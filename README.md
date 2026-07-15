@@ -15,3 +15,9 @@ make olddefconfig
 make -j"$(nproc)" bzImage
 ```
 
+## Build a base debian image
+
+```sh
+just build images
+```
+
