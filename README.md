@@ -21,3 +21,20 @@ make -j"$(nproc)" bzImage
 just build images
 ```
 
+## Build a base debian image
+
+```sh
+just run
+cd nix/
+rm -rf .microqemu/web/console.log .microqemu/web/rootfs.ext4
+nix run
+ssh-keygen -R 10.68.0.2
+ssh ubuntu@10.68.0.2
+```
+
+## Check process running in VM
+
+```sh
+systemctl status microqemu-boot
+journalctl -u microqemu-boot --no-pager
+```
