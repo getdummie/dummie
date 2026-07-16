@@ -29,7 +29,7 @@ build target:
   cd images/{{target}}/
   docker build -t {{target}} .
   cid=$(docker create {{target}})
-  rm -f {{target}}-rootfs.tar
-  docker export "$cid" -o {{target}}-rootfs.tar
+  rm -f rootfs.tar
+  docker export "$cid" -o rootfs.tar
   docker rm "$cid"
 
