@@ -26,10 +26,10 @@ ssh:
 build target:
   #!/usr/bin/env bash
   set -euo pipefail
-  cd {{target}}/
-  docker build -t debian-systemd .
-  cid=$(docker create debian-systemd)
-  rm -f debian-systemd-rootfs.tar
-  docker export "$cid" -o debian-systemd-rootfs.tar
+  cd images/{{target}}/
+  docker build -t {{target}} .
+  cid=$(docker create {{target}})
+  rm -f {{target}}-rootfs.tar
+  docker export "$cid" -o {{target}}-rootfs.tar
   docker rm "$cid"
 
