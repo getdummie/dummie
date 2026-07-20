@@ -21,18 +21,21 @@ make -j"$(nproc)" bzImage
 just build images
 ```
 
-## Build a base debian image
+## Run a VM
 
 ```sh
 just run
-cd nix/
-rm -rf .microqemu/web/console.log .microqemu/web/rootfs.ext4
-nix run
-ssh-keygen -R 10.68.0.2
-ssh ubuntu@10.68.0.2
+```
+
+## SSH into the VM
+
+```sh
+just ssh
 ```
 
 ## Check process running in VM
+
+From inside the VM run
 
 ```sh
 systemctl status microqemu-boot
