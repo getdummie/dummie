@@ -1,18 +1,18 @@
 
 run:
   #!/usr/bin/env bash
-  cd nix/
+  cd nix-vms/
   nix run
 
 stop:
   #!/usr/bin/env bash
-  cd nix/
+  cd nix-vms/
   nix run ".#web" -- stop
 
 clean:
   #!/usr/bin/env bash
   set -euo pipefail
-  cd nix/
+  cd nix-vms/
   nix run "#web" -- stop
   rm -rf .microqemu/web/console.log .microqemu/web/rootfs.ext4
   ssh-keygen -R 10.68.0.2
@@ -20,7 +20,7 @@ clean:
 ssh:
   #!/usr/bin/env bash
   set -euo pipefail
-  cd nix/
+  cd nix-vms/
   ssh ubuntu@10.68.0.2
 
 build target:
