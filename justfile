@@ -23,6 +23,13 @@ ssh:
   cd nix-vms/
   ssh ubuntu@10.68.0.2
 
+# attach to the VM's serial console via QEMU (no ssh/network needed). Ctrl-] to detach.
+console:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cd nix-vms/
+  nix run ".#web" -- console
+
 build target:
   #!/usr/bin/env bash
   set -euo pipefail

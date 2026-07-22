@@ -20,7 +20,7 @@
     dns = "1.1.1.1";
 
     kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-v7.1.3/arch/x86/boot/bzImage";
-    rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/ubuntu-desktop/rootfs.tar";
+    rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/go-bun-dev/rootfs.tar";
 
     # Host directories shared into the guest over virtio-9p. Each gets an
     # fstab entry (nofail) + mountpoint baked into the image, so it mounts
@@ -28,7 +28,7 @@
     shares = [
       {
         tag = "app";
-        source = "/home/cc/Projects/.personal/dummie-v2/sample";
+        source = "/home/cc/Projects/.personal/dummie-v2/control";
         mountPoint = "/home/ubuntu/app";
       }
     ];
@@ -44,7 +44,7 @@
     };
 
     # Command run at every boot, as guestUser, from bootWorkingDir.
-    bootCommand = "python3 main.py";
+    bootCommand = "air";
     bootWorkingDir = "/home/ubuntu/app";
   };
 }
