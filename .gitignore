@@ -2,3 +2,8 @@
 .envrc
 kernel/linux*
 sample/
+
+rustfs-logs/
+rustfs-data/
+.postgres.env
+.rustfs.env

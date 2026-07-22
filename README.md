@@ -41,3 +41,13 @@ From inside the VM run
 systemctl status microqemu-boot
 journalctl -u microqemu-boot --no-pager
 ```
+
+## Control Server
+
+For rustfs
+
+```sh
+mkdir -p rustfs-data rustfs-logs
+sudo chown -R 10001:10001 ./rustfs-data ./rustfs-logs
+```
+
