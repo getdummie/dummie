@@ -88,3 +88,48 @@ scripts/config --disable CONFIG_SUSPEND
 scripts/config --disable CONFIG_HIBERNATION
 # faster decompression than gzip
 scripts/config --enable  CONFIG_KERNEL_LZ4
+
+# 9. Docker / container runtime
+#
+# Everything below is what `docker`'s own check-config.sh flags as required.
+# Built-in (not =m) to match the rest of this config and avoid needing modules.
+#
+# namespaces — the core of container isolation
+scripts/config --enable  CONFIG_NAMESPACES
+scripts/config --enable  CONFIG_NET_NS
+scripts/config --enable  CONFIG_PID_NS
+scripts/config --enable  CONFIG_IPC_NS
+scripts/config --enable  CONFIG_UTS_NS
+scripts/config --enable  CONFIG_USER_NS        # rootless / userns-remap
+# cgroup controllers (bare CONFIG_CGROUPS is already on above)
+scripts/config --enable  CONFIG_CGROUP_CPUACCT
+scripts/config --enable  CONFIG_CGROUP_DEVICE
+scripts/config --enable  CONFIG_CGROUP_FREEZER
+scripts/config --enable  CONFIG_CGROUP_SCHED
+scripts/config --enable  CONFIG_CGROUP_PIDS
+scripts/config --enable  CONFIG_CPUSETS
+scripts/config --enable  CONFIG_MEMCG
+scripts/config --enable  CONFIG_BLK_CGROUP
+scripts/config --enable  CONFIG_CFS_BANDWIDTH   # --cpus / cpu quota
+scripts/config --enable  CONFIG_FAIR_GROUP_SCHED
+# other core requirements
+scripts/config --enable  CONFIG_KEYS
+scripts/config --enable  CONFIG_POSIX_MQUEUE
+# overlay2 storage driver
+scripts/config --enable  CONFIG_OVERLAY_FS
+# container networking: veth pair + bridge + netfilter/NAT for port publishing
+scripts/config --enable  CONFIG_VETH
+scripts/config --enable  CONFIG_BRIDGE
+scripts/config --enable  CONFIG_BRIDGE_NETFILTER
+scripts/config --enable  CONFIG_NF_CONNTRACK
+scripts/config --enable  CONFIG_NF_NAT
+scripts/config --enable  CONFIG_NF_TABLES        # iptables-nft backend
+scripts/config --enable  CONFIG_IP_NF_FILTER
+scripts/config --enable  CONFIG_IP_NF_NAT
+scripts/config --enable  CONFIG_IP_NF_TARGET_MASQUERADE
+scripts/config --enable  CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
+scripts/config --enable  CONFIG_NETFILTER_XT_MATCH_CONNTRACK
+scripts/config --enable  CONFIG_NETFILTER_XT_MARK
+# overlay/swarm networks (drop these two if you never use overlay networking)
+scripts/config --enable  CONFIG_VXLAN
+scripts/config --enable  CONFIG_IP_VS
