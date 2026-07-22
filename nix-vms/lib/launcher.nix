@@ -69,6 +69,15 @@ let
     rm -f "$tmp/etc/resolv.conf"
     echo 'nameserver ${vm.dns}' > "$tmp/etc/resolv.conf"
 
+    # hostname + hosts entry (kernel ip= sets the hostname to '${name}', but
+    # nothing maps it to a local address, so sudo/etc. warn "unable to resolve
+    # host ${name}"). Point it at loopback.
+    echo '${name}' > "$tmp/etc/hostname"
+    {
+      echo '127.0.0.1 localhost'
+      echo '127.0.1.1 ${name}'
+    } > "$tmp/etc/hosts"
+
     # shares: mountpoint + fstab entry (nofail so a bad mount never blocks boot)
     ${lib.concatMapStrings (s: ''
       mkdir -p "$tmp${s.mountPoint}"
