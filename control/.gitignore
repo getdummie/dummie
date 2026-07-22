@@ -1,5 +1,10 @@
 tmp/
 
+# Local env (keep .env.example tracked)
+.env
+.env.*
+!.env.example
+
 # Created by https://www.toptal.com/developers/gitignore/api/go
 # Edit at https://www.toptal.com/developers/gitignore?templates=go
 

@@ -1,23 +1,28 @@
 package main
 
 import (
-  "net/http"
+  "context"
+  "log"
+  "os"
 
-  "github.com/labstack/echo/v5"
-  "github.com/labstack/echo/v5/middleware"
+  "github.com/joho/godotenv"
+  "github.com/urfave/cli/v3"
 )
 
 func main() {
-  e := echo.New()
+  // .env is optional; ignore the error when it's absent.
+  _ = godotenv.Load()
 
-  e.Use(middleware.RequestLogger())
-  e.Use(middleware.Recover())
+  app := &cli.Command{
+    Name:  "control",
+    Usage: "control plane dev orchestrator + API server",
+    Commands: []*cli.Command{
+      serveCommand(),
+      migrateCommand(),
+    },
+  }
 
-  e.GET("/", func(c *echo.Context) error {
-    return c.JSON(http.StatusOK, map[string]string{"message": "Hello, World!"})
-  })
-
-  if err := e.Start(":1323"); err != nil {
-    e.Logger.Error("failed to start server", "error", err)
+  if err := app.Run(context.Background(), os.Args); err != nil {
+    log.Fatal(err)
   }
 }
