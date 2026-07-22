@@ -12,6 +12,15 @@ let
   guestUser = vm.guestUser or null;
   bootCommand = vm.bootCommand or null;
 
+  # extra environment for the boot service, as an attrset of KEY = "value".
+  # systemd runs the unit with a bare PATH (/usr/{local/,}{s,}bin), so a boot
+  # command living outside those dirs (e.g. `air` in /go/bin, put on PATH only
+  # via the interactive shell's .bashrc) needs PATH set explicitly here.
+  bootEnv = vm.bootEnv or { };
+  bootEnvLines = lib.concatStringsSep "\n" (
+    lib.mapAttrsToList (k: v: "Environment=${k}=${v}") bootEnv
+  );
+
   # ephemeral: root writes go to a throwaway overlay, discarded on shutdown;
   # the base image stays pristine (every boot is identical).
   ephemeral = vm.ephemeral or false;
@@ -38,6 +47,7 @@ let
         Type=simple
         User=${guestUser.name}
         WorkingDirectory=${vm.bootWorkingDir}
+        ${bootEnvLines}
         ExecStart=/bin/sh -c "${vm.bootCommand}"
         Restart=on-failure
         RestartSec=2

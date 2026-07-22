@@ -46,5 +46,11 @@
     # Command run at every boot, as guestUser, from bootWorkingDir.
     bootCommand = "air";
     bootWorkingDir = "/home/ubuntu/app";
+
+    # Extra env for the boot service. systemd's PATH is bare, so tools installed
+    # by the go-bun-dev image (air/sqlc/swag in /go/bin, go in /usr/local/go/bin,
+    # bun in ~/.bun/bin) — only on PATH via the interactive shell's .bashrc — are
+    # invisible to the boot command unless we set PATH here explicitly.
+    bootEnv.PATH = "/home/ubuntu/.bun/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
   };
 }
