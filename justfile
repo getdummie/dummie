@@ -21,7 +21,12 @@ ssh:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
-  ssh ubuntu@10.68.0.2
+  # ephemeral VM: host key changes every boot, so skip known_hosts entirely
+  # (no prompt, no "IDENTIFICATION HAS CHANGED" on rebuild).
+  ssh -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR \
+      ubuntu@10.68.0.2
 
 # attach to the VM's serial console via QEMU (no ssh/network needed). Ctrl-] to detach.
 console:
