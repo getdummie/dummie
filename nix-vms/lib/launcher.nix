@@ -131,7 +131,7 @@ pkgs.writeShellApplication {
 
     build_image() {
       if [ ! -f "$IMG" ]; then
-        echo "microqemu(${name}): building rootfs image from ${vm.rootfsTar}" >&2
+        echo "microqemu(${name}): building rootfs image from ${vm.rootfsTar} -> $IMG" >&2
         tmp="$(mktemp -d)"
         truncate -s ${vm.diskSize} "$IMG"
         fakeroot ${mkrootfs} "$tmp" "$IMG"
