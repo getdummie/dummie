@@ -39,7 +39,7 @@ From inside the VM run
 
 ```sh
 systemctl status microqemu-boot
-journalctl -u microqemu-boot --no-pager
+journalctl -u microqemu-boot -f
 ```
 
 ## Control Server
