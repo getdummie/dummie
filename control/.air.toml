@@ -46,8 +46,10 @@ ignore_dangerous_root_dir = false
 follow_symlink = true
 # This log file is placed in your tmp_dir.
 log = "air.log"
-# Poll files for changes instead of using fsnotify.
-poll = false
+# Poll files for changes instead of using fsnotify. Required here: the source is
+# a virtio-9p share, and inotify/fsnotify does NOT fire for host-side changes on
+# 9p, so event-based watching never sees your edits. Polling stats files instead.
+poll = true
 # Poll interval (defaults to the minimum interval of 500ms).
 poll_interval = 500 # ms
 # It's not necessary to trigger build each time file changes if it's too frequent.
