@@ -5,5 +5,7 @@ sample/
 
 rustfs-logs/
 rustfs-data/
-.postgres.env
 .rustfs.env
+
+postgres-data/
+.postgres.env
