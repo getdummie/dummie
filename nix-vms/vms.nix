@@ -22,7 +22,7 @@
     kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-v7.1.3/arch/x86/boot/bzImage";
     rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/go-bun-dev/rootfs.tar";
 
-    # Host directories shared into the guest over virtio-9p. Each gets an
+    # Host directories shared into the guest over virtiofs. Each gets an
     # fstab entry (nofail) + mountpoint baked into the image, so it mounts
     # automatically at boot.
     shares = [
@@ -33,13 +33,19 @@
       }
     ];
 
-    # User created in the guest image. uid/gid MUST match the owner of the
-    # shared dir on the host (9p security_model=none surfaces the host's
-    # numeric uid/gid), so the mount shows up as owned by this user.
+    # Guest user identity. uid AND gid MUST match the host owner of the shared
+    # dir: virtiofsd runs unprivileged as that host user and does guest file ops
+    # under the caller's uid/gid, so it can only assume ids that host user has.
+    # Host `cc` is uid 1000, gid 100 (users); a gid mismatch ⇒ creates fail with
+    # EPERM even though reads work.
+    #   NB: the launcher only *creates* this user when it's absent from the
+    #   rootfsTar. This image already ships `ubuntu`, so its uid/gid come from
+    #   the tarball's /etc/passwd (fix them there too); here gid only drives the
+    #   home-dir chown, which must stay in sync with the tarball.
     guestUser = {
       name = "ubuntu";
       uid = 1000;
-      gid = 1000;
+      gid = 100; # 100 = users, matching host `cc`'s primary group
       home = "/home/ubuntu";
     };
 

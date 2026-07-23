@@ -25,11 +25,37 @@ let
   # the base image stays pristine (every boot is identical).
   ephemeral = vm.ephemeral or false;
 
-  # virtio-9p device args, one fsdev+device pair per share.
+  hasShares = shares != [ ];
+
+  # virtiofs device args, one chardev+device pair per share. Each chardev
+  # connects to a virtiofsd daemon the launcher spawns (see `start`), exposing
+  # its socket at $STATE_DIR/virtiofs-<i>.sock.
   shareArgs = lib.concatStringsSep "\n" (lib.imap0 (
-    i: s: ''          -fsdev "local,id=fs${toString i},path=${s.source},security_model=none"
-          -device "virtio-9p-pci,fsdev=fs${toString i},mount_tag=${s.tag}"''
+    i: s: ''          -chardev "socket,id=fs${toString i},path=$STATE_DIR/virtiofs-${toString i}.sock"
+          -device "vhost-user-fs-pci,queue-size=1024,chardev=fs${toString i},tag=${s.tag}"''
   ) shares);
+
+  # vhost-user (virtiofs) requires the guest's RAM to live in shareable memory,
+  # so virtiofsd can map it. Back main memory with a memfd (share=on) and point
+  # the machine at it — only when there are shares, to keep share-less VMs lean.
+  memBackendArgs = lib.optionalString hasShares ''
+          -object "memory-backend-memfd,id=mem,size=${toString vm.mem}M,share=on"'';
+  machineOpts = "microvm,acpi=on,rtc=on,pcie=on" + lib.optionalString hasShares ",memory-backend=mem";
+
+  # virtiofsd startup, one daemon per share; runs before qemu and outlives this
+  # script (backgrounded, orphaned to init on `nix run`; held in the cgroup
+  # under systemd). --sandbox=none mirrors 9p security_model=none: no uid
+  # mapping, so the guest sees the host's numeric uid/gid.
+  virtiofsdStart = lib.concatStringsSep "\n" (lib.imap0 (i: s: ''
+        rm -f "$STATE_DIR/virtiofs-${toString i}.sock" "$STATE_DIR/virtiofs-${toString i}.pid"
+        virtiofsd \
+          --socket-path="$STATE_DIR/virtiofs-${toString i}.sock" \
+          --shared-dir="${s.source}" \
+          --sandbox=none &
+        echo "$!" > "$STATE_DIR/virtiofs-${toString i}.pid"
+        # qemu needs the socket present before it can connect
+        for _ in $(seq 1 50); do [ -S "$STATE_DIR/virtiofs-${toString i}.sock" ] && break; sleep 0.1; done
+  '') shares);
 
   # systemd unit that runs the boot command as the guest user in the app dir.
   bootUnit =
@@ -81,11 +107,11 @@ let
     # shares: mountpoint + fstab entry (nofail so a bad mount never blocks boot)
     ${lib.concatMapStrings (s: ''
       mkdir -p "$tmp${s.mountPoint}"
-      echo '${s.tag} ${s.mountPoint} 9p trans=virtio,version=9p2000.L,msize=262144,nofail,_netdev 0 0' >> "$tmp/etc/fstab"
+      echo '${s.tag} ${s.mountPoint} virtiofs nofail,_netdev 0 0' >> "$tmp/etc/fstab"
     '') shares}
     ${lib.optionalString (guestUser != null) ''
       # guest user — uid/gid must match the host owner of the shared dir, since
-      # 9p security_model=none shows the host's numeric uid/gid in the guest.
+      # virtiofsd --sandbox=none shows the host's numeric uid/gid in the guest.
       if ! grep -q '^${guestUser.name}:' "$tmp/etc/passwd"; then
         echo '${guestUser.name}:x:${toString guestUser.uid}:${toString guestUser.gid}::${guestUser.home}:/bin/bash' >> "$tmp/etc/passwd"
         echo '${guestUser.name}:x:${toString guestUser.gid}:' >> "$tmp/etc/group"
@@ -108,6 +134,7 @@ pkgs.writeShellApplication {
   name = "microqemu-${name}";
   runtimeInputs = with pkgs; [
     qemu_kvm
+    virtiofsd
     socat
     coreutils
     e2fsprogs
@@ -143,6 +170,15 @@ pkgs.writeShellApplication {
       printf '%s\n%s\n' '{"execute":"qmp_capabilities"}' "$1" \
         | socat - "UNIX-CONNECT:$QMP" >/dev/null 2>&1
     }
+${lib.optionalString hasShares ''
+    kill_virtiofs() {
+      for f in "$STATE_DIR"/virtiofs-*.pid; do
+        [ -e "$f" ] || continue
+        kill "$(cat "$f")" 2>/dev/null || true
+        rm -f "$f"
+      done
+    }
+''}
 
     case "''${1:-start}" in
       start)
@@ -152,9 +188,11 @@ pkgs.writeShellApplication {
         ${lib.optionalString ephemeral ''
         # keep the disposable snapshot overlay on disk (not RAM-backed /tmp)
         export TMPDIR="$STATE_DIR"''}
+${virtiofsdStart}
         args=(
           -pidfile "$PID" -no-reboot
-          -machine "microvm,acpi=on,rtc=on,pcie=on"
+${memBackendArgs}
+          -machine "${machineOpts}"
           -enable-kvm -cpu host
           -m ${toString vm.mem} -smp ${toString vm.cpu}
           -kernel "${vm.kernel}"
@@ -191,16 +229,24 @@ ${shareArgs}
         exec socat -,raw,echo=0,escape=0x1d "UNIX-CONNECT:$STATE_DIR/console.sock"
         ;;
       stop)
-        if ! is_running; then echo "microqemu(${name}): not running"; exit 0; fi
+        if ! is_running; then
+          ${lib.optionalString hasShares "kill_virtiofs"}
+          echo "microqemu(${name}): not running"; exit 0
+        fi
+        stopped=no
         # 1) graceful ACPI powerdown (works only if the guest kernel supports it)
         qmp_cmd '{"execute":"system_powerdown"}' || true
-        for _ in $(seq 1 15); do is_running || { echo "microqemu(${name}): stopped"; exit 0; }; sleep 1; done
+        for _ in $(seq 1 15); do is_running || { stopped=yes; break; }; sleep 1; done
         # 2) fall back to a hard QMP quit
-        echo "microqemu(${name}): powerdown timed out, forcing quit" >&2
-        qmp_cmd '{"execute":"quit"}' || true
-        for _ in $(seq 1 5); do is_running || exit 0; sleep 1; done
+        if [ "$stopped" = no ]; then
+          echo "microqemu(${name}): powerdown timed out, forcing quit" >&2
+          qmp_cmd '{"execute":"quit"}' || true
+          for _ in $(seq 1 5); do is_running || { stopped=yes; break; }; sleep 1; done
+        fi
         # 3) last resort
-        kill -9 "$(cat "$PID")" 2>/dev/null || true
+        [ "$stopped" = yes ] || kill -9 "$(cat "$PID")" 2>/dev/null || true
+        ${lib.optionalString hasShares "kill_virtiofs"}
+        echo "microqemu(${name}): stopped"
         ;;
       status)
         if is_running; then echo "running"; else echo "stopped"; exit 3; fi

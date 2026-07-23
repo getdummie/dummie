@@ -19,7 +19,7 @@ containers. Not `microvm.nix` — that's NixOS-guest only; this drives QEMU dire
 ## Per-VM config (`vms.nix`)
 cpu, mem, diskSize, ephemeral; tap/mac/ip/gateway/netmask/dns; kernel + rootfsTar
 (absolute host paths, referenced at runtime, NOT pinned in the store); optional
-`shares` (virtio-9p host dirs), `guestUser`, `bootCommand`/`bootWorkingDir`.
+`shares` (virtiofs host dirs), `guestUser`, `bootCommand`/`bootWorkingDir`.
 
 ## Key behaviors / gotchas
 - **Networking**: routed tap `vm-tap0` (host `10.68.0.1/16`, guest `10.68.0.2`),
@@ -35,8 +35,14 @@ cpu, mem, diskSize, ephemeral; tap/mac/ip/gateway/netmask/dns; kernel + rootfsTa
   dir), discarded on stop; base image stays pristine. Persist data via a `share`.
 - **Shutdown**: in-guest `poweroff` hangs (kernel ACPI); use `systemctl reboot`
   (clean, `-no-reboot` exits QEMU) or host `stop` (powerdown→quit→kill fallback).
-- 9p `security_model=none` shows host uid/gid; `guestUser.uid` must match the
-  share owner on the host.
+- **Shares are virtiofs** (not 9p): each share runs a `virtiofsd` daemon
+  (spawned by the launcher, socket in the state dir, killed on `stop`) fronting
+  a `vhost-user-fs-pci` device. Requires shareable guest RAM, so when a VM has
+  shares the launcher adds `-object memory-backend-memfd,share=on` +
+  `-machine ...,memory-backend=mem` (size must equal `-m`). Guest kernel needs
+  `CONFIG_VIRTIO_FS` + `CONFIG_FUSE_FS`.
+- virtiofsd `--sandbox=none` shows host uid/gid (like 9p `security_model=none`);
+  `guestUser.uid` must match the share owner on the host.
 
 ## Constraints
 - Per global instructions: do not run nix/qemu/etc. — provide commands for the user.
