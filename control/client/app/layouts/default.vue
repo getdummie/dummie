@@ -1,5 +1,15 @@
 <script setup lang="ts">
+import { LogOut } from '@lucide/vue'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 
 const nav = [
   { label: 'Product', href: '/#product' },
@@ -8,6 +18,16 @@ const nav = [
 ]
 
 const year = 2026
+
+const { user, isAuthenticated, signout } = useAuth()
+
+const initials = computed(() => {
+  const u = user.value
+  if (!u) return '0'
+  const first = (u.first_name?.[0] || u.username?.[0] || '').toUpperCase()
+  const last = (u.last_name?.[0] || '').toUpperCase()
+  return (first + last) || '0'
+})
 </script>
 
 <template>
@@ -36,9 +56,39 @@ const year = 2026
         </nav>
 
         <div class="flex items-center gap-1.5">
-          <Button as-child variant="default" size="sm" class="hidden font-mono text-xs sm:inline-flex">
-            <a href="/#start">Start building</a>
-          </Button>
+          <ClientOnly>
+            <DropdownMenu v-if="isAuthenticated">
+              <DropdownMenuTrigger as-child>
+                <Button variant="ghost" size="sm" class="gap-2 font-mono text-xs">
+                  <Avatar class="size-6">
+                    <AvatarFallback class="bg-primary/15 text-[0.6rem] text-primary">{{ initials }}</AvatarFallback>
+                  </Avatar>
+                  <span class="hidden sm:inline">{{ user?.username }}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" class="w-52 font-mono">
+                <DropdownMenuLabel class="truncate text-xs font-normal text-muted-foreground">
+                  {{ user?.email }}
+                </DropdownMenuLabel>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem as-child class="text-xs">
+                  <NuxtLink to="/dashboard">Dashboard</NuxtLink>
+                </DropdownMenuItem>
+                <DropdownMenuItem class="text-xs text-destructive focus:text-destructive" @select="signout">
+                  <LogOut class="size-4" />
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <Button v-else as-child variant="default" size="sm" class="font-mono text-xs">
+              <NuxtLink to="/signin">Sign in</NuxtLink>
+            </Button>
+
+            <template #fallback>
+              <div class="size-8" />
+            </template>
+          </ClientOnly>
           <ThemeToggle />
         </div>
       </div>

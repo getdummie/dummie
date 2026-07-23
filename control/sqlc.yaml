@@ -8,3 +8,7 @@ sql:
         package: "db"
         out: "internal/db"
         sql_package: "pgx/v5"
+        # Pin the Go field name for the `ip` column so it's deterministic
+        # regardless of sqlc's initialism handling.
+        rename:
+          ip: "IP"

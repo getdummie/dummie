@@ -19,6 +19,8 @@ import (
   "github.com/labstack/echo/v5"
   "github.com/labstack/echo/v5/middleware"
   "github.com/urfave/cli/v3"
+
+  "control/internal/db"
 )
 
 // nuxtTarget is the address the Nuxt dev server binds to.
@@ -98,12 +100,12 @@ func runServe(host string, port int) error {
     os.Exit(0)
   }()
 
-  return runEchoServer(host, port, pool)
+  return runEchoServer(host, port, pool, loadAuthConfig())
 }
 
 // runEchoServer starts the Echo API server: /api/v1/* is handled here, every
 // other path is reverse-proxied to the Nuxt dev server.
-func runEchoServer(host string, port int, pool *pgxpool.Pool) error {
+func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) error {
   e := echo.New()
 
   e.Use(middleware.RequestLogger())
@@ -114,6 +116,13 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool) error {
   api.GET("/health", func(c *echo.Context) error {
     return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
   })
+
+  // Auth: password signup/signin, refresh-token rotation, and session teardown.
+  ah := &AuthHandler{q: db.New(pool), cfg: cfg}
+  api.POST("/signup", ah.Signup)
+  api.POST("/signin", ah.Signin)
+  api.POST("/token_refresh", ah.TokenRefresh)
+  api.POST("/signout", ah.Signout)
 
   // /ht/ is a deeper healthcheck: it reports API liveness plus DB reachability.
   api.GET("/ht/", func(c *echo.Context) error {

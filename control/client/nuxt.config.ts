@@ -14,6 +14,9 @@ export default defineNuxtConfig({
       // Relative by default: the app is served through the Echo proxy, so
       // `/api/v1/*` resolves on the same origin.
       apiBase: '',
+      // Access-token lifetime (minutes); the client refreshes shortly before this.
+      // Keep in sync with the server's ACCESS_TOKEN_EXPIRY_MINS.
+      accessTokenMins: 5,
     },
   },
 
