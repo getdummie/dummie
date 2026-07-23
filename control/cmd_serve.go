@@ -15,6 +15,7 @@ import (
   "syscall"
   "time"
 
+  "github.com/jackc/pgx/v5/pgxpool"
   "github.com/labstack/echo/v5"
   "github.com/labstack/echo/v5/middleware"
   "github.com/urfave/cli/v3"
@@ -55,6 +56,21 @@ func runServe(host string, port int) error {
   ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
   defer stop()
 
+  // Build a lazy pgx pool from DATABASE_URL. pgxpool.New does not dial, so a
+  // missing/unreachable DB never blocks startup; the healthcheck pings on demand.
+  // A nil pool (no DATABASE_URL) makes the healthcheck report db:false.
+  var pool *pgxpool.Pool
+  if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
+    p, err := pgxpool.New(context.Background(), dsn)
+    if err != nil {
+      return fmt.Errorf("failed to build db pool: %w", err)
+    }
+    pool = p
+    defer pool.Close()
+  } else {
+    log.Print("DATABASE_URL not set; healthcheck will report db:false")
+  }
+
   nuxt := exec.Command("bun", "run", "dev")
   nuxt.Dir = "client"
   nuxt.Stdout, nuxt.Stderr = os.Stdout, os.Stderr
@@ -82,12 +98,12 @@ func runServe(host string, port int) error {
     os.Exit(0)
   }()
 
-  return runEchoServer(host, port)
+  return runEchoServer(host, port, pool)
 }
 
 // runEchoServer starts the Echo API server: /api/v1/* is handled here, every
 // other path is reverse-proxied to the Nuxt dev server.
-func runEchoServer(host string, port int) error {
+func runEchoServer(host string, port int, pool *pgxpool.Pool) error {
   e := echo.New()
 
   e.Use(middleware.RequestLogger())
@@ -97,6 +113,22 @@ func runEchoServer(host string, port int) error {
   api := e.Group("/api/v1")
   api.GET("/health", func(c *echo.Context) error {
     return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+  })
+
+  // /ht/ is a deeper healthcheck: it reports API liveness plus DB reachability.
+  api.GET("/ht/", func(c *echo.Context) error {
+    apiOK := true
+    dbOK := false
+    if pool != nil {
+      ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
+      defer cancel()
+      dbOK = pool.Ping(ctx) == nil
+    }
+    return c.JSON(http.StatusOK, map[string]bool{
+      "all": apiOK && dbOK,
+      "db":  dbOK,
+      "api": apiOK,
+    })
   })
 
   addr := host + ":" + strconv.Itoa(port)

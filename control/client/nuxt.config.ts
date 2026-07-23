@@ -6,13 +6,32 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   css: ['~/assets/css/tailwind.css'],
 
+  // Static SPA: no server-rendered pages. `nuxt generate` emits a static SPA.
+  ssr: false,
+
+  runtimeConfig: {
+    public: {
+      // Relative by default: the app is served through the Echo proxy, so
+      // `/api/v1/*` resolves on the same origin.
+      apiBase: '',
+    },
+  },
+
   vite: {
     plugins: [
       tailwindcss(),
     ],
   },
 
-  modules: ['shadcn-nuxt'],
+  modules: ['shadcn-nuxt', '@nuxtjs/color-mode'],
+
+  colorMode: {
+    // Toggle the `.dark` class the CSS expects (no `-mode` suffix), default to
+    // following the OS ("system"), fall back to dark when it can't be detected.
+    classSuffix: '',
+    preference: 'system',
+    fallback: 'dark',
+  },
 
   shadcn: {
     /**
