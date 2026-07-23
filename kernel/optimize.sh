@@ -127,9 +127,19 @@ scripts/config --enable  CONFIG_NF_TABLES        # iptables-nft backend
 scripts/config --enable  CONFIG_IP_NF_FILTER
 scripts/config --enable  CONFIG_IP_NF_NAT
 scripts/config --enable  CONFIG_IP_NF_TARGET_MASQUERADE
+scripts/config --enable  CONFIG_NETFILTER_XT_TARGET_MASQUERADE
 scripts/config --enable  CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
 scripts/config --enable  CONFIG_NETFILTER_XT_MATCH_CONNTRACK
 scripts/config --enable  CONFIG_NETFILTER_XT_MARK
+# container nftables
+scripts/config --enable CONFIG_NF_TABLES_INET
+scripts/config --enable CONFIG_NF_TABLES_IPV4
+scripts/config --enable CONFIG_NF_TABLES_IPV6
+scripts/config --enable CONFIG_NFT_COMPAT      # lets iptables-nft use xt matches (addrtype, MASQUERADE)
+scripts/config --enable CONFIG_NFT_NAT         # the missing nat chain type — the actual failure
+scripts/config --enable CONFIG_NFT_MASQ
+scripts/config --enable CONFIG_NFT_REDIR
+scripts/config --enable CONFIG_NFT_CT          # docker rules match conntrack state
 # overlay/swarm networks (drop these two if you never use overlay networking)
 scripts/config --enable  CONFIG_VXLAN
 scripts/config --enable  CONFIG_IP_VS
