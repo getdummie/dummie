@@ -140,6 +140,11 @@ scripts/config --enable CONFIG_NFT_NAT         # the missing nat chain type — 
 scripts/config --enable CONFIG_NFT_MASQ
 scripts/config --enable CONFIG_NFT_REDIR
 scripts/config --enable CONFIG_NFT_CT          # docker rules match conntrack state
+# bpf for runc v2
+scripts/config --enable CONFIG_BPF
+scripts/config --enable CONFIG_BPF_SYSCALL
+scripts/config --enable CONFIG_CGROUP_BPF      # the one that fixes BPF_CGROUP_DEVICE
+scripts/config --enable CONFIG_BPF_JIT         # optional, faster BPF
 # overlay/swarm networks (drop these two if you never use overlay networking)
 scripts/config --enable  CONFIG_VXLAN
 scripts/config --enable  CONFIG_IP_VS
