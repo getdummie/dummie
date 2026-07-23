@@ -10,7 +10,7 @@ RUN set -ex \
   && systemctl enable ssh \
   && mkdir -p /root/.ssh \
   && curl -sL https://github.com/codingcoffee.keys > /root/.ssh/authorized_keys \
-  && adduser --disabled-password --gecos "" ubuntu \
+  && adduser --disabled-password --gecos "" --uid 1000 --gid 100 ubuntu \
   && adduser ubuntu sudo \
   && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
   && chmod 0440 /etc/sudoers.d/ubuntu
