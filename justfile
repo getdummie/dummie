@@ -45,3 +45,20 @@ build target:
   docker export "$cid" -o rootfs.tar
   docker rm "$cid"
 
+kernel-setup version:
+  #!/usr/bin/env bash
+  cd kernel
+  git clone --depth 1 --branch "{{version}}" https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git "{{version}}"
+
+kernel-build version:
+  #!/usr/bin/env bash
+  cd kernel
+  nix-shell --run '
+    set -euo pipefail
+    cd "linux-{{version}}"
+    make kernelversion
+    make defconfig
+    ../optimize.sh
+    make olddefconfig
+    make -j"$(nproc)" bzImage
+  '
