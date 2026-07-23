@@ -39,6 +39,8 @@ From inside the VM run
 
 ```sh
 systemctl status microqemu-boot
+sudo systemctl restart microqemu-boot
+sudo systemctl stop microqemu-boot
 journalctl -u microqemu-boot -f
 ```
 
