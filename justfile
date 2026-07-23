@@ -17,6 +17,12 @@ clean:
   rm -rf .microqemu/web/console.log .microqemu/web/rootfs.ext4
   ssh-keygen -R 10.68.0.2
 
+stats:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cd nix-vms/
+  nix run "#web" -- stats
+
 ssh:
   #!/usr/bin/env bash
   set -euo pipefail
