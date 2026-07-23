@@ -35,7 +35,7 @@ console:
   cd nix-vms/
   nix run ".#web" -- console
 
-build target:
+image-build target:
   #!/usr/bin/env bash
   set -euo pipefail
   cd images/{{target}}/
