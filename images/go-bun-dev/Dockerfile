@@ -5,6 +5,8 @@ RUN set -ex \
   && apt install -y \
     sudo \
     openssh-server \
+    inetutils-telnet \
+    neovim \
   && echo 'root:root' | chpasswd \
   && apt clean \
   && systemctl enable ssh \
@@ -27,7 +29,6 @@ RUN set -ex \
     curl \
     bash \
     unzip \
-    neovim \
   && go install "github.com/air-verse/air@v1.67.1" \
   && go install "github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1" \
   && go install "github.com/swaggo/swag/cmd/swag@latest" \
