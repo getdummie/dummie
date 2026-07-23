@@ -1,6 +1,9 @@
 # Single source of truth for all VMs. Add a VM = add an attribute here.
 # Paths to kernel/rootfs are referenced at RUNTIME (not pinned into the Nix
 # store) because they're external artifacts you gave as absolute paths.
+
+# min 4G disk always req
+# 2G RAM, 8G disk for running container
 {
   web = {
     cpu = 2;
@@ -19,7 +22,7 @@
     netmask = "255.255.0.0";
     dns = "1.1.1.1";
 
-    kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-v7.1.3/arch/x86/boot/bzImage";
+    kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-v7.1.4/arch/x86/boot/bzImage";
     rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/go-bun-dev/rootfs.tar";
 
     # Host directories shared into the guest over virtiofs. Each gets an
