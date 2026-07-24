@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LogOut, Shield } from '@lucide/vue'
+import { LayoutDashboard, LogOut, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -10,12 +10,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-
-const nav = [
-  { label: 'Product', href: '/#product' },
-  { label: 'Runtime', href: '/#runtime' },
-  { label: 'Health', href: '/health' },
-]
 
 const year = 2026
 
@@ -44,17 +38,6 @@ const initials = computed(() => {
           </span>
         </NuxtLink>
 
-        <nav class="hidden items-center gap-1 md:flex">
-          <a
-            v-for="item in nav"
-            :key="item.href"
-            :href="item.href"
-            class="eyebrow rounded-sm px-3 py-2 text-muted-foreground transition-colors hover:text-foreground"
-          >
-            {{ item.label }}
-          </a>
-        </nav>
-
         <div class="flex items-center gap-1.5">
           <ClientOnly>
             <DropdownMenu v-if="isAuthenticated">
@@ -78,7 +61,10 @@ const initials = computed(() => {
                   </NuxtLink>
                 </DropdownMenuItem>
                 <DropdownMenuItem as-child class="text-xs">
-                  <NuxtLink to="/dashboard">Dashboard</NuxtLink>
+                  <NuxtLink to="/dashboard">
+                    <LayoutDashboard class="size-4" />
+                    Dashboard
+                  </NuxtLink>
                 </DropdownMenuItem>
                 <DropdownMenuItem class="text-xs text-destructive focus:text-destructive" @select="signout">
                   <LogOut class="size-4" />
