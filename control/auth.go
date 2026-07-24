@@ -81,12 +81,15 @@ func toUserDTO(u db.User) userDTO {
 
 // --- cookies ---------------------------------------------------------------
 
-func (h *AuthHandler) setAuthCookies(c *echo.Context, access, refresh string) {
+func (h *AuthHandler) setAccessCookie(c *echo.Context, access string) {
   http.SetCookie(c.Response(), &http.Cookie{
     Name: "access_token", Value: access, Path: "/",
     HttpOnly: true, Secure: h.cfg.prod, SameSite: http.SameSiteLaxMode,
     MaxAge: int(h.cfg.accessTTL.Seconds()),
   })
+}
+
+func (h *AuthHandler) setRefreshCookie(c *echo.Context, refresh string) {
   http.SetCookie(c.Response(), &http.Cookie{
     Name: "refresh_token", Value: refresh, Path: "/",
     HttpOnly: true, Secure: h.cfg.prod, SameSite: http.SameSiteLaxMode,
@@ -115,9 +118,11 @@ func clientIP(c *echo.Context) string {
   return host
 }
 
-// issueSession mints an access JWT + a rotated refresh token, persists the
-// (hashed) refresh token as a session row, sets cookies, and returns the body
-// the SPA reads into its in-memory access token + user state.
+// issueSession starts a NEW session: it mints an access JWT + a fresh refresh
+// token, persists the (hashed) refresh token as a session row, sets both
+// cookies, and returns the body the SPA reads into its in-memory state. Used by
+// sign-up and sign-in only — refreshing an access token does NOT call this, so
+// reloads don't create new sessions.
 func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
   access, err := newAccessToken(u, h.cfg.jwtSecret, h.cfg.accessTTL)
   if err != nil {
@@ -137,7 +142,8 @@ func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not create session")
   }
-  h.setAuthCookies(c, access, raw)
+  h.setAccessCookie(c, access)
+  h.setRefreshCookie(c, raw)
   return c.JSON(http.StatusOK, map[string]any{
     "access_token": access,
     "user":         toUserDTO(u),
@@ -222,6 +228,11 @@ func (h *AuthHandler) Signin(c *echo.Context) error {
   return h.issueSession(c, u)
 }
 
+// TokenRefresh exchanges a valid refresh token for a fresh access token. It does
+// NOT rotate/re-create the refresh token — the existing session (DB row +
+// cookie) is left intact, so a page reload just mints a new access token instead
+// of churning sessions. A new refresh token is only ever created at sign-in;
+// once the refresh token expires or is revoked, the user must sign in again.
 func (h *AuthHandler) TokenRefresh(c *echo.Context) error {
   cookie, err := c.Request().Cookie("refresh_token")
   if err != nil || cookie.Value == "" {
@@ -232,15 +243,19 @@ func (h *AuthHandler) TokenRefresh(c *echo.Context) error {
   if err != nil || rt.Revoked || rt.ExpiresAt.Time.Before(time.Now()) {
     return echo.NewHTTPError(http.StatusUnauthorized, "invalid refresh token")
   }
-  // Rotation: the presented token is single-use — revoke it before issuing anew.
-  if err := h.q.RevokeRefreshTokenByHash(ctx, rt.TokenHash); err != nil {
-    return echo.NewHTTPError(http.StatusInternalServerError, "could not rotate session")
-  }
   u, err := h.q.GetUserByID(ctx, rt.UserID)
   if err != nil {
     return echo.NewHTTPError(http.StatusUnauthorized, "user not found")
   }
-  return h.issueSession(c, u)
+  access, err := newAccessToken(u, h.cfg.jwtSecret, h.cfg.accessTTL)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not mint token")
+  }
+  h.setAccessCookie(c, access)
+  return c.JSON(http.StatusOK, map[string]any{
+    "access_token": access,
+    "user":         toUserDTO(u),
+  })
 }
 
 func (h *AuthHandler) Signout(c *echo.Context) error {
