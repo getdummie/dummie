@@ -17,3 +17,31 @@ WHERE token_hash = $1;
 UPDATE refresh_tokens
 SET revoked = true
 WHERE user_id = $1 AND revoked = false;
+
+-- name: CountRefreshTokens :one
+SELECT count(*) FROM refresh_tokens;
+
+-- name: ListRefreshTokens :many
+SELECT
+  rt.id,
+  rt.user_id,
+  u.username,
+  u.email,
+  rt.expires_at,
+  rt.revoked,
+  rt.user_agent,
+  rt.ip,
+  rt.created_at
+FROM refresh_tokens rt
+JOIN users u ON u.id = rt.user_id
+ORDER BY rt.created_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: RevokeRefreshTokenByID :exec
+UPDATE refresh_tokens
+SET revoked = true
+WHERE id = $1;
+
+-- name: DeleteExpiredRefreshTokens :execrows
+DELETE FROM refresh_tokens
+WHERE expires_at < now();

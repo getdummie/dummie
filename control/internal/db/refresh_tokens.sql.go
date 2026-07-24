@@ -11,6 +11,17 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countRefreshTokens = `-- name: CountRefreshTokens :one
+SELECT count(*) FROM refresh_tokens
+`
+
+func (q *Queries) CountRefreshTokens(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countRefreshTokens)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createRefreshToken = `-- name: CreateRefreshToken :one
 INSERT INTO refresh_tokens (user_id, token_hash, expires_at, user_agent, ip)
 VALUES ($1, $2, $3, $4, $5)
@@ -47,6 +58,19 @@ func (q *Queries) CreateRefreshToken(ctx context.Context, arg CreateRefreshToken
 	return i, err
 }
 
+const deleteExpiredRefreshTokens = `-- name: DeleteExpiredRefreshTokens :execrows
+DELETE FROM refresh_tokens
+WHERE expires_at < now()
+`
+
+func (q *Queries) DeleteExpiredRefreshTokens(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredRefreshTokens)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getRefreshTokenByHash = `-- name: GetRefreshTokenByHash :one
 SELECT id, user_id, token_hash, expires_at, revoked, user_agent, ip, created_at FROM refresh_tokens
 WHERE token_hash = $1
@@ -69,6 +93,70 @@ func (q *Queries) GetRefreshTokenByHash(ctx context.Context, tokenHash string) (
 	return i, err
 }
 
+const listRefreshTokens = `-- name: ListRefreshTokens :many
+SELECT
+  rt.id,
+  rt.user_id,
+  u.username,
+  u.email,
+  rt.expires_at,
+  rt.revoked,
+  rt.user_agent,
+  rt.ip,
+  rt.created_at
+FROM refresh_tokens rt
+JOIN users u ON u.id = rt.user_id
+ORDER BY rt.created_at DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListRefreshTokensParams struct {
+	Limit  int32
+	Offset int32
+}
+
+type ListRefreshTokensRow struct {
+	ID        pgtype.UUID
+	UserID    pgtype.UUID
+	Username  string
+	Email     string
+	ExpiresAt pgtype.Timestamptz
+	Revoked   bool
+	UserAgent string
+	IP        string
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ListRefreshTokens(ctx context.Context, arg ListRefreshTokensParams) ([]ListRefreshTokensRow, error) {
+	rows, err := q.db.Query(ctx, listRefreshTokens, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRefreshTokensRow
+	for rows.Next() {
+		var i ListRefreshTokensRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.Username,
+			&i.Email,
+			&i.ExpiresAt,
+			&i.Revoked,
+			&i.UserAgent,
+			&i.IP,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeAllForUser = `-- name: RevokeAllForUser :exec
 UPDATE refresh_tokens
 SET revoked = true
@@ -88,5 +176,16 @@ WHERE token_hash = $1
 
 func (q *Queries) RevokeRefreshTokenByHash(ctx context.Context, tokenHash string) error {
 	_, err := q.db.Exec(ctx, revokeRefreshTokenByHash, tokenHash)
+	return err
+}
+
+const revokeRefreshTokenByID = `-- name: RevokeRefreshTokenByID :exec
+UPDATE refresh_tokens
+SET revoked = true
+WHERE id = $1
+`
+
+func (q *Queries) RevokeRefreshTokenByID(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, revokeRefreshTokenByID, id)
 	return err
 }

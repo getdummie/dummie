@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LogOut } from '@lucide/vue'
+import { LogOut, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -71,6 +71,12 @@ const initials = computed(() => {
                   {{ user?.email }}
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
+                <DropdownMenuItem v-if="user?.user_type === 'admin'" as-child class="text-xs">
+                  <NuxtLink to="/admin/model/users">
+                    <Shield class="size-4" />
+                    Admin
+                  </NuxtLink>
+                </DropdownMenuItem>
                 <DropdownMenuItem as-child class="text-xs">
                   <NuxtLink to="/dashboard">Dashboard</NuxtLink>
                 </DropdownMenuItem>

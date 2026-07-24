@@ -1,6 +1,6 @@
 -- name: CreateUser :one
-INSERT INTO users (username, email, password_hash, first_name, last_name)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO users (username, email, password_hash, first_name, last_name, user_type)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetUserByUsernameOrEmail :one
@@ -12,3 +12,15 @@ LIMIT 1;
 SELECT * FROM users
 WHERE id = $1
 LIMIT 1;
+
+-- name: CountUsers :one
+SELECT count(*) FROM users;
+
+-- name: ListUsers :many
+SELECT * FROM users
+ORDER BY created_at ASC
+LIMIT $1 OFFSET $2;
+
+-- name: DeleteUser :exec
+DELETE FROM users
+WHERE id = $1;

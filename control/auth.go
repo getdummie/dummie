@@ -171,12 +171,20 @@ func (h *AuthHandler) Signup(c *echo.Context) error {
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not hash password")
   }
-  u, err := h.q.CreateUser(c.Request().Context(), db.CreateUserParams{
+  ctx := c.Request().Context()
+  // The very first account to sign up bootstraps the system as an admin;
+  // everyone after is a regular user. The client never gets to choose.
+  userType := "user"
+  if n, err := h.q.CountUsers(ctx); err == nil && n == 0 {
+    userType = "admin"
+  }
+  u, err := h.q.CreateUser(ctx, db.CreateUserParams{
     Username:     req.Username,
     Email:        req.Email,
     PasswordHash: hash,
     FirstName:    strings.TrimSpace(req.FirstName),
     LastName:     strings.TrimSpace(req.LastName),
+    UserType:     userType,
   })
   if err != nil {
     var pgErr *pgconn.PgError

@@ -103,6 +103,19 @@ export function useAuth() {
     }
   }
 
+  // authFetch is for authenticated (e.g. admin) endpoints. Auth rides the
+  // httpOnly access-token cookie (credentials: 'include'); on a 401 we refresh
+  // once and retry so an expired access cookie is handled transparently.
+  async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
+    const url = `${base}/api/v1${path}`
+    const opts: RequestInit = { credentials: 'include', ...init }
+    let res = await fetch(url, opts)
+    if (res.status === 401 && await refresh()) {
+      res = await fetch(url, opts)
+    }
+    return res
+  }
+
   async function signout() {
     try {
       await api('/signout')
@@ -133,6 +146,7 @@ export function useAuth() {
     signup,
     refresh,
     signout,
+    authFetch,
   }
 }
 
