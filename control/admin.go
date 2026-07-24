@@ -259,6 +259,17 @@ func (h *AdminHandler) BlacklistToken(c *echo.Context) error {
   return c.NoContent(http.StatusNoContent)
 }
 
+func (h *AdminHandler) DeleteToken(c *echo.Context) error {
+  pgID, err := parseUUID(c.Param("id"))
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid token id")
+  }
+  if err := h.q.DeleteRefreshTokenByID(c.Request().Context(), pgID); err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not delete token")
+  }
+  return c.NoContent(http.StatusNoContent)
+}
+
 func (h *AdminHandler) CleanupTokens(c *echo.Context) error {
   n, err := h.q.DeleteExpiredRefreshTokens(c.Request().Context())
   if err != nil {

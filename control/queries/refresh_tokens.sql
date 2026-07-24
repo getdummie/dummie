@@ -42,6 +42,10 @@ UPDATE refresh_tokens
 SET revoked = true
 WHERE id = $1;
 
+-- name: DeleteRefreshTokenByID :exec
+DELETE FROM refresh_tokens
+WHERE id = $1;
+
 -- name: DeleteExpiredRefreshTokens :execrows
 DELETE FROM refresh_tokens
 WHERE expires_at < now();

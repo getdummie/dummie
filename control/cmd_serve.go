@@ -133,6 +133,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin.DELETE("/users/:id", adminH.DeleteUser)
   admin.GET("/tokens", adminH.ListTokens)
   admin.POST("/tokens/:id/blacklist", adminH.BlacklistToken)
+  admin.DELETE("/tokens/:id", adminH.DeleteToken)
   admin.POST("/tokens/cleanup", adminH.CleanupTokens)
 
   // /ht/ is a deeper healthcheck: it reports API liveness plus DB reachability.

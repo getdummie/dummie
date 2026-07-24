@@ -117,6 +117,28 @@ async function confirmBlacklist() {
   }
 }
 
+// --- delete one ---
+const toDelete = ref<TokenRow | null>(null)
+const deleting = ref(false)
+
+async function confirmDelete() {
+  if (!toDelete.value) return
+  deleting.value = true
+  actionError.value = null
+  try {
+    const res = await authFetch(`/admin/tokens/${toDelete.value.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    toDelete.value = null
+    await load()
+  }
+  catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Could not delete token'
+  }
+  finally {
+    deleting.value = false
+  }
+}
+
 // --- cleanup expired ---
 const cleanupOpen = ref(false)
 const cleaning = ref(false)
@@ -194,16 +216,28 @@ async function confirmCleanup() {
             <TableCell class="font-mono text-muted-foreground">{{ t.ip || '—' }}</TableCell>
             <TableCell class="text-muted-foreground">{{ fmtDate(t.created_at) }}</TableCell>
             <TableCell class="text-right">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="text-destructive hover:text-destructive"
-                :disabled="t.status !== 'active'"
-                :title="t.status === 'active' ? 'Blacklist (revoke) session' : 'Not active'"
-                @click="toBlacklist = t"
-              >
-                <Ban class="size-4" />
-              </Button>
+              <div class="flex justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="text-destructive hover:text-destructive"
+                  :disabled="t.status !== 'active'"
+                  :title="t.status === 'active' ? 'Blacklist (revoke) session' : 'Already inactive'"
+                  @click="toBlacklist = t"
+                >
+                  <Ban class="size-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="text-destructive hover:text-destructive"
+                  :disabled="t.status === 'active'"
+                  :title="t.status === 'active' ? 'Blacklist before deleting' : 'Delete token'"
+                  @click="toDelete = t"
+                >
+                  <Trash2 class="size-4" />
+                </Button>
+              </div>
             </TableCell>
           </TableRow>
         </TableBody>
@@ -235,6 +269,30 @@ async function confirmCleanup() {
           </DialogClose>
           <Button variant="destructive" class="font-mono text-xs" :disabled="working" @click="confirmBlacklist">
             {{ working ? 'Blacklisting…' : 'Blacklist' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- delete one confirm -->
+    <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete token</DialogTitle>
+          <DialogDescription>
+            Permanently remove this
+            <span class="font-mono text-foreground">{{ toDelete?.status }}</span>
+            session for <span class="font-mono text-foreground">{{ toDelete?.username }}</span>.
+            This cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
+            {{ deleting ? 'Deleting…' : 'Delete' }}
           </Button>
         </DialogFooter>
       </DialogContent>

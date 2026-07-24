@@ -71,6 +71,16 @@ func (q *Queries) DeleteExpiredRefreshTokens(ctx context.Context) (int64, error)
 	return result.RowsAffected(), nil
 }
 
+const deleteRefreshTokenByID = `-- name: DeleteRefreshTokenByID :exec
+DELETE FROM refresh_tokens
+WHERE id = $1
+`
+
+func (q *Queries) DeleteRefreshTokenByID(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteRefreshTokenByID, id)
+	return err
+}
+
 const getRefreshTokenByHash = `-- name: GetRefreshTokenByHash :one
 SELECT id, user_id, token_hash, expires_at, revoked, user_agent, ip, created_at FROM refresh_tokens
 WHERE token_hash = $1
