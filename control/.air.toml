@@ -47,8 +47,9 @@ follow_symlink = true
 # This log file is placed in your tmp_dir.
 log = "air.log"
 # Poll files for changes instead of using fsnotify. Required here: the source is
-# a virtio-9p share, and inotify/fsnotify does NOT fire for host-side changes on
-# 9p, so event-based watching never sees your edits. Polling stats files instead.
+# a virtiofs share, and inotify/fsnotify does NOT fire for host-side changes on
+# virtiofs (the guest kernel never sees host-side mutations as local events), so
+# event-based watching never sees your edits. Polling stats files instead.
 poll = true
 # Poll interval (defaults to the minimum interval of 500ms).
 poll_interval = 500 # ms
