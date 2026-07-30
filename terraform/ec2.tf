@@ -29,6 +29,10 @@ resource "aws_instance" "ec2-aps1-test-app-001" {
   vpc_security_group_ids = [aws_security_group.sg-aps1-test-app-001.id]
   key_name               = aws_key_pair.kp-aps1-test-001.key_name
 
+  cpu_options {
+    nested_virtualization = "enabled"
+  }
+
   tags = {
     Name = "ec2-aps1-test-app-001"
   }
