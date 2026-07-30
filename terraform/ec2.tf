@@ -33,6 +33,10 @@ resource "aws_instance" "ec2-aps1-test-app-001" {
     nested_virtualization = "enabled"
   }
 
+  root_block_device {
+    volume_size = 100
+  }
+
   tags = {
     Name = "ec2-aps1-test-app-001"
   }
