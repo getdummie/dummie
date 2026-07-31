@@ -50,7 +50,7 @@ func serveCommand() *cli.Command {
   }
 }
 
-// runServe starts `bun run dev` (in ./client) as a child process and then runs
+// runServe starts `bun run dev` (in ./web-client) as a child process and then runs
 // the Echo server. air sits above this process: on a Go rebuild it sends an
 // interrupt, our handler kills the whole Nuxt process group, and we exit so the
 // port is free before air re-runs the rebuilt binary.
@@ -74,7 +74,7 @@ func runServe(host string, port int) error {
   }
 
   nuxt := exec.Command("bun", "run", "dev")
-  nuxt.Dir = "client"
+  nuxt.Dir = "web-client"
   nuxt.Stdout, nuxt.Stderr = os.Stdout, os.Stderr
   // Own process group so we can signal Nuxt + its vite/node children together.
   nuxt.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
