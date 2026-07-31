@@ -1,4 +1,22 @@
 services:
+  control:
+    restart: unless-stopped
+    build:
+      context: ./control
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./control:/app
+    working_dir: /app
+    ports:
+      - 1323:1323
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+    env_file:
+      - control/.env
+
   rustfs:
     image: rustfs/rustfs:1.0.0-beta.10
     security_opt:
