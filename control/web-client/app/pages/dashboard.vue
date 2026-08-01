@@ -13,7 +13,7 @@ const greeting = computed(() =>
 
 <template>
   <div class="mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-24">
-    <p class="eyebrow mb-4 text-primary">// Dashboard</p>
+    <p class="eyebrow mb-4 text-primary-text">// Dashboard</p>
     <h1 class="text-3xl font-semibold tracking-tight sm:text-4xl">
       Welcome, {{ greeting }}.
     </h1>
@@ -23,7 +23,7 @@ const greeting = computed(() =>
 
     <Card class="mt-10 max-w-md">
       <CardHeader>
-        <CardTitle class="font-mono text-base">session</CardTitle>
+        <CardTitle as="h2" class="font-mono text-base">session</CardTitle>
         <CardDescription>Signed-in account</CardDescription>
       </CardHeader>
       <CardContent>

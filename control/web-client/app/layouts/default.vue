@@ -38,6 +38,10 @@ const initials = computed(() => {
     class="min-h-svh flex flex-col bg-background text-foreground antialiased transition-[padding] duration-200"
     :class="showSidebar && (expanded ? 'md:pl-56' : 'md:pl-12')"
   >
+    <!-- First thing in the tab order: lets keyboard and screen-reader users
+         jump the header/sidebar instead of tabbing through it on every page. -->
+    <a href="#main-content" class="skip-link">Skip to main content</a>
+
     <AppSidebar v-if="showSidebar" v-model:open="navOpen" />
 
     <!-- App shell: no top bar on desktop; mobile keeps a bar to reach the drawer -->
@@ -49,11 +53,15 @@ const initials = computed(() => {
         <Menu class="size-4" />
       </Button>
       <NuxtLink to="/dashboard" class="flex items-center gap-2.5">
-        <span class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none">
+        <!-- Decorative logo mark: hidden so the link reads "dummie/", not "0 dummie/". -->
+        <span
+          aria-hidden="true"
+          class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none"
+        >
           0
         </span>
         <span class="font-mono text-sm font-semibold tracking-tight">
-          dummie<span class="text-primary">/</span>
+          dummie<span class="text-primary-text">/</span>
         </span>
       </NuxtLink>
     </header>
@@ -62,21 +70,32 @@ const initials = computed(() => {
     <header v-else class="sticky top-0 z-40 border-b border-border/80 bg-background/80 backdrop-blur">
       <div class="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6">
         <NuxtLink to="/" class="group flex items-center gap-2.5">
-          <span class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none">
+          <span
+            aria-hidden="true"
+            class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none"
+          >
             0
           </span>
           <span class="font-mono text-sm font-semibold tracking-tight">
-            dummie<span class="text-primary">/</span>
+            dummie<span class="text-primary-text">/</span>
           </span>
         </NuxtLink>
 
-        <div class="ml-auto flex items-center gap-1.5">
+        <nav aria-label="Account and preferences" class="ml-auto flex items-center gap-1.5">
           <ClientOnly>
             <DropdownMenu v-if="isAuthenticated">
               <DropdownMenuTrigger as-child>
-                <Button variant="ghost" size="sm" class="gap-2 font-mono text-xs">
+                <!-- The username span is `hidden` below `sm`, which drops it from
+                     the accessibility tree, and the avatar is decorative — so the
+                     button needs its own name or it is unlabelled on mobile. -->
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  class="gap-2 font-mono text-xs"
+                  :aria-label="user ? `Account menu for ${user.username}` : 'Account menu'"
+                >
                   <Avatar class="size-6">
-                    <AvatarFallback class="bg-primary/15 text-[0.6rem] text-primary">{{ initials }}</AvatarFallback>
+                    <AvatarFallback aria-hidden="true" class="bg-primary/15 text-[0.6rem] text-primary-text">{{ initials }}</AvatarFallback>
                   </Avatar>
                   <span class="hidden sm:inline">{{ user?.username }}</span>
                 </Button>
@@ -114,12 +133,13 @@ const initials = computed(() => {
             </template>
           </ClientOnly>
           <ThemeToggle />
-        </div>
+        </nav>
       </div>
     </header>
 
-    <!-- Page -->
-    <main class="flex-1">
+    <!-- Page. `tabindex="-1"` makes this a programmatic focus target for the
+         skip link and the route-change handler without adding a tab stop. -->
+    <main id="main-content" tabindex="-1" class="flex-1 focus-visible:outline-none">
       <slot />
     </main>
 
@@ -127,7 +147,10 @@ const initials = computed(() => {
     <footer v-if="!showSidebar" class="border-t border-border/80">
       <div class="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-4 py-8 sm:flex-row sm:items-center sm:px-6">
         <div class="flex items-center gap-2.5">
-          <span class="grid size-5 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-xs font-bold leading-none">
+          <span
+            aria-hidden="true"
+            class="grid size-5 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-xs font-bold leading-none"
+          >
             0
           </span>
           <span class="font-mono text-xs text-muted-foreground">
@@ -140,9 +163,9 @@ const initials = computed(() => {
             href="https://codingcoffee.dev"
             target="_blank"
             rel="noopener noreferrer"
-            class="text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline"
+            class="text-foreground underline-offset-4 transition-colors hover:text-primary-text hover:underline"
           >
-            Ameya Shenoy
+            Ameya Shenoy<span class="sr-only"> (opens in a new tab)</span>
           </a>
         </p>
       </div>

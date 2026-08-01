@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { Check, Monitor, Moon, Sun } from '@lucide/vue'
+import { Monitor, Moon, Sun } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
@@ -18,39 +19,47 @@ const options = [
   { value: 'system', label: 'System', icon: Monitor },
 ] as const
 
-function setMode(value: 'light' | 'dark' | 'system') {
-  colorMode.preference = value
-}
+const currentLabel = computed(
+  () => options.find(o => o.value === colorMode.preference)?.label ?? 'System',
+)
 </script>
 
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <Button variant="ghost" size="icon" aria-label="Toggle theme">
+      <!-- The label names the control *and* reports its state. A bare "Toggle
+           theme" leaves a screen-reader user with no way to know which mode is
+           active. (WCAG 4.1.2) -->
+      <Button variant="ghost" size="icon" :aria-label="`Theme: ${currentLabel}. Change theme`">
         <!-- Icon reflects the resolved mode. ClientOnly avoids an SSR/first-paint
              mismatch since the applied theme is only known on the client. -->
         <ClientOnly>
-          <Moon v-if="colorMode.value === 'dark'" class="size-[1.15rem]" />
-          <Sun v-else class="size-[1.15rem]" />
+          <Moon v-if="colorMode.value === 'dark'" class="size-[1.15rem]" aria-hidden="true" />
+          <Sun v-else class="size-[1.15rem]" aria-hidden="true" />
           <template #fallback>
-            <Sun class="size-[1.15rem]" />
+            <Sun class="size-[1.15rem]" aria-hidden="true" />
           </template>
         </ClientOnly>
       </Button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end" class="w-40 font-mono">
-      <DropdownMenuItem
-        v-for="opt in options"
-        :key="opt.value"
-        class="justify-between text-xs"
-        @select="setMode(opt.value)"
+      <!-- A radio group rather than plain items with a tick icon: reka-ui then
+           emits role="menuitemradio" + aria-checked, so the current choice is
+           exposed to assistive tech instead of being a purely visual checkmark. -->
+      <DropdownMenuRadioGroup
+        :model-value="colorMode.preference"
+        @update:model-value="(v: string) => colorMode.preference = v"
       >
-        <span class="flex items-center gap-2">
-          <component :is="opt.icon" class="size-4" />
+        <DropdownMenuRadioItem
+          v-for="opt in options"
+          :key="opt.value"
+          :value="opt.value"
+          class="text-xs"
+        >
+          <component :is="opt.icon" class="size-4" aria-hidden="true" />
           {{ opt.label }}
-        </span>
-        <Check v-if="colorMode.preference === opt.value" class="size-3.5 text-primary" />
-      </DropdownMenuItem>
+        </DropdownMenuRadioItem>
+      </DropdownMenuRadioGroup>
     </DropdownMenuContent>
   </DropdownMenu>
 </template>

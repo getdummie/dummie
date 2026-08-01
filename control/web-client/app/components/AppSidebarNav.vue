@@ -66,23 +66,28 @@ function onAdminClick() {
   adminOpen.value = !adminOpen.value
 }
 
+// `focus-visible:` is not optional here: without it the entire rail is
+// invisible to keyboard users, since none of these are shadcn primitives that
+// bring their own ring. (WCAG 2.4.7)
 const itemBase
-  = 'group relative flex items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground'
+  = 'group relative flex items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'
 const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 'size-9 justify-center'))
 </script>
 
 <template>
   <TooltipProvider :delay-duration="150">
     <div class="flex min-h-0 flex-1 flex-col" :class="expanded ? 'px-2' : 'items-center px-1.5'">
-      <nav class="flex flex-1 flex-col gap-0.5 overflow-y-auto py-3">
+      <!-- Named so the landmark list distinguishes this from the admin tab
+           strip and the header nav. (WCAG 1.3.1) -->
+      <nav aria-label="Main" class="flex flex-1 flex-col gap-0.5 overflow-y-auto py-3">
         <Tooltip v-for="item in main" :key="item.to" :disabled="expanded">
           <TooltipTrigger as-child>
             <NuxtLink
               :to="item.to"
-              :class="[itemBase, itemSize, isActive(item.to) && 'bg-primary/12 text-primary hover:bg-primary/12 hover:text-primary']"
+              :class="[itemBase, itemSize, isActive(item.to) && 'bg-primary/12 text-primary-text hover:bg-primary/12 hover:text-primary-text']"
               :aria-current="isActive(item.to) ? 'page' : undefined"
             >
-              <component :is="item.icon" class="size-[18px] shrink-0" />
+              <component :is="item.icon" class="size-[18px] shrink-0" aria-hidden="true" />
               <span v-if="expanded" class="truncate font-mono text-[0.8rem]">{{ item.label }}</span>
               <span v-else class="sr-only">{{ item.label }}</span>
             </NuxtLink>
@@ -99,14 +104,15 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
           <TooltipTrigger as-child>
             <button
               type="button"
-              :class="[itemBase, itemSize, adminActive && !adminOpen && 'text-primary']"
+              :class="[itemBase, itemSize, adminActive && !adminOpen && 'text-primary-text']"
               :aria-expanded="expanded ? adminOpen : undefined"
+              :aria-controls="expanded ? 'admin-subnav' : undefined"
               @click="onAdminClick"
             >
-              <Shield class="size-[18px] shrink-0" />
+              <Shield class="size-[18px] shrink-0" aria-hidden="true" />
               <template v-if="expanded">
                 <span class="flex-1 truncate text-left font-mono text-[0.8rem]">Admin Dashboard</span>
-                <ChevronDown class="size-4 shrink-0 transition-transform" :class="adminOpen && 'rotate-180'" />
+                <ChevronDown class="size-4 shrink-0 transition-transform" :class="adminOpen && 'rotate-180'" aria-hidden="true" />
               </template>
               <span v-else class="sr-only">Admin Dashboard</span>
             </button>
@@ -116,15 +122,15 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
           </TooltipContent>
         </Tooltip>
 
-        <div v-if="expanded && adminOpen" class="ml-[1.05rem] flex flex-col gap-0.5 border-l border-border pl-2">
+        <div v-if="expanded && adminOpen" id="admin-subnav" class="ml-[1.05rem] flex flex-col gap-0.5 border-l border-border pl-2">
           <NuxtLink
             v-for="item in adminItems"
             :key="item.to"
             :to="item.to"
-            :class="[itemBase, 'h-8 w-full gap-2.5 px-2.5', isActive(item.to) && 'bg-primary/12 text-primary hover:bg-primary/12 hover:text-primary']"
+            :class="[itemBase, 'h-8 w-full gap-2.5 px-2.5', isActive(item.to) && 'bg-primary/12 text-primary-text hover:bg-primary/12 hover:text-primary-text']"
             :aria-current="isActive(item.to) ? 'page' : undefined"
           >
-            <component :is="item.icon" class="size-4 shrink-0" />
+            <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
             <span class="truncate font-mono text-[0.8rem]">{{ item.label }}</span>
           </NuxtLink>
         </div>
@@ -140,10 +146,10 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
             <TooltipTrigger as-child>
               <DropdownMenuTrigger
                 :class="[itemBase, expanded ? 'h-9 min-w-0 flex-1 gap-2.5 px-1.5' : 'size-9 justify-center']"
-                :aria-label="user?.username"
+                :aria-label="user ? `Account menu for ${user.username}` : 'Account menu'"
               >
-                <Avatar class="size-6 shrink-0">
-                  <AvatarFallback class="bg-primary/15 text-[0.6rem] text-primary">{{ initials }}</AvatarFallback>
+                <Avatar class="size-6 shrink-0" aria-hidden="true">
+                  <AvatarFallback class="bg-primary/15 text-[0.6rem] text-primary-text">{{ initials }}</AvatarFallback>
                 </Avatar>
                 <span v-if="expanded" class="truncate font-mono text-[0.8rem] text-foreground">{{ user?.username }}</span>
               </DropdownMenuTrigger>
@@ -159,7 +165,7 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem class="text-xs text-destructive focus:text-destructive" @select="signout">
-              <LogOut class="size-4" />
+              <LogOut class="size-4" aria-hidden="true" />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

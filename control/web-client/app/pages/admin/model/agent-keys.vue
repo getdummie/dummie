@@ -205,12 +205,12 @@ async function confirmDelete() {
 
     <div class="mt-8 flex items-end justify-between gap-4">
       <div>
-        <p class="eyebrow mb-2 text-primary">// admin · agent keys</p>
+        <p class="eyebrow mb-2 text-primary-text">// admin · agent keys</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Enrollment keys</h1>
       </div>
       <Dialog v-model:open="createOpen" @update:open="(v: boolean) => !v && resetForm()">
         <Button class="font-mono text-xs" @click="createOpen = true">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New key
         </Button>
         <DialogContent>
@@ -227,18 +227,31 @@ async function confirmDelete() {
           <!-- min-w-0: DialogContent is a grid, so without it the long command
                below sets the track's min-content width and stretches the modal. -->
           <div v-if="issuedKey" class="min-w-0 space-y-4">
-            <div class="rounded-lg border border-primary/40 bg-primary/5 p-3">
+            <div class="rounded-lg border border-primary-text/40 bg-primary/5 p-3">
+              <p class="sr-only">Enrollment key:</p>
               <p class="break-all font-mono text-sm">{{ issuedKey }}</p>
             </div>
             <Button variant="outline" class="w-full font-mono text-xs" @click="copyKey">
-              <component :is="copied ? Check : Copy" class="size-4" />
+              <component :is="copied ? Check : Copy" class="size-4" aria-hidden="true" />
               {{ copied ? 'Copied' : 'Copy key' }}
             </Button>
+            <!-- The button's own label change isn't reliably re-announced, so
+                 the confirmation gets its own live region. (WCAG 4.1.3) -->
+            <p role="status" aria-live="polite" class="sr-only">
+              {{ copied ? 'Enrollment key copied to clipboard' : '' }}
+            </p>
             <div class="min-w-0 space-y-2">
-              <Label>Run on the target machine</Label>
-              <p class="max-w-full overflow-x-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-xs whitespace-pre">{{ connectCommand }}</p>
+              <!-- Wrapping <label> would falsely claim to label the <p>; this is
+                   a heading for a static block, so it's marked up as one. -->
+              <p id="connect-command-label" class="text-sm font-medium">Run on the target machine</p>
+              <p
+                class="max-w-full overflow-x-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-xs whitespace-pre"
+                tabindex="0"
+                role="region"
+                aria-labelledby="connect-command-label"
+              >{{ connectCommand }}</p>
             </div>
-            <p v-if="createError" class="text-sm text-destructive">{{ createError }}</p>
+            <FormError id="issued-key-error" :message="createError" />
             <DialogFooter>
               <DialogClose as-child>
                 <Button type="button" class="font-mono text-xs">Done</Button>
@@ -247,7 +260,7 @@ async function confirmDelete() {
           </div>
 
           <!-- create form -->
-          <form v-else class="space-y-4" @submit.prevent="create">
+          <form v-else class="space-y-4" :aria-busy="creating" @submit.prevent="create">
             <div class="space-y-2">
               <Label for="k-label">Label</Label>
               <Input id="k-label" v-model="form.label" placeholder="staging fleet" />
@@ -268,7 +281,7 @@ async function confirmDelete() {
               </div>
             </div>
 
-            <p v-if="createError" class="text-sm text-destructive">{{ createError }}</p>
+            <FormError id="create-key-error" :message="createError" />
 
             <DialogFooter>
               <DialogClose as-child>
@@ -288,8 +301,9 @@ async function confirmDelete() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <div class="mt-6 rounded-lg border border-border">
-      <Table>
+    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
+      <p v-if="loading" class="sr-only">Loading enrollment keys…</p>
+      <Table label="Enrollment keys">
         <TableHeader>
           <TableRow>
             <TableHead>Label</TableHead>
@@ -303,7 +317,7 @@ async function confirmDelete() {
         </TableHeader>
         <TableBody>
           <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n">
+            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
               <TableCell v-for="c in 7" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
@@ -324,19 +338,21 @@ async function confirmDelete() {
                   size="icon"
                   class="text-destructive hover:text-destructive"
                   :disabled="k.status !== 'active'"
-                  :title="k.status === 'active' ? 'Revoke key' : 'Already inactive'"
+                  :aria-label="k.status === 'active'
+                    ? `Revoke enrollment key ${k.label || k.key_prefix}`
+                    : `Cannot revoke enrollment key ${k.label || k.key_prefix}: already inactive`"
                   @click="toRevoke = k"
                 >
-                  <Ban class="size-4" />
+                  <Ban class="size-4" aria-hidden="true" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
                   class="text-destructive hover:text-destructive"
-                  title="Delete key"
+                  :aria-label="`Delete enrollment key ${k.label || k.key_prefix}`"
                   @click="toDelete = k"
                 >
-                  <Trash2 class="size-4" />
+                  <Trash2 class="size-4" aria-hidden="true" />
                 </Button>
               </div>
             </TableCell>
@@ -345,13 +361,13 @@ async function confirmDelete() {
       </Table>
     </div>
 
-    <div class="mt-4 flex items-center justify-between font-mono text-xs text-muted-foreground">
+    <nav aria-label="Enrollment keys pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>
       <div class="flex gap-2">
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" @click="prev">Prev</Button>
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" @click="next">Next</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" aria-label="Previous page of enrollment keys" @click="prev">Prev</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" aria-label="Next page of enrollment keys" @click="next">Next</Button>
       </div>
-    </div>
+    </nav>
 
     <!-- revoke confirm -->
     <Dialog :open="!!toRevoke" @update:open="(v: boolean) => { if (!v) toRevoke = null }">
@@ -364,7 +380,7 @@ async function confirmDelete() {
             Agents that already enrolled with it keep working — revoke them individually to cut them off.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <FormError id="revoke-key-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
@@ -386,7 +402,7 @@ async function confirmDelete() {
             This also drops the record of which agents enrolled with it. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <FormError id="delete-key-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>

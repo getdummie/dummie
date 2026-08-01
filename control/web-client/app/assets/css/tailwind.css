@@ -29,6 +29,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-primary-text: var(--primary-text);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -61,6 +62,12 @@
   --popover-foreground: oklch(0.17 0.008 220);
   --primary: oklch(0.8 0.15 162);
   --primary-foreground: oklch(0.18 0.02 200);
+  /* `--primary` is a *background* colour: it hits 10.7:1 against
+     `--primary-foreground`, but only 1.8:1 as text on white. `--primary-text`
+     is the accent tuned for text and icons — 5.1:1 on `--background`, 4.6:1 on
+     the lightest tinted surface. Use it anywhere the green carries meaning
+     rather than fills a shape. (WCAG 1.4.3) */
+  --primary-text: oklch(0.52 0.12 162);
   --secondary: oklch(0.96 0.005 220);
   --secondary-foreground: oklch(0.2 0.008 220);
   --muted: oklch(0.96 0.005 220);
@@ -69,8 +76,11 @@
   --accent-foreground: oklch(0.2 0.02 200);
   --destructive: oklch(0.58 0.22 25);
   --border: oklch(0.9 0.005 220);
-  --input: oklch(0.9 0.005 220);
-  --ring: oklch(0.8 0.15 162);
+  /* Darker than `--border`: an input's outline is the only thing identifying
+     it, so it owes 3:1 against the page. Plain dividers don't. (WCAG 1.4.11) */
+  --input: oklch(0.62 0.01 220);
+  /* Focus rings owe 3:1 too, so light mode borrows the text-tuned accent. */
+  --ring: oklch(0.52 0.12 162);
   --chart-1: oklch(0.8 0.15 162);
   --chart-2: oklch(0.6 0.13 220);
   --chart-3: oklch(0.75 0.15 85);
@@ -95,6 +105,9 @@
   --popover-foreground: oklch(0.93 0.002 220);
   --primary: oklch(0.8 0.15 162);
   --primary-foreground: oklch(0.18 0.02 200);
+  /* On a dark ground the brand green already clears 10:1 as text, so the
+     text-tuned token collapses back onto `--primary` here. */
+  --primary-text: oklch(0.8 0.15 162);
   --secondary: oklch(0.27 0.008 220);
   --secondary-foreground: oklch(0.93 0.002 220);
   --muted: oklch(0.25 0.008 220);
@@ -103,7 +116,8 @@
   --accent-foreground: oklch(0.93 0.002 220);
   --destructive: oklch(0.64 0.2 25);
   --border: oklch(0.3 0.008 220);
-  --input: oklch(0.32 0.008 220);
+  /* 3.2:1 against `--card`, 3.5:1 against `--background`. (WCAG 1.4.11) */
+  --input: oklch(0.52 0.008 220);
   --ring: oklch(0.8 0.15 162);
   --chart-1: oklch(0.8 0.15 162);
   --chart-2: oklch(0.65 0.13 220);
@@ -122,11 +136,49 @@
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "ss01", "cv01";
+  }
+
+  /* A single visible focus indicator for everything. The shadcn primitives
+     bring their own `focus-visible:ring-*`, which layers on top; this is the
+     floor that catches every hand-rolled link, nav item and icon button.
+     `:focus-visible` (not `:focus`) so pointer users don't see rings.
+     (WCAG 2.4.7, 2.4.11) */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Tailwind v4's Preflight sets `cursor: default` on buttons. Put the hand
+     back on anything that acts like a control. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  label[for],
+  summary,
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Honour the OS "reduce motion" setting globally rather than per-component:
+     this covers the terminal cursor pulse, the health spinner, the sidebar
+     width/padding transitions and everything `tw-animate-css` drives for the
+     reka-ui popovers. Motion is neutralised, not removed, so transition-end
+     handlers still fire. (WCAG 2.3.3) */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
@@ -141,12 +193,34 @@
     mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
     -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
   }
-  /* Uppercase monospace eyebrow label. */
+  /* Uppercase monospace eyebrow label. Uppercasing is done in CSS so the
+     accessible text stays sentence-case for screen readers. */
   .eyebrow {
     font-family: var(--font-mono);
-    font-size: 0.72rem;
+    font-size: 0.75rem;
     letter-spacing: 0.18em;
     text-transform: uppercase;
+  }
+
+  /* Skip link: off-screen until focused, then pinned top-left. Kept in flow
+     (never `display: none`) so it stays in the tab order. (WCAG 2.4.1) */
+  .skip-link {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    transform: translateY(-150%);
+    padding: 0.625rem 1rem;
+    background-color: var(--background);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    transition: transform 150ms ease;
+  }
+  .skip-link:focus-visible {
+    transform: translateY(0.5rem) translateX(0.5rem);
   }
 }
 

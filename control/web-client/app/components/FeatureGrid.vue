@@ -42,14 +42,16 @@ const features = [
 </script>
 
 <template>
-  <div class="grid grid-cols-1 border-l border-t border-border sm:grid-cols-2 lg:grid-cols-3">
-    <div
+  <ul class="grid grid-cols-1 border-l border-t border-border sm:grid-cols-2 lg:grid-cols-3">
+    <li
       v-for="f in features"
       :key="f.id"
       class="group relative border-b border-r border-border p-6 transition-colors hover:bg-secondary/40 sm:p-8"
     >
-      <div class="mb-5 flex items-center justify-between">
-        <component :is="f.icon" class="size-5 text-primary" />
+      <!-- Icon and ordinal are both decorative: the heading below already names
+           the feature, so reading them adds noise, not information. -->
+      <div class="mb-5 flex items-center justify-between" aria-hidden="true">
+        <component :is="f.icon" class="size-5 text-primary-text" />
         <span class="eyebrow text-muted-foreground/60">{{ f.id }}</span>
       </div>
       <h3 class="mb-2 text-lg font-semibold tracking-tight">
@@ -58,6 +60,6 @@ const features = [
       <p class="text-sm leading-relaxed text-muted-foreground">
         {{ f.body }}
       </p>
-    </div>
-  </div>
+    </li>
+  </ul>
 </template>

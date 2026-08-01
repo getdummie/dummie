@@ -153,12 +153,12 @@ async function confirmDelete() {
 
     <div class="mt-8 flex items-end justify-between gap-4">
       <div>
-        <p class="eyebrow mb-2 text-primary">// admin · users</p>
+        <p class="eyebrow mb-2 text-primary-text">// admin · users</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Users</h1>
       </div>
       <Dialog v-model:open="createOpen" @update:open="(v: boolean) => !v && resetForm()">
         <Button class="font-mono text-xs" @click="createOpen = true">
-          <Plus class="size-4" />
+          <Plus class="size-4" aria-hidden="true" />
           New user
         </Button>
         <DialogContent>
@@ -166,8 +166,8 @@ async function confirmDelete() {
             <DialogTitle>Create user</DialogTitle>
             <DialogDescription>Add a new account to the control plane.</DialogDescription>
           </DialogHeader>
-          <form class="space-y-4" @submit.prevent="create">
-            <div class="grid grid-cols-2 gap-3">
+          <form class="space-y-4" :aria-busy="creating" @submit.prevent="create">
+            <div class="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
               <div class="space-y-2">
                 <Label for="c-first">First name</Label>
                 <Input id="c-first" v-model="form.first_name" />
@@ -179,15 +179,15 @@ async function confirmDelete() {
             </div>
             <div class="space-y-2">
               <Label for="c-username">Username</Label>
-              <Input id="c-username" v-model="form.username" required />
+              <Input id="c-username" v-model="form.username" autocomplete="off" required />
             </div>
             <div class="space-y-2">
               <Label for="c-email">Email</Label>
-              <Input id="c-email" v-model="form.email" type="email" required />
+              <Input id="c-email" v-model="form.email" type="email" autocomplete="off" required />
             </div>
             <div class="space-y-2">
               <Label for="c-password">Password</Label>
-              <Input id="c-password" v-model="form.password" type="password" required />
+              <Input id="c-password" v-model="form.password" type="password" autocomplete="new-password" required />
             </div>
             <div class="space-y-2">
               <Label for="c-role">Role</Label>
@@ -199,7 +199,7 @@ async function confirmDelete() {
               </div>
             </div>
 
-            <p v-if="createError" class="text-sm text-destructive">{{ createError }}</p>
+            <FormError id="create-user-error" :message="createError" />
 
             <DialogFooter>
               <DialogClose as-child>
@@ -219,8 +219,11 @@ async function confirmDelete() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <div class="mt-6 rounded-lg border border-border">
-      <Table>
+    <!-- `aria-live` so a page change or a delete announces the new row count
+         rather than silently swapping the table out. (WCAG 4.1.3) -->
+    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
+      <p v-if="loading" class="sr-only">Loading users…</p>
+      <Table label="Users">
         <TableHeader>
           <TableRow>
             <TableHead>Username</TableHead>
@@ -233,7 +236,7 @@ async function confirmDelete() {
         </TableHeader>
         <TableBody>
           <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n">
+            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
               <TableCell v-for="c in 6" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
@@ -249,15 +252,20 @@ async function confirmDelete() {
             </TableCell>
             <TableCell class="text-muted-foreground">{{ fmtDate(u.created_at) }}</TableCell>
             <TableCell class="text-right">
+              <!-- Icon-only, and one per row — so the name has to include the
+                   username, otherwise every button reads "Delete user" and a
+                   screen-reader user can't tell them apart. (WCAG 2.4.6) -->
               <Button
                 variant="ghost"
                 size="icon"
                 class="text-destructive hover:text-destructive"
                 :disabled="u.id === currentUser?.id"
-                :title="u.id === currentUser?.id ? 'You cannot delete yourself' : 'Delete user'"
+                :aria-label="u.id === currentUser?.id
+                  ? `Cannot delete ${u.username}: this is your own account`
+                  : `Delete user ${u.username}`"
                 @click="toDelete = u"
               >
-                <Trash2 class="size-4" />
+                <Trash2 class="size-4" aria-hidden="true" />
               </Button>
             </TableCell>
           </TableRow>
@@ -265,13 +273,13 @@ async function confirmDelete() {
       </Table>
     </div>
 
-    <div class="mt-4 flex items-center justify-between font-mono text-xs text-muted-foreground">
+    <nav aria-label="Users pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>
       <div class="flex gap-2">
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" @click="prev">Prev</Button>
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" @click="next">Next</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" aria-label="Previous page of users" @click="prev">Prev</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" aria-label="Next page of users" @click="next">Next</Button>
       </div>
-    </div>
+    </nav>
 
     <!-- delete confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
@@ -283,7 +291,7 @@ async function confirmDelete() {
             and all of their sessions. This cannot be undone.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="deleteError" class="text-sm text-destructive">{{ deleteError }}</p>
+        <FormError id="delete-user-error" :message="deleteError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>

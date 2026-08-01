@@ -8,6 +8,9 @@ export default defineNuxtConfig({
 
   app: {
     head: {
+      // Without this the document ships no language, so screen readers fall
+      // back to the user's default voice and mispronounce everything.
+      htmlAttrs: { lang: 'en' },
       link: [
         // SVG first for browsers that support it; the .ico is the raster fallback.
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },

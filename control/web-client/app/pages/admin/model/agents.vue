@@ -159,7 +159,7 @@ async function confirmDelete() {
 
     <div class="mt-8 flex items-end justify-between gap-4">
       <div>
-        <p class="eyebrow mb-2 text-primary">// admin · agents</p>
+        <p class="eyebrow mb-2 text-primary-text">// admin · agents</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Agents</h1>
       </div>
       <span class="font-mono text-xs text-muted-foreground">refreshes every 10s</span>
@@ -170,8 +170,11 @@ async function confirmDelete() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <div class="mt-6 rounded-lg border border-border">
-      <Table>
+    <!-- This table also self-refreshes every 10s. `aria-live="polite"` lets a
+         screen-reader user hear status changes without polling it manually. -->
+    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
+      <p v-if="loading" class="sr-only">Loading agents…</p>
+      <Table label="Agents">
         <TableHeader>
           <TableRow>
             <TableHead>Agent</TableHead>
@@ -185,7 +188,7 @@ async function confirmDelete() {
         </TableHeader>
         <TableBody>
           <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n">
+            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
               <TableCell v-for="c in 7" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
@@ -214,19 +217,21 @@ async function confirmDelete() {
                   size="icon"
                   class="text-destructive hover:text-destructive"
                   :disabled="a.status === 'revoked'"
-                  :title="a.status === 'revoked' ? 'Already revoked' : 'Revoke agent token'"
+                  :aria-label="a.status === 'revoked'
+                    ? `Cannot revoke ${a.hostname || a.machine_id}: already revoked`
+                    : `Revoke agent token for ${a.hostname || a.machine_id}`"
                   @click="toRevoke = a"
                 >
-                  <Ban class="size-4" />
+                  <Ban class="size-4" aria-hidden="true" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
                   class="text-destructive hover:text-destructive"
-                  title="Delete agent"
+                  :aria-label="`Delete agent ${a.hostname || a.machine_id}`"
                   @click="toDelete = a"
                 >
-                  <Trash2 class="size-4" />
+                  <Trash2 class="size-4" aria-hidden="true" />
                 </Button>
               </div>
             </TableCell>
@@ -235,13 +240,13 @@ async function confirmDelete() {
       </Table>
     </div>
 
-    <div class="mt-4 flex items-center justify-between font-mono text-xs text-muted-foreground">
+    <nav aria-label="Agents pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>
       <div class="flex gap-2">
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" @click="prev">Prev</Button>
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" @click="next">Next</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" aria-label="Previous page of agents" @click="prev">Prev</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" aria-label="Next page of agents" @click="next">Next</Button>
       </div>
-    </div>
+    </nav>
 
     <!-- revoke confirm -->
     <Dialog :open="!!toRevoke" @update:open="(v: boolean) => { if (!v) toRevoke = null }">
@@ -253,7 +258,7 @@ async function confirmDelete() {
             Its live connection is dropped immediately and it cannot reconnect until it enrolls again with a valid key.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <FormError id="revoke-agent-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
@@ -276,7 +281,7 @@ async function confirmDelete() {
             from the registry and drop its connection. The machine can enroll again with a valid key.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <FormError id="delete-agent-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>

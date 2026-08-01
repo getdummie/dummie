@@ -170,11 +170,11 @@ async function confirmCleanup() {
 
     <div class="mt-8 flex items-end justify-between gap-4">
       <div>
-        <p class="eyebrow mb-2 text-primary">// admin · tokens</p>
+        <p class="eyebrow mb-2 text-primary-text">// admin · tokens</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Sessions</h1>
       </div>
       <Button variant="outline" class="font-mono text-xs" @click="cleanupOpen = true">
-        <Trash2 class="size-4" />
+        <Trash2 class="size-4" aria-hidden="true" />
         Cleanup expired
       </Button>
     </div>
@@ -183,10 +183,15 @@ async function confirmCleanup() {
       <AlertTitle>Could not load tokens</AlertTitle>
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
-    <p v-if="notice" class="mt-4 font-mono text-xs text-primary">{{ notice }}</p>
+    <!-- Success confirmations are status messages: announce them without
+         stealing focus. (WCAG 4.1.3) -->
+    <div role="status" aria-live="polite">
+      <p v-if="notice" class="mt-4 font-mono text-xs text-primary-text">{{ notice }}</p>
+    </div>
 
-    <div class="mt-6 rounded-lg border border-border">
-      <Table>
+    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
+      <p v-if="loading" class="sr-only">Loading sessions…</p>
+      <Table label="Sessions">
         <TableHeader>
           <TableRow>
             <TableHead>User</TableHead>
@@ -199,7 +204,7 @@ async function confirmCleanup() {
         </TableHeader>
         <TableBody>
           <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n">
+            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
               <TableCell v-for="c in 6" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
@@ -222,20 +227,24 @@ async function confirmCleanup() {
                   size="icon"
                   class="text-destructive hover:text-destructive"
                   :disabled="t.status !== 'active'"
-                  :title="t.status === 'active' ? 'Blacklist (revoke) session' : 'Already inactive'"
+                  :aria-label="t.status === 'active'
+                    ? `Blacklist ${t.username}'s session`
+                    : `Cannot blacklist ${t.username}'s session: already inactive`"
                   @click="toBlacklist = t"
                 >
-                  <Ban class="size-4" />
+                  <Ban class="size-4" aria-hidden="true" />
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
                   class="text-destructive hover:text-destructive"
                   :disabled="t.status === 'active'"
-                  :title="t.status === 'active' ? 'Blacklist before deleting' : 'Delete token'"
+                  :aria-label="t.status === 'active'
+                    ? `Cannot delete ${t.username}'s session: blacklist it first`
+                    : `Delete ${t.username}'s session`"
                   @click="toDelete = t"
                 >
-                  <Trash2 class="size-4" />
+                  <Trash2 class="size-4" aria-hidden="true" />
                 </Button>
               </div>
             </TableCell>
@@ -244,13 +253,13 @@ async function confirmCleanup() {
       </Table>
     </div>
 
-    <div class="mt-4 flex items-center justify-between font-mono text-xs text-muted-foreground">
+    <nav aria-label="Sessions pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>
       <div class="flex gap-2">
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" @click="prev">Prev</Button>
-        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" @click="next">Next</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset <= 0 || loading" aria-label="Previous page of sessions" @click="prev">Prev</Button>
+        <Button variant="outline" size="sm" class="font-mono text-xs" :disabled="offset + limit >= total || loading" aria-label="Next page of sessions" @click="next">Next</Button>
       </div>
-    </div>
+    </nav>
 
     <!-- blacklist confirm -->
     <Dialog :open="!!toBlacklist" @update:open="(v: boolean) => { if (!v) toBlacklist = null }">
@@ -262,7 +271,7 @@ async function confirmCleanup() {
             It can no longer be refreshed; the session ends within the access-token TTL.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <FormError id="blacklist-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
@@ -286,7 +295,7 @@ async function confirmCleanup() {
             This cannot be undone.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <FormError id="delete-token-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
@@ -308,7 +317,7 @@ async function confirmCleanup() {
             sessions are untouched.
           </DialogDescription>
         </DialogHeader>
-        <p v-if="actionError" class="text-sm text-destructive">{{ actionError }}</p>
+        <FormError id="cleanup-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
