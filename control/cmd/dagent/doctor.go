@@ -6,6 +6,7 @@ import (
   "fmt"
   "os"
   "runtime"
+  "slices"
   "strings"
 
   "github.com/urfave/cli/v3"
@@ -40,8 +41,11 @@ type check struct {
 
 var checks = []check{
   {"os is linux", checkLinux},
-  {"distribution is ubuntu", checkUbuntu},
+  {"distribution is ubuntu or debian", checkDistro},
 }
+
+// supportedDistros are the os-release IDs the agent is tested against.
+var supportedDistros = []string{"ubuntu", "debian"}
 
 func doctorCommand() *cli.Command {
   return &cli.Command{
@@ -83,21 +87,23 @@ func checkLinux() (result, string) {
   return pass, "linux/" + runtime.GOARCH
 }
 
-func checkUbuntu() (result, string) {
+func checkDistro() (result, string) {
   rel, err := readOSRelease()
   if err != nil {
     return fail, "could not read /etc/os-release: " + err.Error()
   }
 
-  switch {
-  case rel["ID"] == "ubuntu":
+  if slices.Contains(supportedDistros, rel["ID"]) {
     return pass, describeOSRelease(rel)
-  case strings.Contains(rel["ID_LIKE"], "ubuntu"), strings.Contains(rel["ID_LIKE"], "debian"):
-    // Close enough that most checks will hold, but not what we target.
-    return warn, describeOSRelease(rel) + " (ubuntu-like, not ubuntu)"
-  default:
-    return fail, describeOSRelease(rel) + " is not ubuntu"
   }
+  // Derivatives (Mint, Pop!_OS, Raspberry Pi OS...) will mostly behave, but
+  // they are not what we test against.
+  for _, id := range supportedDistros {
+    if slices.Contains(strings.Fields(rel["ID_LIKE"]), id) {
+      return warn, describeOSRelease(rel) + " (" + id + "-derived, not " + id + ")"
+    }
+  }
+  return fail, describeOSRelease(rel) + " is not ubuntu or debian"
 }
 
 func describeOSRelease(rel map[string]string) string {
