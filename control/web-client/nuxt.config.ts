@@ -6,6 +6,16 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   css: ['~/assets/css/tailwind.css'],
 
+  app: {
+    head: {
+      link: [
+        // SVG first for browsers that support it; the .ico is the raster fallback.
+        { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+        { rel: 'alternate icon', type: 'image/x-icon', href: '/favicon.ico' },
+      ],
+    },
+  },
+
   // Static SPA: no server-rendered pages. `nuxt generate` emits a static SPA.
   ssr: false,
 
