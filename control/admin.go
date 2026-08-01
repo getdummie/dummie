@@ -61,6 +61,7 @@ func adminJWT(cfg authConfig) echo.MiddlewareFunc {
 type AdminHandler struct {
   q   *db.Queries
   cfg authConfig
+  hub *Hub
 }
 
 // --- helpers ---------------------------------------------------------------

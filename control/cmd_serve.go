@@ -125,8 +125,19 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   api.POST("/token_refresh", ah.TokenRefresh)
   api.POST("/signout", ah.Signout)
 
+  // The hub only knows about agents connected to *this* process, so any row
+  // left 'online' by a previous run is stale.
+  hub := NewHub()
+  if pool != nil {
+    ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+    if err := q.SetAllAgentsOffline(ctx); err != nil {
+      log.Printf("could not reset agent statuses at startup: %v", err)
+    }
+    cancel()
+  }
+
   // Admin: user management + refresh-token session management, JWT + admin gated.
-  adminH := &AdminHandler{q: q, cfg: cfg}
+  adminH := &AdminHandler{q: q, cfg: cfg, hub: hub}
   admin := api.Group("/admin", adminJWT(cfg))
   admin.GET("/users", adminH.ListUsers)
   admin.POST("/users", adminH.CreateUser)
@@ -135,6 +146,20 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin.POST("/tokens/:id/blacklist", adminH.BlacklistToken)
   admin.DELETE("/tokens/:id", adminH.DeleteToken)
   admin.POST("/tokens/cleanup", adminH.CleanupTokens)
+  admin.GET("/agent-keys", adminH.ListAgentKeys)
+  admin.POST("/agent-keys", adminH.CreateAgentKey)
+  admin.POST("/agent-keys/:id/revoke", adminH.RevokeAgentKey)
+  admin.DELETE("/agent-keys/:id", adminH.DeleteAgentKey)
+  admin.GET("/agents", adminH.ListAgents)
+  admin.POST("/agents/:id/revoke", adminH.RevokeAgent)
+  admin.DELETE("/agents/:id", adminH.DeleteAgent)
+
+  // Agents: enrollment + the persistent socket the server pushes jobs down.
+  // Authenticated by enrollment key / agent token, not by the user JWT.
+  agentH := &AgentHandler{q: q, pool: pool, hub: hub}
+  ag := api.Group("/agent")
+  ag.POST("/enroll", agentH.Enroll)
+  ag.GET("/connect", agentH.Connect)
 
   // /ht/ is a deeper healthcheck: it reports API liveness plus DB reachability.
   api.GET("/ht/", func(c *echo.Context) error {

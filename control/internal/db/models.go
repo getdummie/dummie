@@ -8,6 +8,37 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type Agent struct {
+	ID            pgtype.UUID
+	MachineID     string
+	Hostname      string
+	TokenHash     string
+	Status        string
+	OS            string
+	OSVersion     string
+	Arch          string
+	AgentVersion  string
+	LastSeenAt    pgtype.Timestamptz
+	LastIP        string
+	EnrolledKeyID pgtype.UUID
+	Revoked       bool
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
+type AgentEnrollmentKey struct {
+	ID        pgtype.UUID
+	KeyHash   string
+	KeyPrefix string
+	Label     string
+	MaxUses   pgtype.Int4
+	Uses      int32
+	ExpiresAt pgtype.Timestamptz
+	Revoked   bool
+	CreatedBy pgtype.UUID
+	CreatedAt pgtype.Timestamptz
+}
+
 type ControlMetum struct {
 	ID        int64
 	CreatedAt pgtype.Timestamptz
