@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LayoutDashboard, LogOut, Shield } from '@lucide/vue'
+import { LayoutDashboard, LogOut, Menu, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -14,6 +14,17 @@ import {
 const year = 2026
 
 const { user, isAuthenticated, signout } = useAuth()
+const route = useRoute()
+
+// The rail is for the signed-in app shell only; the marketing/auth pages keep
+// their full-bleed layout and the public header.
+const appRoutes = ['/dashboard', '/admin']
+const showSidebar = computed(() =>
+  isAuthenticated.value && appRoutes.some(p => route.path === p || route.path.startsWith(`${p}/`)),
+)
+
+const navOpen = ref(false)
+const { expanded } = useSidebar()
 
 const initials = computed(() => {
   const u = user.value
@@ -25,10 +36,33 @@ const initials = computed(() => {
 </script>
 
 <template>
-  <div class="min-h-svh flex flex-col bg-background text-foreground antialiased">
-    <!-- Header -->
-    <header class="sticky top-0 z-50 border-b border-border/80 bg-background/80 backdrop-blur">
-      <div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4 sm:px-6">
+  <div
+    class="min-h-svh flex flex-col bg-background text-foreground antialiased transition-[padding] duration-200"
+    :class="showSidebar && (expanded ? 'md:pl-56' : 'md:pl-12')"
+  >
+    <AppSidebar v-if="showSidebar" v-model:open="navOpen" />
+
+    <!-- App shell: no top bar on desktop; mobile keeps a bar to reach the drawer -->
+    <header
+      v-if="showSidebar"
+      class="sticky top-0 z-40 flex h-14 items-center gap-1 border-b border-border/80 bg-background/80 px-4 backdrop-blur md:hidden"
+    >
+      <Button variant="ghost" size="icon" class="-ml-2" aria-label="Open navigation" @click="navOpen = true">
+        <Menu class="size-4" />
+      </Button>
+      <NuxtLink to="/dashboard" class="flex items-center gap-2.5">
+        <span class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none">
+          0
+        </span>
+        <span class="font-mono text-sm font-semibold tracking-tight">
+          dummie<span class="text-primary">/</span>
+        </span>
+      </NuxtLink>
+    </header>
+
+    <!-- Public header -->
+    <header v-else class="sticky top-0 z-40 border-b border-border/80 bg-background/80 backdrop-blur">
+      <div class="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6">
         <NuxtLink to="/" class="group flex items-center gap-2.5">
           <span class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none">
             0
@@ -38,7 +72,7 @@ const initials = computed(() => {
           </span>
         </NuxtLink>
 
-        <div class="flex items-center gap-1.5">
+        <div class="ml-auto flex items-center gap-1.5">
           <ClientOnly>
             <DropdownMenu v-if="isAuthenticated">
               <DropdownMenuTrigger as-child>
