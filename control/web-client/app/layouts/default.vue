@@ -11,8 +11,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-const year = 2026
-
 const { user, isAuthenticated, signout } = useAuth()
 const route = useRoute()
 
@@ -126,7 +124,7 @@ const initials = computed(() => {
     </main>
 
     <!-- Footer -->
-    <footer class="border-t border-border/80">
+    <footer v-if="!showSidebar" class="border-t border-border/80">
       <div class="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-4 py-8 sm:flex-row sm:items-center sm:px-6">
         <div class="flex items-center gap-2.5">
           <span class="grid size-5 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-xs font-bold leading-none">
@@ -137,7 +135,15 @@ const initials = computed(() => {
           </span>
         </div>
         <p class="eyebrow text-muted-foreground">
-          &copy; {{ year }} dummie labs
+          Crafted by
+          <a
+            href="https://codingcoffee.dev"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="text-foreground underline-offset-4 transition-colors hover:text-primary hover:underline"
+          >
+            Ameya Shenoy
+          </a>
         </p>
       </div>
     </footer>
