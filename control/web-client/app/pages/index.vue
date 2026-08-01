@@ -2,6 +2,9 @@
 import { ArrowRight } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 
+// Signed-in visitors go straight to the app shell.
+definePageMeta({ middleware: 'guest' })
+
 useHead({
   title: 'dummie — secure sandbox runtime',
   meta: [

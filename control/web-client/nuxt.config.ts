@@ -11,7 +11,7 @@ export default defineNuxtConfig({
       link: [
         // SVG first for browsers that support it; the .ico is the raster fallback.
         { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
-        { rel: 'alternate icon', type: 'image/x-icon', href: '/favicon.ico' },
+        { rel: 'shortcut icon', type: 'image/x-icon', href: '/favicon.ico' },
       ],
     },
   },
