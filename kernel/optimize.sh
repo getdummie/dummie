@@ -148,3 +148,35 @@ scripts/config --enable CONFIG_BPF_JIT         # optional, faster BPF
 # overlay/swarm networks (drop these two if you never use overlay networking)
 scripts/config --enable  CONFIG_VXLAN
 scripts/config --enable  CONFIG_IP_VS
+
+# 10. Running VMs *inside* this VM (L1 acting as a hypervisor)
+#
+# Section 4 only gives you /dev/kvm. Everything below is what QEMU / libvirt /
+# firecracker / cloud-hypervisor additionally need to actually boot an L2 guest.
+#
+# NOTE: two things outside this script must also hold, or none of this matters:
+#   - L0 must be loaded with `kvm_amd nested=1` (or `kvm_intel nested=1`)
+#   - L1 must be started with `-cpu host` so svm/vmx is visible in CPUID
+#
+# tap devices — without this an L2 guest has no way to get a NIC at all
+scripts/config --enable  CONFIG_TUN
+# in-kernel virtio-net backend; without it every L2 packet round-trips
+# through userspace QEMU, which nested networking really cannot afford
+scripts/config --enable  CONFIG_VHOST
+scripts/config --enable  CONFIG_VHOST_NET
+# vsock — firecracker / cloud-hypervisor use it for their guest agent + API path
+scripts/config --enable  CONFIG_VSOCKETS
+scripts/config --enable  CONFIG_VHOST_VSOCK
+# macvtap — alternative to bridge+tap when you want L2 straight on the L1 LAN
+scripts/config --enable  CONFIG_MACVLAN
+scripts/config --enable  CONFIG_MACVTAP
+# huge pages for L2 memory — nested page-table walks are two-level, so this is
+# the single biggest perf lever available (HUGETLBFS is already on by default)
+scripts/config --enable  CONFIG_HUGETLBFS
+scripts/config --enable  CONFIG_TRANSPARENT_HUGEPAGE
+scripts/config --enable  CONFIG_TRANSPARENT_HUGEPAGE_MADVISE
+# L1 is itself a guest — pv spinlocks avoid burning vCPU time spinning while
+# the L0 scheduler has the lock holder descheduled
+scripts/config --enable  CONFIG_PARAVIRT_SPINLOCKS
+# page dedup across similar L2 guests; drop if you only run one or two VMs
+scripts/config --enable  CONFIG_KSM
