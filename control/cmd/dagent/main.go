@@ -25,6 +25,7 @@ func main() {
     Commands: []*cli.Command{
       connectCommand(),
       doctorCommand(),
+      vmCommand(),
     },
   }
 

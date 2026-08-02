@@ -5,6 +5,8 @@ import (
   "context"
   "fmt"
   "os"
+  "os/exec"
+  "path/filepath"
   "runtime"
   "slices"
   "strings"
@@ -42,6 +44,12 @@ type check struct {
 var checks = []check{
   {"os is linux", checkLinux},
   {"distribution is ubuntu or debian", checkDistro},
+  {"qemu is installed", checkQEMU},
+  {"qemu-img is installed", checkQEMUImg},
+  {"hardware virtualisation is usable", checkKVM},
+  {"cgroup v2 is available", checkCgroup2},
+  {"rootfs images can be built from tars", checkRootfsTools},
+  {"data directory is writable", checkDataDir},
 }
 
 // supportedDistros are the os-release IDs the agent is tested against.
@@ -104,6 +112,83 @@ func checkDistro() (result, string) {
     }
   }
   return fail, describeOSRelease(rel) + " is not ubuntu or debian"
+}
+
+func checkQEMU() (result, string) {
+  bin := qemuBinary()
+  path, err := exec.LookPath(bin)
+  if err != nil {
+    return fail, bin + " is not on PATH; install qemu-system-x86 (or the arch equivalent)"
+  }
+  out, err := exec.Command(bin, "--version").Output()
+  if err != nil {
+    return fail, path + " will not run: " + err.Error()
+  }
+  version, _, _ := strings.Cut(string(out), "\n")
+  return pass, strings.TrimSpace(version) + " at " + path
+}
+
+func checkQEMUImg() (result, string) {
+  path, err := exec.LookPath("qemu-img")
+  if err != nil {
+    return fail, "qemu-img is not on PATH; install qemu-utils (per-vm disk overlays need it)"
+  }
+  return pass, path
+}
+
+// checkKVM is a warning, not a failure: qemu still runs guests under TCG
+// emulation, just an order of magnitude slower.
+func checkKVM() (result, string) {
+  f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
+  if err != nil {
+    if os.IsNotExist(err) {
+      return warn, "/dev/kvm is missing; vms will fall back to slow software emulation"
+    }
+    return warn, "/dev/kvm is not writable by this user (" + err.Error() +
+      "); add the user to the kvm group, or run as root"
+  }
+  _ = f.Close()
+  return pass, "/dev/kvm is readable and writable"
+}
+
+// checkCgroup2 is a warning for the same reason: without it the vm boots, it
+// just boots without cpu and memory ceilings.
+func checkCgroup2() (result, string) {
+  if !cgroup2Available() {
+    return warn, "no unified hierarchy at " + cgroupRoot + "; vms will run without cpu or memory limits"
+  }
+  // Creating the slice is the part that actually needs privilege, so it is the
+  // honest thing to test.
+  if err := os.MkdirAll(filepath.Join(cgroupRoot, dagentSlice), 0o755); err != nil {
+    return warn, "cannot create " + dagentSlice + " (" + err.Error() + "); vms will run without limits"
+  }
+  return pass, cgroupRoot + ", " + dagentSlice + " is writable"
+}
+
+// checkRootfsTools covers --rootfs-tar only, so a missing tool is a warning:
+// everything else about the agent still works without it.
+func checkRootfsTools() (result, string) {
+  var missing []string
+  for _, bin := range []string{"tar", "mkfs.ext4"} {
+    if _, err := exec.LookPath(bin); err != nil {
+      missing = append(missing, bin)
+    }
+  }
+  if len(missing) > 0 {
+    return warn, strings.Join(missing, " and ") + " not on PATH; --rootfs-tar will not work (install tar and e2fsprogs)"
+  }
+  return pass, "tar and mkfs.ext4 are present"
+}
+
+func checkDataDir() (result, string) {
+  dir := defaultDataDir()
+  if !writableDir(dir) {
+    return fail, "cannot write to " + dir
+  }
+  if dir != "/var/lib/dagent" {
+    return warn, dir + " (not /var/lib/dagent; vms will not be found by a root-run agent)"
+  }
+  return pass, dir
 }
 
 func describeOSRelease(rel map[string]string) string {
