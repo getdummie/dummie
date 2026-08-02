@@ -26,6 +26,7 @@ func main() {
       connectCommand(),
       doctorCommand(),
       vmCommand(),
+      netdCommand(),
     },
   }
 

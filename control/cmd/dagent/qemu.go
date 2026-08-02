@@ -19,6 +19,10 @@ import (
 // this has, for our purposes, started.
 const startupGrace = 1500 * time.Millisecond
 
+// tapChildFD is where the tap lands in the child. Go's exec dups ExtraFiles
+// starting at 3, and the tap is the only file we pass.
+const tapChildFD = 3
+
 func qemuBinary() string {
   if runtime.GOARCH == "arm64" {
     return "qemu-system-aarch64"
@@ -75,9 +79,17 @@ func qemuArgs(data string, v vm, kvm bool) []string {
   // particular means a compromised qemu cannot exec anything.
   args = append(args, "-sandbox", "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny")
 
-  // No networking at all yet. This is deliberate and load-bearing: it is the
-  // isolation guarantee until the nftables layer exists to provide a real one.
-  args = append(args, "-nic", "none")
+  if v.Net == nil {
+    args = append(args, "-nic", "none")
+  } else {
+    // The tap arrives as an already-open fd, inherited across exec. QEMU never
+    // opens /dev/net/tun, never names an interface, and so needs no
+    // CAP_NET_ADMIN -- it cannot reconfigure the network even if compromised.
+    args = append(args,
+      "-netdev", fmt.Sprintf("tap,id=net0,fd=%d,vhost=off", tapChildFD),
+      "-device", device("virtio-net", mmio)+",netdev=net0,mac="+v.Net.MAC,
+    )
+  }
 
   if v.Firmware != "" {
     args = append(args, "-bios", v.Firmware)
@@ -129,7 +141,7 @@ func device(base string, mmio bool) string {
 // launchVM starts qemu detached and returns its pid. The caller's exit must not
 // take the guest with it, so the process gets its own session and its output
 // goes to a file rather than to our stdio.
-func launchVM(ctx context.Context, data string, v *vm) (int, error) {
+func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error) {
   logFile, err := os.OpenFile(vmPath(data, v.ID, vmQEMULog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
   if err != nil {
     return 0, err
@@ -152,6 +164,9 @@ func launchVM(ctx context.Context, data string, v *vm) (int, error) {
     cmd := exec.Command(qemuBinary(), args...)
     cmd.Stdout = logFile
     cmd.Stderr = logFile
+    if tap != nil {
+      cmd.ExtraFiles = []*os.File{tap}
+    }
     cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
     if useCgroup {
       cmd.SysProcAttr.UseCgroupFD = true

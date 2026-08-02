@@ -77,6 +77,9 @@ type vm struct {
 
   Firmware string `json:"firmware,omitempty"` // -bios, when the default will not do
 
+  // Net is nil for a VM with no network devices at all.
+  Net *vmNet `json:"net,omitempty"`
+
   Disk   string `json:"disk"`             // per-VM overlay
   Cgroup string `json:"cgroup,omitempty"` // empty when limits could not be applied
 }

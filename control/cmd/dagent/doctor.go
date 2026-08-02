@@ -11,6 +11,7 @@ import (
   "slices"
   "strings"
 
+  "github.com/google/nftables"
   "github.com/urfave/cli/v3"
 )
 
@@ -49,6 +50,10 @@ var checks = []check{
   {"hardware virtualisation is usable", checkKVM},
   {"cgroup v2 is available", checkCgroup2},
   {"rootfs images can be built from tars", checkRootfsTools},
+  {"tap devices can be created", checkTun},
+  {"nftables is usable", checkNftables},
+  {"ip forwarding is enabled", checkForwarding},
+  {"an uplink for egress exists", checkUplink},
   {"data directory is writable", checkDataDir},
 }
 
@@ -178,6 +183,60 @@ func checkRootfsTools() (result, string) {
     return warn, strings.Join(missing, " and ") + " not on PATH; --rootfs-tar will not work (install tar and e2fsprogs)"
   }
   return pass, "tar and mkfs.ext4 are present"
+}
+
+// checkTun is a hard failure: without /dev/net/tun no VM can have a network
+// device, and the fd handoff that keeps QEMU unprivileged depends on it.
+func checkTun() (result, string) {
+  f, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
+  if err != nil {
+    if os.IsNotExist(err) {
+      return fail, "/dev/net/tun is missing; load the tun module"
+    }
+    return warn, "/dev/net/tun is not writable by this user (" + err.Error() + "); networking needs root"
+  }
+  _ = f.Close()
+  return pass, "/dev/net/tun is readable and writable"
+}
+
+// checkNftables tries the same netlink socket the policy layer uses. Listing is
+// harmless and proves both the kernel support and our permission to use it.
+func checkNftables() (result, string) {
+  c, err := nftables.New()
+  if err != nil {
+    return fail, "could not open a netlink socket: " + err.Error()
+  }
+  tables, err := c.ListTablesOfFamily(nftables.TableFamilyINet)
+  if err != nil {
+    return warn, "cannot list nftables (" + err.Error() + "); policy needs root"
+  }
+  for _, t := range tables {
+    if t.Name == nftTable {
+      return pass, "the " + nftTable + " table is installed"
+    }
+  }
+  return pass, fmt.Sprintf("%d inet table(s); %s will be installed on first use", len(tables), nftTable)
+}
+
+func checkForwarding() (result, string) {
+  b, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward")
+  if err != nil {
+    return fail, err.Error()
+  }
+  if len(b) > 0 && b[0] == '1' {
+    return pass, "net.ipv4.ip_forward=1"
+  }
+  // Turned on automatically when a VM is created, so this is only a warning --
+  // but it will not survive a reboot unless it is also set in sysctl.d.
+  return warn, "net.ipv4.ip_forward=0; dagent will enable it, but set it in /etc/sysctl.d to make it stick"
+}
+
+func checkUplink() (result, string) {
+  name, err := defaultUplink()
+  if err != nil {
+    return warn, err.Error() + "; vm egress cannot be masqueraded"
+  }
+  return pass, name
 }
 
 func checkDataDir() (result, string) {

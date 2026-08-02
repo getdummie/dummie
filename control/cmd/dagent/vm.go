@@ -2,6 +2,7 @@ package main
 
 import (
   "context"
+  "errors"
   "fmt"
   "log"
   "os"
@@ -85,6 +86,10 @@ func vmCreateCommand() *cli.Command {
       &cli.StringFlag{Name: "disk-size", Usage: "grow the disk to `SIZE`, e.g. 10G (default: the image's own size)"},
       &cli.IntFlag{Name: "cpus", Value: defaultCPUs, Usage: "vcpu count, also the cgroup cpu ceiling"},
       &cli.IntFlag{Name: "memory", Value: defaultMemoryMiB, Usage: "guest memory in `MIB`"},
+      &cli.BoolFlag{Name: "no-network", Usage: "give the vm no network device at all"},
+      &cli.StringSliceFlag{Name: "egress", Usage: "`CIDR` this vm may reach outbound; repeatable, default deny"},
+      &cli.IntFlag{Name: "rate-mbit", Usage: "bandwidth ceiling in each direction, in `MBIT`/s (0 = unlimited)"},
+      &cli.IntFlag{Name: "burst-kbit", Usage: "burst allowance in `KBIT` (default: a tenth of a second at --rate-mbit)"},
     },
     Action: func(ctx context.Context, cmd *cli.Command) error {
       return runVMCreate(ctx, cmd)
@@ -213,6 +218,28 @@ func runVMCreate(ctx context.Context, cmd *cli.Command) error {
     return err
   }
 
+  // Networking, in the one order that is safe: interface, then policy, then the
+  // guest. The VM must not be able to send a packet before the rules that
+  // constrain it are already in the kernel.
+  var tap *os.File
+  if !cmd.Bool("no-network") {
+    tap, err = setupVMNetwork(data, &v, cmd.StringSlice("egress"), int(cmd.Int("rate-mbit")), int(cmd.Int("burst-kbit")))
+    if err != nil {
+      cleanup()
+      return err
+    }
+    defer tap.Close() // ours closes after exec; qemu holds the inherited copy
+    cleanup = func() {
+      _ = teardownVMNetwork(v)
+      _ = removeCgroup(v.Cgroup)
+      _ = os.RemoveAll(vmDir(data, id))
+    }
+    // The guest configures itself over DHCP, which is the only way it can get
+    // a usable default route from a /32. Nothing is put on the kernel command
+    // line: a static address there would fight the dhcp client for the
+    // interface.
+  }
+
   if v.Cgroup, err = setupCgroup(v); err != nil {
     // Running unprivileged is a legitimate development mode; the guest just
     // does not get resource limits, and saying so is better than refusing.
@@ -220,7 +247,7 @@ func runVMCreate(ctx context.Context, cmd *cli.Command) error {
     v.Cgroup = ""
   }
 
-  pid, err := launchVM(ctx, data, &v)
+  pid, err := launchVM(ctx, data, &v, tap)
   if err != nil {
     cleanup()
     return err
@@ -236,7 +263,85 @@ func runVMCreate(ctx context.Context, cmd *cli.Command) error {
 
   fmt.Printf("vm %s (%s) started, pid %d\n", v.ID, v.Name, pid)
   fmt.Printf("  console: dagent vm console %s\n", v.ID)
+  if v.Net != nil {
+    fmt.Printf("  address: %s on %s (offered over dhcp; the guest needs a dhcp client)\n",
+      v.Net.IP, v.Net.Tap)
+  }
   return nil
+}
+
+// setupVMNetwork allocates an address, creates and configures the tap, admits
+// the VM to the nftables policy and applies its bandwidth ceiling. It returns
+// the tap's fd for handing to QEMU.
+func setupVMNetwork(data string, v *vm, egress []string, rate, burst int) (*os.File, error) {
+  if os.Geteuid() != 0 {
+    return nil, errors.New("networking needs root: creating taps and writing nftables rules is privileged (use --no-network to skip)")
+  }
+  cfg, err := loadNetConfig(data)
+  if err != nil {
+    return nil, err
+  }
+  ip, err := allocateIP(data, cfg.Pool, cfg.Gateway)
+  if err != nil {
+    return nil, err
+  }
+
+  v.Net = &vmNet{
+    IP:        ip,
+    Gateway:   cfg.Gateway,
+    MAC:       macForIP(ip),
+    Egress:    egress,
+    RateMbit:  rate,
+    BurstKbit: burst,
+  }
+  v.Net.Tap = v.Net.tapName(v.ID)
+
+  if err := enableForwarding(); err != nil {
+    return nil, err
+  }
+  // The ruleset has to exist before the VM is admitted to it; netd may not be
+  // running, and a VM must never start against an empty table.
+  if err := ensureRuleset(cfg); err != nil {
+    return nil, err
+  }
+
+  tap, err := createTap(v.Net.Tap)
+  if err != nil {
+    return nil, err
+  }
+  if err := configureTap(v.Net.Tap, v.Net.IP, v.Net.Gateway); err != nil {
+    tap.Close()
+    return nil, err
+  }
+  if err := addVMPolicy(*v); err != nil {
+    tap.Close()
+    return nil, err
+  }
+  if err := applyBandwidth(v.Net); err != nil {
+    _ = removeVMPolicy(*v)
+    tap.Close()
+    return nil, err
+  }
+  return tap, nil
+}
+
+// teardownVMNetwork reverses setupVMNetwork exactly. Policy is withdrawn before
+// the interface goes, so there is no window where a tap exists unpoliced.
+func teardownVMNetwork(v vm) error {
+  if v.Net == nil {
+    return nil
+  }
+  var firstErr error
+  for _, step := range []func() error{
+    func() error { return removeVMPolicy(v) },
+    func() error { return removeBandwidth(v.Net) },
+    func() error { return removeTap(v.Net.Tap) },
+  } {
+    if err := step(); err != nil && firstErr == nil {
+      firstErr = err
+    }
+  }
+  return firstErr
 }
 
 // parseSize accepts plain bytes or a K/M/G/T suffix, as qemu-img does.
@@ -289,14 +394,18 @@ func vmListCommand() *cli.Command {
       }
 
       w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-      fmt.Fprintln(w, "ID\tNAME\tSTATE\tPID\tBOOT\tCPUS\tMEM\tCREATED")
+      fmt.Fprintln(w, "ID\tNAME\tSTATE\tPID\tADDRESS\tBOOT\tCPUS\tMEM\tCREATED")
       for _, v := range vms {
         state, pid := "stopped", vmPID(data, v.ID)
         if pid > 0 {
           state = "running"
         }
-        fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%d\t%dM\t%s\n",
-          v.ID, v.Name, state, dashIfZero(pid), v.Boot, v.CPUs, v.MemoryMiB,
+        address := "-"
+        if v.Net != nil {
+          address = v.Net.IP
+        }
+        fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%d\t%dM\t%s\n",
+          v.ID, v.Name, state, dashIfZero(pid), address, v.Boot, v.CPUs, v.MemoryMiB,
           v.CreatedAt.Local().Format(time.RFC3339))
       }
       return w.Flush()
@@ -354,6 +463,9 @@ func vmStopCommand() *cli.Command {
       if err := stopVM(ctx, data, v.ID, cmd.Duration("timeout")); err != nil {
         return err
       }
+      if err := teardownVMNetwork(v); err != nil {
+        log.Printf("could not fully tear down the network for %s: %v", v.ID, err)
+      }
       // The cgroup can only be removed once it is empty, so this belongs here
       // rather than next to the kill.
       if err := removeCgroup(v.Cgroup); err != nil {
@@ -379,6 +491,9 @@ func vmRemoveCommand() *cli.Command {
       }
       if err := stopVM(ctx, data, v.ID, defaultStopWait); err != nil {
         return err
+      }
+      if err := teardownVMNetwork(v); err != nil {
+        log.Printf("could not fully tear down the network for %s: %v", v.ID, err)
       }
       if err := removeCgroup(v.Cgroup); err != nil {
         log.Printf("could not remove cgroup %s: %v", v.Cgroup, err)
