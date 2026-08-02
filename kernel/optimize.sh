@@ -180,3 +180,21 @@ scripts/config --enable  CONFIG_TRANSPARENT_HUGEPAGE_MADVISE
 scripts/config --enable  CONFIG_PARAVIRT_SPINLOCKS
 # page dedup across similar L2 guests; drop if you only run one or two VMs
 scripts/config --enable  CONFIG_KSM
+
+# 10. For running suricata with nftables
+scripts/config --enable  CONFIG_NETFILTER_ADVANCED
+scripts/config --enable  CONFIG_NETFILTER_NETLINK
+scripts/config --enable  CONFIG_NETFILTER_NETLINK_QUEUE
+scripts/config --enable  CONFIG_NETFILTER_NETLINK_QUEUE_CT      # optional, gives Suricata conntrack info
+# nftables expressions dagent emits — separate symbols from the core table support
+scripts/config --enable  CONFIG_NFT_QUEUE      # the `queue` verdict itself
+scripts/config --enable  CONFIG_NFT_COUNTER    # counters on the drop rules
+# per-VM bandwidth: HTB on the tap, ingress redirected to an ifb
+scripts/config --enable  CONFIG_IFB
+scripts/config --enable  CONFIG_NET_SCH_HTB
+scripts/config --enable  CONFIG_NET_SCH_INGRESS
+scripts/config --enable  CONFIG_NET_CLS_U32
+scripts/config --enable  CONFIG_NET_ACT_MIRRED
+# so /proc/config.gz exists and you can answer this question in one command
+scripts/config --enable  CONFIG_IKCONFIG
+scripts/config --enable  CONFIG_IKCONFIG_PROC
