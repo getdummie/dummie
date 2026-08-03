@@ -121,6 +121,10 @@ func reconcile(data string, cfg netConfig) error {
     // and the resulting failure looks like unrelated packet loss.
     ensureDockerCompat()
   }
+  // Suricata is in the path of all VM egress when it is on, so a container that
+  // died since the last pass is an outage; started here for the same reason the
+  // docker accepts are repaired here.
+  ensureSuricata(cfg)
 
   vms, err := listVMs(data)
   if err != nil {
@@ -299,6 +303,13 @@ func runTeardown(data string) error {
     return err
   }
   fmt.Println("removed nftables table inet " + nftTable)
+
+  // Nothing queues to Suricata once the table is gone, so the container is left
+  // inspecting nothing. Stopped rather than left behind, because dagent is what
+  // started it.
+  if msg := stopSuricata(); msg != "" {
+    fmt.Println(msg)
+  }
 
   taps, err := removeStrayTaps()
   if err != nil {

@@ -30,7 +30,10 @@ After=network-online.target
 Wants=network-online.target
 # Docker rewrites the forward chain on start; dagent repairs its own accepts
 # afterwards, but starting in this order avoids a window with no vm egress.
+# Wants, not Requires: dagent runs fine without docker, it just cannot start the
+# suricata container, and losing docker later must not stop the daemon.
 After=docker.service
+Wants=docker.service
 
 [Service]
 Type=exec

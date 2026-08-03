@@ -57,6 +57,7 @@ var checks = []check{
   {"ip forwarding is enabled", checkForwarding},
   {"an uplink for egress exists", checkUplink},
   {"nfqueue matches the suricata configuration", checkQueues},
+  {"the suricata container is running", checkSuricata},
   {"docker is not dropping vm traffic", checkDockerCompat},
   {"data directory is writable", checkDataDir},
 }
@@ -277,6 +278,14 @@ func checkUplink() (result, string) {
     return warn, err.Error() + "; vm egress cannot be masqueraded"
   }
   return pass, name
+}
+
+func checkSuricata() (result, string) {
+  cfg, err := loadNetConfig(defaultDataDir())
+  if err != nil {
+    return warn, "could not read the network config: " + err.Error()
+  }
+  return suricataStatus(cfg)
 }
 
 // checkQueues compares the queues something is actually bound to against the
