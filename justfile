@@ -1,15 +1,15 @@
 
-run:
+vm-start:
   #!/usr/bin/env bash
   cd nix-vms/
   nix run
 
-stop:
+vm-stop:
   #!/usr/bin/env bash
   cd nix-vms/
   nix run ".#web" -- stop
 
-clean:
+vm-clean:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
@@ -17,13 +17,13 @@ clean:
   rm -rf .microqemu/web/console.log .microqemu/web/rootfs.ext4
   ssh-keygen -R 10.68.0.2
 
-stats:
+vm-stats:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
   nix run "#web" -- stats
 
-ssh:
+vm-ssh:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
@@ -35,7 +35,7 @@ ssh:
       ubuntu@10.68.0.2
 
 # attach to the VM's serial console via QEMU (no ssh/network needed). Ctrl-] to detach.
-console:
+vm-console:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
