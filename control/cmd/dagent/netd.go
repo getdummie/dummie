@@ -147,11 +147,11 @@ func reconcile(data string, cfg netConfig) error {
   }
   t := &nftables.Table{Family: nftables.TableFamilyINet, Name: nftTable}
 
-  taps := &nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFName}
+  taps := &nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFIndex}
   vmIPs := &nftables.Set{Table: t, Name: setVMIPs, KeyType: nftables.TypeIPAddr}
   vmSrc := &nftables.Set{
     Table: t, Name: setVMSrc, Concatenation: true,
-    KeyType: nftables.MustConcatSetType(nftables.TypeIFName, nftables.TypeIPAddr),
+    KeyType: nftables.MustConcatSetType(nftables.TypeIFIndex, nftables.TypeIPAddr),
   }
   egress := &nftables.Set{
     Table: t, Name: setEgress, Concatenation: true, Interval: true,
@@ -167,13 +167,21 @@ func reconcile(data string, cfg netConfig) error {
       log.Printf("vm %s has an invalid address %q; skipping", v.ID, v.Net.IP)
       continue
     }
-    if err := c.SetAddElements(taps, []nftables.SetElement{{Key: ifname(v.Net.Tap)}}); err != nil {
+    // A running VM whose tap has gone is already off the network, so it gets no
+    // elements at all rather than a partial set: an address in vm_ips with no
+    // tap in vm_taps would be a NAT entry with nothing behind it.
+    idx, err := tapIndex(v.Net.Tap)
+    if err != nil {
+      log.Printf("vm %s is running but its tap is missing: %v; skipping", v.ID, err)
+      continue
+    }
+    if err := c.SetAddElements(taps, []nftables.SetElement{{Key: idx}}); err != nil {
       return err
     }
     if err := c.SetAddElements(vmIPs, []nftables.SetElement{{Key: ip}}); err != nil {
       return err
     }
-    if err := c.SetAddElements(vmSrc, []nftables.SetElement{{Key: append(ifname(v.Net.Tap), ip...)}}); err != nil {
+    if err := c.SetAddElements(vmSrc, []nftables.SetElement{{Key: srcKey(idx, ip)}}); err != nil {
       return err
     }
     elems, err := egressElements(v, ip)

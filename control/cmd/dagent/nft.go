@@ -19,9 +19,9 @@ import (
 const (
   nftTable = "dagent"
 
-  setTaps   = "vm_taps"      // ifname
+  setTaps   = "vm_taps"      // iface_index
   setVMIPs  = "vm_ips"       // ipv4_addr
-  setVMSrc  = "vm_src"       // ifname . ipv4_addr  (the only legal pairing)
+  setVMSrc  = "vm_src"       // iface_index . ipv4_addr  (the only legal pairing)
   setEgress = "egress_allow" // ipv4_addr . ipv4_addr-range (per-VM allowlist)
 
   // metadataPort is where the per-VM identity service listens on the gateway.
@@ -75,12 +75,12 @@ func applyBaseRuleset(cfg netConfig) error {
   }
   t := c.AddTable(&nftables.Table{Family: nftables.TableFamilyINet, Name: nftTable})
 
-  taps := &nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFName}
+  taps := &nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFIndex}
   vmIPs := &nftables.Set{Table: t, Name: setVMIPs, KeyType: nftables.TypeIPAddr}
   vmSrc := &nftables.Set{
     Table:         t,
     Name:          setVMSrc,
-    KeyType:       nftables.MustConcatSetType(nftables.TypeIFName, nftables.TypeIPAddr),
+    KeyType:       nftables.MustConcatSetType(nftables.TypeIFIndex, nftables.TypeIPAddr),
     Concatenation: true,
   }
   egress := &nftables.Set{
@@ -123,10 +123,13 @@ func applyBaseRuleset(cfg netConfig) error {
 
   // Anti-spoof: a packet from a tap may only carry the one address that tap was
   // issued. Pinned as a pair, so a VM cannot borrow another VM's address either.
+  // Both halves are four bytes, so the second goes in register 9 -- the 32-bit
+  // register immediately after the one register 1 starts in, which is how the
+  // kernel wants a concatenated key laid out. Same idiom as the egress lookup.
   c.AddRule(&nftables.Rule{Table: t, Chain: fwd, Exprs: []expr.Any{
-    &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
     &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
-    &expr.Payload{DestRegister: 2, Base: expr.PayloadBaseNetworkHeader, Offset: 12, Len: 4},
+    &expr.Payload{DestRegister: 9, Base: expr.PayloadBaseNetworkHeader, Offset: 12, Len: 4},
     &expr.Lookup{SourceRegister: 1, SetName: setVMSrc, SetID: vmSrc.ID, Invert: true},
     &expr.Counter{},
     &expr.Verdict{Kind: expr.VerdictDrop},
@@ -134,9 +137,9 @@ func applyBaseRuleset(cfg netConfig) error {
 
   // No VM-to-VM traffic, ever -- by output interface...
   c.AddRule(&nftables.Rule{Table: t, Chain: fwd, Exprs: []expr.Any{
-    &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
     &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
-    &expr.Meta{Key: expr.MetaKeyOIFNAME, Register: 1},
+    &expr.Meta{Key: expr.MetaKeyOIF, Register: 1},
     &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
     &expr.Counter{},
     &expr.Verdict{Kind: expr.VerdictDrop},
@@ -145,7 +148,7 @@ func applyBaseRuleset(cfg netConfig) error {
   // ...and again by destination address, which closes the hairpin even if the
   // packet somehow leaves by an interface that is not a tap.
   c.AddRule(&nftables.Rule{Table: t, Chain: fwd, Exprs: []expr.Any{
-    &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
     &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
     &expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
     &expr.Lookup{SourceRegister: 1, SetName: setVMIPs, SetID: vmIPs.ID},
@@ -190,7 +193,7 @@ func applyBaseRuleset(cfg netConfig) error {
   // DHCP, which needs its own rule: a client with no address yet broadcasts to
   // 255.255.255.255, so it never matches a destination of the gateway.
   c.AddRule(&nftables.Rule{Table: t, Chain: in, Exprs: []expr.Any{
-    &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
     &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
     &expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
     &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{unix.IPPROTO_UDP}},
@@ -209,7 +212,7 @@ func applyBaseRuleset(cfg netConfig) error {
     {unix.IPPROTO_TCP, 53},
   } {
     c.AddRule(&nftables.Rule{Table: t, Chain: in, Exprs: []expr.Any{
-      &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+      &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
       &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
       &expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
       &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: gw},
@@ -224,7 +227,7 @@ func applyBaseRuleset(cfg netConfig) error {
   // Ping the gateway, purely so an operator can tell "no route" apart from
   // "policy denied" from inside a guest.
   c.AddRule(&nftables.Rule{Table: t, Chain: in, Exprs: []expr.Any{
-    &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
     &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
     &expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
     &expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{unix.IPPROTO_ICMP}},
@@ -233,7 +236,7 @@ func applyBaseRuleset(cfg netConfig) error {
 
   // Everything else a VM sends at the host.
   c.AddRule(&nftables.Rule{Table: t, Chain: in, Exprs: []expr.Any{
-    &expr.Meta{Key: expr.MetaKeyIIFNAME, Register: 1},
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
     &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
     &expr.Counter{},
     &expr.Verdict{Kind: expr.VerdictDrop},
@@ -263,10 +266,30 @@ func applyBaseRuleset(cfg netConfig) error {
 }
 
 // ifname pads an interface name to the fixed 16-byte field the kernel compares.
+// Only used for the uplink, which is matched by a plain `cmp` against a name
+// from the config: it is not in a set, and the name is what the operator wrote,
+// so resolving it to an index would only add a way for the rule to go stale if
+// the device is ever renumbered.
 func ifname(name string) []byte {
   b := make([]byte, 16)
   copy(b, name)
   return b
+}
+
+// tapIndex resolves a tap to the interface index the kernel compares in
+// `meta iif`. The per-VM sets are keyed on the index rather than the name for
+// two reasons: an ifname key is a 16-byte NUL-padded string that nft renders
+// back as an empty element, which made `nft list set` useless for telling a
+// populated set from an empty one, and a four-byte integer compare is exact
+// where a padded string leaves room to get the length wrong. The index is only
+// meaningful while the device exists, which is why every caller resolves it
+// against a live tap rather than storing it.
+func tapIndex(tap string) ([]byte, error) {
+  iface, err := net.InterfaceByName(tap)
+  if err != nil {
+    return nil, fmt.Errorf("could not resolve tap %s: %w", tap, err)
+  }
+  return binaryutil.NativeEndian.PutUint32(uint32(iface.Index)), nil
 }
 
 // --- per-VM elements --------------------------------------------------------
@@ -283,9 +306,14 @@ func addVMPolicy(v vm) error {
   if ip == nil {
     return fmt.Errorf("vm %s has an invalid address %q", v.ID, v.Net.IP)
   }
+  // The caller has already created and configured the tap, so this resolves.
+  idx, err := tapIndex(v.Net.Tap)
+  if err != nil {
+    return fmt.Errorf("vm %s: %w", v.ID, err)
+  }
 
-  if err := c.SetAddElements(&nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFName},
-    []nftables.SetElement{{Key: ifname(v.Net.Tap)}}); err != nil {
+  if err := c.SetAddElements(&nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFIndex},
+    []nftables.SetElement{{Key: idx}}); err != nil {
     return err
   }
   if err := c.SetAddElements(&nftables.Set{Table: t, Name: setVMIPs, KeyType: nftables.TypeIPAddr},
@@ -294,8 +322,8 @@ func addVMPolicy(v vm) error {
   }
   if err := c.SetAddElements(&nftables.Set{
     Table: t, Name: setVMSrc, Concatenation: true,
-    KeyType: nftables.MustConcatSetType(nftables.TypeIFName, nftables.TypeIPAddr),
-  }, []nftables.SetElement{{Key: append(ifname(v.Net.Tap), ip...)}}); err != nil {
+    KeyType: nftables.MustConcatSetType(nftables.TypeIFIndex, nftables.TypeIPAddr),
+  }, []nftables.SetElement{{Key: srcKey(idx, ip)}}); err != nil {
     return err
   }
 
@@ -327,14 +355,21 @@ func removeVMPolicy(v vm) error {
     return nil
   }
 
-  _ = c.SetDeleteElements(&nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFName},
-    []nftables.SetElement{{Key: ifname(v.Net.Tap)}})
+  // The tap is usually still there -- teardown withdraws policy before deleting
+  // it -- but the kernel reaps a tap on its own when QEMU dies, so the index may
+  // no longer be resolvable. Both tap-keyed elements are then left for the
+  // reconciler, which rebuilds every set from the live VMs each pass. Leaving
+  // them is safe: a stale element can only ever cause a drop.
+  if idx, err := tapIndex(v.Net.Tap); err == nil {
+    _ = c.SetDeleteElements(&nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFIndex},
+      []nftables.SetElement{{Key: idx}})
+    _ = c.SetDeleteElements(&nftables.Set{
+      Table: t, Name: setVMSrc, Concatenation: true,
+      KeyType: nftables.MustConcatSetType(nftables.TypeIFIndex, nftables.TypeIPAddr),
+    }, []nftables.SetElement{{Key: srcKey(idx, ip)}})
+  }
   _ = c.SetDeleteElements(&nftables.Set{Table: t, Name: setVMIPs, KeyType: nftables.TypeIPAddr},
     []nftables.SetElement{{Key: ip}})
-  _ = c.SetDeleteElements(&nftables.Set{
-    Table: t, Name: setVMSrc, Concatenation: true,
-    KeyType: nftables.MustConcatSetType(nftables.TypeIFName, nftables.TypeIPAddr),
-  }, []nftables.SetElement{{Key: append(ifname(v.Net.Tap), ip...)}})
 
   if elems, err := egressElements(v, ip); err == nil && len(elems) > 0 {
     _ = c.SetDeleteElements(&nftables.Set{
@@ -343,6 +378,13 @@ func removeVMPolicy(v vm) error {
     }, elems)
   }
   return c.Flush()
+}
+
+// srcKey builds one vm_src element: the tap index concatenated with the single
+// address that tap is allowed to send from. Both fields are already four bytes,
+// which is the alignment a concatenated key needs, so they just abut.
+func srcKey(idx []byte, ip net.IP) []byte {
+  return append(append([]byte{}, idx...), ip...)
 }
 
 // egressElements turns this VM's allowlist into (source, destination-range)
