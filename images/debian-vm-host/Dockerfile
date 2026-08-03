@@ -35,10 +35,7 @@ RUN set -ex \
   && adduser --disabled-password --gecos "" ubuntu \
   && adduser ubuntu sudo \
   && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
-  && chmod 0440 /etc/sudoers.d/ubuntu \
-  && mkdir -p /var/lib/dagent \
-  && chown ubuntu:ubuntu /var/lib/dagent \
-  && chmod 0755 /var/lib/dagent
+  && chmod 0440 /etc/sudoers.d/ubuntu
 
 RUN set -ex \
   && apt update \
