@@ -149,7 +149,13 @@ func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP) []byte {
   // RFC 3442 says a client that understands option 121 must ignore option 3.
   // Sent anyway for the ones that do not, where it is better than nothing.
   add(optRouter, gw)
-  add(optDNS, gw)
+
+  // The resolver is upstream, not on the gateway -- dagent runs none. A guest
+  // still has to be allowed to reach it, so this address needs to be in the
+  // VM's egress allowlist or the queue has to be accepting everything.
+  if dns := net.ParseIP(s.cfg.DNS).To4(); dns != nil {
+    add(optDNS, dns)
+  }
 
   b = append(b, optEnd)
   return b

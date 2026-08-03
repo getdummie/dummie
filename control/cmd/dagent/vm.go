@@ -87,7 +87,9 @@ func vmCreateCommand() *cli.Command {
       &cli.IntFlag{Name: "cpus", Value: defaultCPUs, Usage: "vcpu count, also the cgroup cpu ceiling"},
       &cli.IntFlag{Name: "memory", Value: defaultMemoryMiB, Usage: "guest memory in `MIB`"},
       &cli.BoolFlag{Name: "no-network", Usage: "give the vm no network device at all"},
+      &cli.StringFlag{Name: "ip", Usage: "pin the vm to this `ADDRESS` instead of taking the lowest free one"},
       &cli.StringSliceFlag{Name: "egress", Usage: "`CIDR` this vm may reach outbound; repeatable, default deny"},
+      &cli.BoolFlag{Name: "egress-any", Usage: "allow any destination in the kernel, leaving egress policy to suricata"},
       &cli.IntFlag{Name: "rate-mbit", Usage: "bandwidth ceiling in each direction, in `MBIT`/s (0 = unlimited)"},
       &cli.IntFlag{Name: "burst-kbit", Usage: "burst allowance in `KBIT` (default: a tenth of a second at --rate-mbit)"},
     },
@@ -223,7 +225,13 @@ func runVMCreate(ctx context.Context, cmd *cli.Command) error {
   // constrain it are already in the kernel.
   var tap *os.File
   if !cmd.Bool("no-network") {
-    tap, err = setupVMNetwork(data, &v, cmd.StringSlice("egress"), int(cmd.Int("rate-mbit")), int(cmd.Int("burst-kbit")))
+    tap, err = setupVMNetwork(data, &v, netOptions{
+      IP:        cmd.String("ip"),
+      Egress:    cmd.StringSlice("egress"),
+      EgressAny: cmd.Bool("egress-any"),
+      RateMbit:  int(cmd.Int("rate-mbit")),
+      BurstKbit: int(cmd.Int("burst-kbit")),
+    })
     if err != nil {
       cleanup()
       return err
@@ -270,10 +278,19 @@ func runVMCreate(ctx context.Context, cmd *cli.Command) error {
   return nil
 }
 
+// netOptions is the network half of a create request.
+type netOptions struct {
+  IP        string // empty means allocate
+  Egress    []string
+  EgressAny bool
+  RateMbit  int
+  BurstKbit int
+}
+
 // setupVMNetwork allocates an address, creates and configures the tap, admits
 // the VM to the nftables policy and applies its bandwidth ceiling. It returns
 // the tap's fd for handing to QEMU.
-func setupVMNetwork(data string, v *vm, egress []string, rate, burst int) (*os.File, error) {
+func setupVMNetwork(data string, v *vm, opts netOptions) (*os.File, error) {
   if os.Geteuid() != 0 {
     return nil, errors.New("networking needs root: creating taps and writing nftables rules is privileged (use --no-network to skip)")
   }
@@ -281,9 +298,22 @@ func setupVMNetwork(data string, v *vm, egress []string, rate, burst int) (*os.F
   if err != nil {
     return nil, err
   }
-  ip, err := allocateIP(data, cfg.Pool, cfg.Gateway)
+
+  var ip string
+  if opts.IP != "" {
+    ip, err = reserveIP(data, cfg.Pool, cfg.Gateway, opts.IP)
+  } else {
+    ip, err = allocateIP(data, cfg.Pool, cfg.Gateway)
+  }
   if err != nil {
     return nil, err
+  }
+
+  egress := opts.Egress
+  if opts.EgressAny {
+    // Recorded as an ordinary allowlist entry rather than a mode flag, so
+    // `vm.json` and `nft list` both say plainly what this VM may reach.
+    egress = append(egress, "0.0.0.0/0")
   }
 
   v.Net = &vmNet{
@@ -291,8 +321,8 @@ func setupVMNetwork(data string, v *vm, egress []string, rate, burst int) (*os.F
     Gateway:   cfg.Gateway,
     MAC:       macForIP(ip),
     Egress:    egress,
-    RateMbit:  rate,
-    BurstKbit: burst,
+    RateMbit:  opts.RateMbit,
+    BurstKbit: opts.BurstKbit,
   }
   v.Net.Tap = v.Net.tapName(v.ID)
 

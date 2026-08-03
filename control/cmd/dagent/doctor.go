@@ -54,6 +54,7 @@ var checks = []check{
   {"nftables is usable", checkNftables},
   {"ip forwarding is enabled", checkForwarding},
   {"an uplink for egress exists", checkUplink},
+  {"nfqueue matches the suricata configuration", checkQueues},
   {"data directory is writable", checkDataDir},
 }
 
@@ -237,6 +238,44 @@ func checkUplink() (result, string) {
     return warn, err.Error() + "; vm egress cannot be masqueraded"
   }
   return pass, name
+}
+
+// checkQueues compares the queues something is actually bound to against the
+// number dagent hands packets to. A mismatch is not cosmetic: traffic hashed to
+// an unbound queue is dropped, so it takes VM egress down for a fraction of
+// flows in a way that looks like packet loss rather than policy.
+func checkQueues() (result, string) {
+  cfg, err := loadNetConfig(defaultDataDir())
+  if err != nil {
+    return warn, "could not read the network config: " + err.Error()
+  }
+  if !cfg.Suricata {
+    return pass, "suricata mode is off; nothing is queued"
+  }
+
+  const p = "/proc/net/netfilter/nfnetlink_queue"
+  b, err := os.ReadFile(p)
+  if err != nil {
+    if os.IsNotExist(err) {
+      return fail, "suricata mode is on but " + p + " does not exist; the kernel has no NFQUEUE support"
+    }
+    return warn, "cannot read " + p + " (" + err.Error() + "); run as root"
+  }
+
+  // One row per bound queue.
+  bound := 0
+  if rows := strings.TrimSpace(string(b)); rows != "" {
+    bound = len(strings.Split(rows, "\n"))
+  }
+
+  switch {
+  case bound == 0:
+    return fail, "suricata mode is on but nothing is bound to any queue; all vm egress is being dropped"
+  case bound != int(cfg.Queues):
+    return fail, fmt.Sprintf("dagent queues to %d queues but %d are bound; start suricata with %d -q flags",
+      cfg.Queues, bound, cfg.Queues)
+  }
+  return pass, fmt.Sprintf("%d queues bound, matching net.json", bound)
 }
 
 func checkDataDir() (result, string) {

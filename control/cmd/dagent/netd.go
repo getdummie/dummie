@@ -22,7 +22,19 @@ import (
 // immediately -- it is there to repair drift from crashes and outside meddling.
 const reconcileInterval = 30 * time.Second
 
-const netConfigFile = "net.json"
+const (
+  netConfigFile = "net.json"
+
+  // defaultDNS is what guests are told to use. It is deliberately an upstream
+  // resolver: dagent does not run one, so pointing guests at the gateway would
+  // give them an address that answers nothing.
+  defaultDNS = "1.1.1.1"
+
+  // defaultQueues has to match the number of -q flags Suricata is started with.
+  // Traffic hashed to a queue nobody is bound to is dropped, so a mismatch is
+  // an outage rather than a warning.
+  defaultQueues = 4
+)
 
 // --- configuration ----------------------------------------------------------
 
@@ -47,8 +59,11 @@ func loadNetConfig(data string) (netConfig, error) {
   if cfg.Gateway == "" {
     cfg.Gateway = defaultGateway
   }
+  if cfg.DNS == "" {
+    cfg.DNS = defaultDNS
+  }
   if cfg.Queues == 0 {
-    cfg.Queues = 4
+    cfg.Queues = defaultQueues
   }
   if cfg.Uplink == "" {
     if cfg.Uplink, err = defaultUplink(); err != nil {
@@ -183,7 +198,9 @@ func netdCommand() *cli.Command {
       &cli.StringFlag{Name: "pool", Usage: "address pool for VMs (default " + defaultPool + ")"},
       &cli.StringFlag{Name: "gateway", Usage: "host address on every tap (default " + defaultGateway + ")"},
       &cli.StringFlag{Name: "uplink", Usage: "interface to masquerade egress out of (default: the default route's)"},
+      &cli.StringFlag{Name: "dns", Usage: "resolver `ADDRESS` handed to guests over dhcp (default " + defaultDNS + ")"},
       &cli.BoolFlag{Name: "suricata", Usage: "queue allowed egress to suricata instead of accepting it outright"},
+      &cli.IntFlag{Name: "queues", Usage: "nfqueue count; must equal suricata's -q flag count (default 4)"},
     },
     Action: func(ctx context.Context, cmd *cli.Command) error {
       data := dataDir(cmd)
@@ -201,6 +218,15 @@ func netdCommand() *cli.Command {
       }
       if v := cmd.String("uplink"); v != "" {
         cfg.Uplink = v
+      }
+      if v := cmd.String("dns"); v != "" {
+        if net.ParseIP(v).To4() == nil {
+          return fmt.Errorf("--dns %q is not an IPv4 address", v)
+        }
+        cfg.DNS = v
+      }
+      if v := int(cmd.Int("queues")); v > 0 {
+        cfg.Queues = uint16(v)
       }
       cfg.Suricata = cmd.Bool("suricata")
       if err := saveNetConfig(data, cfg); err != nil {

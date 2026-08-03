@@ -88,6 +88,40 @@ func allocateIP(data, pool, gateway string) (string, error) {
   return "", fmt.Errorf("no free addresses left in %s", pool)
 }
 
+// reserveIP validates an address the operator chose rather than allocating one.
+//
+// Pinning matters when the egress policy lives in Suricata rules: those rules
+// name addresses, and an address handed out by lowest-free would silently move
+// to a different VM the next time one is recreated -- so the rules would still
+// apply, to the wrong machine.
+func reserveIP(data, pool, gateway, want string) (string, error) {
+  ip := net.ParseIP(want)
+  if ip == nil || ip.To4() == nil {
+    return "", fmt.Errorf("--ip %q is not an IPv4 address", want)
+  }
+  _, ipnet, err := net.ParseCIDR(pool)
+  if err != nil {
+    return "", fmt.Errorf("invalid pool %q: %w", pool, err)
+  }
+  if !ipnet.Contains(ip) {
+    return "", fmt.Errorf("--ip %s is outside the pool %s", want, pool)
+  }
+  if ip.Equal(net.ParseIP(gateway)) {
+    return "", fmt.Errorf("--ip %s is the gateway", want)
+  }
+
+  vms, err := listVMs(data)
+  if err != nil {
+    return "", err
+  }
+  for _, v := range vms {
+    if v.Net != nil && v.Net.IP == ip.String() {
+      return "", fmt.Errorf("--ip %s is already held by vm %s (%s)", want, v.ID, v.Name)
+    }
+  }
+  return ip.String(), nil
+}
+
 func ipToU32(ip net.IP) uint32 {
   return binary.BigEndian.Uint32(ip.To4())
 }

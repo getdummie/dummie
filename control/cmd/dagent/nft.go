@@ -31,11 +31,16 @@ const (
 // netConfig is the host-wide network policy: everything that is the same for
 // every VM.
 type netConfig struct {
-  Pool     string
-  Gateway  string
-  Uplink   string
-  Suricata bool // when set, VM egress is queued to Suricata before acceptance
-  Queues   uint16
+  Pool    string
+  Gateway string
+  Uplink  string
+
+  // DNS is handed to guests over DHCP. It points outside the fleet because
+  // dagent runs no resolver: the gateway would answer nothing.
+  DNS string
+
+  Suricata bool   // when set, VM egress is queued to Suricata before acceptance
+  Queues   uint16 // must match the number of -q flags Suricata is started with
 }
 
 // applyBaseRuleset installs the whole table in one atomic transaction, deleting
