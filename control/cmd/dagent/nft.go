@@ -157,7 +157,20 @@ func applyBaseRuleset(cfg netConfig) error {
   }})
 
   // The allowlist: source VM paired with a permitted destination range.
+  //
+  // The tap guard comes first and is not redundant with the source address. On
+  // its own, the pair only says the packet claims to be from a VM -- a packet
+  // arriving on the uplink carrying a VM's address and an allowed destination
+  // would match. The anti-spoof rule above does not catch that either, because it
+  // is itself scoped to traffic from a tap. Requiring the interface makes the
+  // address a fact about where the packet came from rather than a claim.
+  //
+  // Register 1 holds the interface for the first lookup and is then overwritten
+  // by the source address for the second; register 9 is the 32-bit register after
+  // it, so the two addresses abut into one concatenated key.
   allow := []expr.Any{
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
+    &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
     &expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 12, Len: 4},
     &expr.Payload{DestRegister: 9, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
     &expr.Lookup{SourceRegister: 1, SetName: setEgress, SetID: egress.ID},
