@@ -55,6 +55,7 @@ var checks = []check{
   {"ip forwarding is enabled", checkForwarding},
   {"an uplink for egress exists", checkUplink},
   {"nfqueue matches the suricata configuration", checkQueues},
+  {"docker is not dropping vm traffic", checkDockerCompat},
   {"data directory is writable", checkDataDir},
 }
 
@@ -276,6 +277,14 @@ func checkQueues() (result, string) {
       cfg.Queues, bound, cfg.Queues)
   }
   return pass, fmt.Sprintf("%d queues bound, matching net.json", bound)
+}
+
+func checkDockerCompat() (result, string) {
+  needed, reason := dockerCompatNeeded()
+  if needed {
+    return warn, reason
+  }
+  return pass, reason
 }
 
 func checkDataDir() (result, string) {

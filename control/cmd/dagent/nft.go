@@ -41,6 +41,11 @@ type netConfig struct {
 
   Suricata bool   // when set, VM egress is queued to Suricata before acceptance
   Queues   uint16 // must match the number of -q flags Suricata is started with
+
+  // NoDockerCompat opts out of touching Docker's DOCKER-USER chain. Negated so
+  // that the zero value -- and therefore an older net.json -- keeps the
+  // workaround on, which is what almost every host wants.
+  NoDockerCompat bool
 }
 
 // applyBaseRuleset installs the whole table in one atomic transaction, deleting

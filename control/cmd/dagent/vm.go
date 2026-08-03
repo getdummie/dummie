@@ -334,6 +334,9 @@ func setupVMNetwork(data string, v *vm, opts netOptions) (*os.File, error) {
   if err := ensureRuleset(cfg); err != nil {
     return nil, err
   }
+  if !cfg.NoDockerCompat {
+    ensureDockerCompat()
+  }
 
   tap, err := createTap(v.Net.Tap)
   if err != nil {

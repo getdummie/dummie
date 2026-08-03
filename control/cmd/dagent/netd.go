@@ -116,6 +116,11 @@ func reconcile(data string, cfg netConfig) error {
   if err := ensureRuleset(cfg); err != nil {
     return err
   }
+  if !cfg.NoDockerCompat {
+    // Repaired every pass, because a docker restart or a reboot takes it out
+    // and the resulting failure looks like unrelated packet loss.
+    ensureDockerCompat()
+  }
 
   vms, err := listVMs(data)
   if err != nil {
@@ -203,6 +208,7 @@ func netdCommand() *cli.Command {
       &cli.StringFlag{Name: "dns", Usage: "resolver `ADDRESS` handed to guests over dhcp (default " + defaultDNS + ")"},
       &cli.BoolFlag{Name: "suricata", Usage: "queue allowed egress to suricata instead of accepting it outright"},
       &cli.IntFlag{Name: "queues", Usage: "nfqueue count; must equal suricata's -q flag count (default 4)"},
+      &cli.BoolFlag{Name: "no-docker-compat", Usage: "do not add accept rules for vm traffic to docker's " + dockerUserChain + " chain"},
     },
     Commands: []*cli.Command{netdTeardownCommand()},
     Action: func(ctx context.Context, cmd *cli.Command) error {
@@ -232,6 +238,7 @@ func netdCommand() *cli.Command {
         cfg.Queues = uint16(v)
       }
       cfg.Suricata = cmd.Bool("suricata")
+      cfg.NoDockerCompat = cmd.Bool("no-docker-compat")
       if err := saveNetConfig(data, cfg); err != nil {
         return err
       }
