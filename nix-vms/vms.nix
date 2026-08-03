@@ -6,9 +6,9 @@
 # 2G RAM, 8G disk for running container
 {
   web = {
-    cpu = 2;
+    cpu = 4;
     mem = 1024; # MiB
-    diskSize = "4G"; # rootfs image size
+    diskSize = "6G"; # rootfs image size
 
     # true  = pristine root every boot, changes discarded on shutdown
     # false = persistent root (writes survive reboots)
@@ -23,7 +23,7 @@
     dns = "1.1.1.1";
 
     kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-v7.1.4/arch/x86/boot/bzImage";
-    rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/go-bun-dev/rootfs.tar";
+    rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/debian-vm-host/rootfs.tar";
 
     # Host directories shared into the guest over virtiofs. Each gets an
     # fstab entry (nofail) + mountpoint baked into the image, so it mounts
@@ -53,8 +53,8 @@
     };
 
     # Command run at every boot, as guestUser, from bootWorkingDir.
-    bootCommand = "air";
-    bootWorkingDir = "/home/ubuntu/app";
+    bootCommand = "sudo ./dagent install";
+    bootWorkingDir = "/home/ubuntu/app/tmp";
 
     # Extra env for the boot service. systemd's PATH is bare, so tools installed
     # by the go-bun-dev image (air/sqlc/swag in /go/bin, go in /usr/local/go/bin,
