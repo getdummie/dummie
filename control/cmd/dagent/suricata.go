@@ -107,39 +107,87 @@ rule-files:
   - local.rules
 `
 
-// seedSuricataConfig writes the config and its rule files if they are not there.
-// Absent rather than overwritten-each-start, because this file is the operator's
-// once it exists -- the whole reason it lives on the host and not in the image.
+// localRules is the default egress policy: deny everything, allow ifconfig.io.
+//
+// It is written against what actually reaches the queues, which is only the
+// VM-to-outside direction of each flow -- return traffic is accepted by
+// conntrack and Suricata never sees it. So every verdict here is made on a
+// to-server packet, and dropping one kills the flow.
+//
+// That is also why there is no blanket `drop ip`: a TCP SYN carries no
+// destination name, so dropping it would kill the connection before the
+// ClientHello that proves where it is going ever arrives. The deny is therefore
+// split -- ports at the SYN, names at the handshake -- and the pass rules win
+// where they overlap, because Suricata evaluates pass before drop regardless of
+// sid order.
+const localRules = `# Written by dagent on first start. Edits are preserved: dagent only creates
+# this file when it is missing, and never rewrites it.
+#
+# Default deny, with ifconfig.io allowed. $HOME_NET is the vm pool, so these
+# rules only ever judge guest traffic; the host's own is not queued.
+#
+# Only the vm-to-outside direction reaches suricata, so a drop on a matching
+# packet ends the flow there.
+
+# --- allowed --------------------------------------------------------------
+# pass beats drop in suricata's action order, so these override the denies
+# below no matter what sid they carry.
+pass dns $HOME_NET any -> any any (msg:"dagent: allow dns for ifconfig.io"; dns.query; content:"ifconfig.io"; nocase; endswith; sid:1000001; rev:1;)
+pass tls $HOME_NET any -> any any (msg:"dagent: allow tls to ifconfig.io"; tls.sni; content:"ifconfig.io"; nocase; endswith; sid:1000002; rev:1;)
+# No nocase on http.host: the buffer is already normalized to lowercase, and
+# suricata 8 rejects the rule outright rather than warning about it.
+pass http $HOME_NET any -> any any (msg:"dagent: allow http to ifconfig.io"; http.host; content:"ifconfig.io"; endswith; sid:1000003; rev:1;)
+
+# --- denied ---------------------------------------------------------------
+# Everything that is not tcp. This is safe to judge per-packet: a udp or icmp
+# packet is self-describing, so there is no handshake to preserve. The dns pass
+# above still gets its query out, since pass is evaluated first.
+drop ip $HOME_NET any -> any any (msg:"dagent: deny non-tcp"; ip_proto:!tcp; sid:1000010; rev:1;)
+
+# tcp to anything but the web ports, judged at the syn.
+drop tcp $HOME_NET any -> any ![80,443] (msg:"dagent: deny tcp to a non-web port"; sid:1000011; rev:1;)
+
+# On the web ports the destination is only knowable once the request is parsed,
+# so these fire on the clienthello or the request line -- one packet in, before
+# any payload has left the host.
+drop tls $HOME_NET any -> any any (msg:"dagent: deny tls to another host"; sid:1000012; rev:1;)
+drop http $HOME_NET any -> any any (msg:"dagent: deny http to another host"; sid:1000013; rev:1;)
+
+# A tunnel on 80 or 443 that is neither http nor tls would otherwise match no
+# rule at all and pass by default. app-layer-protocol:failed is detection having
+# run and come up with nothing, not detection still pending, so this does not
+# catch the handshake.
+drop tcp $HOME_NET any -> any [80,443] (msg:"dagent: deny non-web traffic on a web port"; app-layer-protocol:failed; sid:1000014; rev:1;)
+`
+
+// seedSuricataConfig writes the config and rule files that are missing. Each is
+// independent and only ever created, never rewritten: once these files exist
+// they are the operator's, which is the whole reason they live on the host
+// instead of in the image.
 func seedSuricataConfig(cfg netConfig) error {
-  path := filepath.Join(suricataConfigDir, "suricata.yaml")
-  if _, err := os.Stat(path); err == nil {
-    return nil
-  } else if !os.IsNotExist(err) {
-    return err
-  }
-
-  body := fmt.Sprintf(suricataConfigTemplate, cfg.Pool)
-  if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-    return err
-  }
-  log.Printf("wrote %s with HOME_NET %s", path, cfg.Pool)
-
-  // Both files are listed in rule-files, and Suricata treats a listed file it
-  // cannot open as a startup error. An empty local.rules is the normal state on
-  // a host with no local rules yet; suricata.rules is normally suricata-update's
-  // output, and an empty one means "no signatures" rather than "will not start".
   rules := filepath.Join(suricataLibDir, "rules")
   if err := os.MkdirAll(rules, 0o755); err != nil {
     return err
   }
-  for _, name := range []string{"suricata.rules", "local.rules"} {
-    p := filepath.Join(rules, name)
-    if _, err := os.Stat(p); os.IsNotExist(err) {
-      if err := os.WriteFile(p, nil, 0o644); err != nil {
-        return err
-      }
-      log.Printf("created empty %s", p)
+
+  // suricata.rules is suricata-update's output. Seeded empty because it is
+  // listed in rule-files and Suricata treats a listed file it cannot open as a
+  // startup error -- an empty one means "no signatures yet", not "will not run".
+  for _, f := range []struct{ path, body, note string }{
+    {filepath.Join(suricataConfigDir, "suricata.yaml"),
+      fmt.Sprintf(suricataConfigTemplate, cfg.Pool), "HOME_NET " + cfg.Pool},
+    {filepath.Join(rules, "local.rules"), localRules, "default deny, ifconfig.io allowed"},
+    {filepath.Join(rules, "suricata.rules"), "", "empty; run suricata-update to fill it"},
+  } {
+    if _, err := os.Stat(f.path); err == nil {
+      continue
+    } else if !os.IsNotExist(err) {
+      return err
     }
+    if err := os.WriteFile(f.path, []byte(f.body), 0o644); err != nil {
+      return err
+    }
+    log.Printf("wrote %s (%s)", f.path, f.note)
   }
   return nil
 }
