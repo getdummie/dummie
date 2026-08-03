@@ -10,11 +10,13 @@ import (
   "os"
   "os/signal"
   "path/filepath"
+  "strings"
   "syscall"
   "time"
 
   "github.com/google/nftables"
   "github.com/urfave/cli/v3"
+  "github.com/vishvananda/netlink"
 )
 
 // reconcileInterval is how often kernel state is re-derived from desired state.
@@ -202,6 +204,7 @@ func netdCommand() *cli.Command {
       &cli.BoolFlag{Name: "suricata", Usage: "queue allowed egress to suricata instead of accepting it outright"},
       &cli.IntFlag{Name: "queues", Usage: "nfqueue count; must equal suricata's -q flag count (default 4)"},
     },
+    Commands: []*cli.Command{netdTeardownCommand()},
     Action: func(ctx context.Context, cmd *cli.Command) error {
       data := dataDir(cmd)
       cfg, err := loadNetConfig(data)
@@ -235,6 +238,113 @@ func netdCommand() *cli.Command {
       return runNetd(ctx, data, cfg)
     },
   }
+}
+
+// --- teardown ---------------------------------------------------------------
+
+func netdTeardownCommand() *cli.Command {
+  return &cli.Command{
+    Name:  "teardown",
+    Usage: "remove the nftables table, taps and shaping device from the kernel",
+    Description: "Refuses to run while any vm is still using the network. Stopping netd " +
+      "deliberately leaves the policy in the kernel, so this is the only way to take it out.\n\n" +
+      "Configuration in net.json and the vm records on disk are left alone; only kernel state goes.",
+    Flags: []cli.Flag{dataDirFlag()},
+    Action: func(ctx context.Context, cmd *cli.Command) error {
+      return runTeardown(dataDir(cmd))
+    },
+  }
+}
+
+func runTeardown(data string) error {
+  if os.Geteuid() != 0 {
+    return errors.New("teardown needs root: it removes nftables rules and network interfaces")
+  }
+
+  // Tearing the policy out from under a live VM would leave it running with a
+  // tap and no rules -- briefly unpoliced, which is the one state this design
+  // exists to prevent.
+  vms, err := listVMs(data)
+  if err != nil {
+    return err
+  }
+  var running []string
+  for _, v := range vms {
+    if v.Net != nil && vmPID(data, v.ID) != 0 {
+      running = append(running, fmt.Sprintf("%s (%s, %s)", v.ID, v.Name, v.Net.IP))
+    }
+  }
+  if len(running) > 0 {
+    return fmt.Errorf("these vms are still on the network; stop them first:\n  %s",
+      strings.Join(running, "\n  "))
+  }
+
+  // Reverse of startup: policy first, then the interfaces it referred to.
+  if err := deleteRuleset(); err != nil {
+    return err
+  }
+  fmt.Println("removed nftables table inet " + nftTable)
+
+  taps, err := removeStrayTaps()
+  if err != nil {
+    return err
+  }
+  for _, name := range taps {
+    fmt.Println("removed tap " + name)
+  }
+
+  // removeTap is a no-op when the device is not there, which is the usual case
+  // unless bandwidth limits were ever applied.
+  if err := removeTap(ifbDevice); err != nil {
+    return fmt.Errorf("could not remove %s: %w", ifbDevice, err)
+  }
+  fmt.Println("removed " + ifbDevice + " if it existed")
+
+  // ip_forward is left on: it is a host-wide setting that other things may be
+  // relying on, and turning it off is not ours to decide.
+  fmt.Println("note: net.ipv4.ip_forward left enabled, and net.json is unchanged")
+  return nil
+}
+
+// deleteRuleset removes the whole table, which takes its chains, rules and sets
+// with it.
+func deleteRuleset() error {
+  c, err := nftables.New()
+  if err != nil {
+    return err
+  }
+  tables, err := c.ListTablesOfFamily(nftables.TableFamilyINet)
+  if err != nil {
+    return err
+  }
+  for _, t := range tables {
+    if t.Name == nftTable {
+      c.DelTable(t)
+    }
+  }
+  return c.Flush()
+}
+
+// removeStrayTaps deletes any interface named like one of ours. Normally there
+// are none -- the kernel reaps a tap when QEMU's fd closes -- but a VM killed
+// with SIGKILL mid-start can leave one behind.
+func removeStrayTaps() ([]string, error) {
+  links, err := netlink.LinkList()
+  if err != nil {
+    return nil, err
+  }
+  var removed []string
+  for _, l := range links {
+    name := l.Attrs().Name
+    if !strings.HasPrefix(name, tapPrefix) {
+      continue
+    }
+    if err := netlink.LinkDel(l); err != nil {
+      return removed, fmt.Errorf("could not remove %s: %w", name, err)
+    }
+    removed = append(removed, name)
+  }
+  return removed, nil
 }
 
 func runNetd(ctx context.Context, data string, cfg netConfig) error {
