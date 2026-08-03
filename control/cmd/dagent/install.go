@@ -179,9 +179,9 @@ network:
   gateway: 10.64.0.1
   # uplink: eth0          # default: whichever interface reaches the internet
   dns: 1.1.1.1
-  suricata: false         # true queues vm egress to suricata; it must be running
+  suricata: true
   queues: 4               # must equal suricata's -q flag count
-  # no_docker_compat: false
+  no_docker_compat: false
 `
 
 // ensureGroup creates the group if it is missing. groupadd rather than writing
