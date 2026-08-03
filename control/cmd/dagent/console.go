@@ -21,7 +21,12 @@ func attachConsole(socket string) error {
     return fmt.Errorf("could not reach the console at %s: %w", socket, err)
   }
   defer conn.Close()
+  return proxyConsole(conn, conn)
+}
 
+// proxyConsole is the terminal half, shared by the direct path and the daemon
+// client -- the transport differs, the terminal handling does not.
+func proxyConsole(out io.Writer, in io.Reader) error {
   restore, err := makeRaw(int(os.Stdin.Fd()))
   if err == nil {
     defer restore()
@@ -34,11 +39,11 @@ func attachConsole(socket string) error {
 
   done := make(chan error, 1)
   go func() {
-    _, err := io.Copy(os.Stdout, conn)
+    _, err := io.Copy(os.Stdout, in)
     done <- err
   }()
   go func() {
-    done <- copyUntilDetach(conn, os.Stdin)
+    done <- copyUntilDetach(out, os.Stdin)
   }()
 
   return <-done

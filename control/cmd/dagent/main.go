@@ -23,6 +23,9 @@ func main() {
     Usage:   "control plane agent",
     Version: version,
     Commands: []*cli.Command{
+      installCommand(),
+      uninstallCommand(),
+      serveCommand(),
       connectCommand(),
       doctorCommand(),
       vmCommand(),
