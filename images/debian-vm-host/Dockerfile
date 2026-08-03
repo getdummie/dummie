@@ -26,9 +26,12 @@ RUN set -ex \
     qemu-system-x86 \
     qemu-utils \
     neovim \
+    udev \
   && echo 'root:root' | chpasswd \
   && apt clean \
   && systemctl enable ssh \
+  && systemctl unmask systemd-udevd \
+  && systemctl enable systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udevd.service \
   && systemctl enable systemd-resolved \
   && mkdir -p /root/.ssh \
   && curl -sL https://github.com/codingcoffee.keys > /root/.ssh/authorized_keys \
