@@ -1,11 +1,13 @@
 package main
 
 import (
+  "encoding/json"
   "fmt"
   "log"
   "os"
   "os/exec"
   "path/filepath"
+  "slices"
   "strconv"
   "strings"
 )
@@ -50,15 +52,26 @@ func ensureSuricata(cfg netConfig) {
 
   switch state := containerState(docker, suricataContainer); state {
   case "running":
-    return
+    // Running is not the same as running with the right arguments. An operator
+    // who edits network.queues and restarts dagent gets a new ruleset queueing
+    // to a count the container was never told about, and packets hashed to an
+    // unbound queue are dropped -- so the container is replaced rather than left
+    // alone. Nothing to do in the overwhelmingly common case where they agree.
+    drift := suricataDrift(docker, cfg)
+    if drift == "" {
+      return
+    }
+    log.Printf("the suricata container %s; recreating it", drift)
+    if !removeSuricata(docker) {
+      return
+    }
   case "":
     // Not there at all: the usual case on a fresh boot.
   default:
     // Exited, created or dead. --rm normally reaps it, but a container that
     // failed to start can linger and hold the name.
     log.Printf("suricata container is %s; recreating it", state)
-    if out, err := exec.Command(docker, "rm", "-f", suricataContainer).CombinedOutput(); err != nil {
-      log.Printf("could not remove the stale suricata container: %v: %s", err, strings.TrimSpace(string(out)))
+    if !removeSuricata(docker) {
       return
     }
   }
@@ -192,9 +205,60 @@ func seedSuricataConfig(cfg netConfig) error {
   return nil
 }
 
-// suricataRunArgs builds the docker invocation. The queue flags come from
-// cfg.Queues rather than being hardcoded, because a count that disagrees with
-// the ruleset's is an outage: packets hashed to an unbound queue are dropped.
+// suricataDrift compares the running container against what this config would
+// start, and describes the difference or returns "" if there is none. Only the
+// image and the arguments are checked: those are what a config change moves, and
+// the mounts and capabilities are constants in this file.
+func suricataDrift(docker string, cfg netConfig) string {
+  var got struct {
+    Config struct {
+      Image string
+      Cmd   []string
+    }
+  }
+  out, err := exec.Command(docker, "inspect", suricataContainer).Output()
+  if err != nil {
+    return "" // Cannot tell, so leave a working container alone.
+  }
+  var containers []json.RawMessage
+  if err := json.Unmarshal(out, &containers); err != nil || len(containers) == 0 {
+    return ""
+  }
+  if err := json.Unmarshal(containers[0], &got); err != nil {
+    return ""
+  }
+
+  if want := suricataCmd(cfg); !slices.Equal(got.Config.Cmd, want) {
+    return fmt.Sprintf("was started with %q but this config wants %q",
+      strings.Join(got.Config.Cmd, " "), strings.Join(want, " "))
+  }
+  if got.Config.Image != defaultSuricataImage {
+    return fmt.Sprintf("is running %s but dagent expects %s", got.Config.Image, defaultSuricataImage)
+  }
+  return ""
+}
+
+func removeSuricata(docker string) bool {
+  if out, err := exec.Command(docker, "rm", "-f", suricataContainer).CombinedOutput(); err != nil {
+    log.Printf("could not remove the suricata container: %v: %s", err, strings.TrimSpace(string(out)))
+    return false
+  }
+  return true
+}
+
+// suricataCmd is everything after the image name: one -q per queue dagent hands
+// packets to. The count is not a preference but a contract with the ruleset --
+// traffic hashed to a queue nobody is bound to is dropped, so a mismatch takes
+// VM egress down for a fraction of flows.
+func suricataCmd(cfg netConfig) []string {
+  var cmd []string
+  for q := 0; q < int(cfg.Queues); q++ {
+    cmd = append(cmd, "-q", strconv.Itoa(q))
+  }
+  return append(cmd, "-v")
+}
+
+// suricataRunArgs builds the docker invocation.
 func suricataRunArgs(cfg netConfig, image string) []string {
   args := []string{
     "run", "-d", "--rm",
@@ -210,10 +274,9 @@ func suricataRunArgs(cfg netConfig, image string) []string {
     "-v", suricataLibDir + ":" + suricataLibDir,
     image,
   }
-  for q := 0; q < int(cfg.Queues); q++ {
-    args = append(args, "-q", strconv.Itoa(q))
-  }
-  return append(args, "-v")
+  // Shared with the drift check, so what is compared is by construction the
+  // same thing that would be started.
+  return append(args, suricataCmd(cfg)...)
 }
 
 // stopSuricata removes the container, returning what to tell the operator. It
