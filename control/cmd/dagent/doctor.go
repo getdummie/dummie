@@ -10,6 +10,7 @@ import (
   "runtime"
   "slices"
   "strings"
+  "syscall"
 
   "github.com/google/nftables"
   "github.com/urfave/cli/v3"
@@ -49,6 +50,7 @@ var checks = []check{
   {"qemu-img is installed", checkQEMUImg},
   {"hardware virtualisation is usable", checkKVM},
   {"cgroup v2 is available", checkCgroup2},
+  {"vms can run as their own uid", checkVMUID},
   {"rootfs images can be built from tars", checkRootfsTools},
   {"tap devices can be created", checkTun},
   {"nftables is usable", checkNftables},
@@ -170,6 +172,42 @@ func checkCgroup2() (result, string) {
     return warn, "cannot create " + dagentSlice + " (" + err.Error() + "); vms will run without limits"
   }
   return pass, cgroupRoot + ", " + dagentSlice + " is writable"
+}
+
+// checkVMUID covers the two things a per-VM uid needs from the host: privilege
+// to drop, and a /dev/kvm the dropped-to uid can still reach. Both are warnings
+// -- the VM boots either way, less isolated or slower.
+func checkVMUID() (result, string) {
+  if os.Geteuid() != 0 {
+    return warn, "not root; vms will run as this user and share their files with each other"
+  }
+  groups, kvm := kvmAccess()
+  reach := fmt.Sprintf("uids %d-%d", uidBase, uidBase+uidCount-1)
+  switch {
+  case !kvm:
+    return warn, reach + ", but " + describeKVMDevice() +
+      ": no unprivileged uid can open it, so vms will fall back to slow software emulation"
+  case len(groups) == 0:
+    return pass, reach + ", /dev/kvm is world-writable"
+  default:
+    return pass, fmt.Sprintf("%s, /dev/kvm via group %d", reach, groups[0])
+  }
+}
+
+// describeKVMDevice names the device's owner and mode rather than the reason it
+// is unreachable. "Not reachable by an unprivileged uid" has several causes --
+// no group access at all, a root-owned group, a hand-made device node -- and the
+// numbers say which one it is without a second round of questions.
+func describeKVMDevice() string {
+  info, err := os.Stat("/dev/kvm")
+  if err != nil {
+    return "/dev/kvm cannot be read (" + err.Error() + ")"
+  }
+  st, ok := info.Sys().(*syscall.Stat_t)
+  if !ok {
+    return "/dev/kvm"
+  }
+  return fmt.Sprintf("/dev/kvm is owned %d:%d mode %04o", st.Uid, st.Gid, info.Mode().Perm())
 }
 
 // checkRootfsTools covers --rootfs-tar only, so a missing tool is a warning:

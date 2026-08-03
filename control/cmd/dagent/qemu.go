@@ -141,6 +141,10 @@ func device(base string, mmio bool) string {
 // launchVM starts qemu detached and returns its pid. The caller's exit must not
 // take the guest with it, so the process gets its own session and its output
 // goes to a file rather than to our stdio.
+//
+// This is also where the VM stops being privileged: the credential is applied
+// between fork and exec, so the qemu that comes out the other side has never run
+// as anything but its own uid.
 func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error) {
   logFile, err := os.OpenFile(vmPath(data, v.ID, vmQEMULog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
   if err != nil {
@@ -148,7 +152,14 @@ func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error
   }
   defer logFile.Close()
 
-  args := qemuArgs(data, *v, kvmAvailable())
+  cred, kvm := vmCredential(*v)
+  if cred != nil && !kvm && kvmAvailable() {
+    // Worth a line: the guest is about to be an order of magnitude slower, and
+    // the reason is a device permission rather than anything about the VM.
+    log.Printf("vm %s: /dev/kvm is not reachable by uid %d; falling back to software emulation",
+      v.ID, v.UID)
+  }
+  args := qemuArgs(data, *v, kvm)
 
   cgFD := -1
   if v.Cgroup != "" {
@@ -167,7 +178,7 @@ func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error
     if tap != nil {
       cmd.ExtraFiles = []*os.File{tap}
     }
-    cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+    cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Credential: cred}
     if useCgroup {
       cmd.SysProcAttr.UseCgroupFD = true
       cmd.SysProcAttr.CgroupFD = cgFD

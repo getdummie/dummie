@@ -120,6 +120,19 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
     name = id
   }
 
+  // A uid to drop to is only useful if there is privilege to drop. Without it
+  // every guest runs as whoever started dagent and shares that identity with
+  // every other guest, which is worth saying out loud rather than leaving the
+  // operator to infer it.
+  uid := 0
+  if os.Geteuid() == 0 {
+    if uid, err = allocateUID(data); err != nil {
+      return vm{}, err
+    }
+  } else {
+    logf("WARNING: not root; this vm runs as the current user and is not isolated from other vms")
+  }
+
   v := vm{
     ID:        id,
     Name:      name,
@@ -130,6 +143,7 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
     Append:    req.Append,
     Firmware:  req.Firmware,
     Disk:      vmPath(data, id, vmOverlayImage),
+    UID:       uid,
   }
   if boot == bootDirect && v.Append == "" {
     v.Append = defaultAppend()
@@ -157,8 +171,16 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
     }
   }
 
-  if err := os.MkdirAll(vmDir(data, id), 0o700); err != nil {
+  // run/ has to exist before qemu does: it creates its sockets there and will
+  // not create the directory itself.
+  if err := os.MkdirAll(vmPath(data, id, vmRunDir), 0o700); err != nil {
     return vm{}, err
+  }
+  if uid != 0 {
+    // The guest has to be able to reach its own directory to open its disk.
+    if err := ensureTraversable(data); err != nil {
+      return vm{}, err
+    }
   }
   // Anything created from here on has to be undone if the boot fails, or the
   // operator is left with a half-made vm and a stale cgroup.
@@ -201,6 +223,16 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
     v.Cgroup = ""
   }
 
+  // Ownership last: everything qemu will open exists by now, and past this point
+  // the files belong to the guest rather than to us.
+  if err := chownVM(data, v); err != nil {
+    cleanup()
+    return vm{}, err
+  }
+
+  if uid != 0 {
+    logf("running as uid %d", uid)
+  }
   logf("starting qemu")
   pid, err := launchVM(ctx, data, &v, tap)
   if err != nil {

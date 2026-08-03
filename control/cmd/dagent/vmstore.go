@@ -19,19 +19,27 @@ import (
 //   images/                     shared cache of downloaded kernels and images
 //   vms/<id>/vm.json            desired state, the record of what was asked for
 //   vms/<id>/qemu.pid           pid of the running qemu, absent when stopped
-//   vms/<id>/qmp.sock           control socket (stop, later: everything else)
-//   vms/<id>/console.sock       serial console, what `vm console` attaches to
-//   vms/<id>/console.log        every byte the guest ever wrote to the console
 //   vms/<id>/qemu.log           qemu's own stderr, the first place to look
 //   vms/<id>/root.qcow2         per-VM overlay over the cached base image
+//   vms/<id>/run/qmp.sock       control socket (stop, later: everything else)
+//   vms/<id>/run/console.sock   serial console, what `vm console` attaches to
+//   vms/<id>/run/console.log    every byte the guest ever wrote to the console
+//
+// The split at run/ is what a per-VM uid needs: qemu creates its own sockets, so
+// it must own a directory, and that directory must not be the one holding
+// vm.json. The reconciler builds the firewall from vm.json, so a guest able to
+// edit it would be a guest able to write its own egress policy.
 const (
   vmConfigFile   = "vm.json"
   vmPIDFile      = "qemu.pid"
-  vmQMPSocket    = "qmp.sock"
-  vmConsoleSock  = "console.sock"
-  vmConsoleLog   = "console.log"
   vmQEMULog      = "qemu.log"
   vmOverlayImage = "root.qcow2"
+
+  // vmRunDir is the only thing inside a VM's directory the guest may write.
+  vmRunDir      = "run"
+  vmQMPSocket   = vmRunDir + "/qmp.sock"
+  vmConsoleSock = vmRunDir + "/console.sock"
+  vmConsoleLog  = vmRunDir + "/console.log"
 )
 
 // bootMode picks the machine shape. The two are genuinely different machines,
@@ -82,6 +90,12 @@ type vm struct {
 
   Disk   string `json:"disk"`             // per-VM overlay
   Cgroup string `json:"cgroup,omitempty"` // empty when limits could not be applied
+
+  // UID is the unprivileged user qemu runs as, and the owner of everything in
+  // the VM's directory. Zero means the VM was created with no privilege to drop
+  // and runs as dagent itself. It belongs with the desired state because it is
+  // an allocation, exactly like the address.
+  UID int `json:"uid,omitempty"`
 }
 
 // newVMID is short enough to type and wide enough that collisions inside one

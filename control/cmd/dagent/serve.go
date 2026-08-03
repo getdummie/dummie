@@ -60,6 +60,14 @@ func runServe(ctx context.Context, cfg Config) error {
   if err := enableForwarding(); err != nil {
     return fmt.Errorf("could not enable ip forwarding: %w", err)
   }
+  // Repaired on every start, not once at install: /dev is rebuilt at boot, and
+  // in a container it is rebuilt whenever the container is. Not fatal -- a host
+  // with no usable /dev/kvm still runs guests, just slowly.
+  if msg, err := ensureKVMAccess(); err != nil {
+    log.Printf("could not make /dev/kvm reachable by an unprivileged uid (%v); vms will fall back to software emulation", err)
+  } else {
+    log.Print(msg)
+  }
   if err := applyBaseRuleset(nc); err != nil {
     return err
   }

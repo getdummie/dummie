@@ -9,6 +9,7 @@ import (
   "os/exec"
   "os/user"
   "path/filepath"
+  "slices"
 
   "github.com/urfave/cli/v3"
 )
@@ -49,7 +50,7 @@ func installCommand() *cli.Command {
     Name:  "install",
     Usage: "install dagent as a system service so the cli does not need sudo",
     Description: "Copies this binary to " + installedBinary + ", creates the " + defaultGroup +
-      " group, writes " + unitPath + ", and starts the daemon.\n\n" +
+      " group and adds the invoking user to it, writes " + unitPath + ", and starts the daemon.\n\n" +
       "Members of the " + defaultGroup + " group can then run vm commands without sudo. That " +
       "grants the ability to start a vm from an arbitrary kernel and an arbitrary tar, which is " +
       "root by another route -- treat it exactly like passwordless sudo.",
@@ -66,6 +67,14 @@ func installCommand() *cli.Command {
 func runInstall(ctx context.Context, skipDoctor bool, cfgPath string) error {
   if os.Geteuid() != 0 {
     return errors.New("install needs root")
+  }
+
+  // Before the checks rather than after, so the report describes the host as
+  // this install leaves it instead of warning about something install just fixed.
+  if msg, err := ensureKVMAccess(); err != nil {
+    fmt.Println("WARNING: " + err.Error() + "; vms will fall back to software emulation")
+  } else {
+    fmt.Println(msg)
   }
 
   // A host that cannot run a VM should not get a service that pretends it can.
@@ -120,20 +129,53 @@ func runInstall(ctx context.Context, skipDoctor bool, cfgPath string) error {
     }
   }
   fmt.Println("started " + unitName)
+  fmt.Println(addToGroup(ctx, defaultGroup))
 
   fmt.Printf(`
-Add yourself to the %s group, then log out and back in:
-
-    sudo usermod -aG %s $USER
-
-That is equivalent to passwordless sudo: anyone in this group can start a vm
-from any kernel and any rootfs. Only add people you would give root.
+Membership of the %s group is equivalent to passwordless sudo: anyone in it can
+start a vm from any kernel and any rootfs. Only add people you would give root.
 
     dagent vm list
     systemctl status %s
     journalctl -u %s -f
-`, defaultGroup, defaultGroup, unitName, unitName)
+`, defaultGroup, unitName, unitName)
   return nil
+}
+
+// addToGroup puts the operator who ran the install into the group, which is the
+// one step that used to be left as a command to copy. The name comes from
+// SUDO_USER: install runs as root, so the identity worth adding is the one that
+// invoked sudo rather than the one the process ended up as.
+//
+// It returns what happened instead of an error. An install driven by a
+// provisioning tool has no invoking user at all, and that is not a reason to fail
+// an otherwise complete install -- but it is a reason to say so.
+func addToGroup(ctx context.Context, group string) string {
+  name := os.Getenv("SUDO_USER")
+  if name == "" || name == "root" {
+    return "no invoking user to add to the " + group + " group; add one with: usermod -aG " + group + " <user>"
+  }
+
+  u, err := user.Lookup(name)
+  if err != nil {
+    return fmt.Sprintf("could not look up %s (%v); add them with: usermod -aG %s %s", name, err, group, name)
+  }
+  g, err := user.LookupGroup(group)
+  if err != nil {
+    return fmt.Sprintf("could not look up the %s group: %v", group, err)
+  }
+  if gids, err := u.GroupIds(); err == nil && slices.Contains(gids, g.Gid) {
+    return name + " is already in the " + group + " group"
+  }
+
+  // -a is what makes this append. Without it, -G replaces every other group the
+  // user is in, which on a single-admin host means locking them out of sudo.
+  out, err := exec.CommandContext(ctx, "usermod", "-aG", group, name).CombinedOutput()
+  if err != nil {
+    return fmt.Sprintf("could not add %s to the %s group (%v: %s); add them by hand",
+      name, group, err, out)
+  }
+  return "added " + name + " to the " + group + " group; log out and back in for it to take effect"
 }
 
 func uninstallCommand() *cli.Command {
