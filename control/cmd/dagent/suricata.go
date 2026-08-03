@@ -64,18 +64,17 @@ func ensureSuricata(cfg netConfig) {
   }
 
   // Created rather than left to docker, which would make them root-owned
-  // directories with no note of who wanted them. An empty config dir is not an
-  // error: the image seeds its own default suricata.yaml into the mount when it
-  // finds one, which is how a first run on a fresh host works at all.
+  // directories with no note of who wanted them -- and the config dir has to
+  // exist before seedSuricataConfig can write into it.
   for _, dir := range []string{suricataConfigDir, suricataLogDir, suricataLibDir} {
     if err := os.MkdirAll(dir, 0o755); err != nil {
       log.Printf("could not create %s: %v", dir, err)
       return
     }
   }
-  if _, err := os.Stat(filepath.Join(suricataConfigDir, "suricata.yaml")); err != nil {
-    log.Printf("%s has no suricata.yaml; the container will write its defaults there",
-      suricataConfigDir)
+  if err := seedSuricataConfig(cfg); err != nil {
+    log.Printf("could not write the suricata config: %v", err)
+    return
   }
 
   args := suricataRunArgs(cfg, defaultSuricataImage)
@@ -85,6 +84,64 @@ func ensureSuricata(cfg netConfig) {
     return
   }
   log.Printf("started the suricata container on %d queues", cfg.Queues)
+}
+
+// suricataConfigTemplate is the config a fresh host gets. HOME_NET is the VM
+// pool, so a rule written against $HOME_NET means "our guests" on every host
+// regardless of what pool it was given -- hardcoding the default would silently
+// make every VM external on a host that changed it.
+//
+// Everything else is left to Suricata's built-in defaults; this file only says
+// what dagent knows and the defaults cannot.
+const suricataConfigTemplate = `%%YAML 1.1
+---
+# Written by dagent on first start. Edits are preserved: dagent only creates this
+# file when it is missing, and never rewrites it.
+vars:
+  address-groups:
+    HOME_NET: "[%s]"
+
+default-rule-path: /var/lib/suricata/rules
+rule-files:
+  - suricata.rules
+  - local.rules
+`
+
+// seedSuricataConfig writes the config and its rule files if they are not there.
+// Absent rather than overwritten-each-start, because this file is the operator's
+// once it exists -- the whole reason it lives on the host and not in the image.
+func seedSuricataConfig(cfg netConfig) error {
+  path := filepath.Join(suricataConfigDir, "suricata.yaml")
+  if _, err := os.Stat(path); err == nil {
+    return nil
+  } else if !os.IsNotExist(err) {
+    return err
+  }
+
+  body := fmt.Sprintf(suricataConfigTemplate, cfg.Pool)
+  if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+    return err
+  }
+  log.Printf("wrote %s with HOME_NET %s", path, cfg.Pool)
+
+  // Both files are listed in rule-files, and Suricata treats a listed file it
+  // cannot open as a startup error. An empty local.rules is the normal state on
+  // a host with no local rules yet; suricata.rules is normally suricata-update's
+  // output, and an empty one means "no signatures" rather than "will not start".
+  rules := filepath.Join(suricataLibDir, "rules")
+  if err := os.MkdirAll(rules, 0o755); err != nil {
+    return err
+  }
+  for _, name := range []string{"suricata.rules", "local.rules"} {
+    p := filepath.Join(rules, name)
+    if _, err := os.Stat(p); os.IsNotExist(err) {
+      if err := os.WriteFile(p, nil, 0o644); err != nil {
+        return err
+      }
+      log.Printf("created empty %s", p)
+    }
+  }
+  return nil
 }
 
 // suricataRunArgs builds the docker invocation. The queue flags come from
