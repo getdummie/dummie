@@ -59,7 +59,7 @@ SET status = 'gone', updated_at = now()
 WHERE agent_id = $1
   AND vm_id <> ''
   AND status IN ('running', 'stopped')
-  AND NOT (vm_id = ANY($2::text[]));
+  AND NOT (vm_id = ANY(sqlc.arg(vm_ids)::text[]));
 
 -- name: DeleteAdoptedVM :exec
 -- DeleteAdoptedVM resolves the one race between the two ways a row is born: an
