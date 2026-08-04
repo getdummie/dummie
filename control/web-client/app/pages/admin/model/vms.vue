@@ -36,6 +36,45 @@ interface VMRow {
   last_error: string
   created_at: string
   started_at: string
+  // When the host last confirmed this VM; "" if it never has.
+  reported_at: string
+}
+
+// Anything a host reported is only true as of when it reported it, and a host
+// that has stopped answering keeps its last claim on the record. Four missed
+// 30s reports is a generous margin for a slow tick or a brief reconnect, and
+// still catches a host that went down.
+const staleAfterMs = 2 * 60_000
+
+const hostReported = new Set(['running', 'stopped'])
+
+// A ticking clock, because staleness depends on the passage of time rather than
+// on new data. Deriving it from the fetch would be exactly backwards: when the
+// control server is unreachable the table stops updating, which is when a stale
+// 'running' most needs to stop being believed.
+const now = ref(Date.now())
+let clock: ReturnType<typeof setInterval> | undefined
+
+// displayStatus is what the badge shows. 'stale' is not a status the server
+// stores -- it cannot be, since it would go stale itself -- so it is derived
+// here from the row's own status and how long ago the host vouched for it.
+function displayStatus(v: VMRow) {
+  if (!hostReported.has(v.status)) return v.status
+  const at = v.reported_at ? new Date(v.reported_at).getTime() : Number.NaN
+  if (Number.isNaN(at) || now.value - at > staleAfterMs) return 'stale'
+  return v.status
+}
+
+function since(s: string) {
+  if (!s) return 'never'
+  const at = new Date(s).getTime()
+  if (Number.isNaN(at)) return s
+  const secs = Math.max(0, Math.round((now.value - at) / 1000))
+  if (secs < 60) return `${secs}s ago`
+  const mins = Math.round(secs / 60)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.round(mins / 60)
+  return hours < 24 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`
 }
 
 const { authFetch } = useAuth()
@@ -92,7 +131,9 @@ function agentLabel(id: string) {
   return hostnames.value[id] || `${id.slice(0, 8)}…`
 }
 
-const statusVariant: Record<VMRow['status'], 'default' | 'secondary' | 'outline' | 'destructive'> = {
+type BadgeVariant = 'default' | 'secondary' | 'outline' | 'destructive'
+
+const statusVariant: Record<string, BadgeVariant> = {
   running: 'default',
   pending: 'secondary',
   stopped: 'secondary',
@@ -100,6 +141,9 @@ const statusVariant: Record<VMRow['status'], 'default' | 'secondary' | 'outline'
   // its host, which is usually deliberate -- so it reads as muted, not alarming.
   gone: 'outline',
   failed: 'destructive',
+  // 'stale' is loud on purpose: the row is making a claim nobody can currently
+  // stand behind, and reading it as 'running' is the mistake worth preventing.
+  stale: 'destructive',
 }
 
 // silent skips the skeletons so the background poll doesn't make the table flash.
@@ -151,8 +195,14 @@ onMounted(() => {
   load()
   loadAgents()
   poll = setInterval(() => load(true), pollInterval)
+  // Well under staleAfterMs, so a row turns stale within a few seconds of
+  // actually being stale rather than on the next poll.
+  clock = setInterval(() => (now.value = Date.now()), 10_000)
 })
-onUnmounted(() => clearInterval(poll))
+onUnmounted(() => {
+  clearInterval(poll)
+  clearInterval(clock)
+})
 
 // syncing drives the button's own spinner. It is separate from `loading` so a
 // manual refresh spins the icon without also blanking the table into skeletons.
@@ -631,12 +681,20 @@ async function confirmDelete() {
             </TableCell>
             <TableCell class="font-mono text-muted-foreground">{{ agentLabel(v.agent_id) }}</TableCell>
             <TableCell>
-              <Badge :variant="statusVariant[v.status]" class="font-mono">{{ v.status }}</Badge>
+              <Badge :variant="statusVariant[displayStatus(v)]" class="font-mono">
+                {{ displayStatus(v) }}
+              </Badge>
+              <!-- A stale badge without the age is just as unhelpful as the wrong
+                   status was: the age is what says whether the host missed one
+                   report or went down an hour ago. -->
+              <div v-if="displayStatus(v) === 'stale'" class="mt-1 text-xs text-muted-foreground">
+                was <span class="font-mono">{{ v.status }}</span>, last seen {{ since(v.reported_at) }}
+              </div>
               <!-- The reason a create failed is the only thing anyone wants from
                    a failed row, so it sits with the status rather than behind a
                    click. title= keeps the full text reachable when truncated. -->
               <div
-                v-if="v.status === 'failed' && v.last_error"
+                v-else-if="v.status === 'failed' && v.last_error"
                 class="mt-1 max-w-56 truncate text-xs text-destructive"
                 :title="v.last_error"
               >

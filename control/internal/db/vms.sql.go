@@ -37,7 +37,7 @@ func (q *Queries) CountVMsByAgent(ctx context.Context, agentID pgtype.UUID) (int
 const createVM = `-- name: CreateVM :one
 INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, spec)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at
+RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at
 `
 
 type CreateVMParams struct {
@@ -77,6 +77,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartedAt,
+		&i.ReportedAt,
 	)
 	return i, err
 }
@@ -145,7 +146,7 @@ func (q *Queries) FailPendingVMsForAgent(ctx context.Context, arg FailPendingVMs
 }
 
 const getVM = `-- name: GetVM :one
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at FROM vms
 WHERE id = $1
 `
 
@@ -167,12 +168,13 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.StartedAt,
+		&i.ReportedAt,
 	)
 	return i, err
 }
 
 const listVMs = `-- name: ListVMs :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -206,6 +208,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.StartedAt,
+			&i.ReportedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -218,7 +221,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 }
 
 const listVMsByAgent = `-- name: ListVMsByAgent :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at FROM vms
 WHERE agent_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -254,6 +257,7 @@ func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) 
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.StartedAt,
+			&i.ReportedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -347,17 +351,18 @@ func (q *Queries) MarkVMRunning(ctx context.Context, arg MarkVMRunningParams) er
 }
 
 const upsertVMFromInventory = `-- name: UpsertVMFromInventory :exec
-INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 ON CONFLICT (agent_id, vm_id) WHERE vm_id <> '' DO UPDATE
-SET name       = EXCLUDED.name,
-    status     = EXCLUDED.status,
-    boot       = EXCLUDED.boot,
-    cpus       = EXCLUDED.cpus,
-    memory_mib = EXCLUDED.memory_mib,
-    ip         = EXCLUDED.ip,
-    started_at = COALESCE(vms.started_at, EXCLUDED.started_at),
-    updated_at = now()
+SET name        = EXCLUDED.name,
+    status      = EXCLUDED.status,
+    boot        = EXCLUDED.boot,
+    cpus        = EXCLUDED.cpus,
+    memory_mib  = EXCLUDED.memory_mib,
+    ip          = EXCLUDED.ip,
+    started_at  = COALESCE(vms.started_at, EXCLUDED.started_at),
+    reported_at = now(),
+    updated_at  = now()
 `
 
 type UpsertVMFromInventoryParams struct {

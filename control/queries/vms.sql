@@ -35,17 +35,18 @@ WHERE id = $1;
 -- created_at comes from the host, not from now(): the VM's age is a fact about
 -- the guest, not about when this server first heard of it. started_at is kept if
 -- we already knew it, since the host does not report when a boot happened.
-INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 ON CONFLICT (agent_id, vm_id) WHERE vm_id <> '' DO UPDATE
-SET name       = EXCLUDED.name,
-    status     = EXCLUDED.status,
-    boot       = EXCLUDED.boot,
-    cpus       = EXCLUDED.cpus,
-    memory_mib = EXCLUDED.memory_mib,
-    ip         = EXCLUDED.ip,
-    started_at = COALESCE(vms.started_at, EXCLUDED.started_at),
-    updated_at = now();
+SET name        = EXCLUDED.name,
+    status      = EXCLUDED.status,
+    boot        = EXCLUDED.boot,
+    cpus        = EXCLUDED.cpus,
+    memory_mib  = EXCLUDED.memory_mib,
+    ip          = EXCLUDED.ip,
+    started_at  = COALESCE(vms.started_at, EXCLUDED.started_at),
+    reported_at = now(),
+    updated_at  = now();
 
 -- name: MarkMissingVMsGone :exec
 -- MarkMissingVMsGone settles the other half of an inventory report: a row the

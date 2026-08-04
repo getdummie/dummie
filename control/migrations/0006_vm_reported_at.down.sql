@@ -1,0 +1,1 @@
+ALTER TABLE vms DROP COLUMN IF EXISTS reported_at;

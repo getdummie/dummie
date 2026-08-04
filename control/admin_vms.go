@@ -38,6 +38,12 @@ type vmDTO struct {
   LastError string          `json:"last_error"`
   CreatedAt string          `json:"created_at"`
   StartedAt string          `json:"started_at"`
+
+  // ReportedAt is when the host last confirmed this VM; "" means it never has.
+  // 'running' is the host's claim as of that moment, not a live observation, so
+  // a reader has to weigh the status against this timestamp -- a status of
+  // 'running' with a stale ReportedAt means "was running when last seen".
+  ReportedAt string `json:"reported_at"`
 }
 
 func toVMDTO(v db.Vm) vmDTO {
@@ -60,6 +66,9 @@ func toVMDTO(v db.Vm) vmDTO {
   }
   if v.StartedAt.Valid {
     d.StartedAt = v.StartedAt.Time.Format(time.RFC3339)
+  }
+  if v.ReportedAt.Valid {
+    d.ReportedAt = v.ReportedAt.Time.Format(time.RFC3339)
   }
   return d
 }
