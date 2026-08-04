@@ -71,6 +71,27 @@ WHERE agent_id = $1
 DELETE FROM vms
 WHERE agent_id = $1 AND vm_id = $2 AND id <> $3;
 
+-- name: SetVMStatus :exec
+-- SetVMStatus settles a start, stop or destroy as soon as the agent confirms it,
+-- rather than waiting up to a full inventory tick for the row to catch up.
+--
+-- reported_at moves too. A result frame *is* the host vouching for this VM, at
+-- this moment, on the same socket an inventory report would use -- so treating
+-- it as older than it is would show a VM that was just confirmed as stale, which
+-- is both wrong and alarming. A host that dies immediately afterwards is still
+-- caught, by the ordinary staleness window.
+UPDATE vms
+SET status = $2, last_error = '', reported_at = now(), updated_at = now()
+WHERE id = $1;
+
+-- name: SetVMLastError :exec
+-- SetVMLastError records a failed action without changing the status. A stop
+-- that failed most likely leaves the VM running, so claiming otherwise would be
+-- worse than saying nothing.
+UPDATE vms
+SET last_error = $2, updated_at = now()
+WHERE id = $1;
+
 -- name: GetVM :one
 SELECT * FROM vms
 WHERE id = $1;

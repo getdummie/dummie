@@ -35,6 +35,7 @@ func (s *apiServer) routes() http.Handler {
   mux := http.NewServeMux()
   mux.HandleFunc("POST /v1/vms", s.createVM)
   mux.HandleFunc("GET /v1/vms", s.listVMs)
+  mux.HandleFunc("POST /v1/vms/{id}/start", s.startVM)
   mux.HandleFunc("POST /v1/vms/{id}/stop", s.stopVM)
   mux.HandleFunc("DELETE /v1/vms/{id}", s.removeVM)
   mux.HandleFunc("GET /v1/vms/{id}/console", s.console)
@@ -91,6 +92,45 @@ func (s *apiServer) listVMs(w http.ResponseWriter, r *http.Request) {
     out = append(out, vmStatus{VM: v, PID: vmPID(s.data, v.ID)})
   }
   writeJSON(w, http.StatusOK, out)
+}
+
+// startVM streams NDJSON for the same reason createVM does: bringing the tap and
+// policy back and waiting out qemu's startup grace is seconds, not milliseconds,
+// and the progress lines are the same ones a create prints.
+func (s *apiServer) startVM(w http.ResponseWriter, r *http.Request) {
+  v, err := resolveVM(s.data, r.PathValue("id"))
+  if err != nil {
+    writeJSON(w, http.StatusNotFound, errorBody{err.Error()})
+    return
+  }
+
+  w.Header().Set("Content-Type", "application/x-ndjson")
+  w.WriteHeader(http.StatusOK)
+  enc := json.NewEncoder(w)
+  flush := func() {
+    if f, ok := w.(http.Flusher); ok {
+      f.Flush()
+    }
+  }
+  logf := func(format string, args ...any) {
+    _ = enc.Encode(event{Log: fmt.Sprintf(format, args...)})
+    flush()
+  }
+
+  // Detached from the request: a client that hangs up must not leave a VM whose
+  // tap exists but whose qemu was never started.
+  if _, err := startVM(context.WithoutCancel(r.Context()), s.data, v, logf); err != nil {
+    _ = enc.Encode(event{Error: err.Error()})
+    flush()
+    return
+  }
+  // Re-read rather than reusing v: startVM rewrites vm.json with the tap and
+  // cgroup this run got, and the client should see those, not the stale ones.
+  if started, err := loadVM(s.data, v.ID); err == nil {
+    v = started
+  }
+  _ = enc.Encode(event{VM: &v})
+  flush()
 }
 
 func (s *apiServer) stopVM(w http.ResponseWriter, r *http.Request) {

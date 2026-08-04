@@ -86,11 +86,30 @@ func (c *client) create(ctx context.Context, req createRequest, w io.Writer) (vm
   if err != nil {
     return vm{}, err
   }
-  hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://dagent/v1/vms", bytes.NewReader(b))
+  return c.streamVM(ctx, "http://dagent/v1/vms", b, w)
+}
+
+// start boots an existing VM. It is the same NDJSON exchange as create -- both
+// end in either a VM or an error after an unknown number of progress lines --
+// so it is the same reader.
+func (c *client) start(ctx context.Context, ref string, w io.Writer) (vm, error) {
+  return c.streamVM(ctx, "http://dagent/v1/vms/"+ref+"/start", nil, w)
+}
+
+// streamVM posts and then consumes the daemon's NDJSON progress stream, printing
+// log lines to w until the terminating VM or error arrives.
+func (c *client) streamVM(ctx context.Context, url string, body []byte, w io.Writer) (vm, error) {
+  var reader io.Reader
+  if body != nil {
+    reader = bytes.NewReader(body)
+  }
+  hreq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, reader)
   if err != nil {
     return vm{}, err
   }
-  hreq.Header.Set("Content-Type", "application/json")
+  if body != nil {
+    hreq.Header.Set("Content-Type", "application/json")
+  }
 
   res, err := c.http().Do(hreq)
   if err != nil {

@@ -162,6 +162,9 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin.POST("/agents/:id/vms", adminH.CreateVM)
   admin.GET("/vms", adminH.ListVMs)
   admin.GET("/vms/:id", adminH.GetVM)
+  admin.POST("/vms/:id/start", adminH.StartVM)
+  admin.POST("/vms/:id/stop", adminH.StopVM)
+  admin.POST("/vms/:id/destroy", adminH.DestroyVM)
   admin.DELETE("/vms/:id", adminH.DeleteVM)
 
   // Agents: enrollment + the persistent socket the server pushes jobs down.

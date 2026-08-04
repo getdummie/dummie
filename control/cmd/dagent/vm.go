@@ -31,6 +31,7 @@ func vmCommand() *cli.Command {
       vmCreateCommand(),
       vmListCommand(),
       vmConsoleCommand(),
+      vmStartCommand(),
       vmStopCommand(),
       vmRemoveCommand(),
     },
@@ -259,7 +260,43 @@ func vmConsoleCommand() *cli.Command {
   }
 }
 
-// --- stop / remove ----------------------------------------------------------
+// --- start / stop / remove --------------------------------------------------
+
+// vmStartCommand boots a VM that already exists. There is no `--boot`, no images
+// and no sizes: everything about the machine was decided at create and is in its
+// vm.json, so a start takes nothing but which VM.
+func vmStartCommand() *cli.Command {
+  return &cli.Command{
+    Name:      "start",
+    Usage:     "boot a vm that exists but is not running",
+    ArgsUsage: "<vm>",
+    Flags:     []cli.Flag{dataDirFlag()},
+    Action: func(ctx context.Context, cmd *cli.Command) error {
+      ref := cmd.Args().First()
+      c, err := daemon()
+      if err != nil {
+        return err
+      }
+      if c != nil {
+        v, err := c.start(ctx, ref, os.Stdout)
+        if err != nil {
+          return err
+        }
+        fmt.Printf("vm %s (%s) started\n", v.ID, v.Name)
+        return nil
+      }
+
+      data := dataDir(cmd)
+      v, err := resolveVM(data, ref)
+      if err != nil {
+        return err
+      }
+      logf := func(format string, args ...any) { fmt.Printf(format+"\n", args...) }
+      _, err = startVM(ctx, data, v, logf)
+      return err
+    },
+  }
+}
 
 func vmStopCommand() *cli.Command {
   return &cli.Command{
@@ -449,6 +486,40 @@ func setupVMNetwork(data string, v *vm, opts netOptions) (*os.File, error) {
   }
   v.Net.Tap = v.Net.tapName(v.ID)
 
+  return bringUpVMNetwork(cfg, v)
+}
+
+// restoreVMNetwork brings a stopped VM's network back up from the allocation
+// already recorded in vm.json.
+//
+// It must not re-allocate. The address in v.Net belongs to this VM, and
+// reserveIP would refuse it for exactly that reason -- it rejects any address
+// another vm.json holds, and this VM's own record is one of those. Teardown
+// never released it, so there is nothing to allocate.
+func restoreVMNetwork(data string, v *vm) (*os.File, error) {
+  if os.Geteuid() != 0 {
+    return nil, errors.New("networking needs root: creating taps and writing nftables rules is privileged")
+  }
+  if v.Net == nil {
+    return nil, errors.New("this vm was created with no network")
+  }
+  cfg, err := loadNetConfig(data)
+  if err != nil {
+    return nil, err
+  }
+  // The gateway is host-wide policy, not a property of the VM, so an operator
+  // who changed it since the VM was created gets the current one.
+  v.Net.Gateway = cfg.Gateway
+  if v.Net.Tap == "" {
+    v.Net.Tap = v.Net.tapName(v.ID)
+  }
+  return bringUpVMNetwork(cfg, v)
+}
+
+// bringUpVMNetwork realises a decided v.Net in the kernel. Shared by the create
+// and restart paths so the one ordering that is safe -- interface, then policy,
+// then ceiling -- lives in a single place.
+func bringUpVMNetwork(cfg netConfig, v *vm) (*os.File, error) {
   if err := enableForwarding(); err != nil {
     return nil, err
   }

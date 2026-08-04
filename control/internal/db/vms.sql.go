@@ -350,6 +350,49 @@ func (q *Queries) MarkVMRunning(ctx context.Context, arg MarkVMRunningParams) er
 	return err
 }
 
+const setVMLastError = `-- name: SetVMLastError :exec
+UPDATE vms
+SET last_error = $2, updated_at = now()
+WHERE id = $1
+`
+
+type SetVMLastErrorParams struct {
+	ID        pgtype.UUID
+	LastError string
+}
+
+// SetVMLastError records a failed action without changing the status. A stop
+// that failed most likely leaves the VM running, so claiming otherwise would be
+// worse than saying nothing.
+func (q *Queries) SetVMLastError(ctx context.Context, arg SetVMLastErrorParams) error {
+	_, err := q.db.Exec(ctx, setVMLastError, arg.ID, arg.LastError)
+	return err
+}
+
+const setVMStatus = `-- name: SetVMStatus :exec
+UPDATE vms
+SET status = $2, last_error = '', reported_at = now(), updated_at = now()
+WHERE id = $1
+`
+
+type SetVMStatusParams struct {
+	ID     pgtype.UUID
+	Status string
+}
+
+// SetVMStatus settles a start, stop or destroy as soon as the agent confirms it,
+// rather than waiting up to a full inventory tick for the row to catch up.
+//
+// reported_at moves too. A result frame *is* the host vouching for this VM, at
+// this moment, on the same socket an inventory report would use -- so treating
+// it as older than it is would show a VM that was just confirmed as stale, which
+// is both wrong and alarming. A host that dies immediately afterwards is still
+// caught, by the ordinary staleness window.
+func (q *Queries) SetVMStatus(ctx context.Context, arg SetVMStatusParams) error {
+	_, err := q.db.Exec(ctx, setVMStatus, arg.ID, arg.Status)
+	return err
+}
+
 const upsertVMFromInventory = `-- name: UpsertVMFromInventory :exec
 INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())

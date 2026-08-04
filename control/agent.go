@@ -291,26 +291,60 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     log.Printf("agent %s: could not decode the result for job %s: %v", agentID, env.ID, err)
     return
   }
-  if res.Kind != proto.KindVMCreate {
-    log.Printf("agent %s: result for job %s of unknown kind %q", agentID, env.ID, res.Kind)
-    return
-  }
-
   rowID, err := parseUUID(env.ID)
   if err != nil {
     log.Printf("agent %s: result for job %s has an unusable correlation id", agentID, env.ID)
     return
   }
 
+  switch res.Kind {
+  case proto.KindVMCreate:
+    h.settleCreate(ctx, agent, agentID, env.ID, rowID, res)
+  case proto.KindVMStop:
+    h.settleEnd(ctx, agentID, env.ID, rowID, res, "stopped")
+  case proto.KindVMStart:
+    h.settleEnd(ctx, agentID, env.ID, rowID, res, "running")
+  case proto.KindVMDestroy:
+    h.settleEnd(ctx, agentID, env.ID, rowID, res, "gone")
+  default:
+    log.Printf("agent %s: result for job %s of unknown kind %q", agentID, env.ID, res.Kind)
+  }
+}
+
+// settleEnd records the outcome of a start, stop or destroy. On success the status is
+// moved now rather than waiting for the next inventory tick, which is what makes
+// the button feel like it did something. On failure only the message is stored:
+// a stop that failed probably leaves the VM running, and overwriting the status
+// would replace a true claim with a guess.
+func (h *AgentHandler) settleEnd(ctx context.Context, agentID, jobID string, rowID pgtype.UUID, res proto.JobResult, status string) {
+  if !res.OK {
+    msg := res.Error
+    if msg == "" {
+      msg = "the agent reported a failure with no message"
+    }
+    if err := h.q.SetVMLastError(ctx, db.SetVMLastErrorParams{ID: rowID, LastError: msg}); err != nil {
+      log.Printf("agent %s: could not record the failed %s of vm %s: %v", agentID, res.Kind, jobID, err)
+    }
+    log.Printf("agent %s: %s of vm %s failed: %s", agentID, res.Kind, jobID, msg)
+    return
+  }
+  if err := h.q.SetVMStatus(ctx, db.SetVMStatusParams{ID: rowID, Status: status}); err != nil {
+    log.Printf("agent %s: could not mark vm %s %s: %v", agentID, jobID, status, err)
+    return
+  }
+  log.Printf("agent %s: vm %s is now %s", agentID, jobID, status)
+}
+
+func (h *AgentHandler) settleCreate(ctx context.Context, agent db.Agent, agentID, jobID string, rowID pgtype.UUID, res proto.JobResult) {
   if !res.OK || res.VM == nil {
     msg := res.Error
     if msg == "" {
       msg = "the agent reported a failure with no message"
     }
     if err := h.q.MarkVMFailed(ctx, db.MarkVMFailedParams{ID: rowID, LastError: msg}); err != nil {
-      log.Printf("agent %s: could not record the failed vm %s: %v", agentID, env.ID, err)
+      log.Printf("agent %s: could not record the failed vm %s: %v", agentID, jobID, err)
     }
-    log.Printf("agent %s: vm %s failed: %s", agentID, env.ID, msg)
+    log.Printf("agent %s: vm %s failed: %s", agentID, jobID, msg)
     return
   }
 
@@ -320,7 +354,7 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
   // in between leaves two rows for one VM.
   tx, err := h.pool.Begin(ctx)
   if err != nil {
-    log.Printf("agent %s: could not start a transaction for vm %s: %v", agentID, env.ID, err)
+    log.Printf("agent %s: could not start a transaction for vm %s: %v", agentID, jobID, err)
     return
   }
   defer func() { _ = tx.Rollback(ctx) }()
@@ -331,7 +365,7 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     VMID:    res.VM.ID,
     ID:      rowID,
   }); err != nil {
-    log.Printf("agent %s: could not clear the adopted duplicate of vm %s: %v", agentID, env.ID, err)
+    log.Printf("agent %s: could not clear the adopted duplicate of vm %s: %v", agentID, jobID, err)
     return
   }
   if err := qtx.MarkVMRunning(ctx, db.MarkVMRunningParams{
@@ -343,14 +377,14 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     MemoryMiB: int32(res.VM.MemoryMiB),
     IP:        res.VM.IP,
   }); err != nil {
-    log.Printf("agent %s: could not record the running vm %s: %v", agentID, env.ID, err)
+    log.Printf("agent %s: could not record the running vm %s: %v", agentID, jobID, err)
     return
   }
   if err := tx.Commit(ctx); err != nil {
-    log.Printf("agent %s: could not commit the running vm %s: %v", agentID, env.ID, err)
+    log.Printf("agent %s: could not commit the running vm %s: %v", agentID, jobID, err)
     return
   }
-  log.Printf("agent %s: vm %s running (local id %s, ip %s)", agentID, env.ID, res.VM.ID, res.VM.IP)
+  log.Printf("agent %s: vm %s running (local id %s, ip %s)", agentID, jobID, res.VM.ID, res.VM.IP)
 }
 
 // handleInventory reconciles the agent's report against the registry. This is

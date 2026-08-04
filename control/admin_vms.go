@@ -204,10 +204,88 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
   return c.JSON(http.StatusAccepted, toVMDTO(row))
 }
 
-// DeleteVM forgets the row. It does not touch the guest: removing a running VM
-// from the host is a separate job the agent does not accept yet, and silently
-// leaving one running while its record disappears is worth being explicit
-// about rather than pretending this is a teardown.
+// StopVM shuts the guest down but leaves everything it owns on the host, so
+// StartVM can boot it again from the same disk at the same address.
+func (h *AdminHandler) StopVM(c *echo.Context) error {
+  return h.actOnVM(c, proto.KindVMStop)
+}
+
+// StartVM boots a VM that exists but is not running.
+func (h *AdminHandler) StartVM(c *echo.Context) error {
+  return h.actOnVM(c, proto.KindVMStart)
+}
+
+// DestroyVM stops the guest and deletes its disk and directory on the host. The
+// row survives and becomes 'gone', because a VM that was destroyed is exactly
+// what someone will want to look up afterwards.
+func (h *AdminHandler) DestroyVM(c *echo.Context) error {
+  return h.actOnVM(c, proto.KindVMDestroy)
+}
+
+// actOnVM pushes a job that names an existing VM. Both callers need the same
+// four checks -- the row exists, the host assigned it an id, the agent is live,
+// the frame was delivered -- so they share one implementation rather than two
+// that drift.
+func (h *AdminHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
+  pgID, err := parseUUID(c.Param("id"))
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid vm id")
+  }
+
+  ctx := c.Request().Context()
+  row, err := h.q.GetVM(ctx, pgID)
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "no such vm")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
+  }
+  // No local id means no host ever built it -- a pending or failed create. There
+  // is nothing on any host to act on.
+  if row.VMID == "" {
+    return echo.NewHTTPError(http.StatusConflict, "this vm was never created on a host")
+  }
+  if row.Status == "gone" {
+    return echo.NewHTTPError(http.StatusConflict, "this vm no longer exists on its host")
+  }
+  // The agent treats every action as idempotent, so these guards are about
+  // telling the caller its request made no sense rather than about safety.
+  // 'stale' is not checked: a row nobody has heard from recently is exactly one
+  // an operator may need to act on.
+  switch {
+  case kind == proto.KindVMStart && row.Status == "running":
+    return echo.NewHTTPError(http.StatusConflict, "this vm is already running")
+  case kind == proto.KindVMStop && row.Status == "stopped":
+    return echo.NewHTTPError(http.StatusConflict, "this vm is already stopped")
+  }
+
+  agentID := uuid.UUID(row.AgentID.Bytes).String()
+  if !h.hub.Connected(agentID) {
+    return echo.NewHTTPError(http.StatusConflict, "the host running this vm is not connected")
+  }
+
+  // The row id is the correlation id, exactly as for a create, so the result
+  // settles this row without the server tracking in-flight jobs.
+  env, err := proto.NewEnvelope(proto.TypeJob, uuid.UUID(row.ID.Bytes).String(), proto.Job{
+    Kind: kind,
+    VMID: row.VMID,
+  })
+  if err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not build the job")
+  }
+  if err := h.hub.Send(agentID, env); err != nil {
+    return echo.NewHTTPError(http.StatusConflict, "could not deliver the job to the host")
+  }
+
+  // 202: the guest is given time to shut down cleanly, so the row settles when
+  // the agent reports back rather than by the time this returns.
+  return c.JSON(http.StatusAccepted, toVMDTO(row))
+}
+
+// DeleteVM forgets the row. It does not touch the guest -- DestroyVM is what
+// does that -- so a still-running VM is re-adopted by its host's next inventory
+// report. Refusing here would be worse: it is the only way to clear the record
+// of a host that is never coming back.
 func (h *AdminHandler) DeleteVM(c *echo.Context) error {
   pgID, err := parseUUID(c.Param("id"))
   if err != nil {

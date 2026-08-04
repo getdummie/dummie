@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 definePageMeta({ middleware: ['auth', 'admin'] })
@@ -55,15 +56,65 @@ const hostReported = new Set(['running', 'stopped'])
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 
-// displayStatus is what the badge shows. 'stale' is not a status the server
-// stores -- it cannot be, since it would go stale itself -- so it is derived
-// here from the row's own status and how long ago the host vouched for it.
+// An action is acknowledged with 202 and settles when the agent's result frame
+// gets back, which is a second or two -- far quicker than the ordinary poll but
+// not instant. So a row with an action in flight is tracked here: the table
+// shows where it is going, and a fast poll runs until it arrives.
+//
+// `from` is the status at the moment the action was sent, which is how we
+// recognise that the row has moved. `until` bounds the wait, so an agent that
+// never answers leaves the row telling the truth rather than spinning forever.
+interface Settling {
+  verb: string
+  from: string
+  running: boolean
+  until: number
+}
+const settling = ref<Record<string, Settling>>({})
+const settleTimeoutMs = 60_000
+const settlePollMs = 1_500
+let settlePoll: ReturnType<typeof setInterval> | undefined
+
+function isSettling(v: VMRow) {
+  return settling.value[v.id]
+}
+
+// displayStatus is what the badge shows. Neither 'starting'/'stopping' nor
+// 'stale' is a status the server stores: the first is this client's own in-flight
+// action, and the second cannot be stored because it would go stale itself.
 function displayStatus(v: VMRow) {
+  const pending = settling.value[v.id]
+  if (pending) return pending.verb
   if (!hostReported.has(v.status)) return v.status
   const at = v.reported_at ? new Date(v.reported_at).getTime() : Number.NaN
   if (Number.isNaN(at) || now.value - at > staleAfterMs) return 'stale'
   return v.status
 }
+
+// The switch shows the underlying status rather than displayStatus: a stale row
+// was last known to be running, and flipping the control off would claim we know
+// it stopped. The badge is where the doubt belongs.
+function switchOn(v: VMRow) {
+  return settling.value[v.id]?.running ?? v.status === 'running'
+}
+
+function watchSettle(v: VMRow, verb: string, running: boolean) {
+  settling.value = {
+    ...settling.value,
+    [v.id]: { verb, from: v.status, running, until: Date.now() + settleTimeoutMs },
+  }
+  if (!settlePoll) {
+    settlePoll = setInterval(() => {
+      if (!Object.keys(settling.value).length) {
+        clearInterval(settlePoll)
+        settlePoll = undefined
+        return
+      }
+      load(true)
+    }, settlePollMs)
+  }
+}
+
 
 function since(s: string) {
   if (!s) return 'never'
@@ -144,6 +195,10 @@ const statusVariant: Record<string, BadgeVariant> = {
   // 'stale' is loud on purpose: the row is making a claim nobody can currently
   // stand behind, and reading it as 'running' is the mistake worth preventing.
   stale: 'destructive',
+  // In-flight actions: a transition, not a state to worry about.
+  starting: 'secondary',
+  stopping: 'secondary',
+  destroying: 'secondary',
 }
 
 // silent skips the skeletons so the background poll doesn't make the table flash.
@@ -185,6 +240,21 @@ async function loadAgents() {
   }
 }
 
+// A row is done settling when the server has moved it off the status it had, or
+// when the wait runs out. Watching the fetched rows rather than resolving inside
+// each action keeps this true for a row someone else changed too.
+watch(items, (rows) => {
+  const entries = Object.entries(settling.value)
+  if (!entries.length) return
+  const at = Date.now()
+  const next: Record<string, Settling> = {}
+  for (const [id, s] of entries) {
+    const row = rows.find(r => r.id === id)
+    if (row && row.status === s.from && at < s.until) next[id] = s
+  }
+  if (Object.keys(next).length !== entries.length) settling.value = next
+})
+
 // A pending row becomes running or failed without any action from this page, so
 // it has to poll to stay honest. A minute is a long time to watch a create you
 // just started, which is what the refresh button is for.
@@ -202,6 +272,7 @@ onMounted(() => {
 onUnmounted(() => {
   clearInterval(poll)
   clearInterval(clock)
+  clearInterval(settlePoll)
 })
 
 // syncing drives the button's own spinner. It is separate from `loading` so a
@@ -393,27 +464,88 @@ async function create() {
   }
 }
 
-// --- delete ---
-const toDelete = ref<VMRow | null>(null)
-const deleting = ref(false)
+// --- stop / destroy / forget ---
+//
+// Three different things, deliberately not collapsed into one button:
+//   stop     shuts the guest down, keeps its disk
+//   destroy  deletes the guest and its disk on the host
+//   forget   removes only this row, leaving whatever is on the host alone
+//
+// A row that has no guest to act on -- a failed create, or one already gone --
+// gets 'forget' on the same trash affordance, since that is the only removal
+// that means anything for it.
 const actionError = ref<string | null>(null)
+const working = ref(false)
 
-async function confirmDelete() {
-  if (!toDelete.value) return
-  deleting.value = true
+// A guest only exists to act on once a host has assigned it an id.
+function hasGuest(v: VMRow) {
+  return !!v.vm_id && v.status !== 'gone'
+}
+
+const toStop = ref<VMRow | null>(null)
+const toDestroy = ref<VMRow | null>(null)
+const toForget = ref<VMRow | null>(null)
+
+// The trash button is one affordance with two meanings, chosen by whether there
+// is still a guest behind the row.
+function askRemove(v: VMRow) {
+  if (hasGuest(v)) toDestroy.value = v
+  else toForget.value = v
+}
+
+// settle is the verb to show while the action is in flight, or null for one that
+// takes effect the moment the server answers (deleting a row).
+async function act(v: VMRow, path: string, method: string, failure: string, settle: { verb: string, running: boolean } | null) {
+  working.value = true
   actionError.value = null
   try {
-    const res = await authFetch(`/admin/vms/${toDelete.value.id}`, { method: 'DELETE' })
+    const res = await authFetch(path, { method })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    toDelete.value = null
-    await load()
+    if (settle) watchSettle(v, settle.verb, settle.running)
+    toStop.value = null
+    toDestroy.value = null
+    toForget.value = null
+    await load(true)
   }
   catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not delete vm record'
+    actionError.value = e instanceof Error ? e.message : failure
   }
   finally {
-    deleting.value = false
+    working.value = false
   }
+}
+
+// Starting asks for no confirmation: it is cheap, reversible by the same switch,
+// and destroys nothing. Stopping kills whatever the guest was doing, so it does.
+function start(v: VMRow) {
+  act(v, `/admin/vms/${v.id}/start`, 'POST', 'Could not start this VM', { verb: 'starting', running: true })
+}
+function confirmStop() {
+  const v = toStop.value
+  if (v) act(v, `/admin/vms/${v.id}/stop`, 'POST', 'Could not stop this VM', { verb: 'stopping', running: false })
+}
+function confirmDestroy() {
+  const v = toDestroy.value
+  if (v) act(v, `/admin/vms/${v.id}/destroy`, 'POST', 'Could not destroy this VM', { verb: 'destroying', running: false })
+}
+function confirmForget() {
+  const v = toForget.value
+  if (v) act(v, `/admin/vms/${v.id}`, 'DELETE', 'Could not delete this VM record', null)
+}
+
+// The switch is one control for two actions; which one depends on the direction.
+function togglePower(v: VMRow, on: boolean) {
+  if (on) start(v)
+  else toStop.value = v
+}
+
+// Dismissing any dialog clears the error, so a failure does not follow the
+// operator into the next thing they open.
+function closeDialogs() {
+  toStop.value = null
+  toDestroy.value = null
+  toForget.value = null
+  actionError.value = null
 }
 </script>
 
@@ -690,11 +822,12 @@ async function confirmDelete() {
               <div v-if="displayStatus(v) === 'stale'" class="mt-1 text-xs text-muted-foreground">
                 was <span class="font-mono">{{ v.status }}</span>, last seen {{ since(v.reported_at) }}
               </div>
-              <!-- The reason a create failed is the only thing anyone wants from
-                   a failed row, so it sits with the status rather than behind a
-                   click. title= keeps the full text reachable when truncated. -->
+              <!-- Any recorded failure, not just a failed create: a stop that the
+                   host refused leaves the status alone and only sets this, which
+                   would otherwise be invisible. title= keeps the full text
+                   reachable when truncated. -->
               <div
-                v-else-if="v.status === 'failed' && v.last_error"
+                v-else-if="v.last_error"
                 class="mt-1 max-w-56 truncate text-xs text-destructive"
                 :title="v.last_error"
               >
@@ -708,15 +841,30 @@ async function confirmDelete() {
             <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
             <TableCell class="text-muted-foreground whitespace-nowrap">{{ fmtDate(v.created_at) }}</TableCell>
             <TableCell class="text-right">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="text-destructive hover:text-destructive"
-                :aria-label="`Delete the record for VM ${v.name || v.vm_id || v.id}`"
-                @click="toDelete = v"
-              >
-                <Trash2 class="size-4" aria-hidden="true" />
-              </Button>
+              <div class="flex items-center justify-end gap-1">
+                <!-- One control for the VM's power state: on starts it, off
+                     stops it. Disabled while an action is in flight, so a
+                     double-click cannot queue a stop behind a start. -->
+                <Switch
+                  :model-value="switchOn(v)"
+                  :disabled="!hasGuest(v) || !!isSettling(v) || working"
+                  :aria-label="`${switchOn(v) ? 'Stop' : 'Start'} VM ${v.name || v.vm_id || v.id}`"
+                  class="mr-1"
+                  @update:model-value="(on: boolean) => togglePower(v, on)"
+                />
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="text-destructive hover:text-destructive"
+                  :disabled="!!isSettling(v) || working"
+                  :aria-label="hasGuest(v)
+                    ? `Destroy VM ${v.name || v.vm_id} and its disk`
+                    : `Delete the record for VM ${v.name || v.vm_id || v.id}`"
+                  @click="askRemove(v)"
+                >
+                  <Trash2 class="size-4" aria-hidden="true" />
+                </Button>
+              </div>
             </TableCell>
           </TableRow>
         </TableBody>
@@ -731,27 +879,74 @@ async function confirmDelete() {
       </div>
     </nav>
 
-    <!-- delete confirm -->
-    <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
+    <!-- stop confirm -->
+    <Dialog :open="!!toStop" @update:open="(v: boolean) => { if (!v) closeDialogs() }">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Stop VM</DialogTitle>
+          <DialogDescription>
+            Shut down <span class="font-mono text-foreground">{{ toStop?.name || toStop?.vm_id }}</span>
+            on <span class="font-mono text-foreground">{{ agentLabel(toStop?.agent_id ?? '') }}</span>.
+            The guest is asked to power off cleanly and killed if it will not.
+            Its disk and address are kept, so nothing is lost.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="stop-vm-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button class="font-mono text-xs" :disabled="working" @click="confirmStop">
+            {{ working ? 'Stopping…' : 'Stop' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- destroy confirm -->
+    <Dialog :open="!!toDestroy" @update:open="(v: boolean) => { if (!v) closeDialogs() }">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Destroy VM</DialogTitle>
+          <DialogDescription>
+            Stop <span class="font-mono text-foreground">{{ toDestroy?.name || toDestroy?.vm_id }}</span>
+            on <span class="font-mono text-foreground">{{ agentLabel(toDestroy?.agent_id ?? '') }}</span>
+            and delete its disk and directory on the host. This cannot be undone.
+            The record is kept and becomes <span class="font-mono">gone</span>.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="destroy-vm-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="working" @click="confirmDestroy">
+            {{ working ? 'Destroying…' : 'Destroy' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <!-- forget confirm: only offered when there is no guest left to destroy -->
+    <Dialog :open="!!toForget" @update:open="(v: boolean) => { if (!v) closeDialogs() }">
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete VM record</DialogTitle>
           <DialogDescription>
             Remove
-            <span class="font-mono text-foreground">{{ toDelete?.name || toDelete?.vm_id || toDelete?.id }}</span>
-            from the registry. This forgets the record only — the guest keeps running
-            on its host, and while it does, the host's next inventory report will
-            add it straight back. To remove it for real, run
-            <span class="font-mono">dagent vm rm</span> on the host.
+            <span class="font-mono text-foreground">{{ toForget?.name || toForget?.vm_id || toForget?.id }}</span>
+            from the registry. Nothing on any host is touched — and if a guest for
+            this row does still exist, its host's next inventory report will add it
+            straight back.
           </DialogDescription>
         </DialogHeader>
-        <FormError id="delete-vm-error" :message="actionError" />
+        <FormError id="forget-vm-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
           </DialogClose>
-          <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
-            {{ deleting ? 'Deleting…' : 'Delete record' }}
+          <Button variant="destructive" class="font-mono text-xs" :disabled="working" @click="confirmForget">
+            {{ working ? 'Deleting…' : 'Delete record' }}
           </Button>
         </DialogFooter>
       </DialogContent>

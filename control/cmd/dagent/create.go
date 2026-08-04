@@ -228,6 +228,78 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
   return v, nil
 }
 
+// startVM boots a VM that already exists but is not running. It is the tail of
+// createVM and nothing else: the images are resolved, the overlay is built and
+// the address is allocated, all recorded in vm.json. What a stop released --
+// the tap, the policy, the cgroup -- is what this puts back.
+//
+// Idempotent: a VM that is already running is a no-op returning its pid, so a
+// retried job cannot start a second qemu against the same disk.
+func startVM(ctx context.Context, data string, v vm, logf func(string, ...any)) (int, error) {
+  if pid := vmPID(data, v.ID); pid != 0 {
+    return pid, nil
+  }
+
+  // qemu creates its sockets here and will not create the directory itself. It
+  // normally survives a stop, but a VM whose run/ was cleaned needs it back.
+  if err := os.MkdirAll(vmPath(data, v.ID, vmRunDir), 0o700); err != nil {
+    return 0, err
+  }
+  // qemu does not always unlink the sockets it created, and it refuses to bind
+  // a path that already exists -- so a second boot fails on the leftovers of the
+  // first unless they go first.
+  for _, sock := range []string{vmQMPSocket, vmConsoleSock} {
+    if err := os.Remove(vmPath(data, v.ID, sock)); err != nil && !os.IsNotExist(err) {
+      return 0, err
+    }
+  }
+
+  // Same order as create, for the same reason: the VM must not be able to send a
+  // packet before the rules that constrain it are in the kernel.
+  var tap *os.File
+  var err error
+  if v.Net != nil {
+    if tap, err = restoreVMNetwork(data, &v); err != nil {
+      return 0, err
+    }
+    defer tap.Close() // ours closes after exec; qemu holds the inherited copy
+    logf("address %s on %s", v.Net.IP, v.Net.Tap)
+  }
+
+  cleanup := func() {
+    _ = teardownVMNetwork(v)
+    _ = removeCgroup(v.Cgroup)
+  }
+
+  if v.Cgroup, err = setupCgroup(v); err != nil {
+    logf("WARNING: no cpu or memory limits will be applied: %v", err)
+    v.Cgroup = ""
+  }
+  // The uid was allocated at create and is still this VM's; ownership only has
+  // to be reasserted over anything the restart just made.
+  if err := chownVM(data, v); err != nil {
+    cleanup()
+    return 0, err
+  }
+
+  logf("starting qemu")
+  pid, err := launchVM(ctx, data, &v, tap)
+  if err != nil {
+    cleanup()
+    return 0, err
+  }
+
+  // The cgroup path and the tap are part of the desired state and both may have
+  // changed, so the record is rewritten rather than left describing the old run.
+  if err := saveVM(data, v); err != nil {
+    _ = stopVM(ctx, data, v.ID, defaultStopWait)
+    cleanup()
+    return 0, err
+  }
+  logf("vm %s (%s) started, pid %d", v.ID, v.Name, pid)
+  return pid, nil
+}
+
 // removeVM stops a VM and deletes everything belonging to it, in the reverse of
 // the order it was created.
 func removeVM(ctx context.Context, data string, v vm) error {

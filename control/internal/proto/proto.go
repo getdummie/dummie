@@ -80,13 +80,22 @@ type JobKind string
 
 const (
   KindVMCreate JobKind = "vm.create"
+  // KindVMStop shuts the guest down but leaves everything it owns on the host,
+  // so KindVMStart can boot it again. KindVMDestroy is the one that cannot be
+  // undone.
+  KindVMStop    JobKind = "vm.stop"
+  KindVMStart   JobKind = "vm.start"
+  KindVMDestroy JobKind = "vm.destroy"
 )
 
-// Job is the payload of a TypeJob envelope. Exactly one of the per-kind fields
-// is set, chosen by Kind.
+// Job is the payload of a TypeJob envelope. Which fields are set is chosen by
+// Kind: a create carries a spec, everything else names an existing VM.
 type Job struct {
   Kind JobKind `json:"kind"`
   VM   *VMSpec `json:"vm,omitempty"` // set when Kind is KindVMCreate
+  // VMID is the agent's own short id, as reported in VMInfo or an inventory.
+  // Set for every kind that acts on a VM that already exists.
+  VMID string `json:"vm_id,omitempty"`
 }
 
 // VMSpec is one VM creation request. It is the same shape the agent's own unix

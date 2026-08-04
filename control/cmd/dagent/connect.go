@@ -392,6 +392,14 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
       return
     }
     go l.createVM(ctx, env.ID, *job.VM)
+  case proto.KindVMStop, proto.KindVMStart, proto.KindVMDestroy:
+    if job.VMID == "" {
+      l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no vm"})
+      return
+    }
+    // Also off the read loop: a guest is given time to shut down cleanly, a
+    // destroy stops it first, and a boot waits out the startup grace period.
+    go l.runVMAction(ctx, env.ID, job.Kind, job.VMID)
   default:
     l.reply(ctx, env.ID, proto.JobResult{
       Kind:  job.Kind,
@@ -428,6 +436,66 @@ func (l *link) createVM(ctx context.Context, jobID string, spec proto.VMSpec) {
     info.IP = v.Net.IP
   }
   l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMCreate, OK: true, VM: &info})
+}
+
+// runVMAction handles the three jobs that act on a VM which already exists. All
+// are idempotent -- stopping a stopped VM, starting a running one -- so a
+// retried job is not an error.
+//
+// The context is deliberately detached: a stop that is still waiting on a guest
+// when the control link drops should finish the shutdown rather than abandon a
+// half-stopped VM, a destroy that stopped a guest but did not get to its files
+// would leave the host holding disks nobody will reclaim, and a boot that is
+// past the point of creating a tap should not be abandoned either.
+func (l *link) runVMAction(ctx context.Context, jobID string, kind proto.JobKind, vmID string) {
+  ctx = context.WithoutCancel(ctx)
+
+  v, err := resolveVM(l.data, vmID)
+  if err != nil {
+    l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+    return
+  }
+  logf := func(format string, args ...any) {
+    log.Printf("job %s: "+format, append([]any{jobID}, args...)...)
+  }
+
+  switch kind {
+  case proto.KindVMDestroy:
+    logf("destroying vm %s (%s)", v.ID, v.Name)
+    if err := removeVM(ctx, l.data, v); err != nil {
+      logf("destroy failed: %v", err)
+      l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+      return
+    }
+
+  case proto.KindVMStart:
+    logf("starting vm %s (%s)", v.ID, v.Name)
+    if _, err := startVM(ctx, l.data, v, logf); err != nil {
+      logf("start failed: %v", err)
+      l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+      return
+    }
+
+  case proto.KindVMStop:
+    logf("stopping vm %s (%s)", v.ID, v.Name)
+    if err := stopVM(ctx, l.data, v.ID, defaultStopWait); err != nil {
+      logf("stop failed: %v", err)
+      l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+      return
+    }
+    // Same order the socket API uses: the guest is down, so the tap, policy and
+    // cgroup it held go back. The address stays reserved in vm.json, which is
+    // what lets a start put the VM back at the same place. Failing to release
+    // does not un-stop the VM, so it is a warning rather than a failed stop.
+    if err := teardownVMNetwork(v); err != nil {
+      logf("could not fully tear down the network for %s: %v", v.ID, err)
+    }
+    if err := removeCgroup(v.Cgroup); err != nil {
+      logf("could not remove cgroup %s: %v", v.Cgroup, err)
+    }
+  }
+
+  l.reply(ctx, jobID, proto.JobResult{Kind: kind, OK: true})
 }
 
 // reply correlates by the job's envelope id. A failure is reported as a result
