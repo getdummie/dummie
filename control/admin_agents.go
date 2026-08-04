@@ -163,6 +163,25 @@ type agentDTO struct {
   LastSeenAt   string `json:"last_seen_at"`
   LastIP       string `json:"last_ip"`
   CreatedAt    string `json:"created_at"`
+
+  Metrics agentMetricsDTO `json:"metrics"`
+}
+
+// agentMetricsDTO is the host snapshot the agent last reported. ReportedAt is
+// "" when it never has -- the numbers below it are zero either way, so this is
+// the only thing that distinguishes an idle host from a silent one.
+type agentMetricsDTO struct {
+  ReportedAt     string  `json:"reported_at"`
+  CPUCount       int32   `json:"cpu_count"`
+  CPUPercent     float64 `json:"cpu_percent"`
+  Load1          float64 `json:"load1"`
+  Load5          float64 `json:"load5"`
+  Load15         float64 `json:"load15"`
+  MemTotalBytes  int64   `json:"mem_total_bytes"`
+  MemUsedBytes   int64   `json:"mem_used_bytes"`
+  DiskTotalBytes int64   `json:"disk_total_bytes"`
+  DiskUsedBytes  int64   `json:"disk_used_bytes"`
+  UptimeSeconds  int64   `json:"uptime_seconds"`
 }
 
 func toAgentDTO(a db.Agent, connected bool) agentDTO {
@@ -178,6 +197,21 @@ func toAgentDTO(a db.Agent, connected bool) agentDTO {
     AgentVersion: a.AgentVersion,
     LastIP:       a.LastIP,
     CreatedAt:    a.CreatedAt.Time.Format(time.RFC3339),
+    Metrics: agentMetricsDTO{
+      CPUCount:       a.CPUCount,
+      CPUPercent:     a.CPUPercent,
+      Load1:          a.Load1,
+      Load5:          a.Load5,
+      Load15:         a.Load15,
+      MemTotalBytes:  a.MemTotalBytes,
+      MemUsedBytes:   a.MemUsedBytes,
+      DiskTotalBytes: a.DiskTotalBytes,
+      DiskUsedBytes:  a.DiskUsedBytes,
+      UptimeSeconds:  a.UptimeSeconds,
+    },
+  }
+  if a.MetricsAt.Valid {
+    d.Metrics.ReportedAt = a.MetricsAt.Time.Format(time.RFC3339)
   }
   if a.LastSeenAt.Valid {
     d.LastSeenAt = a.LastSeenAt.Time.Format(time.RFC3339)

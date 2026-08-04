@@ -32,8 +32,47 @@ func (q *Queries) DeleteAgent(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const getAgentByID = `-- name: GetAgentByID :one
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents
+WHERE id = $1
+`
+
+func (q *Queries) GetAgentByID(ctx context.Context, id pgtype.UUID) (Agent, error) {
+	row := q.db.QueryRow(ctx, getAgentByID, id)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.Hostname,
+		&i.TokenHash,
+		&i.Status,
+		&i.OS,
+		&i.OSVersion,
+		&i.Arch,
+		&i.AgentVersion,
+		&i.LastSeenAt,
+		&i.LastIP,
+		&i.EnrolledKeyID,
+		&i.Revoked,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CPUCount,
+		&i.CPUPercent,
+		&i.Load1,
+		&i.Load5,
+		&i.Load15,
+		&i.MemTotalBytes,
+		&i.MemUsedBytes,
+		&i.DiskTotalBytes,
+		&i.DiskUsedBytes,
+		&i.UptimeSeconds,
+		&i.MetricsAt,
+	)
+	return i, err
+}
+
 const getAgentByTokenHash = `-- name: GetAgentByTokenHash :one
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at FROM agents
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents
 WHERE token_hash = $1
 LIMIT 1
 `
@@ -57,12 +96,23 @@ func (q *Queries) GetAgentByTokenHash(ctx context.Context, tokenHash string) (Ag
 		&i.Revoked,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CPUCount,
+		&i.CPUPercent,
+		&i.Load1,
+		&i.Load5,
+		&i.Load15,
+		&i.MemTotalBytes,
+		&i.MemUsedBytes,
+		&i.DiskTotalBytes,
+		&i.DiskUsedBytes,
+		&i.UptimeSeconds,
+		&i.MetricsAt,
 	)
 	return i, err
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at FROM agents
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -97,6 +147,17 @@ func (q *Queries) ListAgents(ctx context.Context, arg ListAgentsParams) ([]Agent
 			&i.Revoked,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.CPUCount,
+			&i.CPUPercent,
+			&i.Load1,
+			&i.Load5,
+			&i.Load15,
+			&i.MemTotalBytes,
+			&i.MemUsedBytes,
+			&i.DiskTotalBytes,
+			&i.DiskUsedBytes,
+			&i.UptimeSeconds,
+			&i.MetricsAt,
 		); err != nil {
 			return nil, err
 		}
@@ -197,6 +258,57 @@ func (q *Queries) UpdateAgentFacts(ctx context.Context, arg UpdateAgentFactsPara
 	return err
 }
 
+const updateAgentMetrics = `-- name: UpdateAgentMetrics :exec
+UPDATE agents
+SET cpu_count        = $2,
+    cpu_percent      = $3,
+    load1            = $4,
+    load5            = $5,
+    load15           = $6,
+    mem_total_bytes  = $7,
+    mem_used_bytes   = $8,
+    disk_total_bytes = $9,
+    disk_used_bytes  = $10,
+    uptime_seconds   = $11,
+    metrics_at       = now(),
+    last_seen_at     = now()
+WHERE id = $1
+`
+
+type UpdateAgentMetricsParams struct {
+	ID             pgtype.UUID
+	CPUCount       int32
+	CPUPercent     float64
+	Load1          float64
+	Load5          float64
+	Load15         float64
+	MemTotalBytes  int64
+	MemUsedBytes   int64
+	DiskTotalBytes int64
+	DiskUsedBytes  int64
+	UptimeSeconds  int64
+}
+
+// UpdateAgentMetrics overwrites the host snapshot in place. last_seen_at moves
+// too: a metrics frame is proof the agent is alive, and it arrives often enough
+// that the throttled touch in the read loop rarely has anything left to do.
+func (q *Queries) UpdateAgentMetrics(ctx context.Context, arg UpdateAgentMetricsParams) error {
+	_, err := q.db.Exec(ctx, updateAgentMetrics,
+		arg.ID,
+		arg.CPUCount,
+		arg.CPUPercent,
+		arg.Load1,
+		arg.Load5,
+		arg.Load15,
+		arg.MemTotalBytes,
+		arg.MemUsedBytes,
+		arg.DiskTotalBytes,
+		arg.DiskUsedBytes,
+		arg.UptimeSeconds,
+	)
+	return err
+}
+
 const upsertAgentByMachineID = `-- name: UpsertAgentByMachineID :one
 INSERT INTO agents (machine_id, hostname, token_hash, os, os_version, arch, agent_version, enrolled_key_id)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -210,7 +322,7 @@ SET hostname        = EXCLUDED.hostname,
     enrolled_key_id = EXCLUDED.enrolled_key_id,
     revoked         = false,
     updated_at      = now()
-RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at
+RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at
 `
 
 type UpsertAgentByMachineIDParams struct {
@@ -256,6 +368,17 @@ func (q *Queries) UpsertAgentByMachineID(ctx context.Context, arg UpsertAgentByM
 		&i.Revoked,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.CPUCount,
+		&i.CPUPercent,
+		&i.Load1,
+		&i.Load5,
+		&i.Load15,
+		&i.MemTotalBytes,
+		&i.MemUsedBytes,
+		&i.DiskTotalBytes,
+		&i.DiskUsedBytes,
+		&i.UptimeSeconds,
+		&i.MetricsAt,
 	)
 	return i, err
 }

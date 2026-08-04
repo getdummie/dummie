@@ -9,21 +9,32 @@ import (
 )
 
 type Agent struct {
-	ID            pgtype.UUID
-	MachineID     string
-	Hostname      string
-	TokenHash     string
-	Status        string
-	OS            string
-	OSVersion     string
-	Arch          string
-	AgentVersion  string
-	LastSeenAt    pgtype.Timestamptz
-	LastIP        string
-	EnrolledKeyID pgtype.UUID
-	Revoked       bool
-	CreatedAt     pgtype.Timestamptz
-	UpdatedAt     pgtype.Timestamptz
+	ID             pgtype.UUID
+	MachineID      string
+	Hostname       string
+	TokenHash      string
+	Status         string
+	OS             string
+	OSVersion      string
+	Arch           string
+	AgentVersion   string
+	LastSeenAt     pgtype.Timestamptz
+	LastIP         string
+	EnrolledKeyID  pgtype.UUID
+	Revoked        bool
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	CPUCount       int32
+	CPUPercent     float64
+	Load1          float64
+	Load5          float64
+	Load15         float64
+	MemTotalBytes  int64
+	MemUsedBytes   int64
+	DiskTotalBytes int64
+	DiskUsedBytes  int64
+	UptimeSeconds  int64
+	MetricsAt      pgtype.Timestamptz
 }
 
 type AgentEnrollmentKey struct {
@@ -65,4 +76,21 @@ type User struct {
 	UserType     string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type Vm struct {
+	ID        pgtype.UUID
+	AgentID   pgtype.UUID
+	VMID      string
+	Name      string
+	Status    string
+	Boot      string
+	CPUs      int32
+	MemoryMiB int32
+	IP        string
+	Spec      []byte
+	LastError string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	StartedAt pgtype.Timestamptz
 }

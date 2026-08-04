@@ -31,6 +31,23 @@ interface AgentRow {
   last_seen_at: string
   last_ip: string
   created_at: string
+  metrics: AgentMetrics
+}
+
+interface AgentMetrics {
+  // "" when the agent has never reported. Every number below is zero either
+  // way, so this is the only thing that separates an idle host from a silent one.
+  reported_at: string
+  cpu_count: number
+  cpu_percent: number
+  load1: number
+  load5: number
+  load15: number
+  mem_total_bytes: number
+  mem_used_bytes: number
+  disk_total_bytes: number
+  disk_used_bytes: number
+  uptime_seconds: number
 }
 
 const { authFetch } = useAuth()
@@ -56,6 +73,22 @@ function fmtDate(s: string) {
   if (!s) return '—'
   const d = new Date(s)
   return Number.isNaN(d.getTime()) ? s : d.toLocaleString()
+}
+
+function fmtBytes(n: number) {
+  if (!n) return '—'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`
+}
+
+function pct(used: number, total: number) {
+  return total > 0 ? Math.round((used / total) * 100) : 0
 }
 
 const statusVariant: Record<AgentRow['status'], 'default' | 'secondary' | 'destructive'> = {
@@ -172,13 +205,16 @@ async function confirmDelete() {
 
     <!-- This table also self-refreshes every 10s. `aria-live="polite"` lets a
          screen-reader user hear status changes without polling it manually. -->
-    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
+    <div class="mt-6 overflow-x-auto rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
       <p v-if="loading" class="sr-only">Loading agents…</p>
       <Table label="Agents">
         <TableHeader>
           <TableRow>
             <TableHead>Agent</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>CPU</TableHead>
+            <TableHead>Memory</TableHead>
+            <TableHead>Disk</TableHead>
             <TableHead>OS</TableHead>
             <TableHead>Arch</TableHead>
             <TableHead>Version</TableHead>
@@ -189,10 +225,10 @@ async function confirmDelete() {
         <TableBody>
           <template v-if="loading">
             <TableRow v-for="n in 5" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 7" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
+              <TableCell v-for="c in 10" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
-          <TableEmpty v-else-if="!items.length" :colspan="7">
+          <TableEmpty v-else-if="!items.length" :colspan="10">
             No agents enrolled. Create an enrollment key, then run
             <span class="font-mono">dagent connect --key …</span> on a machine.
           </TableEmpty>
@@ -203,6 +239,34 @@ async function confirmDelete() {
             </TableCell>
             <TableCell>
               <Badge :variant="statusVariant[a.status]" class="font-mono">{{ a.status }}</Badge>
+            </TableCell>
+            <!-- Every metric is zero until the agent reports, so reported_at is
+                 what decides between a real number and an em dash. -->
+            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+              <template v-if="a.metrics?.reported_at">
+                {{ a.metrics.cpu_percent.toFixed(0) }}%
+                <span class="text-xs">/ {{ a.metrics.cpu_count }} cpu</span>
+                <div class="text-xs">load {{ a.metrics.load1.toFixed(2) }}</div>
+              </template>
+              <template v-else>—</template>
+            </TableCell>
+            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+              <template v-if="a.metrics?.reported_at">
+                {{ pct(a.metrics.mem_used_bytes, a.metrics.mem_total_bytes) }}%
+                <div class="text-xs">
+                  {{ fmtBytes(a.metrics.mem_used_bytes) }} / {{ fmtBytes(a.metrics.mem_total_bytes) }}
+                </div>
+              </template>
+              <template v-else>—</template>
+            </TableCell>
+            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+              <template v-if="a.metrics?.reported_at">
+                {{ pct(a.metrics.disk_used_bytes, a.metrics.disk_total_bytes) }}%
+                <div class="text-xs">
+                  {{ fmtBytes(a.metrics.disk_used_bytes) }} / {{ fmtBytes(a.metrics.disk_total_bytes) }}
+                </div>
+              </template>
+              <template v-else>—</template>
             </TableCell>
             <TableCell class="text-muted-foreground">
               {{ [a.os, a.os_version].filter(Boolean).join(' ') || '—' }}

@@ -16,3 +16,8 @@ sql:
           os: "OS"
           os_version: "OSVersion"
           machine_id: "MachineID"
+          vm_id: "VMID"
+          cpus: "CPUs"
+          memory_mib: "MemoryMiB"
+          cpu_count: "CPUCount"
+          cpu_percent: "CPUPercent"

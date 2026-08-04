@@ -12,6 +12,7 @@ import (
   "github.com/coder/websocket"
   "github.com/google/uuid"
   "github.com/jackc/pgx/v5"
+  "github.com/jackc/pgx/v5/pgtype"
   "github.com/jackc/pgx/v5/pgxpool"
   "github.com/labstack/echo/v5"
 
@@ -169,6 +170,15 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
     if err := h.q.SetAgentOffline(octx, agent.ID); err != nil {
       log.Printf("agent %s: could not mark offline: %v", agentID, err)
     }
+    // Anything still pending was waiting on a result frame from the socket that
+    // just died. It is never going to arrive, so the row must not keep claiming
+    // the create is in progress.
+    if err := h.q.FailPendingVMsForAgent(octx, db.FailPendingVMsForAgentParams{
+      AgentID:   agent.ID,
+      LastError: "the agent disconnected before reporting the result",
+    }); err != nil {
+      log.Printf("agent %s: could not fail pending vms: %v", agentID, err)
+    }
     log.Printf("agent %s disconnected", agentID)
   }()
 
@@ -234,9 +244,7 @@ func (h *AgentHandler) handshake(ctx context.Context, conn *agentConn, agent db.
   return conn.enqueue(ack)
 }
 
-// readLoop drains frames until the connection dies. There are no job types
-// yet, so anything other than a result is logged and ignored -- adding one
-// later is a new case, not a restructure.
+// readLoop drains frames until the connection dies.
 func (h *AgentHandler) readLoop(ctx context.Context, conn *agentConn, agent db.Agent, agentID string) {
   lastTouch := time.Now()
 
@@ -259,8 +267,11 @@ func (h *AgentHandler) readLoop(ctx context.Context, conn *agentConn, agent db.A
 
     switch env.Type {
     case proto.TypeResult:
-      // No job dispatch yet; there is nothing waiting on a correlation id.
-      log.Printf("agent %s: result for job %s: %s", agentID, env.ID, env.Payload)
+      h.handleResult(ctx, agent, agentID, env)
+    case proto.TypeMetrics:
+      h.handleMetrics(ctx, agent, agentID, env)
+    case proto.TypeInventory:
+      h.handleInventory(ctx, agent, agentID, env)
     case proto.TypeError:
       var p proto.ErrorPayload
       _ = json.Unmarshal(env.Payload, &p)
@@ -268,6 +279,157 @@ func (h *AgentHandler) readLoop(ctx context.Context, conn *agentConn, agent db.A
     default:
       log.Printf("agent %s: ignoring unexpected frame type %q", agentID, env.Type)
     }
+  }
+}
+
+// handleResult settles the row the job was created from. The envelope id *is*
+// the vms row id, which is what makes the correlation a lookup rather than a
+// table of in-flight jobs that a restart would lose.
+func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID string, env proto.Envelope) {
+  var res proto.JobResult
+  if err := json.Unmarshal(env.Payload, &res); err != nil {
+    log.Printf("agent %s: could not decode the result for job %s: %v", agentID, env.ID, err)
+    return
+  }
+  if res.Kind != proto.KindVMCreate {
+    log.Printf("agent %s: result for job %s of unknown kind %q", agentID, env.ID, res.Kind)
+    return
+  }
+
+  rowID, err := parseUUID(env.ID)
+  if err != nil {
+    log.Printf("agent %s: result for job %s has an unusable correlation id", agentID, env.ID)
+    return
+  }
+
+  if !res.OK || res.VM == nil {
+    msg := res.Error
+    if msg == "" {
+      msg = "the agent reported a failure with no message"
+    }
+    if err := h.q.MarkVMFailed(ctx, db.MarkVMFailedParams{ID: rowID, LastError: msg}); err != nil {
+      log.Printf("agent %s: could not record the failed vm %s: %v", agentID, env.ID, err)
+    }
+    log.Printf("agent %s: vm %s failed: %s", agentID, env.ID, msg)
+    return
+  }
+
+  // An inventory report can beat the result frame here and adopt the very VM
+  // this row is waiting for, which would collide on (agent_id, vm_id). Dropping
+  // the adopted duplicate and claiming the id must happen together, or a failure
+  // in between leaves two rows for one VM.
+  tx, err := h.pool.Begin(ctx)
+  if err != nil {
+    log.Printf("agent %s: could not start a transaction for vm %s: %v", agentID, env.ID, err)
+    return
+  }
+  defer func() { _ = tx.Rollback(ctx) }()
+  qtx := h.q.WithTx(tx)
+
+  if err := qtx.DeleteAdoptedVM(ctx, db.DeleteAdoptedVMParams{
+    AgentID: agent.ID,
+    VMID:    res.VM.ID,
+    ID:      rowID,
+  }); err != nil {
+    log.Printf("agent %s: could not clear the adopted duplicate of vm %s: %v", agentID, env.ID, err)
+    return
+  }
+  if err := qtx.MarkVMRunning(ctx, db.MarkVMRunningParams{
+    ID:        rowID,
+    VMID:      res.VM.ID,
+    Name:      res.VM.Name,
+    Boot:      res.VM.Boot,
+    CPUs:      int32(res.VM.CPUs),
+    MemoryMiB: int32(res.VM.MemoryMiB),
+    IP:        res.VM.IP,
+  }); err != nil {
+    log.Printf("agent %s: could not record the running vm %s: %v", agentID, env.ID, err)
+    return
+  }
+  if err := tx.Commit(ctx); err != nil {
+    log.Printf("agent %s: could not commit the running vm %s: %v", agentID, env.ID, err)
+    return
+  }
+  log.Printf("agent %s: vm %s running (local id %s, ip %s)", agentID, env.ID, res.VM.ID, res.VM.IP)
+}
+
+// handleInventory reconciles the agent's report against the registry. This is
+// what makes a VM created locally with `dagent vm create` appear in the control
+// plane at all, and what notices one that has been removed on the host.
+//
+// The report is authoritative but not destructive: rows are upserted or marked
+// 'gone', never deleted, so a VM that disappeared stays visible.
+func (h *AgentHandler) handleInventory(ctx context.Context, agent db.Agent, agentID string, env proto.Envelope) {
+  var inv proto.Inventory
+  if err := json.Unmarshal(env.Payload, &inv); err != nil {
+    log.Printf("agent %s: could not decode inventory: %v", agentID, err)
+    return
+  }
+
+  seen := make([]string, 0, len(inv.VMs))
+  for _, v := range inv.VMs {
+    if v.ID == "" {
+      continue // nothing to key on; the agent should never send this
+    }
+    seen = append(seen, v.ID)
+
+    status := "stopped"
+    started := pgtype.Timestamptz{}
+    if v.Running {
+      status = "running"
+      // The host does not report when the boot happened, so its creation time is
+      // the closest honest answer -- and only for a row we are learning about now.
+      started = pgtype.Timestamptz{Time: v.CreatedAt, Valid: !v.CreatedAt.IsZero()}
+    }
+    created := pgtype.Timestamptz{Time: v.CreatedAt, Valid: !v.CreatedAt.IsZero()}
+    if !created.Valid {
+      created = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+    }
+
+    if err := h.q.UpsertVMFromInventory(ctx, db.UpsertVMFromInventoryParams{
+      AgentID:   agent.ID,
+      VMID:      v.ID,
+      Name:      v.Name,
+      Status:    status,
+      Boot:      v.Boot,
+      CPUs:      int32(v.CPUs),
+      MemoryMiB: int32(v.MemoryMiB),
+      IP:        v.IP,
+      CreatedAt: created,
+      StartedAt: started,
+    }); err != nil {
+      log.Printf("agent %s: could not record vm %s from inventory: %v", agentID, v.ID, err)
+    }
+  }
+
+  if err := h.q.MarkMissingVMsGone(ctx, db.MarkMissingVMsGoneParams{
+    AgentID: agent.ID,
+    VmIds:   seen,
+  }); err != nil {
+    log.Printf("agent %s: could not reconcile removed vms: %v", agentID, err)
+  }
+}
+
+func (h *AgentHandler) handleMetrics(ctx context.Context, agent db.Agent, agentID string, env proto.Envelope) {
+  var m proto.Metrics
+  if err := json.Unmarshal(env.Payload, &m); err != nil {
+    log.Printf("agent %s: could not decode metrics: %v", agentID, err)
+    return
+  }
+  if err := h.q.UpdateAgentMetrics(ctx, db.UpdateAgentMetricsParams{
+    ID:             agent.ID,
+    CPUCount:       int32(m.CPUCount),
+    CPUPercent:     m.CPUPercent,
+    Load1:          m.Load1,
+    Load5:          m.Load5,
+    Load15:         m.Load15,
+    MemTotalBytes:  m.MemTotalBytes,
+    MemUsedBytes:   m.MemUsedBytes,
+    DiskTotalBytes: m.DiskTotalBytes,
+    DiskUsedBytes:  m.DiskUsedBytes,
+    UptimeSeconds:  m.UptimeSeconds,
+  }); err != nil {
+    log.Printf("agent %s: could not store metrics: %v", agentID, err)
   }
 }
 

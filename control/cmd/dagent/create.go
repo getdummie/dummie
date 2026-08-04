@@ -6,41 +6,18 @@ import (
   "fmt"
   "os"
   "time"
+
+  "control/internal/proto"
 )
 
 // createRequest is one VM creation, in a form that survives being sent over the
-// wire. The CLI builds it from flags; the daemon decodes it from JSON. Both
-// then call createVM, so there is exactly one implementation of what creating a
-// VM means.
-type createRequest struct {
-  Name string `json:"name,omitempty"`
-  Boot string `json:"boot,omitempty"`
-
-  Kernel        string `json:"kernel,omitempty"`
-  KernelSHA     string `json:"kernel_sha256,omitempty"`
-  Initrd        string `json:"initrd,omitempty"`
-  InitrdSHA     string `json:"initrd_sha256,omitempty"`
-  Rootfs        string `json:"rootfs,omitempty"`
-  RootfsSHA     string `json:"rootfs_sha256,omitempty"`
-  RootfsTar     string `json:"rootfs_tar,omitempty"`
-  RootfsTarSHA  string `json:"rootfs_tar_sha256,omitempty"`
-  RootfsSize    string `json:"rootfs_size,omitempty"`
-  Disk          string `json:"disk,omitempty"`
-  DiskSHA       string `json:"disk_sha256,omitempty"`
-  DiskSize      string `json:"disk_size,omitempty"`
-  Append        string `json:"append,omitempty"`
-  Firmware      string `json:"firmware,omitempty"`
-
-  CPUs   int `json:"cpus,omitempty"`
-  Memory int `json:"memory_mib,omitempty"`
-
-  NoNetwork bool     `json:"no_network,omitempty"`
-  IP        string   `json:"ip,omitempty"`
-  Egress    []string `json:"egress,omitempty"`
-  EgressAny bool     `json:"egress_any,omitempty"`
-  RateMbit  int      `json:"rate_mbit,omitempty"`
-  BurstKbit int      `json:"burst_kbit,omitempty"`
-}
+// wire. The CLI builds it from flags; the daemon decodes it from JSON on its
+// socket; the control server pushes it down the websocket. All three then call
+// createVM, so there is exactly one implementation of what creating a VM means.
+//
+// It is an alias, not a conversion, because the control link and the local
+// socket must not be able to drift into two subtly different request shapes.
+type createRequest = proto.VMSpec
 
 // createVM does the whole job: resolve images, build the disk, set up the
 // network, start qemu. logf reports progress -- to the terminal for a direct

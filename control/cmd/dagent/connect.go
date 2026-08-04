@@ -15,6 +15,7 @@ import (
   "os/signal"
   "runtime"
   "strings"
+  "sync"
   "syscall"
   "time"
 
@@ -28,6 +29,11 @@ import (
 const (
   backoffMin = 1 * time.Second
   backoffMax = 60 * time.Second
+
+  // reportInterval is how often a host snapshot and a VM inventory are pushed.
+  // It also doubles as application-level evidence of liveness between websocket
+  // pings.
+  reportInterval = 30 * time.Second
 )
 
 // errTerminal marks a failure that retrying cannot fix -- a revoked or unknown
@@ -60,15 +66,20 @@ func connectCommand() *cli.Command {
         Usage:   "directory holding agent.json (default /etc/dagent, or the user config dir)",
         Sources: cli.EnvVars("DAGENT_STATE_DIR"),
       },
+      &cli.StringFlag{
+        Name:    "data-dir",
+        Usage:   "directory holding images and vms; where pushed vm.create jobs build",
+        Sources: cli.EnvVars("DAGENT_DATA_DIR"),
+      },
     },
     Action: func(ctx context.Context, cmd *cli.Command) error {
       return runConnect(cmd.String("control-url"), cmd.String("key"),
-        cmd.String("state-dir"), cmd.Bool("insecure"))
+        cmd.String("state-dir"), cmd.String("data-dir"), cmd.Bool("insecure"))
     },
   }
 }
 
-func runConnect(controlURL, key, stateDir string, insecure bool) error {
+func runConnect(controlURL, key, stateDir, dataDir string, insecure bool) error {
   base, err := normalizeControlURL(controlURL, insecure)
   if err != nil {
     return err
@@ -79,6 +90,9 @@ func runConnect(controlURL, key, stateDir string, insecure bool) error {
 
   if stateDir == "" {
     stateDir = defaultStateDir()
+  }
+  if dataDir == "" {
+    dataDir = defaultDataDir()
   }
   st, err := loadState(stateDir)
   if err != nil {
@@ -108,7 +122,7 @@ func runConnect(controlURL, key, stateDir string, insecure bool) error {
     log.Print("already enrolled; ignoring --key")
   }
 
-  return connectLoop(ctx, client, base, st)
+  return connectLoop(ctx, client, base, st, dataDir)
 }
 
 // normalizeControlURL validates the scheme and strips any trailing path so the
@@ -199,12 +213,15 @@ func hostname() string {
 
 // --- connection loop --------------------------------------------------------
 
-func connectLoop(ctx context.Context, client *http.Client, base *url.URL, st state) error {
+func connectLoop(ctx context.Context, client *http.Client, base *url.URL, st state, dataDir string) error {
   backoff := backoffMin
+  // Held across reconnects: cpu utilisation is a delta, and throwing the
+  // previous sample away on every blip would mean never reporting a rate.
+  var cpu cpuSampler
 
   for {
     start := time.Now()
-    err := connectOnce(ctx, client, base, st)
+    err := connectOnce(ctx, client, base, st, dataDir, &cpu)
 
     switch {
     case ctx.Err() != nil:
@@ -246,7 +263,7 @@ func jitter(d time.Duration) time.Duration {
   return time.Duration(float64(d) - delta + rand.Float64()*2*delta)
 }
 
-func connectOnce(ctx context.Context, client *http.Client, base *url.URL, st state) error {
+func connectOnce(ctx context.Context, client *http.Client, base *url.URL, st state, dataDir string, cpu *cpuSampler) error {
   wsURL := *base
   switch wsURL.Scheme {
   case "https":
@@ -271,6 +288,10 @@ func connectOnce(ctx context.Context, client *http.Client, base *url.URL, st sta
   }
   defer ws.CloseNow()
 
+  // Everything past the handshake may write concurrently -- a job finishing, a
+  // metrics tick -- so from here on the socket is only touched through link.
+  l := &link{ws: ws, data: dataDir}
+
   if err := sendHello(ctx, ws); err != nil {
     return err
   }
@@ -288,7 +309,14 @@ func connectOnce(ctx context.Context, client *http.Client, base *url.URL, st sta
   }
   log.Printf("connected to %s as agent %s", base.Host, st.AgentID)
 
-  return readLoop(ctx, ws)
+  // Jobs outlive the read loop iteration that started them, so cancelling here
+  // is what stops an in-flight create from writing to a dead socket.
+  ctx, cancel := context.WithCancel(ctx)
+  defer cancel()
+
+  go l.pushReports(ctx, cpu)
+
+  return l.readLoop(ctx)
 }
 
 func sendHello(ctx context.Context, ws *websocket.Conn) error {
@@ -307,12 +335,26 @@ func sendHello(ctx context.Context, ws *websocket.Conn) error {
   return writeEnvelope(ctx, ws, env)
 }
 
-// readLoop blocks until the socket dies. There are no job types yet, so
-// anything unrecognised is logged and ignored -- handling a new type later is
-// an added case here, nothing more.
-func readLoop(ctx context.Context, ws *websocket.Conn) error {
+// link is the live control connection. The mutex exists because a websocket
+// permits exactly one writer at a time and there are now three of them: the
+// read loop, the metrics ticker, and every job goroutine reporting its result.
+type link struct {
+  ws   *websocket.Conn
+  data string
+
+  mu sync.Mutex
+}
+
+func (l *link) write(ctx context.Context, env proto.Envelope) error {
+  l.mu.Lock()
+  defer l.mu.Unlock()
+  return writeEnvelope(ctx, l.ws, env)
+}
+
+// readLoop blocks until the socket dies.
+func (l *link) readLoop(ctx context.Context) error {
   for {
-    env, err := readEnvelope(ctx, ws)
+    env, err := readEnvelope(ctx, l.ws)
     if err != nil {
       if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
         return nil
@@ -322,7 +364,7 @@ func readLoop(ctx context.Context, ws *websocket.Conn) error {
 
     switch env.Type {
     case proto.TypeJob:
-      log.Printf("received job %s (no handler yet): %s", env.ID, env.Payload)
+      l.handleJob(ctx, env)
     case proto.TypeError:
       var p proto.ErrorPayload
       _ = json.Unmarshal(env.Payload, &p)
@@ -331,6 +373,153 @@ func readLoop(ctx context.Context, ws *websocket.Conn) error {
       log.Printf("ignoring unexpected frame type %q", env.Type)
     }
   }
+}
+
+// handleJob dispatches on kind and never blocks the read loop: creating a VM
+// downloads images and builds a filesystem, which takes minutes, and the socket
+// still has to answer pings and accept further work while that happens.
+func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
+  var job proto.Job
+  if err := json.Unmarshal(env.Payload, &job); err != nil {
+    l.reply(ctx, env.ID, proto.JobResult{Error: "could not decode the job: " + err.Error()})
+    return
+  }
+
+  switch job.Kind {
+  case proto.KindVMCreate:
+    if job.VM == nil {
+      l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no vm spec"})
+      return
+    }
+    go l.createVM(ctx, env.ID, *job.VM)
+  default:
+    l.reply(ctx, env.ID, proto.JobResult{
+      Kind:  job.Kind,
+      Error: fmt.Sprintf("this agent does not know how to run a %q job", job.Kind),
+    })
+  }
+}
+
+func (l *link) createVM(ctx context.Context, jobID string, spec proto.VMSpec) {
+  log.Printf("job %s: creating a vm", jobID)
+
+  // Progress goes to the local log rather than back up the socket: the control
+  // server records outcomes, and streaming a multi-minute build to it would be
+  // a second protocol for no one's benefit.
+  logf := func(format string, args ...any) {
+    log.Printf("job %s: "+format, append([]any{jobID}, args...)...)
+  }
+
+  v, err := createVM(ctx, l.data, spec, logf)
+  if err != nil {
+    log.Printf("job %s: vm create failed: %v", jobID, err)
+    l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMCreate, Error: err.Error()})
+    return
+  }
+
+  info := proto.VMInfo{
+    ID:        v.ID,
+    Name:      v.Name,
+    Boot:      string(v.Boot),
+    CPUs:      v.CPUs,
+    MemoryMiB: v.MemoryMiB,
+  }
+  if v.Net != nil {
+    info.IP = v.Net.IP
+  }
+  l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMCreate, OK: true, VM: &info})
+}
+
+// reply correlates by the job's envelope id. A failure is reported as a result
+// with OK false rather than as an error frame, because an error frame carries
+// no correlation and would leave the server's row pending forever.
+func (l *link) reply(ctx context.Context, jobID string, res proto.JobResult) {
+  env, err := proto.NewEnvelope(proto.TypeResult, jobID, res)
+  if err != nil {
+    log.Printf("job %s: could not build the result frame: %v", jobID, err)
+    return
+  }
+  // Detached from ctx: a job that failed because the socket died still has
+  // nowhere to send this, but one that finished as the daemon shuts down should
+  // get its last word out.
+  wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+  defer cancel()
+  if err := l.write(wctx, env); err != nil {
+    log.Printf("job %s: could not report the result: %v", jobID, err)
+  }
+}
+
+// pushReports sends a host snapshot and a VM inventory on a timer until the
+// connection ends. The first pair goes out immediately so a freshly connected
+// agent is not blank in the fleet view for half a minute -- and so a VM that was
+// created locally shows up as soon as the host is reachable.
+func (l *link) pushReports(ctx context.Context, cpu *cpuSampler) {
+  ticker := time.NewTicker(reportInterval)
+  defer ticker.Stop()
+
+  for {
+    metrics, err := proto.NewEnvelope(proto.TypeMetrics, "", cpu.collect(l.data))
+    if err != nil {
+      log.Printf("could not build the metrics frame: %v", err)
+      return
+    }
+    if err := l.write(ctx, metrics); err != nil {
+      // The read loop owns the connection's lifetime and will see the same
+      // failure; there is nothing useful to do here but stop.
+      return
+    }
+
+    // A listing failure is worth reporting nothing rather than reporting an
+    // empty inventory: the server reads a missing VM as removed, and an
+    // unreadable data directory would look like the whole fleet vanished.
+    if inv, err := l.inventory(); err != nil {
+      log.Printf("could not read the vm inventory: %v", err)
+    } else {
+      env, err := proto.NewEnvelope(proto.TypeInventory, "", inv)
+      if err != nil {
+        log.Printf("could not build the inventory frame: %v", err)
+        return
+      }
+      if err := l.write(ctx, env); err != nil {
+        return
+      }
+    }
+
+    select {
+    case <-ctx.Done():
+      return
+    case <-ticker.C:
+    }
+  }
+}
+
+// inventory is everything under vms/, with liveness resolved per VM. Reported in
+// full every tick: the directory is the truth about what exists, so a snapshot
+// is both simpler than a diff and self-correcting when a frame is lost.
+func (l *link) inventory() (proto.Inventory, error) {
+  vms, err := listVMs(l.data)
+  if err != nil {
+    return proto.Inventory{}, err
+  }
+  inv := proto.Inventory{VMs: make([]proto.VMState, 0, len(vms))}
+  for _, v := range vms {
+    state := proto.VMState{
+      VMInfo: proto.VMInfo{
+        ID:        v.ID,
+        Name:      v.Name,
+        Boot:      string(v.Boot),
+        CPUs:      v.CPUs,
+        MemoryMiB: v.MemoryMiB,
+      },
+      Running:   vmPID(l.data, v.ID) != 0,
+      CreatedAt: v.CreatedAt,
+    }
+    if v.Net != nil {
+      state.IP = v.Net.IP
+    }
+    inv.VMs = append(inv.VMs, state)
+  }
+  return inv, nil
 }
 
 func writeEnvelope(ctx context.Context, ws *websocket.Conn, env proto.Envelope) error {

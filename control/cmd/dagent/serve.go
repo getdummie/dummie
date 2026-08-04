@@ -102,7 +102,7 @@ func runServe(ctx context.Context, cfg Config) error {
   // perfectly good standalone dagent.
   if cfg.ControlURL != "" {
     go func() {
-      if err := runConnect(cfg.ControlURL, cfg.EnrollmentKey, cfg.DataDir, cfg.Insecure); err != nil {
+      if err := runConnect(cfg.ControlURL, cfg.EnrollmentKey, cfg.DataDir, cfg.DataDir, cfg.Insecure); err != nil {
         // Not fatal to the daemon -- losing the control plane must not take
         // local VM management down with it.
         log.Printf("control link stopped: %v", err)

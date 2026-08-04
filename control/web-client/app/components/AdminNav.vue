@@ -5,6 +5,7 @@ const links = [
   { label: 'Users', to: '/admin/model/users' },
   { label: 'Tokens', to: '/admin/model/tokens' },
   { label: 'Agents', to: '/admin/model/agents' },
+  { label: 'VMs', to: '/admin/model/vms' },
   { label: 'Keys', to: '/admin/model/agent-keys' },
 ]
 

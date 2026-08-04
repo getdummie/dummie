@@ -25,6 +25,8 @@ const (
   TypeHelloAck MsgType = "hello_ack" // server -> agent
   TypeJob      MsgType = "job"       // server -> agent
   TypeResult   MsgType = "result"    // agent -> server
+  TypeMetrics   MsgType = "metrics"   // agent -> server, unsolicited and periodic
+  TypeInventory MsgType = "inventory" // agent -> server, unsolicited and periodic
   TypeError    MsgType = "error"     // either direction
 )
 
@@ -67,6 +69,117 @@ type HelloAck struct {
 
 type ErrorPayload struct {
   Message string `json:"message"`
+}
+
+// --- jobs -------------------------------------------------------------------
+
+// JobKind says what a job frame asks for. The kind is inside the payload rather
+// than in MsgType so the envelope keeps one frame type for all pushed work and
+// the correlation id keeps its single meaning.
+type JobKind string
+
+const (
+  KindVMCreate JobKind = "vm.create"
+)
+
+// Job is the payload of a TypeJob envelope. Exactly one of the per-kind fields
+// is set, chosen by Kind.
+type Job struct {
+  Kind JobKind `json:"kind"`
+  VM   *VMSpec `json:"vm,omitempty"` // set when Kind is KindVMCreate
+}
+
+// VMSpec is one VM creation request. It is the same shape the agent's own unix
+// socket accepts, so a VM asked for by the control plane and one asked for by
+// `dagent vm create` are the same request travelling by different routes.
+type VMSpec struct {
+  Name string `json:"name,omitempty"`
+  Boot string `json:"boot,omitempty"`
+
+  Kernel       string `json:"kernel,omitempty"`
+  KernelSHA    string `json:"kernel_sha256,omitempty"`
+  Initrd       string `json:"initrd,omitempty"`
+  InitrdSHA    string `json:"initrd_sha256,omitempty"`
+  Rootfs       string `json:"rootfs,omitempty"`
+  RootfsSHA    string `json:"rootfs_sha256,omitempty"`
+  RootfsTar    string `json:"rootfs_tar,omitempty"`
+  RootfsTarSHA string `json:"rootfs_tar_sha256,omitempty"`
+  RootfsSize   string `json:"rootfs_size,omitempty"`
+  Disk         string `json:"disk,omitempty"`
+  DiskSHA      string `json:"disk_sha256,omitempty"`
+  DiskSize     string `json:"disk_size,omitempty"`
+  Append       string `json:"append,omitempty"`
+  Firmware     string `json:"firmware,omitempty"`
+
+  CPUs   int `json:"cpus,omitempty"`
+  Memory int `json:"memory_mib,omitempty"`
+
+  NoNetwork bool     `json:"no_network,omitempty"`
+  IP        string   `json:"ip,omitempty"`
+  Egress    []string `json:"egress,omitempty"`
+  EgressAny bool     `json:"egress_any,omitempty"`
+  RateMbit  int      `json:"rate_mbit,omitempty"`
+  BurstKbit int      `json:"burst_kbit,omitempty"`
+}
+
+// JobResult is the payload of a TypeResult envelope, correlated to its job by
+// the envelope id. A failure is a result too -- the server needs to hear about
+// it, and an error frame carries no correlation.
+type JobResult struct {
+  Kind  JobKind `json:"kind"`
+  OK    bool    `json:"ok"`
+  Error string  `json:"error,omitempty"`
+  VM    *VMInfo `json:"vm,omitempty"` // set when Kind is KindVMCreate and OK
+}
+
+// VMInfo is what the agent actually built. The id and the address are allocated
+// on the host, so this is the only place the control plane learns them.
+type VMInfo struct {
+  ID        string `json:"id"`
+  Name      string `json:"name"`
+  Boot      string `json:"boot"`
+  CPUs      int    `json:"cpus"`
+  MemoryMiB int    `json:"memory_mib"`
+  IP        string `json:"ip,omitempty"`
+}
+
+// --- inventory ---------------------------------------------------------------
+
+// Inventory is the full set of VMs on the host, reported periodically. It is
+// deliberately a complete list rather than a diff: the agent's own directory is
+// the truth about what exists, and a snapshot means a missed frame self-corrects
+// on the next tick instead of leaving the server permanently out of step.
+//
+// It is also how a VM created locally with `dagent vm create` becomes visible to
+// the control plane at all.
+type Inventory struct {
+  VMs []VMState `json:"vms"`
+}
+
+// VMState is one VM as the host currently sees it. Running is live state -- is
+// there a qemu process -- while everything in VMInfo is what the VM was made as.
+type VMState struct {
+  VMInfo
+  Running   bool      `json:"running"`
+  CreatedAt time.Time `json:"created_at"`
+}
+
+// --- metrics ----------------------------------------------------------------
+
+// Metrics is a snapshot of the host the agent runs on, pushed periodically.
+// Disk is the filesystem holding the agent's data directory -- the one that
+// fills up when images and overlays accumulate, which is the one that matters.
+type Metrics struct {
+  CPUCount       int     `json:"cpu_count"`
+  CPUPercent     float64 `json:"cpu_percent"`
+  Load1          float64 `json:"load1"`
+  Load5          float64 `json:"load5"`
+  Load15         float64 `json:"load15"`
+  MemTotalBytes  int64   `json:"mem_total_bytes"`
+  MemUsedBytes   int64   `json:"mem_used_bytes"`
+  DiskTotalBytes int64   `json:"disk_total_bytes"`
+  DiskUsedBytes  int64   `json:"disk_used_bytes"`
+  UptimeSeconds  int64   `json:"uptime_seconds"`
 }
 
 // EnrollRequest is the body of POST /api/v1/agent/enroll.

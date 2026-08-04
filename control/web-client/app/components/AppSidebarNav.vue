@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { ChevronDown, KeyRound, LayoutDashboard, LogOut, Server, Shield, Ticket, Users } from '@lucide/vue'
+import { Boxes, ChevronDown, KeyRound, LayoutDashboard, LogOut, Server, Shield, Ticket, Users } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -42,6 +42,7 @@ const adminItems: NavItem[] = [
   { label: 'Users', to: '/admin/model/users', icon: Users },
   { label: 'Tokens', to: '/admin/model/tokens', icon: Ticket },
   { label: 'Agents', to: '/admin/model/agents', icon: Server },
+  { label: 'VMs', to: '/admin/model/vms', icon: Boxes },
   { label: 'Keys', to: '/admin/model/agent-keys', icon: KeyRound },
 ]
 

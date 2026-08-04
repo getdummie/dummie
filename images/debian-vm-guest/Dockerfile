@@ -22,7 +22,6 @@ RUN set -ex \
     htop \
     btop \
     neovim \
-    udev \
   && echo 'root:root' | chpasswd \
   && apt clean \
   && systemctl enable ssh \

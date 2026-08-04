@@ -133,6 +133,11 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
     if err := q.SetAllAgentsOffline(ctx); err != nil {
       log.Printf("could not reset agent statuses at startup: %v", err)
     }
+    // Same reasoning for VMs: a pending row was waiting on a result frame that
+    // belonged to a socket this process never had.
+    if err := q.FailAllPendingVMs(ctx, "the control server restarted before the agent reported the result"); err != nil {
+      log.Printf("could not fail pending vms at startup: %v", err)
+    }
     cancel()
   }
 
@@ -153,6 +158,11 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin.GET("/agents", adminH.ListAgents)
   admin.POST("/agents/:id/revoke", adminH.RevokeAgent)
   admin.DELETE("/agents/:id", adminH.DeleteAgent)
+  admin.GET("/agents/:id/vms", adminH.ListAgentVMs)
+  admin.POST("/agents/:id/vms", adminH.CreateVM)
+  admin.GET("/vms", adminH.ListVMs)
+  admin.GET("/vms/:id", adminH.GetVM)
+  admin.DELETE("/vms/:id", adminH.DeleteVM)
 
   // Agents: enrollment + the persistent socket the server pushes jobs down.
   // Authenticated by enrollment key / agent token, not by the user JWT.

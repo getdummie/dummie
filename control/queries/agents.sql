@@ -22,6 +22,10 @@ SELECT * FROM agents
 WHERE token_hash = $1
 LIMIT 1;
 
+-- name: GetAgentByID :one
+SELECT * FROM agents
+WHERE id = $1;
+
 -- name: CountAgents :one
 SELECT count(*) FROM agents;
 
@@ -48,6 +52,25 @@ WHERE id = $1;
 -- name: UpdateAgentFacts :exec
 UPDATE agents
 SET hostname = $2, os = $3, os_version = $4, arch = $5, agent_version = $6, updated_at = now()
+WHERE id = $1;
+
+-- name: UpdateAgentMetrics :exec
+-- UpdateAgentMetrics overwrites the host snapshot in place. last_seen_at moves
+-- too: a metrics frame is proof the agent is alive, and it arrives often enough
+-- that the throttled touch in the read loop rarely has anything left to do.
+UPDATE agents
+SET cpu_count        = $2,
+    cpu_percent      = $3,
+    load1            = $4,
+    load5            = $5,
+    load15           = $6,
+    mem_total_bytes  = $7,
+    mem_used_bytes   = $8,
+    disk_total_bytes = $9,
+    disk_used_bytes  = $10,
+    uptime_seconds   = $11,
+    metrics_at       = now(),
+    last_seen_at     = now()
 WHERE id = $1;
 
 -- name: RevokeAgent :exec
