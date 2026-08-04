@@ -203,6 +203,28 @@ func applyBaseRuleset(cfg netConfig) error {
     return fmt.Errorf("invalid gateway %q", cfg.Gateway)
   }
 
+  // Return traffic for flows that were already allowed -- the same rule the
+  // forward chain opens with, and needed here for the same reason.
+  //
+  // Without it the catch-all drop at the end of this chain also swallows the
+  // guest's replies to connections the *host* opened, so `curl http://<vm>:8000`
+  // from the host hangs: the SYN is locally generated and never filtered, but the
+  // SYN-ACK arrives on a tap addressed to the host and is dropped.
+  //
+  // This opens nothing new. Conntrack state is per flow, not per direction: a VM
+  // sending its own SYN at a host port is NEW, still hits the drop below, and
+  // never reaches ESTABLISHED. Only a flow something already accepted can match.
+  c.AddRule(&nftables.Rule{Table: t, Chain: in, Exprs: []expr.Any{
+    &expr.Ct{Register: 1, Key: expr.CtKeySTATE},
+    &expr.Bitwise{
+      SourceRegister: 1, DestRegister: 1, Len: 4,
+      Mask: binaryutil.NativeEndian.PutUint32(expr.CtStateBitESTABLISHED | expr.CtStateBitRELATED),
+      Xor:  binaryutil.NativeEndian.PutUint32(0),
+    },
+    &expr.Cmp{Op: expr.CmpOpNeq, Register: 1, Data: []byte{0, 0, 0, 0}},
+    &expr.Verdict{Kind: expr.VerdictAccept},
+  }})
+
   // DHCP, which needs its own rule: a client with no address yet broadcasts to
   // 255.255.255.255, so it never matches a destination of the gateway.
   c.AddRule(&nftables.Rule{Table: t, Chain: in, Exprs: []expr.Any{
