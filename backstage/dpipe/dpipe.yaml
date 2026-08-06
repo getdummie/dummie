@@ -1,0 +1,30 @@
+# Example dpipe configuration. Paths are relative to the working directory.
+control_socket: /run/dpipe/control.sock
+upgrade_socket: /run/dpipe/upgrade.sock
+drain_timeout: 0s
+log_level: info
+
+ssh:
+  enabled: true
+  host_key: ./keys/dpipe_host_ed25519
+  client_key: ./keys/dpipe_client_ed25519
+  backend_known_hosts: ./keys/known_hosts # empty => insecure (dev only) + warn
+  dial_timeout: 5s
+  resolve_timeout: 3s
+
+tls:
+  enabled: true
+  certs: # selected by SNI
+    - sni: vm1.local
+      cert: ./keys/vm1.crt
+      key: ./keys/vm1.key
+    - sni: vm2.local
+      cert: ./keys/vm2.crt
+      key: ./keys/vm2.key
+  default_cert: ./keys/default.crt # optional fallback when SNI misses
+  default_key: ./keys/default.key
+  min_version: "1.2" # 1.2 or 1.3
+  dial_timeout: 5s
+  resolve_timeout: 3s
+  sniff_timeout: 5s
+  sniff_max_bytes: 65536

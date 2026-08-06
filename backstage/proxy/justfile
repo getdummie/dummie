@@ -1,0 +1,27 @@
+default: build
+
+# Build the proxy binary.
+build:
+    go build -o bin/proxy ./cmd/proxy
+
+# Unit + integration tests.
+test:
+    go test ./...
+
+# Tests under the race detector.
+race:
+    go test -race ./...
+
+lint:
+    go vet ./...
+
+# Generate the demo keys and certificates.
+keys:
+    ./scripts/keys.sh
+
+# Full proxy + dpipe demo (builds both repos).
+demo:
+    ./scripts/demo.sh
+
+clean:
+    rm -rf bin

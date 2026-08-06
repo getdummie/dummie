@@ -1,0 +1,50 @@
+package proxy
+
+import (
+	"proxy/internal/httpsniff"
+)
+
+// Router is the single source of truth for HTTP routing: the plaintext path
+// reads it directly, the HTTPS path reads it via resolve{kind:"http"}.
+type Router struct {
+	hosts   map[string]string
+	def     string
+	tcp     map[string]TCPRoute
+	tcpList []TCPRoute
+}
+
+// NewRouter builds the routing tables from the configuration.
+func NewRouter(cfg *Config) *Router {
+	r := &Router{hosts: map[string]string{}, tcp: map[string]TCPRoute{}}
+	if cfg.HTTP != nil {
+		for host, target := range cfg.HTTP.Hosts {
+			r.hosts[httpsniff.NormalizeHost(host)] = target
+		}
+		r.def = cfg.HTTP.Default
+	}
+	for _, route := range cfg.TCP {
+		r.tcp[route.Listen] = route
+		r.tcpList = append(r.tcpList, route)
+	}
+	return r
+}
+
+// HostBackend resolves an HTTP host (with or without port, any case) to a
+// backend. It falls back to http.default when configured; an empty default means
+// no route, which the caller turns into a 502.
+func (r *Router) HostBackend(host string) (string, bool) {
+	h := httpsniff.NormalizeHost(host)
+	if h == "" {
+		return "", false
+	}
+	if t, ok := r.hosts[h]; ok {
+		return t, true
+	}
+	if r.def != "" {
+		return r.def, true
+	}
+	return "", false
+}
+
+// TCPRoutes returns the configured opaque TCP routes.
+func (r *Router) TCPRoutes() []TCPRoute { return r.tcpList }

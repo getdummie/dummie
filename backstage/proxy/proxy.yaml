@@ -1,0 +1,42 @@
+# Example proxy configuration. Paths are relative to the working directory.
+control_socket: /run/dpipe/control.sock
+
+http: # plaintext HTTP (proxy sniffs Host + hands off a copy)
+  listen: ":8080"
+  reuseport: true
+  hosts:
+    vm1.local: "127.0.0.1:8001"
+    vm2.local: "127.0.0.1:8002"
+  default: "" # empty => 502
+
+https: # TLS ingress (proxy accepts raw, dpipe terminates)
+  listen: ":8443"
+  reuseport: true
+  # routing reuses http.hosts via resolve{kind:"http"}; certs live in dpipe.tls
+  # NOTE: dpipe.tls.enabled must be true for this ingress to work.
+
+tcp:
+  - listen: ":9000"
+    target: "127.0.0.1:9000"
+    protocol: tcp
+    reuseport: true
+
+ssh:
+  listen: ":2222"
+  reuseport: true
+  users:
+    - pubkey_file: ./keys/alice.pub
+      target: "127.0.0.1:22"
+      remote_user: "dev"
+    # - pubkey: "ssh-ed25519 AAAA... bob@laptop"
+    #   target: "127.0.0.1:2200"
+    #   remote_user: "root"
+
+listen_forwards:
+  - listen: "127.0.0.1:15432"
+    target: "127.0.0.1:5432"
+
+dial_timeout: 5s
+http_sniff_timeout: 5s
+http_sniff_max_bytes: 65536
+log_level: info
