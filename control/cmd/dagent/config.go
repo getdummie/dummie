@@ -28,6 +28,11 @@ type Config struct {
 
   Features Features      `yaml:"features"`
   Network  NetworkConfig `yaml:"network"`
+
+  // Companion binaries dagent downloads and runs as systemd units. Off by
+  // default like everything else that changes the host.
+  Proxy ServiceConfig `yaml:"proxy"`
+  Dpipe ServiceConfig `yaml:"dpipe"`
 }
 
 // Features is every part of `serve` that changes something outside dagent's own

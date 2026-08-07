@@ -123,6 +123,23 @@ func runServe(ctx context.Context, cfg Config) error {
   ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
   defer stop()
 
+  // The companions are their own systemd units, so a failure to install one is
+  // logged rather than fatal: it must not take local VM management down, and the
+  // next start retries it anyway.
+  for _, svc := range []struct {
+    name string
+    cfg  ServiceConfig
+  }{
+    {proxyService, cfg.Proxy},
+    {dpipeService, cfg.Dpipe},
+  } {
+    if err := ensureManagedService(ctx, cfg.DataDir, svc.name, svc.cfg); err != nil {
+      log.Printf("WARNING: %s: %v", svc.name, err)
+    } else if svc.cfg.Enable {
+      log.Printf("%s is installed and running as %s.service", svc.name, svc.name)
+    }
+  }
+
   errs := make(chan error, 4)
 
   // The CLI socket is not gated: it is the daemon, not something the daemon

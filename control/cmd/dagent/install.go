@@ -191,6 +191,9 @@ func uninstallCommand() *cli.Command {
       if os.Geteuid() != 0 {
         return errors.New("uninstall needs root")
       }
+      // dagent started the companions, so dagent takes them away; leaving them
+      // behind would mean units pointing at a config directory nobody maintains.
+      removeManagedServices(ctx)
       for _, args := range [][]string{
         {"disable", "--now", unitName},
         {"daemon-reload"},
@@ -235,6 +238,14 @@ const exampleConfig = `# control_url: https://control.example.com
 #   uplink: eth0            # default: whichever interface reaches the internet
 #   dns: 1.1.1.1
 #   queues: 4               # the suricata service will spin up the same number of queues
+#
+# dpipe:
+#   enable: false
+#   download_url: http://10.68.0.1:8081/backstage/dpipe/dpipe
+#
+# proxy:
+#   enable: false
+#   download_url: http://10.68.0.1:8081/backstage/proxy/proxy
 `
 
 // ensureGroup creates the group if it is missing. groupadd rather than writing
