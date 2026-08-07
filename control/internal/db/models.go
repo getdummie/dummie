@@ -85,6 +85,7 @@ type User struct {
 	UpdatedAt      pgtype.Timestamptz
 	VCPULimit      int32
 	MemoryLimitMiB int32
+	DiskLimitMiB   int32
 }
 
 type Vm struct {
@@ -104,6 +105,7 @@ type Vm struct {
 	StartedAt  pgtype.Timestamptz
 	ReportedAt pgtype.Timestamptz
 	CreatedBy  pgtype.UUID
+	DiskMiB    int32
 }
 
 type VmNetworkTarget struct {

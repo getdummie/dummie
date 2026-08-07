@@ -30,6 +30,7 @@ interface VM {
   boot: string
   cpus: number
   memory_mib: number
+  disk_mib: number
   ip: string
   last_error: string
   created_at: string
@@ -38,8 +39,10 @@ interface VM {
 interface Quota {
   vcpu_limit: number
   memory_limit_mib: number
+  disk_limit_mib: number
   vcpu_used: number
   memory_used_mib: number
+  disk_used_mib: number
 }
 
 const { authFetch } = useAuth()
@@ -159,7 +162,12 @@ const memRemaining = computed(() => {
   const q = quota.value
   return q ? Math.max(0, q.memory_limit_mib - q.memory_used_mib) : 0
 })
-const atCapacity = computed(() => cpuRemaining.value < 1 || memRemaining.value < 128)
+const diskRemaining = computed(() => {
+  const q = quota.value
+  return q ? Math.max(0, q.disk_limit_mib - q.disk_used_mib) : 0
+})
+const atCapacity = computed(() =>
+  cpuRemaining.value < 1 || memRemaining.value < 64 || diskRemaining.value < 1)
 
 // --- create ---
 interface Host {
@@ -218,6 +226,18 @@ async function openCreate() {
   if (hosts.value.length === 1) form.agent_id = hosts.value[0]!.id
 }
 
+// Mirrors the server's parseSizeMiB: same units, same rounding up, so the form
+// and the server agree on whether a size fits.
+function sizeToMiB(s: string): number | null {
+  const v = s.trim()
+  if (!v) return 0
+  const m = /^(\d+)([KkMmGgTt]?)$/.exec(v)
+  if (!m) return null
+  const mult: Record<string, number> = { '': 1, k: 1 << 10, m: 1 << 20, g: 1 << 30, t: 2 ** 40 }
+  const bytes = Number(m[1]) * (mult[m[2]!.toLowerCase()] ?? 1)
+  return Math.ceil(bytes / (1 << 20))
+}
+
 // Checked client-side purely so the form can say no before a round trip; the
 // server does the same check and is the one that decides.
 const wouldExceed = computed(() => {
@@ -225,8 +245,11 @@ const wouldExceed = computed(() => {
   if (!q) return false
   const cpus = Number(form.cpus)
   const mem = Number(form.memory_mib)
-  if (!Number.isFinite(cpus) || !Number.isFinite(mem)) return false
-  return q.vcpu_used + cpus > q.vcpu_limit || q.memory_used_mib + mem > q.memory_limit_mib
+  const disk = sizeToMiB(form.disk_size)
+  if (!Number.isFinite(cpus) || !Number.isFinite(mem) || disk === null) return false
+  return q.vcpu_used + cpus > q.vcpu_limit
+    || q.memory_used_mib + mem > q.memory_limit_mib
+    || q.disk_used_mib + disk > q.disk_limit_mib
 })
 
 // Mirrors the server's checks so a mistake is caught before the round trip.
@@ -428,6 +451,7 @@ async function confirmDestroy() {
                 <p id="vm-disk-hint" class="text-xs text-muted-foreground">
                   Size of this VM's disk. The guest still has to grow its own filesystem to use the space.
                 </p>
+                <p class="font-mono text-xs text-muted-foreground">{{ fmtMiB(diskRemaining) }} left</p>
               </div>
 
               <div class="space-y-2">
@@ -472,7 +496,7 @@ async function confirmDestroy() {
     </div>
 
     <!-- allowance -->
-    <div class="mt-6 grid gap-4 sm:grid-cols-2">
+    <div class="mt-6 grid gap-4 sm:grid-cols-3">
       <div class="rounded-lg border border-border p-4">
         <p class="eyebrow text-muted-foreground">vCPU</p>
         <p v-if="quota" class="mt-1 font-mono text-lg">
@@ -484,6 +508,13 @@ async function confirmDestroy() {
         <p class="eyebrow text-muted-foreground">Memory</p>
         <p v-if="quota" class="mt-1 font-mono text-lg">
           {{ fmtMiB(quota.memory_used_mib) }} <span class="text-muted-foreground">/ {{ fmtMiB(quota.memory_limit_mib) }}</span>
+        </p>
+        <Skeleton v-else class="mt-1 h-7 w-28" aria-hidden="true" />
+      </div>
+      <div class="rounded-lg border border-border p-4">
+        <p class="eyebrow text-muted-foreground">Disk</p>
+        <p v-if="quota" class="mt-1 font-mono text-lg">
+          {{ fmtMiB(quota.disk_used_mib) }} <span class="text-muted-foreground">/ {{ fmtMiB(quota.disk_limit_mib) }}</span>
         </p>
         <Skeleton v-else class="mt-1 h-7 w-28" aria-hidden="true" />
       </div>
@@ -514,6 +545,7 @@ async function confirmDestroy() {
             <TableHead>Name</TableHead>
             <TableHead>Status</TableHead>
             <TableHead>Size</TableHead>
+            <TableHead>Disk</TableHead>
             <TableHead>Address</TableHead>
             <TableHead>Created</TableHead>
             <TableHead>Power</TableHead>
@@ -523,10 +555,10 @@ async function confirmDestroy() {
         <TableBody>
           <template v-if="loading">
             <TableRow v-for="n in 3" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 7" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
+              <TableCell v-for="c in 8" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
-          <TableEmpty v-else-if="!items.length" :colspan="7">
+          <TableEmpty v-else-if="!items.length" :colspan="8">
             You have no VMs yet.
           </TableEmpty>
           <TableRow v-for="v in items" v-else :key="v.id">
@@ -549,6 +581,12 @@ async function confirmDestroy() {
             </TableCell>
             <TableCell class="font-mono text-muted-foreground">
               {{ v.cpus }} vCPU · {{ fmtMiB(v.memory_mib) }}
+            </TableCell>
+            <!-- An em dash, not '0': the size was never recorded for VMs made
+                 before the column existed or adopted from a host, and 0 would
+                 read as a diskless VM. -->
+            <TableCell class="font-mono text-muted-foreground">
+              {{ v.disk_mib ? fmtMiB(v.disk_mib) : '—' }}
             </TableCell>
             <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
             <TableCell class="text-muted-foreground">{{ fmtDate(v.created_at) }}</TableCell>

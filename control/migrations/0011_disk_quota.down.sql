@@ -1,0 +1,2 @@
+ALTER TABLE users DROP COLUMN IF EXISTS disk_limit_mib;
+ALTER TABLE vms DROP COLUMN IF EXISTS disk_mib;

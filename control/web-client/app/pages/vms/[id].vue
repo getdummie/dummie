@@ -30,6 +30,7 @@ interface VM {
   boot: string
   cpus: number
   memory_mib: number
+  disk_mib: number
   ip: string
   last_error: string
   created_at: string
@@ -172,6 +173,35 @@ async function togglePower(run: boolean) {
   }
 }
 
+// --- destroy ---
+const destroyOpen = ref(false)
+const destroying = ref(false)
+
+const destroyable = computed(() => {
+  const v = vm.value
+  return !!v?.vm_id && v.status !== 'gone'
+})
+
+async function confirmDestroy() {
+  destroying.value = true
+  actionError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/destroy`, { method: 'POST' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    destroyOpen.value = false
+    // Stay put and let the poll show it reach 'gone': navigating away would
+    // claim the destroy finished when the host has only just been asked.
+    settling.value = { want: 'gone', until: Date.now() + settleTimeoutMs }
+    await load(true)
+  }
+  catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Could not destroy the VM'
+  }
+  finally {
+    destroying.value = false
+  }
+}
+
 // --- destinations ---
 const addOpen = ref(false)
 const adding = ref(false)
@@ -281,17 +311,34 @@ async function confirmRemove() {
             <Badge :variant="statusVariant[vm.status]" class="font-mono">{{ vm.status }}</Badge>
           </div>
         </div>
-        <div class="flex items-center gap-2.5">
-          <Label for="vm-power" class="font-mono text-xs text-muted-foreground">Power</Label>
-          <Switch
-            id="vm-power"
-            :model-value="isRunning"
-            :disabled="!switchable || !!settling"
-            :aria-label="switchable
-              ? `${isRunning ? 'Stop' : 'Start'} this VM`
-              : `Cannot start or stop this VM: it is ${vm.status}`"
-            @update:model-value="togglePower"
-          />
+        <div class="flex flex-wrap items-center gap-4">
+          <div class="flex items-center gap-2.5">
+            <Label for="vm-power" class="font-mono text-xs text-muted-foreground">Power</Label>
+            <Switch
+              id="vm-power"
+              :model-value="isRunning"
+              :disabled="!switchable || !!settling"
+              :aria-label="switchable
+                ? `${isRunning ? 'Stop' : 'Start'} this VM`
+                : `Cannot start or stop this VM: it is ${vm.status}`"
+              @update:model-value="togglePower"
+            />
+          </div>
+          <!-- Labelled, not icon-only: this is the one irreversible action on
+               the page, and it sits next to a switch that is not. -->
+          <Button
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs text-destructive hover:text-destructive"
+            :disabled="!destroyable"
+            :aria-label="destroyable
+              ? 'Destroy this VM'
+              : `Cannot destroy this VM: it is ${vm.status}`"
+            @click="destroyOpen = true"
+          >
+            <Trash2 class="size-4" aria-hidden="true" />
+            Destroy
+          </Button>
         </div>
       </div>
 
@@ -316,6 +363,14 @@ async function confirmRemove() {
           <div>
             <dt class="eyebrow text-muted-foreground">Size</dt>
             <dd class="mt-1 font-mono text-sm">{{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }}</dd>
+          </div>
+          <div>
+            <dt class="eyebrow text-muted-foreground">Disk</dt>
+            <!-- Shown even when unrecorded: '0' would read as a diskless VM,
+                 and a blank field as one that has no such property at all. -->
+            <dd class="mt-1 font-mono text-sm">
+              {{ vm.disk_mib ? fmtMiB(vm.disk_mib) : 'not recorded' }}
+            </dd>
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">Boot mode</dt>
@@ -480,6 +535,29 @@ async function confirmRemove() {
         </Table>
       </section>
     </template>
+
+    <!-- destroy confirm -->
+    <Dialog v-model:open="destroyOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Destroy VM</DialogTitle>
+          <DialogDescription>
+            <span class="font-mono text-foreground">{{ vm?.name || vm?.vm_id }}</span>
+            is shut down and its disk is deleted on the host. This cannot be undone.
+            The vCPU, memory and disk it holds are returned to your allowance.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="destroy-vm-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="destroying" @click="confirmDestroy">
+            {{ destroying ? 'Destroying…' : 'Destroy' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <!-- remove confirm -->
     <Dialog :open="!!toRemove" @update:open="(v: boolean) => { if (!v) toRemove = null }">

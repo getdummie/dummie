@@ -120,6 +120,7 @@ type adminUserDTO struct {
   // Recorded allowances. Nothing enforces these yet; see 0008_user_quotas.
   VCPULimit      int32  `json:"vcpu_limit"`
   MemoryLimitMiB int32  `json:"memory_limit_mib"`
+  DiskLimitMiB   int32  `json:"disk_limit_mib"`
   CreatedAt      string `json:"created_at"`
   UpdatedAt      string `json:"updated_at"`
 }
@@ -134,6 +135,7 @@ func toAdminUserDTO(u db.User) adminUserDTO {
     UserType:       u.UserType,
     VCPULimit:      u.VCPULimit,
     MemoryLimitMiB: u.MemoryLimitMiB,
+    DiskLimitMiB:   u.DiskLimitMiB,
     CreatedAt:      u.CreatedAt.Time.Format(time.RFC3339),
     UpdatedAt:      u.UpdatedAt.Time.Format(time.RFC3339),
   }
@@ -223,6 +225,7 @@ func (h *AdminHandler) GetUser(c *echo.Context) error {
 type updateUserQuotaReq struct {
   VCPULimit      int32 `json:"vcpu_limit"`
   MemoryLimitMiB int32 `json:"memory_limit_mib"`
+  DiskLimitMiB   int32 `json:"disk_limit_mib"`
 }
 
 // UpdateUserQuota records what a user is allowed. Nothing reads these values
@@ -243,11 +246,15 @@ func (h *AdminHandler) UpdateUserQuota(c *echo.Context) error {
   if req.MemoryLimitMiB < 128 {
     return echo.NewHTTPError(http.StatusBadRequest, "memory_limit_mib must be at least 128")
   }
+  if req.DiskLimitMiB < 1024 {
+    return echo.NewHTTPError(http.StatusBadRequest, "disk_limit_mib must be at least 1024")
+  }
 
   u, err := h.q.UpdateUserQuota(c.Request().Context(), db.UpdateUserQuotaParams{
     ID:             pgID,
     VCPULimit:      req.VCPULimit,
     MemoryLimitMiB: req.MemoryLimitMiB,
+    DiskLimitMiB:   req.DiskLimitMiB,
   })
   if err != nil {
     if errors.Is(err, pgx.ErrNoRows) {

@@ -18,6 +18,7 @@ interface AdminUser {
   user_type: string
   vcpu_limit: number
   memory_limit_mib: number
+  disk_limit_mib: number
   created_at: string
   updated_at: string
 }
@@ -68,7 +69,7 @@ const fullName = computed(() => {
 // --- quota ---
 // Strings, because a number input binds to '' while being cleared and coercing
 // that to 0 would silently rewrite what the admin is halfway through typing.
-const form = reactive({ vcpu_limit: '', memory_limit_mib: '' })
+const form = reactive({ vcpu_limit: '', memory_limit_mib: '', disk_limit_mib: '' })
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saved = ref(false)
@@ -76,6 +77,7 @@ const saved = ref(false)
 function resetForm(u: AdminUser) {
   form.vcpu_limit = String(u.vcpu_limit)
   form.memory_limit_mib = String(u.memory_limit_mib)
+  form.disk_limit_mib = String(u.disk_limit_mib)
 }
 
 /** Template-side reset: the loaded user is the source of truth for "unchanged". */
@@ -84,19 +86,22 @@ function discardEdits() {
   saveError.value = null
 }
 
-const memoryGiB = computed(() => {
-  const mib = Number(form.memory_limit_mib)
+// Two decimals only when it isn't a whole number of GiB.
+function asGiB(mib: number) {
   if (!Number.isFinite(mib) || mib <= 0) return null
-  // Two decimals only when it isn't a whole number of GiB.
   const gib = mib / 1024
   return Number.isInteger(gib) ? `${gib} GiB` : `${gib.toFixed(2)} GiB`
-})
+}
+
+const memoryGiB = computed(() => asGiB(Number(form.memory_limit_mib)))
+const diskGiB = computed(() => asGiB(Number(form.disk_limit_mib)))
 
 const dirty = computed(() => {
   const u = user.value
   if (!u) return false
   return form.vcpu_limit !== String(u.vcpu_limit)
     || form.memory_limit_mib !== String(u.memory_limit_mib)
+    || form.disk_limit_mib !== String(u.disk_limit_mib)
 })
 
 async function load() {
@@ -130,6 +135,7 @@ async function saveQuota() {
       body: JSON.stringify({
         vcpu_limit: Number(form.vcpu_limit),
         memory_limit_mib: Number(form.memory_limit_mib),
+        disk_limit_mib: Number(form.disk_limit_mib),
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -217,7 +223,8 @@ async function saveQuota() {
       <section aria-labelledby="quota-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="quota-heading" class="text-sm font-semibold">Resource allowance</h2>
         <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-          What this user is entitled to. Recorded only — nothing checks these when a VM is created yet.
+          What this user is entitled to, totalled across every VM they hold. Checked when they create
+          a VM from their own VMs page; nothing enforces it on the host.
         </p>
 
         <form class="mt-4 space-y-4" :aria-busy="saving" @submit.prevent="saveQuota">
@@ -232,6 +239,13 @@ async function saveQuota() {
               <Input id="q-mem" v-model="form.memory_limit_mib" type="number" min="128" step="128" inputmode="numeric" aria-describedby="q-mem-hint" />
               <p id="q-mem-hint" class="font-mono text-xs text-muted-foreground">
                 Default 1024 (1 GiB)<span v-if="memoryGiB"> · currently {{ memoryGiB }}</span>
+              </p>
+            </div>
+            <div class="space-y-2">
+              <Label for="q-disk">Disk (MiB)</Label>
+              <Input id="q-disk" v-model="form.disk_limit_mib" type="number" min="1024" step="1024" inputmode="numeric" aria-describedby="q-disk-hint" />
+              <p id="q-disk-hint" class="font-mono text-xs text-muted-foreground">
+                Default 10240 (10 GiB)<span v-if="diskGiB"> · currently {{ diskGiB }}</span>
               </p>
             </div>
           </div>

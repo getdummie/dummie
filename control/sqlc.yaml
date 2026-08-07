@@ -23,3 +23,5 @@ sql:
           cpu_percent: "CPUPercent"
           vcpu_limit: "VCPULimit"
           memory_limit_mib: "MemoryLimitMiB"
+          disk_limit_mib: "DiskLimitMiB"
+          disk_mib: "DiskMiB"

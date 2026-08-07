@@ -47,9 +47,9 @@ func (q *Queries) CountVMsByOwner(ctx context.Context, createdBy pgtype.UUID) (i
 }
 
 const createVM = `-- name: CreateVM :one
-INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, spec, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by
+INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib
 `
 
 type CreateVMParams struct {
@@ -58,6 +58,7 @@ type CreateVMParams struct {
 	Boot      string
 	CPUs      int32
 	MemoryMiB int32
+	DiskMiB   int32
 	Spec      []byte
 	CreatedBy pgtype.UUID
 }
@@ -72,6 +73,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		arg.Boot,
 		arg.CPUs,
 		arg.MemoryMiB,
+		arg.DiskMiB,
 		arg.Spec,
 		arg.CreatedBy,
 	)
@@ -93,6 +95,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		&i.StartedAt,
 		&i.ReportedAt,
 		&i.CreatedBy,
+		&i.DiskMiB,
 	)
 	return i, err
 }
@@ -161,7 +164,7 @@ func (q *Queries) FailPendingVMsForAgent(ctx context.Context, arg FailPendingVMs
 }
 
 const getVM = `-- name: GetVM :one
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib FROM vms
 WHERE id = $1
 `
 
@@ -185,12 +188,13 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.StartedAt,
 		&i.ReportedAt,
 		&i.CreatedBy,
+		&i.DiskMiB,
 	)
 	return i, err
 }
 
 const getVMForOwner = `-- name: GetVMForOwner :one
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib FROM vms
 WHERE id = $1 AND created_by = $2
 `
 
@@ -222,12 +226,13 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 		&i.StartedAt,
 		&i.ReportedAt,
 		&i.CreatedBy,
+		&i.DiskMiB,
 	)
 	return i, err
 }
 
 const listVMs = `-- name: ListVMs :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -263,6 +268,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 			&i.StartedAt,
 			&i.ReportedAt,
 			&i.CreatedBy,
+			&i.DiskMiB,
 		); err != nil {
 			return nil, err
 		}
@@ -275,7 +281,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 }
 
 const listVMsByAgent = `-- name: ListVMsByAgent :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib FROM vms
 WHERE agent_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -313,6 +319,7 @@ func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) 
 			&i.StartedAt,
 			&i.ReportedAt,
 			&i.CreatedBy,
+			&i.DiskMiB,
 		); err != nil {
 			return nil, err
 		}
@@ -325,7 +332,7 @@ func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) 
 }
 
 const listVMsByOwner = `-- name: ListVMsByOwner :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib FROM vms
 WHERE created_by = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -363,6 +370,7 @@ func (q *Queries) ListVMsByOwner(ctx context.Context, arg ListVMsByOwnerParams) 
 			&i.StartedAt,
 			&i.ReportedAt,
 			&i.CreatedBy,
+			&i.DiskMiB,
 		); err != nil {
 			return nil, err
 		}
@@ -500,7 +508,8 @@ func (q *Queries) SetVMStatus(ctx context.Context, arg SetVMStatusParams) error 
 
 const sumActiveVMUsageByOwner = `-- name: SumActiveVMUsageByOwner :one
 SELECT COALESCE(SUM(cpus), 0)::int AS cpus,
-       COALESCE(SUM(memory_mib), 0)::int AS memory_mib
+       COALESCE(SUM(memory_mib), 0)::int AS memory_mib,
+       COALESCE(SUM(disk_mib), 0)::int AS disk_mib
 FROM vms
 WHERE created_by = $1
   AND status IN ('pending', 'running', 'stopped')
@@ -509,6 +518,7 @@ WHERE created_by = $1
 type SumActiveVMUsageByOwnerRow struct {
 	CPUs      int32
 	MemoryMiB int32
+	DiskMiB   int32
 }
 
 // SumActiveVMUsageByOwner totals what a user is currently holding, for the
@@ -521,7 +531,7 @@ type SumActiveVMUsageByOwnerRow struct {
 func (q *Queries) SumActiveVMUsageByOwner(ctx context.Context, createdBy pgtype.UUID) (SumActiveVMUsageByOwnerRow, error) {
 	row := q.db.QueryRow(ctx, sumActiveVMUsageByOwner, createdBy)
 	var i SumActiveVMUsageByOwnerRow
-	err := row.Scan(&i.CPUs, &i.MemoryMiB)
+	err := row.Scan(&i.CPUs, &i.MemoryMiB, &i.DiskMiB)
 	return i, err
 }
 

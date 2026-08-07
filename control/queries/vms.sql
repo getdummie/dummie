@@ -2,8 +2,8 @@
 -- CreateVM records the intent before the job is pushed to the agent. The row id
 -- doubles as the job's correlation id, which is what lets the result frame find
 -- its way back to exactly this row.
-INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, spec, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
+INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: MarkVMRunning :exec
@@ -140,7 +140,8 @@ WHERE id = $1 AND created_by = $2;
 -- allowance. 'pending' IS counted -- it is a create in flight, and leaving it
 -- out lets concurrent requests each see room that only one of them can have.
 SELECT COALESCE(SUM(cpus), 0)::int AS cpus,
-       COALESCE(SUM(memory_mib), 0)::int AS memory_mib
+       COALESCE(SUM(memory_mib), 0)::int AS memory_mib,
+       COALESCE(SUM(disk_mib), 0)::int AS disk_mib
 FROM vms
 WHERE created_by = $1
   AND status IN ('pending', 'running', 'stopped');

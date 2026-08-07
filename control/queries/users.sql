@@ -25,6 +25,7 @@ LIMIT $1 OFFSET $2;
 UPDATE users
 SET vcpu_limit = $2,
     memory_limit_mib = $3,
+    disk_limit_mib = $4,
     updated_at = now()
 WHERE id = $1
 RETURNING *;

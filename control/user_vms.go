@@ -94,8 +94,10 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 type quotaDTO struct {
   VCPULimit      int32 `json:"vcpu_limit"`
   MemoryLimitMiB int32 `json:"memory_limit_mib"`
+  DiskLimitMiB   int32 `json:"disk_limit_mib"`
   VCPUUsed       int32 `json:"vcpu_used"`
   MemoryUsedMiB  int32 `json:"memory_used_mib"`
+  DiskUsedMiB    int32 `json:"disk_used_mib"`
 }
 
 func (h *UserHandler) GetQuota(c *echo.Context) error {
@@ -115,8 +117,10 @@ func (h *UserHandler) GetQuota(c *echo.Context) error {
   return c.JSON(http.StatusOK, quotaDTO{
     VCPULimit:      u.VCPULimit,
     MemoryLimitMiB: u.MemoryLimitMiB,
+    DiskLimitMiB:   u.DiskLimitMiB,
     VCPUUsed:       used.CPUs,
     MemoryUsedMiB:  used.MemoryMiB,
+    DiskUsedMiB:    used.DiskMiB,
   })
 }
 
@@ -175,6 +179,46 @@ var sizePattern = regexp.MustCompile(`^[0-9]+[KkMmGgTt]?$`)
 // compares against.
 var sha256Pattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
+// parseSizeMiB converts the agent's size syntax to MiB, so a disk size given as
+// "2G" can be totalled against a limit stored as a number. Mirrors the agent's
+// own parseSize (cmd/dagent/vm.go) -- same units, same suffixes.
+//
+// Rounds up: a 1.5 GiB disk that counted as 1 GiB would let a user hold more
+// than their limit, and rounding a limit check in the user's favour is the
+// wrong direction to be imprecise in. An empty string is 0, matching the agent,
+// where an unset size means "no explicit size".
+func parseSizeMiB(s string) (int32, error) {
+  s = strings.TrimSpace(s)
+  if s == "" {
+    return 0, nil
+  }
+  mult := int64(1)
+  switch unit := s[len(s)-1]; unit {
+  case 'K', 'k':
+    mult = 1 << 10
+  case 'M', 'm':
+    mult = 1 << 20
+  case 'G', 'g':
+    mult = 1 << 30
+  case 'T', 't':
+    mult = 1 << 40
+  default:
+    if unit < '0' || unit > '9' {
+      return 0, fmt.Errorf("unknown size unit %q", string(unit))
+    }
+  }
+  if mult > 1 {
+    s = s[:len(s)-1]
+  }
+  n, err := strconv.ParseInt(s, 10, 64)
+  if err != nil || n < 0 {
+    return 0, fmt.Errorf("invalid size %q", s)
+  }
+  bytes := n * mult
+  const mib = 1 << 20
+  return int32((bytes + mib - 1) / mib), nil
+}
+
 func (h *UserHandler) CreateVM(c *echo.Context) error {
   owner, err := callerID(c)
   if err != nil {
@@ -205,6 +249,10 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusBadRequest, "a root filesystem tar url is required")
   }
   if req.DiskSize != "" && !sizePattern.MatchString(req.DiskSize) {
+    return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
+  }
+  diskMiB, err := parseSizeMiB(req.DiskSize)
+  if err != nil {
     return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
   }
   if req.KernelSHA != "" && !sha256Pattern.MatchString(req.KernelSHA) {
@@ -241,8 +289,13 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   }
   if used.MemoryMiB+req.MemoryMiB > u.MemoryLimitMiB {
     return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf(
-      "this would use %d MiB of your %d MiB limit; you are already using %d MiB",
+      "this would use %d MiB of memory against your %d MiB limit; you are already using %d MiB",
       used.MemoryMiB+req.MemoryMiB, u.MemoryLimitMiB, used.MemoryMiB))
+  }
+  if used.DiskMiB+diskMiB > u.DiskLimitMiB {
+    return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf(
+      "this would use %d MiB of disk against your %d MiB limit; you are already using %d MiB",
+      used.DiskMiB+diskMiB, u.DiskLimitMiB, used.DiskMiB))
   }
 
   // --- host ----------------------------------------------------------------
@@ -297,6 +350,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
     Boot:      spec.Boot,
     CPUs:      req.CPUs,
     MemoryMiB: req.MemoryMiB,
+    DiskMiB:   diskMiB,
     Spec:      raw,
     CreatedBy: owner,
   })

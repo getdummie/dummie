@@ -33,6 +33,7 @@ type vmDTO struct {
   Boot      string          `json:"boot"`
   CPUs      int32           `json:"cpus"`
   MemoryMiB int32           `json:"memory_mib"`
+  DiskMiB   int32           `json:"disk_mib"`
   IP        string          `json:"ip"`
   Spec      json.RawMessage `json:"spec"`
   LastError string          `json:"last_error"`
@@ -60,6 +61,7 @@ func toVMDTO(v db.Vm) vmDTO {
     Boot:      v.Boot,
     CPUs:      v.CPUs,
     MemoryMiB: v.MemoryMiB,
+    DiskMiB:   v.DiskMiB,
     IP:        v.IP,
     Spec:      json.RawMessage(v.Spec),
     LastError: v.LastError,
@@ -178,6 +180,10 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not encode the vm spec")
   }
 
+  // Best effort: an admin's spec is not bounded by a quota, so an unparseable
+  // size is not worth refusing the create over -- it just does not count.
+  diskMiB, _ := parseSizeMiB(spec.DiskSize)
+
   // Written before the job is pushed: a row with no job is a visible failure,
   // whereas a job with no row is a VM nobody knows about.
   params := db.CreateVMParams{
@@ -186,6 +192,7 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
     Boot:      spec.Boot,
     CPUs:      int32(spec.CPUs),
     MemoryMiB: int32(spec.Memory),
+    DiskMiB:   diskMiB,
     Spec:      raw,
   }
   // An admin creating a VM owns it like anyone else, so it shows up on their
