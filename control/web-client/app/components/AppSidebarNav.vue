@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { LayoutDashboard, LogOut, Shield } from '@lucide/vue'
+import { Boxes, LayoutDashboard, LogOut, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -35,6 +35,7 @@ const initials = computed(() => {
 
 const main: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
+  { label: 'VMs', to: '/vms', icon: Boxes },
 ]
 
 // Landing page for the admin section; the section's own tab strip takes over

@@ -2,8 +2,8 @@
 -- CreateVM records the intent before the job is pushed to the agent. The row id
 -- doubles as the job's correlation id, which is what lets the result frame find
 -- its way back to exactly this row.
-INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, spec)
-VALUES ($1, $2, $3, $4, $5, $6)
+INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, spec, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: MarkVMRunning :exec
@@ -113,6 +113,37 @@ SELECT * FROM vms
 WHERE agent_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
+
+-- name: CountVMsByOwner :one
+SELECT count(*) FROM vms
+WHERE created_by = $1;
+
+-- name: ListVMsByOwner :many
+SELECT * FROM vms
+WHERE created_by = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3;
+
+-- name: GetVMForOwner :one
+-- GetVMForOwner is the ownership check and the read in one statement. Doing it
+-- as two -- read, then compare created_by in Go -- is the same query written so
+-- that forgetting the second half silently leaks another user's VM.
+SELECT * FROM vms
+WHERE id = $1 AND created_by = $2;
+
+-- name: SumActiveVMUsageByOwner :one
+-- SumActiveVMUsageByOwner totals what a user is currently holding, for the
+-- quota check on create.
+--
+-- 'failed' and 'gone' are excluded: neither has anything running on a host, so
+-- counting them would let a run of failed creates permanently consume someone's
+-- allowance. 'pending' IS counted -- it is a create in flight, and leaving it
+-- out lets concurrent requests each see room that only one of them can have.
+SELECT COALESCE(SUM(cpus), 0)::int AS cpus,
+       COALESCE(SUM(memory_mib), 0)::int AS memory_mib
+FROM vms
+WHERE created_by = $1
+  AND status IN ('pending', 'running', 'stopped');
 
 -- name: DeleteVM :exec
 DELETE FROM vms

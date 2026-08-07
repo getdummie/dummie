@@ -22,6 +22,17 @@ import (
 // httpOnly cookie, or an Authorization: Bearer header for API clients) and
 // requires the "admin" role. 401 for missing/invalid tokens, 403 for non-admins.
 func adminJWT(cfg authConfig) echo.MiddlewareFunc {
+  return jwtAuth(cfg, true)
+}
+
+// userJWT is the same gate without the role check: any signed-in account. Every
+// route behind it must scope its own reads and writes to the caller's "uid" --
+// the middleware proves who is asking, not what they may touch.
+func userJWT(cfg authConfig) echo.MiddlewareFunc {
+  return jwtAuth(cfg, false)
+}
+
+func jwtAuth(cfg authConfig, requireAdmin bool) echo.MiddlewareFunc {
   return func(next echo.HandlerFunc) echo.HandlerFunc {
     return func(c *echo.Context) error {
       raw := ""
@@ -47,7 +58,7 @@ func adminJWT(cfg authConfig) echo.MiddlewareFunc {
       if err != nil || !tok.Valid {
         return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired token")
       }
-      if claims["user_type"] != "admin" {
+      if requireAdmin && claims["user_type"] != "admin" {
         return echo.NewHTTPError(http.StatusForbidden, "admin access required")
       }
       if sub, ok := claims["sub"].(string); ok {

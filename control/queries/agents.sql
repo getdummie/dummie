@@ -91,3 +91,20 @@ WHERE id = $1;
 UPDATE agents
 SET status = 'offline', updated_at = now()
 WHERE status <> 'offline';
+
+-- name: ListAvailableHosts :many
+-- ListAvailableHosts is the host list a self-service caller picks from, least
+-- busy first so the default choice spreads load instead of piling onto whichever
+-- agent happens to sort first.
+--
+-- Deliberately NOT filtered on status: that column is a cached copy of
+-- connectivity and goes stale -- startup sets every agent 'offline', and a
+-- reconnect that has not written back yet would hide a host that is genuinely
+-- there. The hub is the authority, and the caller filters on it. Matching what
+-- the admin screen does, which reads connectivity only from the hub.
+SELECT id, hostname FROM agents
+WHERE revoked = false
+ORDER BY (
+    SELECT count(*) FROM vms
+    WHERE vms.agent_id = agents.id AND vms.status IN ('pending', 'running')
+) ASC, last_seen_at DESC NULLS LAST;

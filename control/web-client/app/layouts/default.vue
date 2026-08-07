@@ -16,7 +16,7 @@ const route = useRoute()
 
 // The rail is for the signed-in app shell only; the marketing/auth pages keep
 // their full-bleed layout and the public header.
-const appRoutes = ['/dashboard', '/admin']
+const appRoutes = ['/dashboard', '/vms', '/admin']
 const showSidebar = computed(() =>
   isAuthenticated.value && appRoutes.some(p => route.path === p || route.path.startsWith(`${p}/`)),
 )

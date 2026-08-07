@@ -39,6 +39,10 @@ type vmDTO struct {
   CreatedAt string          `json:"created_at"`
   StartedAt string          `json:"started_at"`
 
+  // CreatedBy is "" for a VM nobody here asked for -- one adopted from an
+  // agent's inventory report, or created before ownership was recorded.
+  CreatedBy string `json:"created_by"`
+
   // ReportedAt is when the host last confirmed this VM; "" means it never has.
   // 'running' is the host's claim as of that moment, not a live observation, so
   // a reader has to weigh the status against this timestamp -- a status of
@@ -69,6 +73,9 @@ func toVMDTO(v db.Vm) vmDTO {
   }
   if v.ReportedAt.Valid {
     d.ReportedAt = v.ReportedAt.Time.Format(time.RFC3339)
+  }
+  if v.CreatedBy.Valid {
+    d.CreatedBy = uuid.UUID(v.CreatedBy.Bytes).String()
   }
   return d
 }
@@ -173,14 +180,22 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
 
   // Written before the job is pushed: a row with no job is a visible failure,
   // whereas a job with no row is a VM nobody knows about.
-  row, err := h.q.CreateVM(ctx, db.CreateVMParams{
+  params := db.CreateVMParams{
     AgentID:   pgAgentID,
     Name:      spec.Name,
     Boot:      spec.Boot,
     CPUs:      int32(spec.CPUs),
     MemoryMiB: int32(spec.Memory),
     Spec:      raw,
-  })
+  }
+  // An admin creating a VM owns it like anyone else, so it shows up on their
+  // own /vms and counts against their allowance.
+  if uid, _ := c.Get("uid").(string); uid != "" {
+    if pgID, err := parseUUID(uid); err == nil {
+      params.CreatedBy = pgID
+    }
+  }
+  row, err := h.q.CreateVM(ctx, params)
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not record the vm")
   }

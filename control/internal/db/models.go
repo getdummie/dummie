@@ -103,4 +103,5 @@ type Vm struct {
 	UpdatedAt  pgtype.Timestamptz
 	StartedAt  pgtype.Timestamptz
 	ReportedAt pgtype.Timestamptz
+	CreatedBy  pgtype.UUID
 }

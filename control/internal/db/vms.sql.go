@@ -34,10 +34,22 @@ func (q *Queries) CountVMsByAgent(ctx context.Context, agentID pgtype.UUID) (int
 	return count, err
 }
 
+const countVMsByOwner = `-- name: CountVMsByOwner :one
+SELECT count(*) FROM vms
+WHERE created_by = $1
+`
+
+func (q *Queries) CountVMsByOwner(ctx context.Context, createdBy pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countVMsByOwner, createdBy)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createVM = `-- name: CreateVM :one
-INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, spec)
-VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at
+INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, spec, created_by)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
+RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by
 `
 
 type CreateVMParams struct {
@@ -47,6 +59,7 @@ type CreateVMParams struct {
 	CPUs      int32
 	MemoryMiB int32
 	Spec      []byte
+	CreatedBy pgtype.UUID
 }
 
 // CreateVM records the intent before the job is pushed to the agent. The row id
@@ -60,6 +73,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		arg.CPUs,
 		arg.MemoryMiB,
 		arg.Spec,
+		arg.CreatedBy,
 	)
 	var i Vm
 	err := row.Scan(
@@ -78,6 +92,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.ReportedAt,
+		&i.CreatedBy,
 	)
 	return i, err
 }
@@ -146,7 +161,7 @@ func (q *Queries) FailPendingVMsForAgent(ctx context.Context, arg FailPendingVMs
 }
 
 const getVM = `-- name: GetVM :one
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
 WHERE id = $1
 `
 
@@ -169,12 +184,50 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.ReportedAt,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const getVMForOwner = `-- name: GetVMForOwner :one
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
+WHERE id = $1 AND created_by = $2
+`
+
+type GetVMForOwnerParams struct {
+	ID        pgtype.UUID
+	CreatedBy pgtype.UUID
+}
+
+// GetVMForOwner is the ownership check and the read in one statement. Doing it
+// as two -- read, then compare created_by in Go -- is the same query written so
+// that forgetting the second half silently leaks another user's VM.
+func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (Vm, error) {
+	row := q.db.QueryRow(ctx, getVMForOwner, arg.ID, arg.CreatedBy)
+	var i Vm
+	err := row.Scan(
+		&i.ID,
+		&i.AgentID,
+		&i.VMID,
+		&i.Name,
+		&i.Status,
+		&i.Boot,
+		&i.CPUs,
+		&i.MemoryMiB,
+		&i.IP,
+		&i.Spec,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.ReportedAt,
+		&i.CreatedBy,
 	)
 	return i, err
 }
 
 const listVMs = `-- name: ListVMs :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -209,6 +262,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 			&i.UpdatedAt,
 			&i.StartedAt,
 			&i.ReportedAt,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -221,7 +275,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 }
 
 const listVMsByAgent = `-- name: ListVMsByAgent :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at FROM vms
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
 WHERE agent_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -258,6 +312,57 @@ func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) 
 			&i.UpdatedAt,
 			&i.StartedAt,
 			&i.ReportedAt,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVMsByOwner = `-- name: ListVMsByOwner :many
+SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by FROM vms
+WHERE created_by = $1
+ORDER BY created_at DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListVMsByOwnerParams struct {
+	CreatedBy pgtype.UUID
+	Limit     int32
+	Offset    int32
+}
+
+func (q *Queries) ListVMsByOwner(ctx context.Context, arg ListVMsByOwnerParams) ([]Vm, error) {
+	rows, err := q.db.Query(ctx, listVMsByOwner, arg.CreatedBy, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Vm
+	for rows.Next() {
+		var i Vm
+		if err := rows.Scan(
+			&i.ID,
+			&i.AgentID,
+			&i.VMID,
+			&i.Name,
+			&i.Status,
+			&i.Boot,
+			&i.CPUs,
+			&i.MemoryMiB,
+			&i.IP,
+			&i.Spec,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.ReportedAt,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -391,6 +496,33 @@ type SetVMStatusParams struct {
 func (q *Queries) SetVMStatus(ctx context.Context, arg SetVMStatusParams) error {
 	_, err := q.db.Exec(ctx, setVMStatus, arg.ID, arg.Status)
 	return err
+}
+
+const sumActiveVMUsageByOwner = `-- name: SumActiveVMUsageByOwner :one
+SELECT COALESCE(SUM(cpus), 0)::int AS cpus,
+       COALESCE(SUM(memory_mib), 0)::int AS memory_mib
+FROM vms
+WHERE created_by = $1
+  AND status IN ('pending', 'running', 'stopped')
+`
+
+type SumActiveVMUsageByOwnerRow struct {
+	CPUs      int32
+	MemoryMiB int32
+}
+
+// SumActiveVMUsageByOwner totals what a user is currently holding, for the
+// quota check on create.
+//
+// 'failed' and 'gone' are excluded: neither has anything running on a host, so
+// counting them would let a run of failed creates permanently consume someone's
+// allowance. 'pending' IS counted -- it is a create in flight, and leaving it
+// out lets concurrent requests each see room that only one of them can have.
+func (q *Queries) SumActiveVMUsageByOwner(ctx context.Context, createdBy pgtype.UUID) (SumActiveVMUsageByOwnerRow, error) {
+	row := q.db.QueryRow(ctx, sumActiveVMUsageByOwner, createdBy)
+	var i SumActiveVMUsageByOwnerRow
+	err := row.Scan(&i.CPUs, &i.MemoryMiB)
+	return i, err
 }
 
 const upsertVMFromInventory = `-- name: UpsertVMFromInventory :exec

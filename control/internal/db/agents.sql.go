@@ -207,6 +207,49 @@ func (q *Queries) ListAgents(ctx context.Context, arg ListAgentsParams) ([]Agent
 	return items, nil
 }
 
+const listAvailableHosts = `-- name: ListAvailableHosts :many
+SELECT id, hostname FROM agents
+WHERE revoked = false
+ORDER BY (
+    SELECT count(*) FROM vms
+    WHERE vms.agent_id = agents.id AND vms.status IN ('pending', 'running')
+) ASC, last_seen_at DESC NULLS LAST
+`
+
+type ListAvailableHostsRow struct {
+	ID       pgtype.UUID
+	Hostname string
+}
+
+// ListAvailableHosts is the host list a self-service caller picks from, least
+// busy first so the default choice spreads load instead of piling onto whichever
+// agent happens to sort first.
+//
+// Deliberately NOT filtered on status: that column is a cached copy of
+// connectivity and goes stale -- startup sets every agent 'offline', and a
+// reconnect that has not written back yet would hide a host that is genuinely
+// there. The hub is the authority, and the caller filters on it. Matching what
+// the admin screen does, which reads connectivity only from the hub.
+func (q *Queries) ListAvailableHosts(ctx context.Context) ([]ListAvailableHostsRow, error) {
+	rows, err := q.db.Query(ctx, listAvailableHosts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAvailableHostsRow
+	for rows.Next() {
+		var i ListAvailableHostsRow
+		if err := rows.Scan(&i.ID, &i.Hostname); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeAgent = `-- name: RevokeAgent :exec
 UPDATE agents
 SET revoked = true, status = 'offline', updated_at = now()
