@@ -105,3 +105,15 @@ type Vm struct {
 	ReportedAt pgtype.Timestamptz
 	CreatedBy  pgtype.UUID
 }
+
+type VmNetworkTarget struct {
+	ID          pgtype.UUID
+	VMID        pgtype.UUID
+	Kind        string
+	Destination string
+	Transport   string
+	Ports       string
+	Note        string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}

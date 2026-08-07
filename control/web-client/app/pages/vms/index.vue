@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 
 definePageMeta({ middleware: ['auth'] })
@@ -113,13 +114,33 @@ onMounted(() => load())
 // filesystem — so the row sits at 'pending' and only a poll moves it. Polling
 // stops as soon as nothing is in flight rather than running forever.
 const anyPending = computed(() => items.value.some(v => v.status === 'pending'))
+
+// A start or stop is answered with 202 and settles when the agent reports back,
+// so the row keeps its old status for a moment. Tracking which rows are waiting
+// keeps the poll running and the switch honest until they land.
+const settleTimeoutMs = 60_000
+const settling = ref<Record<string, { want: VM['status'], until: number }>>({})
+
+const anySettling = computed(() => Object.keys(settling.value).length > 0)
 let timer: ReturnType<typeof setInterval> | null = null
 
-watch(anyPending, (pending) => {
-  if (pending && !timer) {
+// Drop a row from `settling` once the server agrees, or once waiting stops
+// being reasonable — otherwise a job that never lands leaves the switch stuck.
+watch(items, (rows) => {
+  const now = Date.now()
+  const next: typeof settling.value = {}
+  for (const [id, s] of Object.entries(settling.value)) {
+    const row = rows.find(r => r.id === id)
+    if (row && row.status !== s.want && now < s.until) next[id] = s
+  }
+  settling.value = next
+})
+
+watch([anyPending, anySettling], ([pending, waiting]) => {
+  if ((pending || waiting) && !timer) {
     timer = setInterval(() => load(true), 5000)
   }
-  else if (!pending && timer) {
+  else if (!pending && !waiting && timer) {
     clearInterval(timer)
     timer = null
   }
@@ -263,6 +284,41 @@ async function create() {
   }
   finally {
     creating.value = false
+  }
+}
+
+// --- start / stop ---
+//
+// The switch shows where the VM is being asked to go while a job is in flight,
+// not where it currently is: a switch that snaps back for the minute a boot
+// takes reads as "that didn't work".
+function isRunning(v: VM) {
+  const want = settling.value[v.id]?.want
+  return want ? want === 'running' : v.status === 'running'
+}
+
+// Only a VM the host has actually built can be started or stopped. 'pending'
+// has no id yet, 'gone' no longer exists, 'failed' never got that far.
+function switchable(v: VM) {
+  return !!v.vm_id && (v.status === 'running' || v.status === 'stopped')
+}
+
+async function toggleRunning(v: VM, run: boolean) {
+  actionError.value = null
+  settling.value = {
+    ...settling.value,
+    [v.id]: { want: run ? 'running' : 'stopped', until: Date.now() + settleTimeoutMs },
+  }
+  try {
+    const res = await authFetch(`/vms/${v.id}/${run ? 'start' : 'stop'}`, { method: 'POST' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await load(true)
+  }
+  catch (e) {
+    const next = { ...settling.value }
+    delete next[v.id]
+    settling.value = next
+    actionError.value = e instanceof Error ? e.message : `Could not ${run ? 'start' : 'stop'} the VM`
   }
 }
 
@@ -460,21 +516,28 @@ async function confirmDestroy() {
             <TableHead>Size</TableHead>
             <TableHead>Address</TableHead>
             <TableHead>Created</TableHead>
+            <TableHead>Power</TableHead>
             <TableHead class="text-right">Actions</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           <template v-if="loading">
             <TableRow v-for="n in 3" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 6" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
+              <TableCell v-for="c in 7" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
-          <TableEmpty v-else-if="!items.length" :colspan="6">
+          <TableEmpty v-else-if="!items.length" :colspan="7">
             You have no VMs yet.
           </TableEmpty>
           <TableRow v-for="v in items" v-else :key="v.id">
             <TableCell>
-              <span class="font-mono">{{ v.name || v.vm_id || '—' }}</span>
+              <NuxtLink
+                :to="`/vms/${v.id}`"
+                class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                :aria-label="`View details for ${v.name || v.vm_id || 'this VM'}`"
+              >
+                {{ v.name || v.vm_id || '—' }}
+              </NuxtLink>
               <!-- The failure reason is the whole point of a failed row, so it
                    is shown inline rather than hidden behind a detail view. -->
               <span v-if="v.status === 'failed' && v.last_error" class="mt-1 block text-xs text-destructive">
@@ -489,6 +552,18 @@ async function confirmDestroy() {
             </TableCell>
             <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
             <TableCell class="text-muted-foreground">{{ fmtDate(v.created_at) }}</TableCell>
+            <TableCell>
+              <!-- One switch per row, so the name has to be in the label or
+                   they all read alike to a screen reader. (WCAG 2.4.6) -->
+              <Switch
+                :model-value="isRunning(v)"
+                :disabled="!switchable(v) || !!settling[v.id]"
+                :aria-label="switchable(v)
+                  ? `${isRunning(v) ? 'Stop' : 'Start'} VM ${v.name || v.vm_id}`
+                  : `Cannot start or stop ${v.name || v.vm_id}: it is ${v.status}`"
+                @update:model-value="(run: boolean) => toggleRunning(v, run)"
+              />
+            </TableCell>
             <TableCell class="text-right">
               <!-- Icon-only, one per row: the name has to be in the label or
                    every button reads the same to a screen reader. (WCAG 2.4.6) -->

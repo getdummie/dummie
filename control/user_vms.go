@@ -6,12 +6,16 @@ import (
   "errors"
   "fmt"
   "log"
+  "net"
   "net/http"
   "regexp"
+  "strconv"
   "strings"
+  "time"
 
   "github.com/google/uuid"
   "github.com/jackc/pgx/v5"
+  "github.com/jackc/pgx/v5/pgconn"
   "github.com/jackc/pgx/v5/pgtype"
   "github.com/labstack/echo/v5"
 
@@ -317,10 +321,30 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   return c.JSON(http.StatusAccepted, toVMDTO(row))
 }
 
-// DestroyVM stops the guest and deletes its disk on the host. This is the only
-// destructive action a self-service caller gets, and it is the one that frees
-// the allowance the VM is holding.
+// StartVM boots a VM that exists but is not running.
+func (h *UserHandler) StartVM(c *echo.Context) error {
+  return h.actOnVM(c, proto.KindVMStart)
+}
+
+// StopVM shuts the guest down but leaves its disk on the host, so StartVM can
+// boot it again from the same state. The allowance it holds is NOT freed: a
+// stopped VM still owns its disk and its slot, and letting a stop free the quota
+// would make the limit trivially evadable by stopping and creating in a loop.
+func (h *UserHandler) StopVM(c *echo.Context) error {
+  return h.actOnVM(c, proto.KindVMStop)
+}
+
+// DestroyVM stops the guest and deletes its disk on the host. This is the one
+// action that frees the allowance the VM is holding.
 func (h *UserHandler) DestroyVM(c *echo.Context) error {
+  return h.actOnVM(c, proto.KindVMDestroy)
+}
+
+// actOnVM pushes a job naming an existing VM the caller owns. All three actions
+// need the same checks -- the row is theirs, the host assigned it an id, the
+// agent is live, the frame was delivered -- so they share one implementation
+// rather than three that drift.
+func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
   owner, err := callerID(c)
   if err != nil {
     return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
@@ -344,13 +368,21 @@ func (h *UserHandler) DestroyVM(c *echo.Context) error {
   if row.Status == "gone" {
     return echo.NewHTTPError(http.StatusConflict, "this vm no longer exists on its host")
   }
+  // The agent treats every action as idempotent, so these guards are about
+  // telling the caller its request made no sense rather than about safety.
+  switch {
+  case kind == proto.KindVMStart && row.Status == "running":
+    return echo.NewHTTPError(http.StatusConflict, "this vm is already running")
+  case kind == proto.KindVMStop && row.Status == "stopped":
+    return echo.NewHTTPError(http.StatusConflict, "this vm is already stopped")
+  }
 
   agentID := uuid.UUID(row.AgentID.Bytes).String()
   if !h.hub.Connected(agentID) {
     return echo.NewHTTPError(http.StatusConflict, "the host running this vm is not connected")
   }
   env, err := proto.NewEnvelope(proto.TypeJob, uuid.UUID(row.ID.Bytes).String(), proto.Job{
-    Kind: proto.KindVMDestroy,
+    Kind: kind,
     VMID: row.VMID,
   })
   if err != nil {
@@ -363,6 +395,211 @@ func (h *UserHandler) DestroyVM(c *echo.Context) error {
   // 202: the row settles when the agent reports back, not by the time this
   // returns.
   return c.JSON(http.StatusAccepted, toVMDTO(row))
+}
+
+// --- network targets --------------------------------------------------------
+
+type vmTargetDTO struct {
+  ID          string `json:"id"`
+  Destination string `json:"destination"`
+  Kind        string `json:"kind"`      // domain | ip
+  Transport   string `json:"transport"` // ip rows only: tcp | udp | any
+  Ports       string `json:"ports"`     // ip rows only; "" = any
+  Note        string `json:"note"`
+  CreatedAt   string `json:"created_at"`
+}
+
+func toVMTargetDTO(t db.VmNetworkTarget) vmTargetDTO {
+  return vmTargetDTO{
+    ID:          uuid.UUID(t.ID.Bytes).String(),
+    Destination: t.Destination,
+    Kind:        t.Kind,
+    Transport:   t.Transport,
+    Ports:       t.Ports,
+    Note:        t.Note,
+    CreatedAt:   t.CreatedAt.Time.Format(time.RFC3339),
+  }
+}
+
+// ownedVM resolves the VM in the path and proves the caller owns it. Every
+// target route starts here, so none of them can operate on a VM by id alone.
+func (h *UserHandler) ownedVM(c *echo.Context) (db.Vm, error) {
+  owner, err := callerID(c)
+  if err != nil {
+    return db.Vm{}, echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
+  }
+  pgID, err := parseUUID(c.Param("id"))
+  if err != nil {
+    return db.Vm{}, echo.NewHTTPError(http.StatusBadRequest, "invalid vm id")
+  }
+  row, err := h.q.GetVMForOwner(c.Request().Context(), db.GetVMForOwnerParams{
+    ID: pgID, CreatedBy: owner,
+  })
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return db.Vm{}, echo.NewHTTPError(http.StatusNotFound, "no such vm")
+    }
+    return db.Vm{}, echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
+  }
+  return row, nil
+}
+
+func (h *UserHandler) ListTargets(c *echo.Context) error {
+  vm, err := h.ownedVM(c)
+  if err != nil {
+    return err
+  }
+  rows, err := h.q.ListVMNetworkTargets(c.Request().Context(), vm.ID)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not list destinations")
+  }
+  items := make([]vmTargetDTO, 0, len(rows))
+  for _, t := range rows {
+    items = append(items, toVMTargetDTO(t))
+  }
+  return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
+type createTargetReq struct {
+  // Kind is what the caller says this is. Optional: omitted, the destination is
+  // classified for them. Supplied and disagreeing with the destination, the
+  // request is rejected -- a form that asked for an address and got a hostname
+  // has a mistake in it, and quietly storing the other kind hides it.
+  Kind        string `json:"kind"`
+  Destination string `json:"destination"`
+  // Both ignored when the destination is a domain: a domain compiles to
+  // dns.query / tls.sni / http.host rules whose headers are `any any`, so there
+  // is nowhere to put either one.
+  Transport string `json:"transport"`
+  Ports     string `json:"ports"`
+  Note      string `json:"note"`
+}
+
+// portsPattern is Suricata's port syntax, restricted to the forms worth
+// offering: a single port, a comma-separated list, or a colon range. Validated
+// rather than passed through, because this string ends up inside a generated
+// rule and a malformed one breaks the whole ruleset, not just this line.
+var portsPattern = regexp.MustCompile(`^[0-9]+(:[0-9]+)?(,[0-9]+(:[0-9]+)?)*$`)
+
+// hostPattern is a conservative hostname: labels of alphanumerics and hyphens,
+// at least two of them. Wildcards are not accepted -- a leading '*' means
+// something specific in a rule generator and is worth adding deliberately.
+var hostPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
+
+// classifyDestination decides whether a destination is an address or a name,
+// and rejects anything that is neither. Stored rather than re-derived so the
+// rule generator does not have to repeat this and reach a different answer.
+func classifyDestination(s string) (string, error) {
+  if _, _, err := net.ParseCIDR(s); err == nil {
+    return "ip", nil
+  }
+  if net.ParseIP(s) != nil {
+    return "ip", nil
+  }
+  if hostPattern.MatchString(s) {
+    return "domain", nil
+  }
+  return "", errors.New("destination must be a domain, an IP address, or a CIDR")
+}
+
+func (h *UserHandler) CreateTarget(c *echo.Context) error {
+  vm, err := h.ownedVM(c)
+  if err != nil {
+    return err
+  }
+
+  var req createTargetReq
+  if err := c.Bind(&req); err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+  }
+  req.Destination = strings.TrimSpace(req.Destination)
+  req.Ports = strings.ReplaceAll(strings.TrimSpace(req.Ports), " ", "")
+  req.Note = strings.TrimSpace(req.Note)
+  req.Transport = strings.ToLower(strings.TrimSpace(req.Transport))
+
+  if req.Destination == "" {
+    return echo.NewHTTPError(http.StatusBadRequest, "a destination is required")
+  }
+  kind, err := classifyDestination(req.Destination)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+  }
+  if declared := strings.ToLower(strings.TrimSpace(req.Kind)); declared != "" && declared != kind {
+    switch declared {
+    case "domain":
+      return echo.NewHTTPError(http.StatusBadRequest, "that is an address, not a domain")
+    case "ip":
+      return echo.NewHTTPError(http.StatusBadRequest, "that is a domain, not an IP address or CIDR")
+    default:
+      return echo.NewHTTPError(http.StatusBadRequest, "type must be domain or ip")
+    }
+  }
+
+  // The kind decides which of the remaining fields mean anything. Cleared
+  // rather than rejected for a domain: the form hides them, so a stale value
+  // arriving is this server's problem to normalise, not the caller's to fix.
+  if kind == "domain" {
+    req.Transport, req.Ports = "", ""
+    // A hostname is matched case-insensitively against buffers Suricata
+    // normalises to lowercase, so storing it lowercased keeps the unique index
+    // from treating Example.com and example.com as two allowances.
+    req.Destination = strings.ToLower(req.Destination)
+  } else {
+    if req.Transport == "" {
+      req.Transport = "tcp"
+    }
+    switch req.Transport {
+    case "tcp", "udp", "any":
+    default:
+      return echo.NewHTTPError(http.StatusBadRequest, "transport must be tcp, udp or any")
+    }
+    if req.Ports != "" {
+      if !portsPattern.MatchString(req.Ports) {
+        return echo.NewHTTPError(http.StatusBadRequest,
+          "ports must be a port, a list like 80,443, or a range like 1000:2000")
+      }
+      for _, part := range strings.Split(strings.ReplaceAll(req.Ports, ":", ","), ",") {
+        n, err := strconv.Atoi(part)
+        if err != nil || n < 1 || n > 65535 {
+          return echo.NewHTTPError(http.StatusBadRequest, "ports must be between 1 and 65535")
+        }
+      }
+    }
+  }
+
+  t, err := h.q.CreateVMNetworkTarget(c.Request().Context(), db.CreateVMNetworkTargetParams{
+    VMID:        vm.ID,
+    Destination: req.Destination,
+    Kind:        kind,
+    Transport:   req.Transport,
+    Ports:       req.Ports,
+    Note:        req.Note,
+  })
+  if err != nil {
+    var pgErr *pgconn.PgError
+    if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+      return echo.NewHTTPError(http.StatusConflict, "that destination is already on the list")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not add the destination")
+  }
+  return c.JSON(http.StatusCreated, toVMTargetDTO(t))
+}
+
+func (h *UserHandler) DeleteTarget(c *echo.Context) error {
+  vm, err := h.ownedVM(c)
+  if err != nil {
+    return err
+  }
+  targetID, err := parseUUID(c.Param("target_id"))
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid destination id")
+  }
+  if err := h.q.DeleteVMNetworkTarget(c.Request().Context(), db.DeleteVMNetworkTargetParams{
+    ID: targetID, VMID: vm.ID,
+  }); err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not remove the destination")
+  }
+  return c.NoContent(http.StatusNoContent)
 }
 
 func (h *UserHandler) failVM(ctx context.Context, id pgtype.UUID, msg string) {

@@ -179,7 +179,12 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   vms.GET("/quota", userH.GetQuota)
   vms.GET("/hosts", userH.ListHosts)
   vms.GET("/:id", userH.GetVM)
+  vms.POST("/:id/start", userH.StartVM)
+  vms.POST("/:id/stop", userH.StopVM)
   vms.POST("/:id/destroy", userH.DestroyVM)
+  vms.GET("/:id/targets", userH.ListTargets)
+  vms.POST("/:id/targets", userH.CreateTarget)
+  vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 
   // Agents: enrollment + the persistent socket the server pushes jobs down.
   // Authenticated by enrollment key / agent token, not by the user JWT.
