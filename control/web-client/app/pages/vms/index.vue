@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { Copy, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -24,6 +24,7 @@ useHead({ title: 'dummie — vms' })
 
 interface VM {
   id: string
+  agent_id: string
   vm_id: string
   name: string
   status: 'pending' | 'running' | 'stopped' | 'failed' | 'gone'
@@ -34,6 +35,9 @@ interface VM {
   ip: string
   last_error: string
   created_at: string
+  // The spec as it was sent to the agent. Empty for a VM adopted from a host's
+  // inventory report -- nobody here asked for it, so there is nothing to copy.
+  spec: Record<string, unknown>
 }
 
 interface Quota {
@@ -215,15 +219,56 @@ const form = reactive({ ...blankForm })
 function resetForm() {
   Object.assign(form, blankForm)
   createError.value = null
+  copiedFrom.value = null
 }
+
+// Set while the dialog was opened by copying, so it can say what it copied.
+const copiedFrom = ref<string | null>(null)
 
 async function openCreate() {
   resetForm()
+  copiedFrom.value = null
   createOpen.value = true
   // A host that came online since the page loaded should be pickable now.
   await loadHosts()
   // Preselect when there is no choice to make; with several, the pick is real.
   if (hosts.value.length === 1) form.agent_id = hosts.value[0]!.id
+}
+
+// Only a VM this server created has a spec to copy. One adopted from a host's
+// inventory report has an empty one, and a form prefilled from nothing is worse
+// than no button.
+function copyable(v: VM) {
+  return !!(v.spec?.kernel || v.spec?.rootfs_tar || v.spec?.rootfs)
+}
+
+/** Reads a spec field as a string, since the spec is whatever was sent. */
+function specStr(spec: Record<string, unknown>, key: string) {
+  const v = spec?.[key]
+  return typeof v === 'string' ? v : ''
+}
+
+async function openCopy(v: VM) {
+  resetForm()
+  copiedFrom.value = v.name || v.vm_id || 'that VM'
+
+  form.name = v.name
+  form.cpus = String(v.cpus || 1)
+  form.memory_mib = String(v.memory_mib || 512)
+  // From the spec, not from disk_mib: the spec holds what was typed ("2G"),
+  // which is what belongs back in the field. disk_mib is the parsed number.
+  form.disk_size = specStr(v.spec, 'disk_size') || '2G'
+  form.kernel = specStr(v.spec, 'kernel')
+  form.kernel_sha256 = specStr(v.spec, 'kernel_sha256')
+  form.rootfs_tar = specStr(v.spec, 'rootfs_tar')
+  form.rootfs_tar_sha256 = specStr(v.spec, 'rootfs_tar_sha256')
+
+  createOpen.value = true
+  await loadHosts()
+  // The original host only if it is still connected — otherwise the create
+  // would be rejected, and preselecting an unusable host hides why.
+  if (hosts.value.some(h => h.id === v.agent_id)) form.agent_id = v.agent_id
+  else if (hosts.value.length === 1) form.agent_id = hosts.value[0]!.id
 }
 
 // Mirrors the server's parseSizeMiB: same units, same rounding up, so the form
@@ -399,10 +444,16 @@ async function confirmDestroy() {
                the footer must stay reachable. -->
           <DialogContent class="max-h-[85svh] overflow-y-auto sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>New VM</DialogTitle>
+              <DialogTitle>{{ copiedFrom ? 'New VM from a copy' : 'New VM' }}</DialogTitle>
               <DialogDescription>
-                Pushed to the host you pick, which downloads the images and boots it. Building takes
-                a few minutes — the row stays <span class="font-mono">pending</span> until it reports back.
+                <template v-if="copiedFrom">
+                  Prefilled from <span class="font-mono">{{ copiedFrom }}</span>. Nothing is created
+                  until you submit, so change whatever you need first.
+                </template>
+                <template v-else>
+                  Pushed to the host you pick, which downloads the images and boots it. Building takes
+                  a few minutes — the row stays <span class="font-mono">pending</span> until it reports back.
+                </template>
               </DialogDescription>
             </DialogHeader>
 
@@ -603,20 +654,33 @@ async function confirmDestroy() {
               />
             </TableCell>
             <TableCell class="text-right">
-              <!-- Icon-only, one per row: the name has to be in the label or
-                   every button reads the same to a screen reader. (WCAG 2.4.6) -->
-              <Button
-                variant="ghost"
-                size="icon"
-                class="text-destructive hover:text-destructive"
-                :disabled="!destroyable(v)"
-                :aria-label="destroyable(v)
-                  ? `Destroy VM ${v.name || v.vm_id}`
-                  : `Cannot destroy ${v.name || v.vm_id}: it does not exist on a host`"
-                @click="toDestroy = v"
-              >
-                <Trash2 class="size-4" aria-hidden="true" />
-              </Button>
+              <div class="flex justify-end gap-1">
+                <!-- Icon-only, one per row: the name has to be in the label or
+                     every button reads the same to a screen reader. (WCAG 2.4.6) -->
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  :disabled="!copyable(v)"
+                  :aria-label="copyable(v)
+                    ? `Copy ${v.name || v.vm_id} as a template for a new VM`
+                    : `Cannot copy ${v.name || v.vm_id}: it was created on its host, not here`"
+                  @click="openCopy(v)"
+                >
+                  <Copy class="size-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="text-destructive hover:text-destructive"
+                  :disabled="!destroyable(v)"
+                  :aria-label="destroyable(v)
+                    ? `Destroy VM ${v.name || v.vm_id}`
+                    : `Cannot destroy ${v.name || v.vm_id}: it does not exist on a host`"
+                  @click="toDestroy = v"
+                >
+                  <Trash2 class="size-4" aria-hidden="true" />
+                </Button>
+              </div>
             </TableCell>
           </TableRow>
         </TableBody>
