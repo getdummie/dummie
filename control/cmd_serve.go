@@ -21,6 +21,7 @@ import (
   "github.com/urfave/cli/v3"
 
   "control/internal/db"
+  "control/internal/proto"
 )
 
 // nuxtTarget is the address the Nuxt dev server binds to.
@@ -169,7 +170,11 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
 
   // Agents: enrollment + the persistent socket the server pushes jobs down.
   // Authenticated by enrollment key / agent token, not by the user JWT.
-  agentH := &AgentHandler{q: q, pool: pool, hub: hub}
+  agentH := &AgentHandler{q: q, pool: pool, hub: hub, openEnrollment: openEnrollment()}
+  if agentH.openEnrollment {
+    log.Print("WARNING: AGENT_OPEN_ENROLLMENT is set; any machine that can reach " +
+      proto.EnrollPath + " can join the fleet without a key")
+  }
   ag := api.Group("/agent")
   ag.POST("/enroll", agentH.Enroll)
   ag.GET("/connect", agentH.Connect)

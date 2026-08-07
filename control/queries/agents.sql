@@ -17,6 +17,9 @@ SET hostname        = EXCLUDED.hostname,
     updated_at      = now()
 RETURNING *;
 
+-- name: GetAgentByMachineID :one
+SELECT * FROM agents WHERE machine_id = $1;
+
 -- name: GetAgentByTokenHash :one
 SELECT * FROM agents
 WHERE token_hash = $1

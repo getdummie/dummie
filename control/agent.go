@@ -6,6 +6,7 @@ import (
   "errors"
   "log"
   "net/http"
+  "os"
   "strings"
   "time"
 
@@ -37,6 +38,21 @@ type AgentHandler struct {
   q    *db.Queries
   pool *pgxpool.Pool
   hub  *Hub
+
+  // openEnrollment lets an agent enrol with no key at all. Off unless
+  // AGENT_OPEN_ENROLLMENT says otherwise; see openEnrollment().
+  openEnrollment bool
+}
+
+// openEnrollment reads the one setting that decides whether a machine can join
+// the fleet unauthenticated. Anything that reaches /enroll can then become an
+// agent, so this belongs behind a network the operator controls.
+func openEnrollment() bool {
+  switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENT_OPEN_ENROLLMENT"))) {
+  case "1", "true", "yes", "on":
+    return true
+  }
+  return false
 }
 
 // --- enrollment ------------------------------------------------------------
@@ -44,6 +60,12 @@ type AgentHandler struct {
 // Enroll trades a valid enrollment key for a long-lived per-agent token. The
 // key is consumed and the agent row written in one transaction, so a failed
 // insert never burns a use of a use-limited key.
+//
+// With open enrollment on, a request may carry no key. That path is deliberately
+// narrower than the keyed one: it can register a machine_id the server has not
+// seen, and nothing else. Re-enrolling an existing machine rewrites its token,
+// and without a key to prove authorization that would be a takeover of any agent
+// whose machine_id a caller could guess.
 func (h *AgentHandler) Enroll(c *echo.Context) error {
   var req proto.EnrollRequest
   if err := c.Bind(&req); err != nil {
@@ -51,7 +73,10 @@ func (h *AgentHandler) Enroll(c *echo.Context) error {
   }
   req.Key = strings.TrimSpace(req.Key)
   req.MachineID = strings.TrimSpace(req.MachineID)
-  if req.Key == "" || req.MachineID == "" {
+  if req.MachineID == "" {
+    return echo.NewHTTPError(http.StatusBadRequest, "machine_id is required")
+  }
+  if req.Key == "" && !h.openEnrollment {
     return echo.NewHTTPError(http.StatusBadRequest, "key and machine_id are required")
   }
   if h.pool == nil {
@@ -66,14 +91,30 @@ func (h *AgentHandler) Enroll(c *echo.Context) error {
   defer func() { _ = tx.Rollback(ctx) }()
   qtx := h.q.WithTx(tx)
 
-  key, err := qtx.ConsumeEnrollmentKey(ctx, hashRefresh(req.Key))
-  if err != nil {
-    if errors.Is(err, pgx.ErrNoRows) {
-      // Revoked, expired, exhausted and unknown are deliberately
-      // indistinguishable so a caller cannot probe which keys exist.
-      return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired enrollment key")
+  // Null for a keyless enrollment: no key was consumed, so there is none to
+  // point at, and the column already allows it.
+  var enrolledKeyID pgtype.UUID
+  if req.Key != "" {
+    key, err := qtx.ConsumeEnrollmentKey(ctx, hashRefresh(req.Key))
+    if err != nil {
+      if errors.Is(err, pgx.ErrNoRows) {
+        // Revoked, expired, exhausted and unknown are deliberately
+        // indistinguishable so a caller cannot probe which keys exist.
+        return echo.NewHTTPError(http.StatusUnauthorized, "invalid or expired enrollment key")
+      }
+      return echo.NewHTTPError(http.StatusInternalServerError, "could not validate enrollment key")
     }
-    return echo.NewHTTPError(http.StatusInternalServerError, "could not validate enrollment key")
+    enrolledKeyID = key.ID
+  } else {
+    // In the same transaction as the upsert below, so two simultaneous keyless
+    // requests for one machine_id cannot both pass this check.
+    switch _, err := qtx.GetAgentByMachineID(ctx, req.MachineID); {
+    case err == nil:
+      return echo.NewHTTPError(http.StatusConflict,
+        "this machine is already enrolled; keyless enrollment cannot re-issue its token, so use an enrollment key or delete the agent first")
+    case !errors.Is(err, pgx.ErrNoRows):
+      return echo.NewHTTPError(http.StatusInternalServerError, "could not check machine registration")
+    }
   }
 
   secret, err := newRefreshToken()
@@ -89,7 +130,7 @@ func (h *AgentHandler) Enroll(c *echo.Context) error {
     OSVersion:     req.OSVersion,
     Arch:          req.Arch,
     AgentVersion:  req.Version,
-    EnrolledKeyID: key.ID,
+    EnrolledKeyID: enrolledKeyID,
   })
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not register agent")
@@ -99,7 +140,11 @@ func (h *AgentHandler) Enroll(c *echo.Context) error {
   }
 
   agentID := uuid.UUID(agent.ID.Bytes).String()
-  log.Printf("agent %s enrolled (machine_id=%s hostname=%s)", agentID, agent.MachineID, agent.Hostname)
+  how := "key"
+  if req.Key == "" {
+    how = "keyless"
+  }
+  log.Printf("agent %s enrolled via %s (machine_id=%s hostname=%s)", agentID, how, agent.MachineID, agent.Hostname)
 
   // The raw token leaves the server exactly once, here.
   return c.JSON(http.StatusCreated, proto.EnrollResponse{AgentID: agentID, Token: secret})

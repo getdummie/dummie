@@ -71,6 +71,44 @@ func (q *Queries) GetAgentByID(ctx context.Context, id pgtype.UUID) (Agent, erro
 	return i, err
 }
 
+const getAgentByMachineID = `-- name: GetAgentByMachineID :one
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents WHERE machine_id = $1
+`
+
+func (q *Queries) GetAgentByMachineID(ctx context.Context, machineID string) (Agent, error) {
+	row := q.db.QueryRow(ctx, getAgentByMachineID, machineID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.Hostname,
+		&i.TokenHash,
+		&i.Status,
+		&i.OS,
+		&i.OSVersion,
+		&i.Arch,
+		&i.AgentVersion,
+		&i.LastSeenAt,
+		&i.LastIP,
+		&i.EnrolledKeyID,
+		&i.Revoked,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CPUCount,
+		&i.CPUPercent,
+		&i.Load1,
+		&i.Load5,
+		&i.Load15,
+		&i.MemTotalBytes,
+		&i.MemUsedBytes,
+		&i.DiskTotalBytes,
+		&i.DiskUsedBytes,
+		&i.UptimeSeconds,
+		&i.MetricsAt,
+	)
+	return i, err
+}
+
 const getAgentByTokenHash = `-- name: GetAgentByTokenHash :one
 SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents
 WHERE token_hash = $1

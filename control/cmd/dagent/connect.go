@@ -107,8 +107,11 @@ func runConnect(controlURL, key, stateDir, dataDir string, insecure bool) error 
   // Enrolling on every start would burn a use of a use-limited key each time
   // the agent restarts, so saved credentials always win over --key.
   if st.Token == "" {
+    // A missing key is no longer refused here: whether a keyless enrollment is
+    // allowed is the server's decision, not this host's, and the server says so
+    // with a 400 that names the missing key.
     if key == "" {
-      return fmt.Errorf("no agent token in %s; pass --key to enroll this machine", stateDir)
+      log.Print("no enrollment key configured; attempting keyless enrollment")
     }
     st, err = enroll(ctx, client, base, key)
     if err != nil {
@@ -188,6 +191,14 @@ func enroll(ctx context.Context, client *http.Client, base *url.URL, key string)
 
   if res.StatusCode == http.StatusUnauthorized {
     return state{}, fmt.Errorf("%w: enrollment key rejected (invalid, expired, revoked or exhausted)", errTerminal)
+  }
+  // Sent with no key to a server that wants one, or for a machine_id it has
+  // already registered. Retrying changes neither, so stop rather than loop.
+  if res.StatusCode == http.StatusBadRequest && key == "" {
+    return state{}, fmt.Errorf("%w: this server does not allow keyless enrollment; set enrollment_key", errTerminal)
+  }
+  if res.StatusCode == http.StatusConflict {
+    return state{}, fmt.Errorf("%w: this machine is already enrolled on the server; enrol with a key, or delete the agent there first", errTerminal)
   }
   if res.StatusCode != http.StatusCreated {
     return state{}, fmt.Errorf("enrollment failed: %s", res.Status)
