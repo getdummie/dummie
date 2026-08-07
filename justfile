@@ -7,21 +7,21 @@ vm-start:
 vm-stop:
   #!/usr/bin/env bash
   cd nix-vms/
-  nix run ".#web" -- stop
+  nix run ".#qemu-host" -- stop
 
 vm-clean:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
-  nix run "#web" -- stop
-  rm -rf .microqemu/web/console.log .microqemu/web/rootfs.ext4
+  nix run "#qemu-host" -- stop
+  rm -rf .microqemu/qemu-host/console.log .microqemu/qemu-host/rootfs.ext4
   ssh-keygen -R 10.68.0.2
 
 vm-stats:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
-  nix run "#web" -- stats
+  nix run "#qemu-host" -- stats
 
 vm-ssh:
   #!/usr/bin/env bash
@@ -39,7 +39,7 @@ vm-console:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
-  nix run ".#web" -- console
+  nix run ".#qemu-host" -- console
 
 image-build target:
   #!/usr/bin/env bash

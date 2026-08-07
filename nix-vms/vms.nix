@@ -5,7 +5,46 @@
 # min 4G disk always req
 # 2G RAM, 8G disk for running container
 {
-  web = {
+  # edge = {
+  #   cpu = 1;
+  #   mem = 512;
+  #   diskSize = "2G";
+  #
+  #   ephemeral = true;
+  #
+  #   # host tap device + addressing (host side gets <gateway>/16)
+  #   tap = "vm-tap1";
+  #   mac = "02:00:00:00:00:01";
+  #   ip = "10.68.0.3";
+  #   gateway = "10.68.0.1";
+  #   netmask = "255.255.0.0";
+  #   dns = "1.1.1.1";
+  #
+  #   kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-v7.1.4/arch/x86/boot/bzImage";
+  #   rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/debian-vm-host/rootfs.tar";
+  #
+  #   shares = [
+  #     {
+  #       tag = "app";
+  #       source = "/home/cc/Projects/.personal/dummie-v2/backstage";
+  #       mountPoint = "/home/ubuntu/backstage";
+  #     }
+  #   ];
+  #
+  #   guestUser = {
+  #     name = "ubuntu";
+  #     uid = 1000;
+  #     gid = 100; # 100 = users, matching host `cc`'s primary group
+  #     home = "/home/ubuntu";
+  #   };
+  #
+  #   # Command run at every boot, as guestUser, from bootWorkingDir.
+  #   bootCommand = "sudo ./dagent install";
+  #   bootWorkingDir = "/home/ubuntu/app/tmp";
+  #
+  #   bootEnv.PATH = "/home/ubuntu/.bun/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  # };
+  qemu-host = {
     cpu = 4;
     mem = 1024; # MiB
     diskSize = "6G"; # rootfs image size
@@ -33,6 +72,11 @@
         tag = "app";
         source = "/home/cc/Projects/.personal/dummie-v2/control";
         mountPoint = "/home/ubuntu/app";
+      }
+      {
+        tag = "pipe";
+        source = "/home/cc/Projects/.personal/dummie-v2/backstage";
+        mountPoint = "/home/ubuntu/backstage";
       }
     ];
 
