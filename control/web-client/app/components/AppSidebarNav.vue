@@ -142,27 +142,27 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
         class="flex border-t border-border/80 py-2"
         :class="expanded ? '-mx-2 items-center gap-1 px-2' : '-mx-1.5 flex-col items-center gap-1 px-1.5'"
       >
+        <!-- No tooltip on this one: a Tooltip trigger wrapping the menu trigger
+             leaves two reka Primitives on one element and the menu stops
+             opening. The menu itself names the account, so nothing is lost. -->
         <DropdownMenu>
-          <Tooltip :disabled="expanded">
-            <TooltipTrigger as-child>
-              <DropdownMenuTrigger
-                :class="[itemBase, expanded ? 'h-9 min-w-0 flex-1 gap-2.5 px-1.5' : 'size-9 justify-center']"
-                :aria-label="user ? `Account menu for ${user.username}` : 'Account menu'"
-              >
-                <Avatar class="size-6 shrink-0" aria-hidden="true">
-                  <AvatarFallback class="bg-primary/15 text-[0.6rem] text-primary-text">{{ initials }}</AvatarFallback>
-                </Avatar>
-                <span v-if="expanded" class="truncate font-mono text-[0.8rem] text-foreground">{{ user?.username }}</span>
-              </DropdownMenuTrigger>
-            </TooltipTrigger>
-            <TooltipContent side="right" class="font-mono text-xs">
-              {{ user?.username }}
-            </TooltipContent>
-          </Tooltip>
+          <DropdownMenuTrigger as-child>
+            <button
+              type="button"
+              :class="[itemBase, expanded ? 'h-9 min-w-0 flex-1 gap-2.5 px-1.5' : 'size-9 justify-center']"
+              :aria-label="user ? `Account menu for ${user.username}` : 'Account menu'"
+            >
+              <Avatar class="size-6 shrink-0" aria-hidden="true">
+                <AvatarFallback class="bg-primary/15 text-[0.6rem] text-primary-text">{{ initials }}</AvatarFallback>
+              </Avatar>
+              <span v-if="expanded" class="truncate font-mono text-[0.8rem] text-foreground">{{ user?.username }}</span>
+            </button>
+          </DropdownMenuTrigger>
 
-          <DropdownMenuContent side="right" align="end" class="w-52 font-mono">
-            <DropdownMenuLabel class="truncate text-xs font-normal text-muted-foreground">
-              {{ user?.email }}
+          <DropdownMenuContent side="right" align="end" :side-offset="8" class="w-52 font-mono">
+            <DropdownMenuLabel class="grid gap-0.5 font-normal">
+              <span class="truncate text-xs text-foreground">{{ user?.username }}</span>
+              <span class="truncate text-xs text-muted-foreground">{{ user?.email }}</span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
             <DropdownMenuItem class="text-xs text-destructive focus:text-destructive" @select="signout">
