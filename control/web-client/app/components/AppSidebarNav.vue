@@ -39,7 +39,7 @@ const main: NavItem[] = [
 
 // Landing page for the admin section; the section's own tab strip takes over
 // from there.
-const adminEntry: NavItem = { label: 'Admin Dashboard', to: '/admin/model/users', icon: Shield }
+const adminEntry: NavItem = { label: 'Admin Dashboard', to: '/admin/model/settings', icon: Shield }
 
 function isActive(to: string) {
   return route.path === to || route.path.startsWith(`${to}/`)

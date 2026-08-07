@@ -2,6 +2,7 @@
 const route = useRoute()
 
 const links = [
+  { label: 'Settings', to: '/admin/model/settings' },
   { label: 'Users', to: '/admin/model/users' },
   { label: 'Tokens', to: '/admin/model/tokens' },
   { label: 'Agents', to: '/admin/model/agents' },

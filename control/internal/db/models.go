@@ -66,6 +66,13 @@ type RefreshToken struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type Setting struct {
+	Key       string
+	Value     string
+	UpdatedAt pgtype.Timestamptz
+	UpdatedBy pgtype.UUID
+}
+
 type User struct {
 	ID           pgtype.UUID
 	Username     string

@@ -6,7 +6,6 @@ import (
   "errors"
   "log"
   "net/http"
-  "os"
   "strings"
   "time"
 
@@ -38,21 +37,17 @@ type AgentHandler struct {
   q    *db.Queries
   pool *pgxpool.Pool
   hub  *Hub
-
-  // openEnrollment lets an agent enrol with no key at all. Off unless
-  // AGENT_OPEN_ENROLLMENT says otherwise; see openEnrollment().
-  openEnrollment bool
 }
 
-// openEnrollment reads the one setting that decides whether a machine can join
-// the fleet unauthenticated. Anything that reaches /enroll can then become an
-// agent, so this belongs behind a network the operator controls.
-func openEnrollment() bool {
-  switch strings.ToLower(strings.TrimSpace(os.Getenv("AGENT_OPEN_ENROLLMENT"))) {
-  case "1", "true", "yes", "on":
-    return true
-  }
-  return false
+// openEnrollment reports whether a machine may join the fleet unauthenticated.
+// Anything that reaches /enroll can then become an agent, so this belongs
+// behind a network the operator controls.
+//
+// Read per request from the settings table rather than latched at boot: an
+// admin turning it off in the UI has to take effect on the next enrollment
+// attempt, not on the next restart. Fails closed if the read fails.
+func (h *AgentHandler) openEnrollment(ctx context.Context) bool {
+  return boolSetting(ctx, h.q, settingAgentOpenEnrollment)
 }
 
 // --- enrollment ------------------------------------------------------------
@@ -76,14 +71,17 @@ func (h *AgentHandler) Enroll(c *echo.Context) error {
   if req.MachineID == "" {
     return echo.NewHTTPError(http.StatusBadRequest, "machine_id is required")
   }
-  if req.Key == "" && !h.openEnrollment {
-    return echo.NewHTTPError(http.StatusBadRequest, "key and machine_id are required")
-  }
   if h.pool == nil {
     return echo.NewHTTPError(http.StatusServiceUnavailable, "database unavailable")
   }
 
   ctx := c.Request().Context()
+
+  // After the pool check: whether a keyless enrollment is allowed is itself a
+  // database read now.
+  if req.Key == "" && !h.openEnrollment(ctx) {
+    return echo.NewHTTPError(http.StatusBadRequest, "key and machine_id are required")
+  }
   tx, err := h.pool.Begin(ctx)
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not start transaction")
