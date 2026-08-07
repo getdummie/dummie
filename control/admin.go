@@ -10,6 +10,7 @@ import (
 
   "github.com/golang-jwt/jwt/v5"
   "github.com/google/uuid"
+  "github.com/jackc/pgx/v5"
   "github.com/jackc/pgx/v5/pgconn"
   "github.com/jackc/pgx/v5/pgtype"
   "github.com/labstack/echo/v5"
@@ -105,18 +106,25 @@ type adminUserDTO struct {
   FirstName string `json:"first_name"`
   LastName  string `json:"last_name"`
   UserType  string `json:"user_type"`
-  CreatedAt string `json:"created_at"`
+  // Recorded allowances. Nothing enforces these yet; see 0008_user_quotas.
+  VCPULimit      int32  `json:"vcpu_limit"`
+  MemoryLimitMiB int32  `json:"memory_limit_mib"`
+  CreatedAt      string `json:"created_at"`
+  UpdatedAt      string `json:"updated_at"`
 }
 
 func toAdminUserDTO(u db.User) adminUserDTO {
   return adminUserDTO{
-    ID:        uuid.UUID(u.ID.Bytes).String(),
-    Username:  u.Username,
-    Email:     u.Email,
-    FirstName: u.FirstName,
-    LastName:  u.LastName,
-    UserType:  u.UserType,
-    CreatedAt: u.CreatedAt.Time.Format(time.RFC3339),
+    ID:             uuid.UUID(u.ID.Bytes).String(),
+    Username:       u.Username,
+    Email:          u.Email,
+    FirstName:      u.FirstName,
+    LastName:       u.LastName,
+    UserType:       u.UserType,
+    VCPULimit:      u.VCPULimit,
+    MemoryLimitMiB: u.MemoryLimitMiB,
+    CreatedAt:      u.CreatedAt.Time.Format(time.RFC3339),
+    UpdatedAt:      u.UpdatedAt.Time.Format(time.RFC3339),
   }
 }
 
@@ -184,6 +192,59 @@ func (h *AdminHandler) CreateUser(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not create user")
   }
   return c.JSON(http.StatusCreated, toAdminUserDTO(u))
+}
+
+func (h *AdminHandler) GetUser(c *echo.Context) error {
+  pgID, err := parseUUID(c.Param("id"))
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
+  }
+  u, err := h.q.GetUserByID(c.Request().Context(), pgID)
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "user not found")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not load user")
+  }
+  return c.JSON(http.StatusOK, toAdminUserDTO(u))
+}
+
+type updateUserQuotaReq struct {
+  VCPULimit      int32 `json:"vcpu_limit"`
+  MemoryLimitMiB int32 `json:"memory_limit_mib"`
+}
+
+// UpdateUserQuota records what a user is allowed. Nothing reads these values
+// when a VM is created yet -- the bounds here only keep the stored number
+// meaningful, they are not an admission-control decision.
+func (h *AdminHandler) UpdateUserQuota(c *echo.Context) error {
+  pgID, err := parseUUID(c.Param("id"))
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
+  }
+  var req updateUserQuotaReq
+  if err := c.Bind(&req); err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+  }
+  if req.VCPULimit < 1 {
+    return echo.NewHTTPError(http.StatusBadRequest, "vcpu_limit must be at least 1")
+  }
+  if req.MemoryLimitMiB < 128 {
+    return echo.NewHTTPError(http.StatusBadRequest, "memory_limit_mib must be at least 128")
+  }
+
+  u, err := h.q.UpdateUserQuota(c.Request().Context(), db.UpdateUserQuotaParams{
+    ID:             pgID,
+    VCPULimit:      req.VCPULimit,
+    MemoryLimitMiB: req.MemoryLimitMiB,
+  })
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "user not found")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not save quota")
+  }
+  return c.JSON(http.StatusOK, toAdminUserDTO(u))
 }
 
 func (h *AdminHandler) DeleteUser(c *echo.Context) error {

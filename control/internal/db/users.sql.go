@@ -25,7 +25,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, first_name, last_name, user_type)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib
 `
 
 type CreateUserParams struct {
@@ -57,6 +57,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UserType,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VCPULimit,
+		&i.MemoryLimitMiB,
 	)
 	return i, err
 }
@@ -72,7 +74,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at FROM users
+SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib FROM users
 WHERE id = $1
 LIMIT 1
 `
@@ -90,12 +92,14 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.UserType,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VCPULimit,
+		&i.MemoryLimitMiB,
 	)
 	return i, err
 }
 
 const getUserByUsernameOrEmail = `-- name: GetUserByUsernameOrEmail :one
-SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at FROM users
+SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib FROM users
 WHERE username = $1 OR email = $1
 LIMIT 1
 `
@@ -113,12 +117,14 @@ func (q *Queries) GetUserByUsernameOrEmail(ctx context.Context, username string)
 		&i.UserType,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.VCPULimit,
+		&i.MemoryLimitMiB,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at FROM users
+SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib FROM users
 ORDER BY created_at ASC
 LIMIT $1 OFFSET $2
 `
@@ -147,6 +153,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.UserType,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.VCPULimit,
+			&i.MemoryLimitMiB,
 		); err != nil {
 			return nil, err
 		}
@@ -156,4 +164,38 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateUserQuota = `-- name: UpdateUserQuota :one
+UPDATE users
+SET vcpu_limit = $2,
+    memory_limit_mib = $3,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib
+`
+
+type UpdateUserQuotaParams struct {
+	ID             pgtype.UUID
+	VCPULimit      int32
+	MemoryLimitMiB int32
+}
+
+func (q *Queries) UpdateUserQuota(ctx context.Context, arg UpdateUserQuotaParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserQuota, arg.ID, arg.VCPULimit, arg.MemoryLimitMiB)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.FirstName,
+		&i.LastName,
+		&i.UserType,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.VCPULimit,
+		&i.MemoryLimitMiB,
+	)
+	return i, err
 }

@@ -242,7 +242,18 @@ async function confirmDelete() {
           </template>
           <TableEmpty v-else-if="!items.length" :colspan="6">No users found.</TableEmpty>
           <TableRow v-for="u in items" v-else :key="u.id">
-            <TableCell class="font-mono">{{ u.username }}</TableCell>
+            <TableCell>
+              <!-- Underlined at rest, not just on hover: in a table of plain
+                   text cells an underline-on-hover link is undiscoverable, and
+                   colour alone would not carry it either. (WCAG 1.4.1) -->
+              <NuxtLink
+                :to="`/admin/model/users/${u.id}`"
+                class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                :aria-label="`View details for ${u.username}`"
+              >
+                {{ u.username }}
+              </NuxtLink>
+            </TableCell>
             <TableCell class="text-muted-foreground">{{ u.email }}</TableCell>
             <TableCell>{{ [u.first_name, u.last_name].filter(Boolean).join(' ') || '—' }}</TableCell>
             <TableCell>

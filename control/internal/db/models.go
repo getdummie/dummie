@@ -74,15 +74,17 @@ type Setting struct {
 }
 
 type User struct {
-	ID           pgtype.UUID
-	Username     string
-	Email        string
-	PasswordHash string
-	FirstName    string
-	LastName     string
-	UserType     string
-	CreatedAt    pgtype.Timestamptz
-	UpdatedAt    pgtype.Timestamptz
+	ID             pgtype.UUID
+	Username       string
+	Email          string
+	PasswordHash   string
+	FirstName      string
+	LastName       string
+	UserType       string
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+	VCPULimit      int32
+	MemoryLimitMiB int32
 }
 
 type Vm struct {

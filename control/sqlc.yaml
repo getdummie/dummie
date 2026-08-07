@@ -21,3 +21,5 @@ sql:
           memory_mib: "MemoryMiB"
           cpu_count: "CPUCount"
           cpu_percent: "CPUPercent"
+          vcpu_limit: "VCPULimit"
+          memory_limit_mib: "MemoryLimitMiB"

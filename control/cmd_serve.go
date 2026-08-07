@@ -146,6 +146,8 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin := api.Group("/admin", adminJWT(cfg))
   admin.GET("/users", adminH.ListUsers)
   admin.POST("/users", adminH.CreateUser)
+  admin.GET("/users/:id", adminH.GetUser)
+  admin.PUT("/users/:id/quota", adminH.UpdateUserQuota)
   admin.DELETE("/users/:id", adminH.DeleteUser)
   admin.GET("/tokens", adminH.ListTokens)
   admin.POST("/tokens/:id/blacklist", adminH.BlacklistToken)
