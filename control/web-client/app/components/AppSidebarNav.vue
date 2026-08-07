@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { Boxes, ChevronDown, KeyRound, LayoutDashboard, LogOut, Server, Shield, Ticket, Users } from '@lucide/vue'
+import { LayoutDashboard, LogOut, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -19,7 +19,6 @@ interface NavItem {
 }
 
 const props = defineProps<{ expanded: boolean }>()
-const emit = defineEmits<{ expand: [] }>()
 
 const { user, signout } = useAuth()
 const route = useRoute()
@@ -38,34 +37,15 @@ const main: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
 ]
 
-const adminItems: NavItem[] = [
-  { label: 'Users', to: '/admin/model/users', icon: Users },
-  { label: 'Tokens', to: '/admin/model/tokens', icon: Ticket },
-  { label: 'Agents', to: '/admin/model/agents', icon: Server },
-  { label: 'VMs', to: '/admin/model/vms', icon: Boxes },
-  { label: 'Keys', to: '/admin/model/agent-keys', icon: KeyRound },
-]
+// Landing page for the admin section; the section's own tab strip takes over
+// from there.
+const adminEntry: NavItem = { label: 'Admin Dashboard', to: '/admin/model/users', icon: Shield }
 
 function isActive(to: string) {
   return route.path === to || route.path.startsWith(`${to}/`)
 }
 
-const adminActive = computed(() => adminItems.some(i => isActive(i.to)))
-const adminOpen = ref(adminActive.value)
-
-watch(adminActive, (v) => {
-  if (v) adminOpen.value = true
-})
-
-/** Collapsed: the group is a single button that expands the rail. */
-function onAdminClick() {
-  if (!props.expanded) {
-    emit('expand')
-    adminOpen.value = true
-    return
-  }
-  adminOpen.value = !adminOpen.value
-}
+const adminActive = computed(() => isActive('/admin'))
 
 // `focus-visible:` is not optional here: without it the entire rail is
 // invisible to keyboard users, since none of these are shadcn primitives that
@@ -99,42 +79,24 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
         </Tooltip>
       </nav>
 
-      <!-- Admin group, pinned to the bottom -->
+      <!-- Admin entry, pinned to the bottom -->
       <div v-if="isAdmin" class="flex flex-col gap-0.5 pb-2">
         <Tooltip :disabled="expanded">
           <TooltipTrigger as-child>
-            <button
-              type="button"
-              :class="[itemBase, itemSize, adminActive && !adminOpen && 'text-primary-text']"
-              :aria-expanded="expanded ? adminOpen : undefined"
-              :aria-controls="expanded ? 'admin-subnav' : undefined"
-              @click="onAdminClick"
+            <NuxtLink
+              :to="adminEntry.to"
+              :class="[itemBase, itemSize, adminActive && 'bg-primary/12 text-primary-text hover:bg-primary/12 hover:text-primary-text']"
+              :aria-current="adminActive ? 'page' : undefined"
             >
-              <Shield class="size-[18px] shrink-0" aria-hidden="true" />
-              <template v-if="expanded">
-                <span class="flex-1 truncate text-left font-mono text-[0.8rem]">Admin Dashboard</span>
-                <ChevronDown class="size-4 shrink-0 transition-transform" :class="adminOpen && 'rotate-180'" aria-hidden="true" />
-              </template>
-              <span v-else class="sr-only">Admin Dashboard</span>
-            </button>
+              <component :is="adminEntry.icon" class="size-[18px] shrink-0" aria-hidden="true" />
+              <span v-if="expanded" class="truncate font-mono text-[0.8rem]">{{ adminEntry.label }}</span>
+              <span v-else class="sr-only">{{ adminEntry.label }}</span>
+            </NuxtLink>
           </TooltipTrigger>
           <TooltipContent side="right" class="font-mono text-xs">
-            Admin Dashboard
+            {{ adminEntry.label }}
           </TooltipContent>
         </Tooltip>
-
-        <div v-if="expanded && adminOpen" id="admin-subnav" class="ml-[1.05rem] flex flex-col gap-0.5 border-l border-border pl-2">
-          <NuxtLink
-            v-for="item in adminItems"
-            :key="item.to"
-            :to="item.to"
-            :class="[itemBase, 'h-8 w-full gap-2.5 px-2.5', isActive(item.to) && 'bg-primary/12 text-primary-text hover:bg-primary/12 hover:text-primary-text']"
-            :aria-current="isActive(item.to) ? 'page' : undefined"
-          >
-            <component :is="item.icon" class="size-4 shrink-0" aria-hidden="true" />
-            <span class="truncate font-mono text-[0.8rem]">{{ item.label }}</span>
-          </NuxtLink>
-        </div>
       </div>
 
       <!-- Account + theme -->

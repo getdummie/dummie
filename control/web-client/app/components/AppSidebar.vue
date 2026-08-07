@@ -70,7 +70,7 @@ watch(() => route.fullPath, () => {
       </TooltipProvider>
     </div>
 
-    <AppSidebarNav :expanded="expanded" @expand="expanded = true" />
+    <AppSidebarNav :expanded="expanded" />
   </aside>
 
   <!-- Mobile: same nav as a drawer, always labelled -->
