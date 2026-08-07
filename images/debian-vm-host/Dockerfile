@@ -1,4 +1,4 @@
-FROM debian:stable
+FROM golang:1.26.5-trixie
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -69,4 +69,5 @@ RUN set -ex \
   && curl -sL https://github.com/codingcoffee.keys > /home/ubuntu/.ssh/authorized_keys \
   && echo 'alias d=docker' >> /home/ubuntu/.bashrc \
   && echo 'alias dco="docker compose"' >> /home/ubuntu/.bashrc \
-  && echo 'alias v=neovim' >> /home/ubuntu/.bashrc
+  && echo 'alias v=neovim' >> /home/ubuntu/.bashrc \
+  && echo 'export PATH="$PATH:/usr/local/go/bin"' >> /home/ubuntu/.bashrc
