@@ -209,24 +209,32 @@ func uninstallCommand() *cli.Command {
   }
 }
 
-const exampleConfig = `# dagent configuration. Mode 0600: this file may hold an enrollment key.
-#
-# control_url: https://control.example.com
+// exampleConfig is written on install and is entirely commented out: every key
+// has a default, and every feature's default is off, so the file an operator
+// finds is both a complete reference and a host that touches nothing.
+const exampleConfig = `# control_url: https://control.example.com
 # enrollment_key: paste-once-then-it-is-ignored
 # insecure: false
-
+#
 # data_dir: /var/lib/dagent
 # socket: /run/dagent/dagent.sock
 # group: dagent
-
-network:
-  pool: 10.64.0.0/16
-  gateway: 10.64.0.1
-  # uplink: eth0          # default: whichever interface reaches the internet
-  dns: 1.1.1.1
-  suricata: true
-  queues: 4               # must equal suricata's -q flag count
-  no_docker_compat: false
+#
+# features:
+#   ip_forward: false       # sets net.ipv4.ip_forward; needed for any vm egress
+#   kvm_access: false       # chown/chmod /dev/kvm, else vms run under emulation
+#   nftables: false         # install and reconcile the packet policy
+#   docker_compat: false    # accepts in docker's DOCKER-USER chain; needs nftables
+#   suricata: false         # ids container in the egress path; needs nftables
+#   dhcp: false             # leases for guests, which is how they get a route
+#   metadata: false         # per-vm identity service on the gateway
+#
+# network:
+#   pool: 10.64.0.0/16
+#   gateway: 10.64.0.1
+#   uplink: eth0            # default: whichever interface reaches the internet
+#   dns: 1.1.1.1
+#   queues: 4               # the suricata service will spin up the same number of queues
 `
 
 // ensureGroup creates the group if it is missing. groupadd rather than writing

@@ -42,9 +42,38 @@ func serveCommand() *cli.Command {
   }
 }
 
+// checkFeatures rejects combinations that would start something with nothing
+// behind it. Both of these are enforced by the packet policy: Suricata only ever
+// sees traffic the ruleset queues to it, and the DOCKER-USER accepts exist to
+// let traffic reach a ruleset that has to be there to accept it. Running either
+// without nftables is a config that does nothing, quietly, which is worse than
+// refusing to start.
+func checkFeatures(f Features) error {
+  if f.Nftables {
+    return nil
+  }
+  for _, bad := range []struct {
+    on   bool
+    name string
+  }{
+    {f.Suricata, "features.suricata"},
+    {f.DockerCompat, "features.docker_compat"},
+  } {
+    if bad.on {
+      return fmt.Errorf("%s needs features.nftables, which is off", bad.name)
+    }
+  }
+  return nil
+}
+
 func runServe(ctx context.Context, cfg Config) error {
   if os.Geteuid() != 0 {
     return errors.New("serve needs root: it writes nftables rules, network interfaces and sysctls")
+  }
+
+  f := cfg.Features
+  if err := checkFeatures(f); err != nil {
+    return err
   }
 
   nc, err := cfg.netConfig()
@@ -52,26 +81,33 @@ func runServe(ctx context.Context, cfg Config) error {
     return err
   }
   // Persisted so the direct (root, no daemon) path and `netd teardown` agree
-  // with the daemon about the pool, gateway and queue count.
+  // with the daemon about the pool, gateway and queue count. Inside dagent's own
+  // data directory, so it is not one of the things features gate.
   if err := saveNetConfig(cfg.DataDir, nc); err != nil {
     return err
   }
 
-  if err := enableForwarding(); err != nil {
-    return fmt.Errorf("could not enable ip forwarding: %w", err)
+  if f.IPForward {
+    if err := enableForwarding(); err != nil {
+      return fmt.Errorf("could not enable ip forwarding: %w", err)
+    }
   }
   // Repaired on every start, not once at install: /dev is rebuilt at boot, and
   // in a container it is rebuilt whenever the container is. Not fatal -- a host
   // with no usable /dev/kvm still runs guests, just slowly.
-  if msg, err := ensureKVMAccess(); err != nil {
-    log.Printf("could not make /dev/kvm reachable by an unprivileged uid (%v); vms will fall back to software emulation", err)
-  } else {
-    log.Print(msg)
+  if f.KVMAccess {
+    if msg, err := ensureKVMAccess(); err != nil {
+      log.Printf("could not make /dev/kvm reachable by an unprivileged uid (%v); vms will fall back to software emulation", err)
+    } else {
+      log.Print(msg)
+    }
   }
-  if err := applyBaseRuleset(nc); err != nil {
-    return err
+  if f.Nftables {
+    if err := applyBaseRuleset(nc); err != nil {
+      return err
+    }
+    log.Printf("policy installed: pool %s, gateway %s, uplink %s", nc.Pool, nc.Gateway, nc.Uplink)
   }
-  log.Printf("policy installed: pool %s, gateway %s, uplink %s", nc.Pool, nc.Gateway, nc.Uplink)
 
   // Bind the socket before anything long-running, so a permissions problem
   // fails immediately rather than after the network is half set up.
@@ -89,14 +125,20 @@ func runServe(ctx context.Context, cfg Config) error {
 
   errs := make(chan error, 4)
 
+  // The CLI socket is not gated: it is the daemon, not something the daemon
+  // does to the host, and without it `serve` is a process with no way in.
   api := &apiServer{data: cfg.DataDir, cfg: nc}
   go func() { errs <- api.serve(ctx, ln) }()
 
-  meta := &metadataServer{data: cfg.DataDir, cfg: nc}
-  go func() { errs <- meta.serve(ctx) }()
+  if f.Metadata {
+    meta := &metadataServer{data: cfg.DataDir, cfg: nc}
+    go func() { errs <- meta.serve(ctx) }()
+  }
 
-  dhcp := &dhcpServer{data: cfg.DataDir, cfg: nc}
-  go func() { errs <- dhcp.serve(ctx) }()
+  if f.DHCP {
+    dhcp := &dhcpServer{data: cfg.DataDir, cfg: nc}
+    go func() { errs <- dhcp.serve(ctx) }()
+  }
 
   // The control link is optional: a host with no control server is still a
   // perfectly good standalone dagent.
@@ -110,11 +152,20 @@ func runServe(ctx context.Context, cfg Config) error {
     }()
   }
 
+  // Docker compat and Suricata are repaired inside reconcile, so they follow
+  // nftables: checkFeatures has already rejected a config that asks for either
+  // without it.
+  if !f.Nftables {
+    log.Print("features.nftables is off: no packet policy is being installed or repaired")
+  }
+
   ticker := time.NewTicker(reconcileInterval)
   defer ticker.Stop()
   for {
-    if err := reconcile(cfg.DataDir, nc); err != nil {
-      log.Printf("reconcile failed: %v", err)
+    if f.Nftables {
+      if err := reconcile(cfg.DataDir, nc); err != nil {
+        log.Printf("reconcile failed: %v", err)
+      }
     }
     select {
     case <-ctx.Done():
