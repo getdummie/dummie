@@ -37,6 +37,12 @@ const (
   // directory as dagent's own config, because they are one operator surface.
   serviceConfigDir = "/etc/dagent"
 
+  // serviceRuntimeDir is where dpipe puts its control and upgrade sockets, and
+  // where proxy goes looking for the control one. /run is a tmpfs, so it is
+  // empty after every boot and something has to make this before dpipe starts or
+  // it fails to bind.
+  serviceRuntimeDir = "/run/dpipe"
+
   downloadTimeout = 5 * time.Minute
 )
 
@@ -62,6 +68,15 @@ After=dagent.service
 
 [Service]
 Type=simple
+# /run/dpipe, created by systemd before ExecStart. dagent makes this directory
+# too, but only once its own startup gets that far -- and dagent is Type=exec, so
+# systemd calls this unit started the moment it execs and will happily launch
+# dpipe first. Declaring it here is what removes the race.
+#
+# Preserved on stop because both units name the same directory: without this,
+# stopping proxy would delete the socket a running dpipe is still serving.
+RuntimeDirectory=dpipe
+RuntimeDirectoryPreserve=yes
 ExecStart=%s -config %s
 Restart=on-failure
 RestartSec=2
@@ -73,8 +88,8 @@ WantedBy=multi-user.target
 // defaultDpipeConfig and defaultProxyConfig are written once, on the first start
 // after the service is enabled. Never rewritten: after that the file belongs to
 // the operator, and clobbering their listeners on a restart would be an outage.
-const defaultDpipeConfig = `control_socket: /home/ubuntu/control.sock
-upgrade_socket: /home/ubuntu/upgrade.sock
+const defaultDpipeConfig = `control_socket: /run/dpipe/control.sock
+upgrade_socket: /run/dpipe/upgrade.sock
 drain_timeout: 0s
 log_level: info
 
@@ -84,7 +99,7 @@ tls:
   enabled: false
 `
 
-const defaultProxyConfig = `control_socket: /home/ubuntu/control.sock
+const defaultProxyConfig = `control_socket: /run/dpipe/control.sock
 
 http:
   listen: "0.0.0.0:8080"
@@ -126,6 +141,13 @@ func ensureManagedService(ctx context.Context, data, name string, cfg ServiceCon
   }
   if err := checkDownloadURL(cfg.DownloadURL); err != nil {
     return err
+  }
+
+  // Belt to the unit's braces. RuntimeDirectory only takes effect once the unit
+  // is next started, so on a host whose proxy and dpipe are already running this
+  // is what puts the directory there now rather than at the next reboot.
+  if err := os.MkdirAll(serviceRuntimeDir, 0o755); err != nil {
+    return fmt.Errorf("could not create %s: %w", serviceRuntimeDir, err)
   }
 
   if err := writeIfAbsent(serviceConfigPath(name), defaultServiceConfig(name), 0o644); err != nil {
