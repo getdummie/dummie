@@ -35,6 +35,7 @@ type Agent struct {
 	DiskUsedBytes  int64
 	UptimeSeconds  int64
 	MetricsAt      pgtype.Timestamptz
+	DomainID       pgtype.UUID
 }
 
 type AgentEnrollmentKey struct {
@@ -53,6 +54,11 @@ type AgentEnrollmentKey struct {
 type ControlMetum struct {
 	ID        int64
 	CreatedAt pgtype.Timestamptz
+}
+
+type Domain struct {
+	ID  pgtype.UUID
+	TLD string
 }
 
 type RefreshToken struct {

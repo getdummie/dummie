@@ -33,7 +33,7 @@ func (q *Queries) DeleteAgent(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getAgentByID = `-- name: GetAgentByID :one
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id FROM agents
 WHERE id = $1
 `
 
@@ -67,12 +67,13 @@ func (q *Queries) GetAgentByID(ctx context.Context, id pgtype.UUID) (Agent, erro
 		&i.DiskUsedBytes,
 		&i.UptimeSeconds,
 		&i.MetricsAt,
+		&i.DomainID,
 	)
 	return i, err
 }
 
 const getAgentByMachineID = `-- name: GetAgentByMachineID :one
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents WHERE machine_id = $1
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id FROM agents WHERE machine_id = $1
 `
 
 func (q *Queries) GetAgentByMachineID(ctx context.Context, machineID string) (Agent, error) {
@@ -105,12 +106,13 @@ func (q *Queries) GetAgentByMachineID(ctx context.Context, machineID string) (Ag
 		&i.DiskUsedBytes,
 		&i.UptimeSeconds,
 		&i.MetricsAt,
+		&i.DomainID,
 	)
 	return i, err
 }
 
 const getAgentByTokenHash = `-- name: GetAgentByTokenHash :one
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id FROM agents
 WHERE token_hash = $1
 LIMIT 1
 `
@@ -145,13 +147,16 @@ func (q *Queries) GetAgentByTokenHash(ctx context.Context, tokenHash string) (Ag
 		&i.DiskUsedBytes,
 		&i.UptimeSeconds,
 		&i.MetricsAt,
+		&i.DomainID,
 	)
 	return i, err
 }
 
 const listAgents = `-- name: ListAgents :many
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at FROM agents
-ORDER BY created_at DESC
+SELECT agents.id, agents.machine_id, agents.hostname, agents.token_hash, agents.status, agents.os, agents.os_version, agents.arch, agents.agent_version, agents.last_seen_at, agents.last_ip, agents.enrolled_key_id, agents.revoked, agents.created_at, agents.updated_at, agents.cpu_count, agents.cpu_percent, agents.load1, agents.load5, agents.load15, agents.mem_total_bytes, agents.mem_used_bytes, agents.disk_total_bytes, agents.disk_used_bytes, agents.uptime_seconds, agents.metrics_at, agents.domain_id, d.tld AS domain_tld
+FROM agents
+LEFT JOIN domains d ON d.id = agents.domain_id
+ORDER BY agents.created_at DESC
 LIMIT $1 OFFSET $2
 `
 
@@ -160,42 +165,51 @@ type ListAgentsParams struct {
 	Offset int32
 }
 
-func (q *Queries) ListAgents(ctx context.Context, arg ListAgentsParams) ([]Agent, error) {
+type ListAgentsRow struct {
+	Agent     Agent
+	DomainTLD pgtype.Text
+}
+
+// The domain is joined in rather than resolved per row by the caller: the admin
+// table shows the TLD, not the id, and one join beats a lookup per agent.
+func (q *Queries) ListAgents(ctx context.Context, arg ListAgentsParams) ([]ListAgentsRow, error) {
 	rows, err := q.db.Query(ctx, listAgents, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Agent
+	var items []ListAgentsRow
 	for rows.Next() {
-		var i Agent
+		var i ListAgentsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.MachineID,
-			&i.Hostname,
-			&i.TokenHash,
-			&i.Status,
-			&i.OS,
-			&i.OSVersion,
-			&i.Arch,
-			&i.AgentVersion,
-			&i.LastSeenAt,
-			&i.LastIP,
-			&i.EnrolledKeyID,
-			&i.Revoked,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.CPUCount,
-			&i.CPUPercent,
-			&i.Load1,
-			&i.Load5,
-			&i.Load15,
-			&i.MemTotalBytes,
-			&i.MemUsedBytes,
-			&i.DiskTotalBytes,
-			&i.DiskUsedBytes,
-			&i.UptimeSeconds,
-			&i.MetricsAt,
+			&i.Agent.ID,
+			&i.Agent.MachineID,
+			&i.Agent.Hostname,
+			&i.Agent.TokenHash,
+			&i.Agent.Status,
+			&i.Agent.OS,
+			&i.Agent.OSVersion,
+			&i.Agent.Arch,
+			&i.Agent.AgentVersion,
+			&i.Agent.LastSeenAt,
+			&i.Agent.LastIP,
+			&i.Agent.EnrolledKeyID,
+			&i.Agent.Revoked,
+			&i.Agent.CreatedAt,
+			&i.Agent.UpdatedAt,
+			&i.Agent.CPUCount,
+			&i.Agent.CPUPercent,
+			&i.Agent.Load1,
+			&i.Agent.Load5,
+			&i.Agent.Load15,
+			&i.Agent.MemTotalBytes,
+			&i.Agent.MemUsedBytes,
+			&i.Agent.DiskTotalBytes,
+			&i.Agent.DiskUsedBytes,
+			&i.Agent.UptimeSeconds,
+			&i.Agent.MetricsAt,
+			&i.Agent.DomainID,
+			&i.DomainTLD,
 		); err != nil {
 			return nil, err
 		}
@@ -391,8 +405,8 @@ func (q *Queries) UpdateAgentMetrics(ctx context.Context, arg UpdateAgentMetrics
 }
 
 const upsertAgentByMachineID = `-- name: UpsertAgentByMachineID :one
-INSERT INTO agents (machine_id, hostname, token_hash, os, os_version, arch, agent_version, enrolled_key_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO agents (machine_id, hostname, token_hash, os, os_version, arch, agent_version, enrolled_key_id, domain_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (machine_id) DO UPDATE
 SET hostname        = EXCLUDED.hostname,
     token_hash      = EXCLUDED.token_hash,
@@ -401,9 +415,13 @@ SET hostname        = EXCLUDED.hostname,
     arch            = EXCLUDED.arch,
     agent_version   = EXCLUDED.agent_version,
     enrolled_key_id = EXCLUDED.enrolled_key_id,
+    -- COALESCE, not EXCLUDED: a domain already on the row was either assigned
+    -- deliberately or picked at first enrollment, and a re-enroll is not a
+    -- statement about which domain the machine belongs to.
+    domain_id       = COALESCE(agents.domain_id, EXCLUDED.domain_id),
     revoked         = false,
     updated_at      = now()
-RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at
+RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, agent_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id
 `
 
 type UpsertAgentByMachineIDParams struct {
@@ -415,6 +433,7 @@ type UpsertAgentByMachineIDParams struct {
 	Arch          string
 	AgentVersion  string
 	EnrolledKeyID pgtype.UUID
+	DomainID      pgtype.UUID
 }
 
 // UpsertAgentByMachineID re-enrolls an existing machine in place rather than
@@ -431,6 +450,7 @@ func (q *Queries) UpsertAgentByMachineID(ctx context.Context, arg UpsertAgentByM
 		arg.Arch,
 		arg.AgentVersion,
 		arg.EnrolledKeyID,
+		arg.DomainID,
 	)
 	var i Agent
 	err := row.Scan(
@@ -460,6 +480,7 @@ func (q *Queries) UpsertAgentByMachineID(ctx context.Context, arg UpsertAgentByM
 		&i.DiskUsedBytes,
 		&i.UptimeSeconds,
 		&i.MetricsAt,
+		&i.DomainID,
 	)
 	return i, err
 }

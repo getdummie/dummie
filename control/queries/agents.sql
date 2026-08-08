@@ -3,8 +3,8 @@
 -- creating a duplicate row: the token is rotated and the facts refreshed. A
 -- previously revoked agent is restored, because holding a valid enrollment key
 -- is the authorization to enroll.
-INSERT INTO agents (machine_id, hostname, token_hash, os, os_version, arch, agent_version, enrolled_key_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO agents (machine_id, hostname, token_hash, os, os_version, arch, agent_version, enrolled_key_id, domain_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 ON CONFLICT (machine_id) DO UPDATE
 SET hostname        = EXCLUDED.hostname,
     token_hash      = EXCLUDED.token_hash,
@@ -13,6 +13,10 @@ SET hostname        = EXCLUDED.hostname,
     arch            = EXCLUDED.arch,
     agent_version   = EXCLUDED.agent_version,
     enrolled_key_id = EXCLUDED.enrolled_key_id,
+    -- COALESCE, not EXCLUDED: a domain already on the row was either assigned
+    -- deliberately or picked at first enrollment, and a re-enroll is not a
+    -- statement about which domain the machine belongs to.
+    domain_id       = COALESCE(agents.domain_id, EXCLUDED.domain_id),
     revoked         = false,
     updated_at      = now()
 RETURNING *;
@@ -33,8 +37,12 @@ WHERE id = $1;
 SELECT count(*) FROM agents;
 
 -- name: ListAgents :many
-SELECT * FROM agents
-ORDER BY created_at DESC
+-- The domain is joined in rather than resolved per row by the caller: the admin
+-- table shows the TLD, not the id, and one join beats a lookup per agent.
+SELECT sqlc.embed(agents), d.tld AS domain_tld
+FROM agents
+LEFT JOIN domains d ON d.id = agents.domain_id
+ORDER BY agents.created_at DESC
 LIMIT $1 OFFSET $2;
 
 -- name: SetAgentOnline :exec

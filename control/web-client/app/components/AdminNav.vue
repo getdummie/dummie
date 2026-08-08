@@ -8,6 +8,7 @@ const links = [
   { label: 'Agents', to: '/admin/model/agents' },
   { label: 'VMs', to: '/admin/model/vms' },
   { label: 'Keys', to: '/admin/model/agent-keys' },
+  { label: 'Domains', to: '/admin/model/domains' },
 ]
 
 function isActive(to: string) {

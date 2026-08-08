@@ -163,6 +163,9 @@ type agentDTO struct {
   LastSeenAt   string `json:"last_seen_at"`
   LastIP       string `json:"last_ip"`
   CreatedAt    string `json:"created_at"`
+  // "" when the agent has no domain: none was configured when it enrolled, or
+  // there were several and the choice was left to an operator.
+  Domain string `json:"domain"`
 
   Metrics agentMetricsDTO `json:"metrics"`
 }
@@ -184,13 +187,14 @@ type agentMetricsDTO struct {
   UptimeSeconds  int64   `json:"uptime_seconds"`
 }
 
-func toAgentDTO(a db.Agent, connected bool) agentDTO {
+func toAgentDTO(a db.Agent, connected bool, domain string) agentDTO {
   d := agentDTO{
     ID:           uuid.UUID(a.ID.Bytes).String(),
     MachineID:    a.MachineID,
     Hostname:     a.Hostname,
     Status:       a.Status,
     Connected:    connected,
+    Domain:       domain,
     OS:           a.OS,
     OSVersion:    a.OSVersion,
     Arch:         a.Arch,
@@ -234,9 +238,9 @@ func (h *AdminHandler) ListAgents(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not list agents")
   }
   items := make([]agentDTO, 0, len(rows))
-  for _, a := range rows {
-    id := uuid.UUID(a.ID.Bytes).String()
-    items = append(items, toAgentDTO(a, h.hub.Connected(id)))
+  for _, r := range rows {
+    id := uuid.UUID(r.Agent.ID.Bytes).String()
+    items = append(items, toAgentDTO(r.Agent, h.hub.Connected(id), r.DomainTLD.String))
   }
   return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }

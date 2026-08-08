@@ -120,6 +120,17 @@ func (h *AgentHandler) Enroll(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not generate agent token")
   }
 
+  // With exactly one domain configured there is no choice to make, so the agent
+  // gets it. With none or several, it enrolls without one and an operator
+  // decides. pgx.ErrNoRows covers both of those cases -- see GetSoleDomain.
+  var domainID pgtype.UUID
+  switch domain, err := qtx.GetSoleDomain(ctx); {
+  case err == nil:
+    domainID = domain.ID
+  case !errors.Is(err, pgx.ErrNoRows):
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not resolve the agent domain")
+  }
+
   agent, err := qtx.UpsertAgentByMachineID(ctx, db.UpsertAgentByMachineIDParams{
     MachineID:     req.MachineID,
     Hostname:      strings.TrimSpace(req.Hostname),
@@ -129,6 +140,7 @@ func (h *AgentHandler) Enroll(c *echo.Context) error {
     Arch:          req.Arch,
     AgentVersion:  req.Version,
     EnrolledKeyID: enrolledKeyID,
+    DomainID:      domainID,
   })
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not register agent")

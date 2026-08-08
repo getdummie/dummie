@@ -13,6 +13,8 @@ sql:
         rename:
           ip: "IP"
           last_ip: "LastIP"
+          tld: "TLD"
+          domain_tld: "DomainTLD"
           os: "OS"
           os_version: "OSVersion"
           machine_id: "MachineID"

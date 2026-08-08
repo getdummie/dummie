@@ -31,6 +31,9 @@ interface AgentRow {
   last_seen_at: string
   last_ip: string
   created_at: string
+  // "" when no domain was configured at enrollment, or several were and the
+  // choice was left to an operator.
+  domain: string
   metrics: AgentMetrics
 }
 
@@ -212,6 +215,7 @@ async function confirmDelete() {
           <TableRow>
             <TableHead>Agent</TableHead>
             <TableHead>Status</TableHead>
+            <TableHead>Domain</TableHead>
             <TableHead>CPU</TableHead>
             <TableHead>Memory</TableHead>
             <TableHead>Disk</TableHead>
@@ -225,10 +229,10 @@ async function confirmDelete() {
         <TableBody>
           <template v-if="loading">
             <TableRow v-for="n in 5" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 10" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
+              <TableCell v-for="c in 11" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
             </TableRow>
           </template>
-          <TableEmpty v-else-if="!items.length" :colspan="10">
+          <TableEmpty v-else-if="!items.length" :colspan="11">
             No agents enrolled. Create an enrollment key, then run
             <span class="font-mono">dagent connect --key …</span> on a machine.
           </TableEmpty>
@@ -240,6 +244,7 @@ async function confirmDelete() {
             <TableCell>
               <Badge :variant="statusVariant[a.status]" class="font-mono">{{ a.status }}</Badge>
             </TableCell>
+            <TableCell class="font-mono text-muted-foreground">{{ a.domain || '—' }}</TableCell>
             <!-- Every metric is zero until the agent reports, so reported_at is
                  what decides between a real number and an em dash. -->
             <TableCell class="font-mono text-muted-foreground whitespace-nowrap">

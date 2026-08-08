@@ -231,6 +231,64 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 	return i, err
 }
 
+const listProxySSHUsersByAgent = `-- name: ListProxySSHUsersByAgent :many
+SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
+FROM vms v
+JOIN users u ON u.id = v.created_by
+WHERE v.agent_id = $1
+  AND v.ip <> ''
+  AND v.status <> 'gone'
+  AND u.public_key <> ''
+ORDER BY v.created_at, v.vm_id
+`
+
+type ListProxySSHUsersByAgentRow struct {
+	VMIP      string
+	HostVMID  string
+	VMName    string
+	PublicKey string
+}
+
+// ListProxySSHUsersByAgent is the input to the proxy.yaml generator: every VM on
+// the host that can be reached over ssh, carrying the key of whoever owns it.
+//
+// One query for the whole host, like the Suricata one, because the file is
+// written as a whole -- a VM missed here is a VM its owner silently loses access
+// to until the next regeneration.
+//
+// An inner join on users drops VMs with no owner: one adopted from a host's
+// inventory report was created outside the control plane, so there is no key to
+// route with. A user with no key on file drops out for the same reason.
+//
+// Rows without an address are skipped -- there is nothing to point the route at
+// -- and 'gone' VMs are excluded because their address goes back to the pool and
+// will be handed to some other guest, which a stale route would then expose to
+// the wrong user's key.
+func (q *Queries) ListProxySSHUsersByAgent(ctx context.Context, agentID pgtype.UUID) ([]ListProxySSHUsersByAgentRow, error) {
+	rows, err := q.db.Query(ctx, listProxySSHUsersByAgent, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProxySSHUsersByAgentRow
+	for rows.Next() {
+		var i ListProxySSHUsersByAgentRow
+		if err := rows.Scan(
+			&i.VMIP,
+			&i.HostVMID,
+			&i.VMName,
+			&i.PublicKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVMs = `-- name: ListVMs :many
 SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib FROM vms
 ORDER BY created_at DESC
@@ -320,64 +378,6 @@ func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) 
 			&i.ReportedAt,
 			&i.CreatedBy,
 			&i.DiskMiB,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listProxySSHUsersByAgent = `-- name: ListProxySSHUsersByAgent :many
-SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
-FROM vms v
-JOIN users u ON u.id = v.created_by
-WHERE v.agent_id = $1
-  AND v.ip <> ''
-  AND v.status <> 'gone'
-  AND u.public_key <> ''
-ORDER BY v.created_at, v.vm_id
-`
-
-type ListProxySSHUsersByAgentRow struct {
-	VMIP      string
-	HostVMID  string
-	VMName    string
-	PublicKey string
-}
-
-// ListProxySSHUsersByAgent is the input to the proxy.yaml generator: every VM on
-// the host that can be reached over ssh, carrying the key of whoever owns it.
-//
-// One query for the whole host, like the Suricata one, because the file is
-// written as a whole -- a VM missed here is a VM its owner silently loses access
-// to until the next regeneration.
-//
-// An inner join on users drops VMs with no owner: one adopted from a host's
-// inventory report was created outside the control plane, so there is no key to
-// route with. A user with no key on file drops out for the same reason.
-//
-// Rows without an address are skipped -- there is nothing to point the route at
-// -- and 'gone' VMs are excluded because their address goes back to the pool and
-// will be handed to some other guest, which a stale route would then expose to
-// the wrong user's key.
-func (q *Queries) ListProxySSHUsersByAgent(ctx context.Context, agentID pgtype.UUID) ([]ListProxySSHUsersByAgentRow, error) {
-	rows, err := q.db.Query(ctx, listProxySSHUsersByAgent, agentID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListProxySSHUsersByAgentRow
-	for rows.Next() {
-		var i ListProxySSHUsersByAgentRow
-		if err := rows.Scan(
-			&i.VMIP,
-			&i.HostVMID,
-			&i.VMName,
-			&i.PublicKey,
 		); err != nil {
 			return nil, err
 		}

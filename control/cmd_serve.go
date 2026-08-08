@@ -169,6 +169,9 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin.POST("/vms/:id/stop", adminH.StopVM)
   admin.POST("/vms/:id/destroy", adminH.DestroyVM)
   admin.DELETE("/vms/:id", adminH.DeleteVM)
+  admin.GET("/domains", adminH.ListDomains)
+  admin.POST("/domains", adminH.CreateDomain)
+  admin.DELETE("/domains/:id", adminH.DeleteDomain)
   admin.GET("/settings", adminH.ListSettings)
   admin.PUT("/settings/:key", adminH.UpdateSetting)
 
