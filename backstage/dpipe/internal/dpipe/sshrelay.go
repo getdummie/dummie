@@ -4,14 +4,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
 
 // exitStatusGrace bounds how long a relayed channel waits for trailing channel
-// requests (typically exit-status) after both data directions have hit EOF.
+// requests (typically exit-status) after the far side has hit EOF.
 const exitStatusGrace = 30 * time.Second
 
 // relaySSH wires two established SSH connections together: global requests both
@@ -76,39 +75,38 @@ func openAndRelay(log *slog.Logger, nch ssh.NewChannel, out ssh.Conn) {
 // relayChannel copies data, extended data (stderr) and channel requests between
 // two channels, honouring half-close and letting trailing requests such as
 // exit-status through before closing.
+// The far side (b) closing is what ends the channel. Waiting on both directions
+// would deadlock an interactive session: the client keeps its input side open
+// until it sees our close, and we would not close until it did.
 func relayChannel(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs <-chan *ssh.Request) {
-	var data sync.WaitGroup
-	data.Add(2)
 	go func() {
-		defer data.Done()
 		_, _ = io.Copy(b, a)
 		_ = b.CloseWrite()
 	}()
+	farDone := make(chan struct{})
 	go func() {
-		defer data.Done()
+		defer close(farDone)
 		_, _ = io.Copy(a, b)
 		_ = a.CloseWrite()
 	}()
 	go func() { _, _ = io.Copy(a.Stderr(), b.Stderr()) }()
 	go func() { _, _ = io.Copy(b.Stderr(), a.Stderr()) }()
 
-	reqs := make(chan struct{}, 2)
-	go func() { relayChannelRequests(aReqs, b); reqs <- struct{}{} }()
-	go func() { relayChannelRequests(bReqs, a); reqs <- struct{}{} }()
+	go relayChannelRequests(aReqs, b)
+	farReqs := make(chan struct{})
+	go func() { relayChannelRequests(bReqs, a); close(farReqs) }()
 
-	data.Wait()
+	<-farDone
 
-	// Give the peers a bounded window to deliver exit-status and close.
+	// exit-status arrives from b as a trailing request; let it through first.
 	timer := time.NewTimer(exitStatusGrace)
 	defer timer.Stop()
-	for i := 0; i < 2; i++ {
-		select {
-		case <-reqs:
-		case <-timer.C:
-			i = 2
-		}
+	select {
+	case <-farReqs:
+	case <-timer.C:
 	}
 
+	// Closing a unblocks the still-pending copy out of it.
 	_ = a.Close()
 	_ = b.Close()
 }

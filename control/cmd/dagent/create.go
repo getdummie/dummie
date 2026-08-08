@@ -132,8 +132,18 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
     return vm{}, err
   }
   if fromTar {
+    // Read per create rather than once at startup: a host that installs or
+    // rotates dpipe's key should not need dagent restarted before the next
+    // guest gets it.
+    pubKey, err := readClientPubKey()
+    if err != nil {
+      return vm{}, err
+    }
+    if pubKey == "" {
+      logf("no dpipe key at %s; this vm will not accept dpipe's ssh key", clientPubKeyPath)
+    }
     logf("building an ext4 rootfs from the tar (cached after the first time)")
-    if v.Backing, err = ext4FromTar(ctx, cache, v.Backing, rootfsSize); err != nil {
+    if v.Backing, err = ext4FromTar(ctx, cache, v.Backing, pubKey, rootfsSize); err != nil {
       return vm{}, err
     }
   }

@@ -130,14 +130,30 @@ const tarSlack = 256 << 20
 // as far as a root-mount panic and no further.
 //
 // The image is built with mkfs.ext4 -d, which populates from a directory
-// without a loop mount, so nothing here needs to mount anything.
-func ext4FromTar(ctx context.Context, cache, tarPath string, sizeBytes int64) (string, error) {
+// without a loop mount, so nothing here needs to mount anything. That window --
+// the rootfs as a plain directory -- is also where pubKey, when there is one,
+// is installed into the guest's authorized_keys.
+//
+// The result is shared by every VM built from the same tar, so pubKey must be a
+// host-wide key rather than anything per VM.
+func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes int64) (string, error) {
   digest, err := fileDigest(tarPath)
   if err != nil {
     return "", err
   }
-  // Keyed on the tar's content: rebuilding a 400 MiB image on every create,
-  // for a tar that has not changed, is a minute of nothing.
+  // Keyed on everything that goes into the image, which is the tar and -- since
+  // the dpipe key is baked in below -- the key too. Keying on the tar alone
+  // would mean a host that gained or rotated a key kept serving the image built
+  // before it, forever and silently: the filename would still match, so the
+  // build that installs the new key would never run.
+  //
+  // Left as the bare tar digest when there is no key, so a host that does not
+  // run dpipe keeps the images it has already built.
+  if pubKey != "" {
+    digest = keyedDigest(digest, pubKey)
+  }
+  // Rebuilding a 400 MiB image on every create, for inputs that have not
+  // changed, is a minute of nothing.
   dst := filepath.Join(cache, digest[:32]+"-rootfs.ext4")
   if _, err := os.Stat(dst); err == nil {
     return dst, nil
@@ -173,6 +189,16 @@ func ext4FromTar(ctx context.Context, cache, tarPath string, sizeBytes int64) (s
     return "", fmt.Errorf("could not extract %s: %v: %s", tarPath, err, strings.TrimSpace(string(out)))
   }
 
+  // Between the extraction and the mkfs is the only moment the root filesystem
+  // is an ordinary directory this process can write to. Fatal rather than a
+  // warning: the cache key says this image has the key in it, so building one
+  // without it would poison the cache with an image no later create can fix.
+  if pubKey != "" {
+    if err := injectAuthorizedKey(work, pubKey); err != nil {
+      return "", fmt.Errorf("could not install the dpipe key into the rootfs: %w", err)
+    }
+  }
+
   tmp, err := os.CreateTemp(cache, ".rootfs-*.ext4")
   if err != nil {
     return "", err
@@ -198,6 +224,17 @@ func ext4FromTar(ctx context.Context, cache, tarPath string, sizeBytes int64) (s
     return "", err
   }
   return dst, nil
+}
+
+// keyedDigest folds a second input into a digest. Used to make the cache
+// identity of a built rootfs cover the injected key as well as the tar, so
+// changing either one is a different image rather than a stale hit.
+//
+// The two are separated by a byte that cannot appear in a hex digest, so no pair
+// of inputs can concatenate into the same string as another pair.
+func keyedDigest(digest, extra string) string {
+  sum := sha256.Sum256([]byte(digest + "\x00" + extra))
+  return hex.EncodeToString(sum[:])
 }
 
 // fileDigest is the cache identity for a built image: the same tar always
