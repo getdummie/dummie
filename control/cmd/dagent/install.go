@@ -240,7 +240,7 @@ const exampleConfig = `# control_url: https://control.example.com
 #   queues: 4               # the suricata service will spin up the same number of queues
 #
 # dpipe:
-#   enable: false
+#   enable: false           # generates /etc/dpipe/keys/* on first start if absent
 #   download_url: http://10.68.0.1:8081/backstage/dpipe/dpipe
 #
 # proxy:

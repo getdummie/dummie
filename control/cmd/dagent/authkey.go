@@ -24,10 +24,10 @@ import (
 // guest -- its client identity, not the host key a guest would use to identify
 // itself. That is the one that belongs in a guest's authorized_keys.
 //
-// The same on every host, so it is a constant rather than config: it is placed
-// by whatever installs dpipe, and a host where it differs is a host where dpipe
-// is not what we think it is.
-const clientPubKeyPath = "/etc/dpipe/keys/dpipe_client_ed25519.pub"
+// The same on every host, so it is a constant rather than config: dagent places
+// it itself when dpipe is enabled (see ensureDpipeKeys), and a host where it
+// differs is a host where dpipe is not what we think it is.
+const clientPubKeyPath = dpipeClientKeyPath + ".pub"
 
 // readClientPubKey returns the key, or "" if there is none.
 //

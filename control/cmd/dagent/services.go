@@ -94,7 +94,13 @@ drain_timeout: 0s
 log_level: info
 
 ssh:
-  enabled: false
+  enabled: true
+  host_key: /etc/dpipe/keys/dpipe_host_ed25519      # what the user's client pins
+  client_key: /etc/dpipe/keys/dpipe_client_ed25519  # what the VM authorizes
+  backend_known_hosts: ""
+  dial_timeout: 5s
+  resolve_timeout: 3s
+
 tls:
   enabled: false
 `
@@ -148,6 +154,15 @@ func ensureManagedService(ctx context.Context, data, name string, cfg ServiceCon
   // is what puts the directory there now rather than at the next reboot.
   if err := os.MkdirAll(serviceRuntimeDir, 0o755); err != nil {
     return fmt.Errorf("could not create %s: %w", serviceRuntimeDir, err)
+  }
+
+  // Before the config is written, and certainly before the unit is started:
+  // defaultDpipeConfig turns ssh on and names both key files, so dpipe started
+  // without them restart-loops.
+  if name == dpipeService {
+    if err := ensureDpipeKeys(); err != nil {
+      return err
+    }
   }
 
   if err := writeIfAbsent(serviceConfigPath(name), defaultServiceConfig(name), 0o644); err != nil {
