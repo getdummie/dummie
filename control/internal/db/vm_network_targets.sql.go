@@ -103,3 +103,67 @@ func (q *Queries) ListVMNetworkTargets(ctx context.Context, vmID pgtype.UUID) ([
 	}
 	return items, nil
 }
+
+const listVMNetworkTargetsByAgent = `-- name: ListVMNetworkTargetsByAgent :many
+SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name,
+       t.kind, t.destination, t.transport, t.ports, t.note
+FROM vm_network_targets t
+JOIN vms v ON v.id = t.vm_id
+WHERE v.agent_id = $1
+  AND v.ip <> ''
+  AND v.status <> 'gone'
+ORDER BY v.ip, t.kind, t.destination, t.transport, t.ports
+`
+
+type ListVMNetworkTargetsByAgentRow struct {
+	VMIP        string
+	HostVMID    string
+	VMName      string
+	Kind        string
+	Destination string
+	Transport   string
+	Ports       string
+	Note        string
+}
+
+// ListVMNetworkTargetsByAgent is the input to the rule generator: every
+// allowance on the host, carrying the address of the VM that owns it.
+//
+// One query rather than a VM list plus a lookup per VM, because the file is
+// generated as a whole and a half-read fleet would compile to a ruleset that
+// silently revokes whatever was missed.
+//
+// Rows without an address are skipped: a rule is scoped to a VM by its source
+// IP, so a VM that has not been given one yet cannot be expressed. It is still
+// covered -- by the default deny, which is what an unscopable allowance should
+// fall back to. 'gone' VMs are excluded for the same reason in reverse: their
+// address will be handed to some other guest, and a stale pass rule would let
+// that guest out.
+func (q *Queries) ListVMNetworkTargetsByAgent(ctx context.Context, agentID pgtype.UUID) ([]ListVMNetworkTargetsByAgentRow, error) {
+	rows, err := q.db.Query(ctx, listVMNetworkTargetsByAgent, agentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVMNetworkTargetsByAgentRow
+	for rows.Next() {
+		var i ListVMNetworkTargetsByAgentRow
+		if err := rows.Scan(
+			&i.VMIP,
+			&i.HostVMID,
+			&i.VMName,
+			&i.Kind,
+			&i.Destination,
+			&i.Transport,
+			&i.Ports,
+			&i.Note,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}

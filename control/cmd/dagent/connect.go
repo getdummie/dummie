@@ -411,6 +411,14 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
     // Also off the read loop: a guest is given time to shut down cleanly, a
     // destroy stops it first, and a boot waits out the startup grace period.
     go l.runVMAction(ctx, env.ID, job.Kind, job.VMID)
+  case proto.KindSuricataRules:
+    if job.Suricata == nil {
+      l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no ruleset"})
+      return
+    }
+    // Off the read loop like the rest: the reload shells into a container, and
+    // a slow docker must not stop the socket answering pings.
+    go l.applyRules(ctx, env.ID, job.Suricata.Rules)
   default:
     l.reply(ctx, env.ID, proto.JobResult{
       Kind:  job.Kind,
@@ -447,6 +455,20 @@ func (l *link) createVM(ctx context.Context, jobID string, spec proto.VMSpec) {
     info.IP = v.Net.IP
   }
   l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMCreate, OK: true, VM: &info})
+}
+
+// applyRules installs a pushed ruleset. The context is detached for the same
+// reason a stop's is: a write that has begun should finish, since abandoning it
+// leaves the host enforcing a policy the control plane believes it replaced.
+func (l *link) applyRules(ctx context.Context, jobID, rules string) {
+  ctx = context.WithoutCancel(ctx)
+  if err := applySuricataRules(rules); err != nil {
+    log.Printf("job %s: could not apply the suricata ruleset: %v", jobID, err)
+    l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindSuricataRules, Error: err.Error()})
+    return
+  }
+  log.Printf("job %s: applied a new suricata ruleset and reloaded it", jobID)
+  l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindSuricataRules, OK: true})
 }
 
 // runVMAction handles the three jobs that act on a VM which already exists. All

@@ -636,6 +636,9 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
     }
     return echo.NewHTTPError(http.StatusInternalServerError, "could not add the destination")
   }
+  // Whole-host, not whole-VM: the ruleset is one file covering every guest, so
+  // it is regenerated from the database rather than patched with this row.
+  pushSuricataRules(c.Request().Context(), h.q, h.hub, vm.AgentID)
   return c.JSON(http.StatusCreated, toVMTargetDTO(t))
 }
 
@@ -653,6 +656,9 @@ func (h *UserHandler) DeleteTarget(c *echo.Context) error {
   }); err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not remove the destination")
   }
+  // A removal has to reach the host even more urgently than an addition: until
+  // it does, the guest still has the access the user just revoked.
+  pushSuricataRules(c.Request().Context(), h.q, h.hub, vm.AgentID)
   return c.NoContent(http.StatusNoContent)
 }
 

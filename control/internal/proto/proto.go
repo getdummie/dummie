@@ -86,6 +86,12 @@ const (
   KindVMStop    JobKind = "vm.stop"
   KindVMStart   JobKind = "vm.start"
   KindVMDestroy JobKind = "vm.destroy"
+
+  // KindSuricataRules replaces the host's whole local.rules file. It names no
+  // VM because the file is the host's, not one guest's: the pass rules for
+  // every VM and the default deny they sit above have to be written together or
+  // the ones left out stop being enforced.
+  KindSuricataRules JobKind = "suricata.rules"
 )
 
 // Job is the payload of a TypeJob envelope. Which fields are set is chosen by
@@ -96,6 +102,17 @@ type Job struct {
   // VMID is the agent's own short id, as reported in VMInfo or an inventory.
   // Set for every kind that acts on a VM that already exists.
   VMID string `json:"vm_id,omitempty"`
+  // Suricata is set when Kind is KindSuricataRules.
+  Suricata *SuricataRules `json:"suricata,omitempty"`
+}
+
+// SuricataRules carries a complete local.rules. The control server compiles it
+// from every VM on the host, so the agent never merges or edits -- it writes the
+// file as given and tells Suricata to reload. Anything cleverer on the host
+// would be a second opinion about policy in the one place that cannot be
+// audited from the control plane.
+type SuricataRules struct {
+  Rules string `json:"rules"`
 }
 
 // VMSpec is one VM creation request. It is the same shape the agent's own unix

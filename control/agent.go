@@ -241,6 +241,12 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
   }
   log.Printf("agent %s connected (hostname=%s ip=%s)", agentID, agent.Hostname, remoteIP)
 
+  // The host may have been offline while destinations were added or removed, so
+  // its local.rules is only trustworthy once this server has written it. Sent on
+  // every connect rather than only when something changed: dagent's copy is not
+  // knowable from here, and rewriting an identical file costs a reload.
+  pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+
   h.readLoop(ctx, conn, agent, agentID)
 }
 
@@ -334,6 +340,17 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     log.Printf("agent %s: could not decode the result for job %s: %v", agentID, env.ID, err)
     return
   }
+  // A ruleset push settles no row, so it carries no correlation id and must be
+  // answered before the id is parsed. There is nothing to record either: the
+  // database already holds the policy, and this only says whether the host has
+  // caught up with it yet.
+  if res.Kind == proto.KindSuricataRules {
+    if !res.OK {
+      log.Printf("agent %s: could not apply the suricata ruleset: %s", agentID, res.Error)
+    }
+    return
+  }
+
   rowID, err := parseUUID(env.ID)
   if err != nil {
     log.Printf("agent %s: result for job %s has an unusable correlation id", agentID, env.ID)
@@ -349,6 +366,12 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     h.settleEnd(ctx, agentID, env.ID, rowID, res, "running")
   case proto.KindVMDestroy:
     h.settleEnd(ctx, agentID, env.ID, rowID, res, "gone")
+    // The address this VM held goes back to the pool and will be handed to some
+    // other guest. Its pass rules have to be gone before that happens, or the
+    // new guest inherits an allowlist it was never granted.
+    if res.OK {
+      pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+    }
   default:
     log.Printf("agent %s: result for job %s of unknown kind %q", agentID, env.ID, res.Kind)
   }
