@@ -246,6 +246,10 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
   // every connect rather than only when something changed: dagent's copy is not
   // knowable from here, and rewriting an identical file costs a reload.
   pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+  // Same reasoning for proxy.yaml: VMs may have come or gone while the host was
+  // away. Cheap to send unconditionally -- the agent compares the file it is
+  // given against the one on disk and only restarts proxy when they differ.
+  pushProxyConfig(ctx, h.q, h.hub, agent.ID)
 
   h.readLoop(ctx, conn, agent, agentID)
 }
@@ -350,6 +354,13 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     }
     return
   }
+  // A proxy config push settles no row either, for the same reasons.
+  if res.Kind == proto.KindProxyConfig {
+    if !res.OK {
+      log.Printf("agent %s: could not apply the proxy config: %s", agentID, res.Error)
+    }
+    return
+  }
 
   rowID, err := parseUUID(env.ID)
   if err != nil {
@@ -369,8 +380,12 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     // The address this VM held goes back to the pool and will be handed to some
     // other guest. Its pass rules have to be gone before that happens, or the
     // new guest inherits an allowlist it was never granted.
+    // The proxy entry has to go for the same reason and with the same urgency:
+    // until it does, the destroyed VM's owner still has a route pointing at an
+    // address that is about to belong to somebody else's guest.
     if res.OK {
       pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+      pushProxyConfig(ctx, h.q, h.hub, agent.ID)
     }
   default:
     log.Printf("agent %s: result for job %s of unknown kind %q", agentID, env.ID, res.Kind)
@@ -451,6 +466,12 @@ func (h *AgentHandler) settleCreate(ctx context.Context, agent db.Agent, agentID
     return
   }
   log.Printf("agent %s: vm %s running (local id %s, ip %s)", agentID, jobID, res.VM.ID, res.VM.IP)
+
+  // Here rather than at the create request: the VM's address is allocated on the
+  // host and is not knowable until this frame, and an entry with no target to
+  // point at is not an entry. After the commit, so the generator reads the row
+  // this result just wrote.
+  pushProxyConfig(ctx, h.q, h.hub, agent.ID)
 }
 
 // handleInventory reconciles the agent's report against the registry. This is
@@ -508,6 +529,14 @@ func (h *AgentHandler) handleInventory(ctx context.Context, agent db.Agent, agen
   }); err != nil {
     log.Printf("agent %s: could not reconcile removed vms: %v", agentID, err)
   }
+
+  // An inventory report is the only way this server hears about a VM destroyed
+  // on the host directly, and a route left pointing at its address after it is
+  // reissued would hand one user's key to another user's guest. Sent on every
+  // tick rather than only when the report changed something: the agent restarts
+  // proxy only when the file it receives differs from the one on disk, so an
+  // unchanged fleet costs a frame and a comparison.
+  pushProxyConfig(ctx, h.q, h.hub, agent.ID)
 }
 
 func (h *AgentHandler) handleMetrics(ctx context.Context, agent db.Agent, agentID string, env proto.Envelope) {

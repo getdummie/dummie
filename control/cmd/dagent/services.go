@@ -86,8 +86,15 @@ WantedBy=multi-user.target
 `
 
 // defaultDpipeConfig and defaultProxyConfig are written once, on the first start
-// after the service is enabled. Never rewritten: after that the file belongs to
-// the operator, and clobbering their listeners on a restart would be an outage.
+// after the service is enabled, so the unit has something to read before the
+// control server has said anything. Never rewritten from here: clobbering a
+// running service's listeners on every restart would be an outage.
+//
+// dpipe.yaml is the operator's after that. proxy.yaml is NOT: the control server
+// regenerates it in full whenever the set of VMs on this host changes, because
+// its ssh user list maps a public key to its owner's VM and only the control
+// plane knows that mapping. This default is what proxy runs on until the first
+// push arrives.
 const defaultDpipeConfig = `control_socket: /run/dpipe/control.sock
 upgrade_socket: /run/dpipe/upgrade.sock
 drain_timeout: 0s
@@ -113,6 +120,13 @@ http:
   hosts:
     app.example.com: "10.64.0.2:8000"
   default: ""
+
+# Empty, not absent: the control server fills this in, and until it does nobody
+# may connect. A missing key would read as "not configured" instead.
+ssh:
+  listen: "0.0.0.0:2222"
+  reuseport: true
+  users: []
 
 dial_timeout: 5s
 http_sniff_timeout: 5s

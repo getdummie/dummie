@@ -419,6 +419,14 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
     // Off the read loop like the rest: the reload shells into a container, and
     // a slow docker must not stop the socket answering pings.
     go l.applyRules(ctx, env.ID, job.Suricata.Rules)
+  case proto.KindProxyConfig:
+    if job.Proxy == nil {
+      l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no proxy config"})
+      return
+    }
+    // Off the read loop like the rest: this restarts a unit, and a systemctl
+    // that blocks must not stop the socket answering pings.
+    go l.applyProxy(ctx, env.ID, job.Proxy.Config)
   default:
     l.reply(ctx, env.ID, proto.JobResult{
       Kind:  job.Kind,
@@ -469,6 +477,23 @@ func (l *link) applyRules(ctx context.Context, jobID, rules string) {
   }
   log.Printf("job %s: applied a new suricata ruleset and reloaded it", jobID)
   l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindSuricataRules, OK: true})
+}
+
+// applyProxy installs a pushed proxy.yaml. Detached for the same reason as the
+// ruleset: a write that has begun should finish, since abandoning it leaves the
+// host routing by a table the control plane believes it replaced.
+func (l *link) applyProxy(ctx context.Context, jobID, config string) {
+  ctx = context.WithoutCancel(ctx)
+  changed, err := applyProxyConfig(ctx, config)
+  if err != nil {
+    log.Printf("job %s: could not apply the proxy config: %v", jobID, err)
+    l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, Error: err.Error()})
+    return
+  }
+  if changed {
+    log.Printf("job %s: wrote a new proxy config and restarted %s", jobID, proxyService)
+  }
+  l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, OK: true})
 }
 
 // runVMAction handles the three jobs that act on a VM which already exists. All

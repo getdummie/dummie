@@ -146,6 +146,31 @@ FROM vms
 WHERE created_by = $1
   AND status IN ('pending', 'running', 'stopped');
 
+-- name: ListProxySSHUsersByAgent :many
+-- ListProxySSHUsersByAgent is the input to the proxy.yaml generator: every VM on
+-- the host that can be reached over ssh, carrying the key of whoever owns it.
+--
+-- One query for the whole host, like the Suricata one, because the file is
+-- written as a whole -- a VM missed here is a VM its owner silently loses access
+-- to until the next regeneration.
+--
+-- An inner join on users drops VMs with no owner: one adopted from a host's
+-- inventory report was created outside the control plane, so there is no key to
+-- route with. A user with no key on file drops out for the same reason.
+--
+-- Rows without an address are skipped -- there is nothing to point the route at
+-- -- and 'gone' VMs are excluded because their address goes back to the pool and
+-- will be handed to some other guest, which a stale route would then expose to
+-- the wrong user's key.
+SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
+FROM vms v
+JOIN users u ON u.id = v.created_by
+WHERE v.agent_id = $1
+  AND v.ip <> ''
+  AND v.status <> 'gone'
+  AND u.public_key <> ''
+ORDER BY v.created_at, v.vm_id;
+
 -- name: DeleteVM :exec
 DELETE FROM vms
 WHERE id = $1;
