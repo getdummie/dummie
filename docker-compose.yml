@@ -17,6 +17,14 @@ services:
     env_file:
       - control/.env
 
+  backstage-builder:
+    restart: unless-stopped
+    image: golang:1.26.5-trixie
+    volumes:
+      - ./backstage:/app
+    working_dir: /app
+    entrypoint: sh -c 'cd /app/dpipe && go build -o dpipe ./cmd/dpipe/ && cd /app/proxy && go build -o proxy ./cmd/proxy/ && echo "Building proxy and dpipe complete" && sleep inf'
+
   rustfs:
     image: rustfs/rustfs:1.0.0-beta.10
     security_opt:
