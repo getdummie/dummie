@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { Boxes, LayoutDashboard, LogOut, Shield } from '@lucide/vue'
+import { Boxes, LayoutDashboard, LogOut, Settings, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -127,6 +127,13 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
               <span class="truncate text-xs text-foreground">{{ user?.username }}</span>
               <span class="truncate text-xs text-muted-foreground">{{ user?.email }}</span>
             </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem as-child class="text-xs">
+              <NuxtLink to="/settings">
+                <Settings class="size-4" aria-hidden="true" />
+                Settings
+              </NuxtLink>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem class="text-xs text-destructive focus:text-destructive" @select="signout">
               <LogOut class="size-4" aria-hidden="true" />

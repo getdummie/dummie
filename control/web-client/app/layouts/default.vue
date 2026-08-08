@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { LayoutDashboard, LogOut, Menu, Shield } from '@lucide/vue'
+import { LayoutDashboard, LogOut, Menu, Settings, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -16,7 +16,7 @@ const route = useRoute()
 
 // The rail is for the signed-in app shell only; the marketing/auth pages keep
 // their full-bleed layout and the public header.
-const appRoutes = ['/dashboard', '/vms', '/admin']
+const appRoutes = ['/dashboard', '/vms', '/settings', '/admin']
 const showSidebar = computed(() =>
   isAuthenticated.value && appRoutes.some(p => route.path === p || route.path.startsWith(`${p}/`)),
 )
@@ -115,6 +115,12 @@ const initials = computed(() => {
                   <NuxtLink to="/dashboard">
                     <LayoutDashboard class="size-4" />
                     Dashboard
+                  </NuxtLink>
+                </DropdownMenuItem>
+                <DropdownMenuItem as-child class="text-xs">
+                  <NuxtLink to="/settings">
+                    <Settings class="size-4" />
+                    Settings
                   </NuxtLink>
                 </DropdownMenuItem>
                 <DropdownMenuItem class="text-xs text-destructive focus:text-destructive" @select="signout">

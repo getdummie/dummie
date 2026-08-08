@@ -278,6 +278,16 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not read your account")
   }
+
+  // A VM is only useful to someone who can get into it, and in these images the
+  // key has to be in the root filesystem before it is turned into a disk -- there
+  // is no cloud-init and no guest agent, so adding one afterwards means a rebuild.
+  // Refusing the create is the last point at which a missing key is cheap to fix.
+  if u.PublicKey == "" {
+    return echo.NewHTTPError(http.StatusForbidden,
+      "add an SSH public key to your profile in Settings before creating a VM")
+  }
+
   used, err := h.q.SumActiveVMUsageByOwner(ctx, owner)
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not total your usage")

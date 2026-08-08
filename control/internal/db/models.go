@@ -86,6 +86,7 @@ type User struct {
 	VCPULimit      int32
 	MemoryLimitMiB int32
 	DiskLimitMiB   int32
+	PublicKey      string
 }
 
 type Vm struct {

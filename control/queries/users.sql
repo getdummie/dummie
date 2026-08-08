@@ -30,6 +30,22 @@ SET vcpu_limit = $2,
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateUserPublicKey :one
+UPDATE users
+SET public_key = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: UpdateUserProfile :one
+UPDATE users
+SET first_name = $2,
+    last_name = $3,
+    public_key = $4,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: DeleteUser :exec
 DELETE FROM users
 WHERE id = $1;

@@ -110,6 +110,11 @@ func parseUUID(s string) (pgtype.UUID, error) {
 
 // --- users -----------------------------------------------------------------
 
+// adminUserDTO is one account as the admin section shows it. /me returns the
+// same shape: a user reading their own row wants the same facts an admin sees
+// about it, and a second near-identical struct would be one more place for the
+// two views to disagree. Nothing secret is in here -- no hash, and a public key
+// is public.
 type adminUserDTO struct {
   ID        string `json:"id"`
   Username  string `json:"username"`
@@ -117,6 +122,9 @@ type adminUserDTO struct {
   FirstName string `json:"first_name"`
   LastName  string `json:"last_name"`
   UserType  string `json:"user_type"`
+  // '' when the account has no key on file, which is what blocks it from
+  // creating a VM.
+  PublicKey string `json:"public_key"`
   // Recorded allowances. Nothing enforces these yet; see 0008_user_quotas.
   VCPULimit      int32  `json:"vcpu_limit"`
   MemoryLimitMiB int32  `json:"memory_limit_mib"`
@@ -133,6 +141,7 @@ func toAdminUserDTO(u db.User) adminUserDTO {
     FirstName:      u.FirstName,
     LastName:       u.LastName,
     UserType:       u.UserType,
+    PublicKey:      u.PublicKey,
     VCPULimit:      u.VCPULimit,
     MemoryLimitMiB: u.MemoryLimitMiB,
     DiskLimitMiB:   u.DiskLimitMiB,
@@ -261,6 +270,40 @@ func (h *AdminHandler) UpdateUserQuota(c *echo.Context) error {
       return echo.NewHTTPError(http.StatusNotFound, "user not found")
     }
     return echo.NewHTTPError(http.StatusInternalServerError, "could not save quota")
+  }
+  return c.JSON(http.StatusOK, toAdminUserDTO(u))
+}
+
+type updateUserPublicKeyReq struct {
+  PublicKey string `json:"public_key"`
+}
+
+// UpdateUserPublicKey sets the key on someone else's account. An admin gets this
+// so an account can be unblocked without asking its owner to sign in -- a user
+// with no key cannot create a VM, and that is otherwise a dead end only they can
+// leave. Empty clears it, which is a deliberate way to stop them creating more.
+func (h *AdminHandler) UpdateUserPublicKey(c *echo.Context) error {
+  pgID, err := parseUUID(c.Param("id"))
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
+  }
+  var req updateUserPublicKeyReq
+  if err := c.Bind(&req); err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+  }
+  key, err := normalizePublicKey(req.PublicKey)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+  }
+  u, err := h.q.UpdateUserPublicKey(c.Request().Context(), db.UpdateUserPublicKeyParams{
+    ID:        pgID,
+    PublicKey: key,
+  })
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "user not found")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not save the public key")
   }
   return c.JSON(http.StatusOK, toAdminUserDTO(u))
 }

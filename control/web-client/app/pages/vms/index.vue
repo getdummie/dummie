@@ -53,6 +53,10 @@ const { authFetch } = useAuth()
 
 const items = ref<VM[]>([])
 const quota = ref<Quota | null>(null)
+// Only whether a key is on file. The server refuses a create without one, so the
+// form needs to know before offering it -- the key itself is nothing this page
+// shows.
+const hasPublicKey = ref(true)
 const loading = ref(true)
 const error = ref<string | null>(null)
 
@@ -99,14 +103,18 @@ async function load(quiet = false) {
   if (!quiet) loading.value = true
   error.value = null
   try {
-    const [vmRes, qRes] = await Promise.all([
+    // Not on a quiet poll: the poll runs every few seconds to watch a pending
+    // row, and a key does not change on that timescale.
+    const [vmRes, qRes, meRes] = await Promise.all([
       authFetch('/vms?limit=100'),
       authFetch('/vms/quota'),
+      quiet ? null : authFetch('/me'),
     ])
     if (!vmRes.ok) throw new Error(`HTTP ${vmRes.status}`)
     if (!qRes.ok) throw new Error(`HTTP ${qRes.status}`)
     items.value = (await vmRes.json()).items ?? []
     quota.value = await qRes.json()
+    if (meRes?.ok) hasPublicKey.value = !!(await meRes.json()).public_key
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load your VMs'
@@ -172,6 +180,14 @@ const diskRemaining = computed(() => {
 })
 const atCapacity = computed(() =>
   cpuRemaining.value < 1 || memRemaining.value < 64 || diskRemaining.value < 1)
+
+// Two independent reasons a create cannot happen. The button needs one answer,
+// but the label has to say which -- "disabled" with no reason is a dead end.
+const blockedReason = computed(() => {
+  if (!hasPublicKey.value) return 'Cannot create a VM: add an SSH public key in Settings first'
+  if (atCapacity.value) return 'Cannot create a VM: your allowance is fully used'
+  return null
+})
 
 // --- create ---
 interface Host {
@@ -433,8 +449,8 @@ async function confirmDestroy() {
         <Dialog v-model:open="createOpen" @update:open="(v: boolean) => !v && resetForm()">
           <Button
             class="font-mono text-xs"
-            :disabled="atCapacity"
-            :aria-label="atCapacity ? 'Cannot create a VM: your allowance is fully used' : 'Create a VM'"
+            :disabled="!!blockedReason"
+            :aria-label="blockedReason ?? 'Create a VM'"
             @click="openCreate"
           >
             <Plus class="size-4" aria-hidden="true" />
@@ -571,6 +587,21 @@ async function confirmDestroy() {
       </div>
     </div>
 
+    <!-- Before the allowance notice: a missing key blocks every create regardless
+         of how much room is left, so it is the thing to fix first. -->
+    <Alert v-if="!hasPublicKey && !loading" class="mt-4">
+      <AlertTitle>No SSH public key on your profile</AlertTitle>
+      <AlertDescription>
+        A VM is built to accept your key before it boots, so one has to be on file first.
+        <NuxtLink
+          to="/settings"
+          class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          Add it in Settings
+        </NuxtLink>.
+      </AlertDescription>
+    </Alert>
+
     <Alert v-if="atCapacity && !loading" class="mt-4">
       <AlertTitle>Allowance fully used</AlertTitle>
       <AlertDescription>
@@ -660,10 +691,10 @@ async function confirmDestroy() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  :disabled="!copyable(v)"
-                  :aria-label="copyable(v)
-                    ? `Copy ${v.name || v.vm_id} as a template for a new VM`
-                    : `Cannot copy ${v.name || v.vm_id}: it was created on its host, not here`"
+                  :disabled="!copyable(v) || !!blockedReason"
+                  :aria-label="!copyable(v)
+                    ? `Cannot copy ${v.name || v.vm_id}: it was created on its host, not here`
+                    : blockedReason ?? `Copy ${v.name || v.vm_id} as a template for a new VM`"
                   @click="openCopy(v)"
                 >
                   <Copy class="size-4" aria-hidden="true" />

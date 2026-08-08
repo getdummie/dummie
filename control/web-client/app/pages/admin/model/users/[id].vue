@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
+import { Textarea } from '@/components/ui/textarea'
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 
@@ -16,6 +17,7 @@ interface AdminUser {
   first_name: string
   last_name: string
   user_type: string
+  public_key: string
   vcpu_limit: number
   memory_limit_mib: number
   disk_limit_mib: number
@@ -104,6 +106,22 @@ const dirty = computed(() => {
     || form.disk_limit_mib !== String(u.disk_limit_mib)
 })
 
+// --- public key ---
+// Its own form, saved separately: a key and an allowance are unrelated decisions,
+// and one PUT that carried both would make fixing a typo in the key also re-send
+// numbers the admin never looked at.
+const keyForm = reactive({ public_key: '' })
+const savingKey = ref(false)
+const keyError = ref<string | null>(null)
+const keySaved = ref(false)
+
+const keyDirty = computed(() => keyForm.public_key.trim() !== (user.value?.public_key ?? ''))
+
+function discardKeyEdits() {
+  keyForm.public_key = user.value?.public_key ?? ''
+  keyError.value = null
+}
+
 async function load() {
   loading.value = true
   error.value = null
@@ -114,6 +132,7 @@ async function load() {
     const data: AdminUser = await res.json()
     user.value = data
     resetForm(data)
+    keyForm.public_key = data.public_key
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load user'
@@ -149,6 +168,32 @@ async function saveQuota() {
   }
   finally {
     saving.value = false
+  }
+}
+
+async function saveKey() {
+  savingKey.value = true
+  keyError.value = null
+  keySaved.value = false
+  try {
+    const res = await authFetch(`/admin/users/${id.value}/public_key`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ public_key: keyForm.public_key }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const data: AdminUser = await res.json()
+    user.value = data
+    // From the response, not from what was typed: the server canonicalises the
+    // key, so echoing the input back would leave the form looking dirty.
+    keyForm.public_key = data.public_key
+    keySaved.value = true
+  }
+  catch (e) {
+    keyError.value = e instanceof Error ? e.message : 'Could not save the public key'
+  }
+  finally {
+    savingKey.value = false
   }
 }
 </script>
@@ -217,6 +262,62 @@ async function saveQuota() {
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(user.updated_at) }}</dd>
           </div>
         </dl>
+      </section>
+
+      <!-- public key -->
+      <section aria-labelledby="key-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
+        <h2 id="key-heading" class="text-sm font-semibold">SSH public key</h2>
+        <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+          The key this user's VMs are built to accept. Without one they cannot create a VM at all,
+          so setting it here unblocks an account without needing its owner to sign in.
+        </p>
+
+        <!-- The blocked state is the reason an admin is on this page, so it is
+             stated rather than left to be inferred from an empty field. -->
+        <Alert v-if="!user.public_key" class="mt-4">
+          <AlertTitle>No key on file</AlertTitle>
+          <AlertDescription>This user cannot create VMs until a key is added.</AlertDescription>
+        </Alert>
+
+        <form class="mt-4 space-y-4" :aria-busy="savingKey" @submit.prevent="saveKey">
+          <div class="space-y-2">
+            <Label for="u-key">Public key</Label>
+            <Textarea
+              id="u-key"
+              v-model="keyForm.public_key"
+              rows="3"
+              spellcheck="false"
+              class="font-mono text-xs break-all"
+              placeholder="ssh-ed25519 AAAA… user@host"
+              aria-describedby="u-key-hint"
+            />
+            <p id="u-key-hint" class="text-xs text-muted-foreground">
+              One key, as it appears in a <span class="font-mono">.pub</span> file. Clearing this
+              field removes the key and stops them creating anything new.
+            </p>
+          </div>
+
+          <FormError id="key-error" :message="keyError" />
+
+          <div class="flex items-center gap-3">
+            <Button type="submit" class="font-mono text-xs" :disabled="savingKey || !keyDirty">
+              {{ savingKey ? 'Saving…' : 'Save' }}
+            </Button>
+            <Button
+              v-if="keyDirty"
+              type="button"
+              variant="outline"
+              class="font-mono text-xs"
+              :disabled="savingKey"
+              @click="discardKeyEdits"
+            >
+              Reset
+            </Button>
+            <p role="status" aria-live="polite" class="font-mono text-xs text-muted-foreground">
+              {{ keySaved && !keyDirty ? 'Saved' : '' }}
+            </p>
+          </div>
+        </form>
       </section>
 
       <!-- quota -->

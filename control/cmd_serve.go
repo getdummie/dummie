@@ -148,6 +148,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin.POST("/users", adminH.CreateUser)
   admin.GET("/users/:id", adminH.GetUser)
   admin.PUT("/users/:id/quota", adminH.UpdateUserQuota)
+  admin.PUT("/users/:id/public_key", adminH.UpdateUserPublicKey)
   admin.DELETE("/users/:id", adminH.DeleteUser)
   admin.GET("/tokens", adminH.ListTokens)
   admin.POST("/tokens/:id/blacklist", adminH.BlacklistToken)
@@ -170,6 +171,13 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   admin.DELETE("/vms/:id", adminH.DeleteVM)
   admin.GET("/settings", adminH.ListSettings)
   admin.PUT("/settings/:key", adminH.UpdateSetting)
+
+  // Own profile: no id in the path, so the only account either route can reach
+  // is the one the JWT names.
+  profileH := &ProfileHandler{q: q}
+  me := api.Group("/me", userJWT(cfg))
+  me.GET("", profileH.GetMe)
+  me.PUT("", profileH.UpdateMe)
 
   // Self-service VMs: any signed-in account. Every route scopes to the caller.
   userH := &UserHandler{q: q, hub: hub}
