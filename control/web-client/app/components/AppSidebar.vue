@@ -30,21 +30,16 @@ watch(() => route.fullPath, () => {
       <button
         v-if="!expanded"
         type="button"
-        class="grid size-6 place-items-center rounded-sm bg-primary font-mono text-sm leading-none font-bold text-primary-foreground transition-opacity hover:opacity-80"
+        class="grid size-6 place-items-center transition-opacity hover:opacity-80"
         aria-label="Expand sidebar"
         aria-expanded="false"
         @click="toggle"
       >
-        <span aria-hidden="true">0</span>
+        <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
       </button>
 
       <NuxtLink v-else to="/dashboard" class="flex min-w-0 items-center gap-2.5">
-        <span
-          aria-hidden="true"
-          class="grid size-6 shrink-0 place-items-center rounded-sm bg-primary font-mono text-sm leading-none font-bold text-primary-foreground"
-        >
-          0
-        </span>
+        <img src="/logo.svg" alt="" aria-hidden="true" class="size-6 shrink-0">
         <span class="truncate font-mono text-sm font-semibold tracking-tight">
           dummie<span class="text-primary-text">/</span>
         </span>
@@ -77,12 +72,7 @@ watch(() => route.fullPath, () => {
   <Sheet v-model:open="open">
     <SheetContent side="left" class="w-64 gap-0 p-0">
       <SheetHeader class="h-14 shrink-0 flex-row items-center gap-2.5 border-b border-border/80 px-4">
-        <span
-          aria-hidden="true"
-          class="grid size-6 place-items-center rounded-sm bg-primary font-mono text-sm leading-none font-bold text-primary-foreground"
-        >
-          0
-        </span>
+        <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
         <SheetTitle class="font-mono text-sm font-semibold tracking-tight">
           dummie<span class="text-primary-text">/</span>
         </SheetTitle>

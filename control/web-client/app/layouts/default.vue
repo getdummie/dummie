@@ -53,13 +53,8 @@ const initials = computed(() => {
         <Menu class="size-4" />
       </Button>
       <NuxtLink to="/dashboard" class="flex items-center gap-2.5">
-        <!-- Decorative logo mark: hidden so the link reads "dummie/", not "0 dummie/". -->
-        <span
-          aria-hidden="true"
-          class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none"
-        >
-          0
-        </span>
+        <!-- Decorative logo mark: hidden so the link reads "dummie/" alone. -->
+        <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
         <span class="font-mono text-sm font-semibold tracking-tight">
           dummie<span class="text-primary-text">/</span>
         </span>
@@ -70,12 +65,7 @@ const initials = computed(() => {
     <header v-else class="sticky top-0 z-40 border-b border-border/80 bg-background/80 backdrop-blur">
       <div class="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6">
         <NuxtLink to="/" class="group flex items-center gap-2.5">
-          <span
-            aria-hidden="true"
-            class="grid size-6 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-sm font-bold leading-none"
-          >
-            0
-          </span>
+          <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
           <span class="font-mono text-sm font-semibold tracking-tight">
             dummie<span class="text-primary-text">/</span>
           </span>
@@ -153,12 +143,7 @@ const initials = computed(() => {
     <footer v-if="!showSidebar" class="border-t border-border/80">
       <div class="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-4 py-8 sm:flex-row sm:items-center sm:px-6">
         <div class="flex items-center gap-2.5">
-          <span
-            aria-hidden="true"
-            class="grid size-5 place-items-center rounded-sm bg-primary text-primary-foreground font-mono text-xs font-bold leading-none"
-          >
-            0
-          </span>
+          <img src="/logo.svg" alt="" aria-hidden="true" class="size-5">
           <span class="font-mono text-xs text-muted-foreground">
             dummie — secure sandbox runtime
           </span>
