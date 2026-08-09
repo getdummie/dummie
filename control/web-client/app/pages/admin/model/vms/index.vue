@@ -855,7 +855,16 @@ function closeDialogs() {
       </template>
       <TableRow v-for="v in items" :key="v.id">
         <TableCell>
-          <div class="font-mono">{{ v.name || '—' }}</div>
+          <!-- Underlined at rest, not just on hover: in a table of plain text
+               cells an underline-on-hover link is undiscoverable, and colour
+               alone would not carry it either. (WCAG 1.4.1) -->
+          <NuxtLink
+            :to="`/admin/model/vms/${v.id}`"
+            class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            :aria-label="`View details for ${v.name || v.vm_id || 'this VM'}`"
+          >
+            {{ v.name || v.vm_id || '—' }}
+          </NuxtLink>
           <div class="truncate font-mono text-xs text-muted-foreground">
             :{{ v.default_port }}<template v-if="v.public_ports?.length"> · {{ v.public_ports.join(', ') }}</template>
           </div>
