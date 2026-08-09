@@ -26,7 +26,11 @@ interface VM {
   id: string
   agent_id: string
   vm_id: string
+  // Unique across the fleet, and the key its http route is published under.
+  // Generated when the create request leaves it empty.
   name: string
+  default_port: number
+  public_ports: number[]
   status: 'pending' | 'running' | 'stopped' | 'failed' | 'gone'
   boot: string
   cpus: number
@@ -223,6 +227,8 @@ const blankForm = {
   name: '',
   cpus: '1',
   memory_mib: '512',
+  default_port: '8000',
+  public_ports: '',
   // Sizes the per-VM overlay, not the shared base image built from the tar.
   disk_size: '2G',
   kernel: '',
@@ -268,9 +274,12 @@ async function openCopy(v: VM) {
   resetForm()
   copiedFrom.value = v.name || v.vm_id || 'that VM'
 
-  form.name = v.name
+  // The name is deliberately not copied: it is unique across the fleet, so
+  // reusing it would be rejected. Left empty, the copy gets a generated one.
   form.cpus = String(v.cpus || 1)
   form.memory_mib = String(v.memory_mib || 512)
+  form.default_port = String(v.default_port || 8000)
+  form.public_ports = (v.public_ports ?? []).join(', ')
   // From the spec, not from disk_mib: the spec holds what was typed ("2G"),
   // which is what belongs back in the field. disk_mib is the parsed number.
   form.disk_size = specStr(v.spec, 'disk_size') || '2G'
@@ -315,8 +324,32 @@ const wouldExceed = computed(() => {
 
 // Mirrors the server's checks so a mistake is caught before the round trip.
 // The server repeats all of them and is the one that decides.
+// The server is the authority on both of these -- the name has a unique
+// constraint behind it, and the ports are re-validated there. These checks only
+// save a round trip on a typo.
+const namePattern = /^[a-z0-9]+(-[a-z0-9]+)*$/
+
+/** "8000, 9090" -> [8000, 9090]. Blank entries are dropped, not zeroed. */
+function parsePorts(s: string): number[] {
+  return s.split(',').map(p => p.trim()).filter(Boolean).map(Number)
+}
+
 function validate(): string | null {
   if (!form.agent_id) return 'Choose a host to run this VM on.'
+  const name = form.name.trim()
+  if (name && (name.length < 3 || name.length > 52)) {
+    return 'A name must be between 3 and 52 characters.'
+  }
+  if (name && !namePattern.test(name)) {
+    return 'A name must be lowercase letters, digits and single hyphens — e.g. hello-kitty.'
+  }
+  const defaultPort = Number(form.default_port)
+  if (!Number.isInteger(defaultPort) || defaultPort < 1 || defaultPort > 65535) {
+    return 'The default port must be a whole number between 1 and 65535.'
+  }
+  if (parsePorts(form.public_ports).some(p => !Number.isInteger(p) || p < 1 || p > 65535)) {
+    return 'Public ports must be whole numbers between 1 and 65535, separated by commas.'
+  }
   const cpus = Number(form.cpus)
   const memory = Number(form.memory_mib)
   if (!Number.isInteger(cpus) || cpus < 1) return 'vCPU must be a whole number of at least 1.'
@@ -351,6 +384,8 @@ async function create() {
         name: form.name,
         cpus: Number(form.cpus),
         memory_mib: Number(form.memory_mib),
+        default_port: Number(form.default_port),
+        public_ports: parsePorts(form.public_ports),
         disk_size: form.disk_size,
         kernel: form.kernel,
         kernel_sha256: form.kernel_sha256,
@@ -494,7 +529,47 @@ async function confirmDestroy() {
 
               <div class="space-y-2">
                 <Label for="vm-name">Name</Label>
-                <Input id="vm-name" v-model="form.name" placeholder="defaults to the generated id" />
+                <Input
+                  id="vm-name"
+                  v-model="form.name"
+                  placeholder="leave empty for a generated name"
+                  aria-describedby="vm-name-hint"
+                />
+                <p id="vm-name-hint" class="text-xs text-muted-foreground">
+                  Lowercase letters, digits and single hyphens, 3–52 characters. Unique across every
+                  VM, because requests are routed to it by this name.
+                </p>
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-2">
+                  <Label for="vm-default-port">Default port</Label>
+                  <Input
+                    id="vm-default-port"
+                    v-model="form.default_port"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    inputmode="numeric"
+                    aria-describedby="vm-default-port-hint"
+                  />
+                  <p id="vm-default-port-hint" class="text-xs text-muted-foreground">
+                    Where a request goes when it does not pick a port.
+                  </p>
+                </div>
+                <div class="space-y-2">
+                  <Label for="vm-public-ports">Public ports</Label>
+                  <Input
+                    id="vm-public-ports"
+                    v-model="form.public_ports"
+                    placeholder="8000, 9090"
+                    inputmode="numeric"
+                    aria-describedby="vm-public-ports-hint"
+                  />
+                  <p id="vm-public-ports-hint" class="text-xs text-muted-foreground">
+                    Comma separated. Empty publishes nothing.
+                  </p>
+                </div>
               </div>
 
               <div class="grid gap-4 sm:grid-cols-2">

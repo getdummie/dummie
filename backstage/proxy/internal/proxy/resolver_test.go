@@ -91,7 +91,7 @@ func TestResolveSSHUnparsableKeyFailsClosed(t *testing.T) {
 }
 
 func TestResolveHTTP(t *testing.T) {
-	cfg := &Config{HTTP: &HTTPConfig{Hosts: map[string]string{"vm1.local": "127.0.0.1:8001"}}}
+	cfg := &Config{HTTP: &HTTPConfig{Hosts: map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 8001}}}}
 	r := newTestResolver(t, cfg)
 
 	hit := r.Handle(control.Msg{V: control.Version, Type: control.TypeResolve, ID: "h1",

@@ -114,11 +114,13 @@ tls:
 
 const defaultProxyConfig = `control_socket: /run/dpipe/control.sock
 
+# Empty for the same reason the ssh users are: the host table is keyed by VM
+# name, which is unique across the whole fleet, so it is not something this
+# machine can compile on its own.
 http:
-  listen: "0.0.0.0:8080"
+  listen: "0.0.0.0:80"
   reuseport: true
-  hosts:
-    app.example.com: "10.64.0.2:8000"
+  hosts: {}
   default: ""
 
 # Empty, not absent: the control server fills this in, and until it does nobody

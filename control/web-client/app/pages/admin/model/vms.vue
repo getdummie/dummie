@@ -28,7 +28,11 @@ interface VMRow {
   id: string
   agent_id: string
   vm_id: string
+  // Unique across the fleet, and the key its http route is published under.
+  // Generated when the create request leaves it empty.
   name: string
+  default_port: number
+  public_ports: number[]
   status: 'pending' | 'running' | 'stopped' | 'failed' | 'gone'
   boot: string
   cpus: number
@@ -322,6 +326,8 @@ const createError = ref<string | null>(null)
 const blankForm = {
   agent_id: '',
   name: '',
+  default_port: '8000',
+  public_ports: '',
   boot: 'direct',
   // 'image' is a ready-made ext4 rootfs; 'tar' is a `docker export` the agent
   // builds one from. Direct boot needs exactly one of them.
@@ -395,6 +401,10 @@ function buildSpec() {
   }
 
   put('name', form.name)
+  // Not part of the agent's spec: these are the control plane's routing, and the
+  // endpoint reads them off the same body.
+  spec.default_port = Number(form.default_port)
+  spec.public_ports = form.public_ports.split(',').map(p => p.trim()).filter(Boolean).map(Number)
   spec.cpus = Number(form.cpus)
   spec.memory_mib = Number(form.memory_mib)
   put('disk_size', form.disk_size)
@@ -607,7 +617,15 @@ function closeDialogs() {
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-2">
                   <Label for="vm-name">Name</Label>
-                  <Input id="vm-name" v-model="form.name" placeholder="defaults to the generated id" />
+                  <Input
+                    id="vm-name"
+                    v-model="form.name"
+                    placeholder="leave empty for a generated name"
+                    aria-describedby="vm-name-hint"
+                  />
+                  <p id="vm-name-hint" class="text-xs text-muted-foreground">
+                    Lowercase, digits and single hyphens, 3–52 characters. Unique across every VM.
+                  </p>
                 </div>
                 <div class="space-y-2">
                   <Label for="vm-boot">Boot mode</Label>
@@ -617,6 +635,37 @@ function closeDialogs() {
                       <NativeSelectOption value="disk">disk — full image via firmware</NativeSelectOption>
                     </NativeSelect>
                   </div>
+                </div>
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-2">
+                  <Label for="vm-default-port">Default port</Label>
+                  <Input
+                    id="vm-default-port"
+                    v-model="form.default_port"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    inputmode="numeric"
+                    aria-describedby="vm-default-port-hint"
+                  />
+                  <p id="vm-default-port-hint" class="text-xs text-muted-foreground">
+                    Where a request goes when it does not pick a port.
+                  </p>
+                </div>
+                <div class="space-y-2">
+                  <Label for="vm-public-ports">Public ports</Label>
+                  <Input
+                    id="vm-public-ports"
+                    v-model="form.public_ports"
+                    placeholder="8000, 9090"
+                    inputmode="numeric"
+                    aria-describedby="vm-public-ports-hint"
+                  />
+                  <p id="vm-public-ports-hint" class="text-xs text-muted-foreground">
+                    Comma separated. Empty publishes nothing.
+                  </p>
                 </div>
               </div>
 
@@ -809,6 +858,9 @@ function closeDialogs() {
           <TableRow v-for="v in items" v-else :key="v.id">
             <TableCell>
               <div class="font-mono">{{ v.name || '—' }}</div>
+              <div class="truncate font-mono text-xs text-muted-foreground">
+                :{{ v.default_port }}<template v-if="v.public_ports?.length"> · {{ v.public_ports.join(', ') }}</template>
+              </div>
               <div class="truncate font-mono text-xs text-muted-foreground">{{ v.vm_id || 'not assigned yet' }}</div>
             </TableCell>
             <TableCell class="font-mono text-muted-foreground">{{ agentLabel(v.agent_id) }}</TableCell>

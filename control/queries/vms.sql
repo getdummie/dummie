@@ -2,21 +2,25 @@
 -- CreateVM records the intent before the job is pushed to the agent. The row id
 -- doubles as the job's correlation id, which is what lets the result frame find
 -- its way back to exactly this row.
-INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: MarkVMRunning :exec
--- MarkVMRunning applies what the agent actually built: the id, name and address
+-- MarkVMRunning applies what the agent actually built: the id and the address
 -- are allocated on the host, so they are only known once it answers.
+--
+-- The name is NOT taken from the host. It was chosen here, it is unique across
+-- the fleet, and it is what proxy routes http by -- so accepting the host's copy
+-- of it would let a rename on one machine either collide with another VM or move
+-- a live route out from under whoever is using it.
 UPDATE vms
 SET status     = 'running',
     vm_id      = $2,
-    name       = $3,
-    boot       = $4,
-    cpus       = $5,
-    memory_mib = $6,
-    ip         = $7,
+    boot       = $3,
+    cpus       = $4,
+    memory_mib = $5,
+    ip         = $6,
     last_error = '',
     started_at = now(),
     updated_at = now()
@@ -35,11 +39,15 @@ WHERE id = $1;
 -- created_at comes from the host, not from now(): the VM's age is a fact about
 -- the guest, not about when this server first heard of it. started_at is kept if
 -- we already knew it, since the host does not report when a boot happened.
+--
+-- name is insert-only: it is absent from the update list below because it is
+-- what the VM's http route is keyed on, so re-taking it from the host on every
+-- inventory tick would move that route underneath whoever is using it -- and
+-- could collide with a name another VM already holds.
 INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
 ON CONFLICT (agent_id, vm_id) WHERE vm_id <> '' DO UPDATE
-SET name        = EXCLUDED.name,
-    status      = EXCLUDED.status,
+SET status      = EXCLUDED.status,
     boot        = EXCLUDED.boot,
     cpus        = EXCLUDED.cpus,
     memory_mib  = EXCLUDED.memory_mib,
@@ -170,6 +178,47 @@ WHERE v.agent_id = $1
   AND v.status <> 'gone'
   AND u.public_key <> ''
 ORDER BY v.created_at, v.vm_id;
+
+-- name: ListProxyHTTPRoutesByAgent :many
+-- ListProxyHTTPRoutesByAgent is the other half of the proxy.yaml input: every VM
+-- on the host that can be reached over http, with the ports it publishes and the
+-- domain its hostname sits under.
+--
+-- The join on domains is inner, so a host whose agent has no domain contributes
+-- nothing. That is the honest outcome rather than a gap: the hostname is the VM
+-- name under that domain, so without one there is no name to route on, and
+-- inventing a suffix would publish a hostname the operator never configured and
+-- nothing resolves.
+--
+-- Unlike the ssh side this does not join users: an http route exposes a port the
+-- guest chose to listen on, so it does not depend on who owns the VM or on their
+-- having a key. Rows with no address are still skipped, and 'gone' VMs excluded,
+-- for the same reason -- an address that has gone back to the pool will be handed
+-- to another guest, and a stale route would then publish that one under this
+-- name.
+SELECT v.name AS vm_name, v.ip AS vm_ip, v.vm_id AS host_vm_id,
+       v.default_port, v.public_ports, d.tld AS domain_tld
+FROM vms v
+JOIN agents a ON a.id = v.agent_id
+JOIN domains d ON d.id = a.domain_id
+WHERE v.agent_id = $1
+  AND v.ip <> ''
+  AND v.status <> 'gone'
+ORDER BY v.created_at, v.vm_id;
+
+-- name: UpdateVMPortsForOwner :one
+-- UpdateVMPortsForOwner changes what a VM publishes. Scoped to the owner in the
+-- statement, like GetVMForOwner: an ownership check written as a separate read
+-- is one a later edit can drop without the query stopping working.
+--
+-- Only the ports. The name is settled at create and the address is the host's,
+-- so this is the whole of what an owner may change about how their VM is routed.
+UPDATE vms
+SET default_port = $3,
+    public_ports = $4,
+    updated_at   = now()
+WHERE id = $1 AND created_by = $2
+RETURNING *;
 
 -- name: DeleteVM :exec
 DELETE FROM vms

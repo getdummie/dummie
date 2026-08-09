@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +42,20 @@ func (f *fakeDpipe) Peer(t *testing.T) *control.Peer {
 		t.Fatal("proxy never opened a control connection")
 		return nil
 	}
+}
+
+// hostEntry turns a listener's "host:port" into an http.hosts entry.
+func hostEntry(t *testing.T, addr string) HTTPHost {
+	t.Helper()
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("split %q: %v", addr, err)
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatalf("port %q: %v", port, err)
+	}
+	return HTTPHost{Host: host, PublicPorts: []int{p}, DefaultPort: p}
 }
 
 func startFakeDpipe(t *testing.T) *fakeDpipe {
@@ -188,8 +203,8 @@ func TestHTTPHostRouting(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP: &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]string{
-			"vm1.local": backend.Listener.Addr().String(),
+		HTTP: &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{
+			"vm1.local": hostEntry(t, backend.Listener.Addr().String()),
 		}},
 	}
 	p := startProxy(t, cfg, 1)
@@ -221,7 +236,7 @@ func TestHTTPUnknownHostIs502(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]string{"vm1.local": "127.0.0.1:1"}},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 1}}},
 	}
 	p := startProxy(t, cfg, 1)
 
@@ -283,7 +298,7 @@ func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]string{"vm1.local": "127.0.0.1:1"}},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 1}}},
 		HTTPS:         &HTTPSConfig{Listen: "127.0.0.1:0"},
 		SSH: &SSHConfig{Listen: "127.0.0.1:0", Users: []SSHUser{{
 			PubKey:     authorizedLine(newTestKey(t), " test@example"),
@@ -351,7 +366,7 @@ func TestResolveOverControlConnection(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]string{"vm1.local": "127.0.0.1:8001"}},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 8001}}},
 		HTTPS:         &HTTPSConfig{Listen: "127.0.0.1:0"},
 	}
 	startProxy(t, cfg, 2)

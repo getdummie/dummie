@@ -3,7 +3,6 @@ package main
 import (
   "errors"
   "net/http"
-  "regexp"
   "strings"
 
   "github.com/google/uuid"
@@ -22,12 +21,11 @@ func toDomainDTO(d db.Domain) domainDTO {
   return domainDTO{ID: uuid.UUID(d.ID.Bytes).String(), TLD: d.TLD}
 }
 
-// A dotted name of letter/digit/hyphen labels, each starting and ending
-// alphanumeric. Deliberately not a public-suffix check: these are the operator's
-// own suffixes and are often internal ones ("lab.internal") that no registry
-// knows about.
-var tldPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
-
+// normalizeTLD validates and canonicalises an operator-entered domain. It checks
+// the shape of a hostname (hostnamePattern, shared with the proxy generator that
+// has to emit these) and deliberately not the public suffix list: these are the
+// operator's own suffixes, and are often internal ones like "lab.internal" that
+// no registry knows about.
 func normalizeTLD(s string) (string, error) {
   // A leading dot is how people write a suffix, and a trailing one is a
   // fully-qualified name; neither should become a second stored form of the
@@ -39,7 +37,7 @@ func normalizeTLD(s string) (string, error) {
   if len(tld) > 253 {
     return "", errors.New("tld is too long")
   }
-  if !tldPattern.MatchString(tld) {
+  if !hostnamePattern.MatchString(tld) {
     return "", errors.New("tld must be a dotted name of letters, digits and hyphens")
   }
   return tld, nil

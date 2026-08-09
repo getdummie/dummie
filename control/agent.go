@@ -461,10 +461,12 @@ func (h *AgentHandler) settleCreate(ctx context.Context, agent db.Agent, agentID
     log.Printf("agent %s: could not clear the adopted duplicate of vm %s: %v", agentID, jobID, err)
     return
   }
+  // The name the host reports back is deliberately not applied: it was chosen
+  // here, it is unique across the fleet, and it is what the VM's http route is
+  // keyed on.
   if err := qtx.MarkVMRunning(ctx, db.MarkVMRunningParams{
     ID:        rowID,
     VMID:      res.VM.ID,
-    Name:      res.VM.Name,
     Boot:      res.VM.Boot,
     CPUs:      int32(res.VM.CPUs),
     MemoryMiB: int32(res.VM.MemoryMiB),
@@ -519,17 +521,26 @@ func (h *AgentHandler) handleInventory(ctx context.Context, agent db.Agent, agen
       created = pgtype.Timestamptz{Time: time.Now(), Valid: true}
     }
 
-    if err := h.q.UpsertVMFromInventory(ctx, db.UpsertVMFromInventoryParams{
-      AgentID:   agent.ID,
-      VMID:      v.ID,
-      Name:      v.Name,
-      Status:    status,
-      Boot:      v.Boot,
-      CPUs:      int32(v.CPUs),
-      MemoryMiB: int32(v.MemoryMiB),
-      IP:        v.IP,
-      CreatedAt: created,
-      StartedAt: started,
+    // The host's name is only a suggestion here: it was chosen on a machine that
+    // cannot see the rest of the fleet, so it may be taken or may not be a name
+    // at all, and either way a generated one is used instead. The name only
+    // applies if this turns out to be an insert -- the upsert leaves an existing
+    // row's name alone, so the name a guest is reachable at does not move on
+    // every tick.
+    preferred, _ := validateVMName(v.Name)
+    if err := withAdoptedVMName(ctx, preferred, func(ctx context.Context, name string) error {
+      return h.q.UpsertVMFromInventory(ctx, db.UpsertVMFromInventoryParams{
+        AgentID:   agent.ID,
+        VMID:      v.ID,
+        Name:      name,
+        Status:    status,
+        Boot:      v.Boot,
+        CPUs:      int32(v.CPUs),
+        MemoryMiB: int32(v.MemoryMiB),
+        IP:        v.IP,
+        CreatedAt: created,
+        StartedAt: started,
+      })
     }); err != nil {
       log.Printf("agent %s: could not record vm %s from inventory: %v", agentID, v.ID, err)
     }

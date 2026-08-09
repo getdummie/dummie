@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Plus, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -25,7 +25,11 @@ interface VM {
   id: string
   agent_id: string
   vm_id: string
+  // Unique across the fleet, and the key its http route is published under.
+  // Generated when the create request leaves it empty.
   name: string
+  default_port: number
+  public_ports: number[]
   status: 'pending' | 'running' | 'stopped' | 'failed' | 'gone'
   boot: string
   cpus: number
@@ -199,6 +203,62 @@ async function confirmDestroy() {
   }
   finally {
     destroying.value = false
+  }
+}
+
+// --- ports ---
+//
+// Editable because what a VM serves changes; the name and the address are not,
+// so this dialog is the whole of what an owner can change about routing.
+const portsOpen = ref(false)
+const savingPorts = ref(false)
+const portsError = ref<string | null>(null)
+const portsForm = reactive({ default_port: '8000', public_ports: '' })
+
+/** "8000, 9090" -> [8000, 9090]. Blank entries are dropped, not zeroed. */
+function parsePorts(s: string): number[] {
+  return s.split(',').map(p => p.trim()).filter(Boolean).map(Number)
+}
+
+function openPorts() {
+  if (!vm.value) return
+  portsForm.default_port = String(vm.value.default_port || 8000)
+  portsForm.public_ports = (vm.value.public_ports ?? []).join(', ')
+  portsError.value = null
+  portsOpen.value = true
+}
+
+async function savePorts() {
+  const defaultPort = Number(portsForm.default_port)
+  if (!Number.isInteger(defaultPort) || defaultPort < 1 || defaultPort > 65535) {
+    portsError.value = 'The default port must be a whole number between 1 and 65535.'
+    return
+  }
+  const publicPorts = parsePorts(portsForm.public_ports)
+  if (publicPorts.some(p => !Number.isInteger(p) || p < 1 || p > 65535)) {
+    portsError.value = 'Public ports must be whole numbers between 1 and 65535, separated by commas.'
+    return
+  }
+
+  savingPorts.value = true
+  portsError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/ports`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_port: defaultPort, public_ports: publicPorts }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    // The response is the saved row, so the page shows what was stored rather
+    // than what was typed.
+    vm.value = await res.json()
+    portsOpen.value = false
+  }
+  catch (e) {
+    portsError.value = e instanceof Error ? e.message : 'Could not save the ports'
+  }
+  finally {
+    savingPorts.value = false
   }
 }
 
@@ -393,6 +453,89 @@ async function confirmRemove() {
                  reading, so the age of that claim belongs next to it. -->
             <dt class="eyebrow text-muted-foreground">Last confirmed by host</dt>
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.reported_at) }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <!-- routing -->
+      <section aria-labelledby="ports-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 id="ports-heading" class="text-sm font-semibold">Ports</h2>
+            <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Which ports inside this VM are reachable, and where a request goes when it does not pick
+              one. Changes reach the host straight away.
+            </p>
+          </div>
+          <Dialog v-model:open="portsOpen">
+            <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
+              <Pencil class="size-4" aria-hidden="true" />
+              Edit
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Edit ports</DialogTitle>
+                <DialogDescription>
+                  Requests reach this VM as
+                  <span class="font-mono text-foreground">{{ vm.name }}</span>, whichever ports it
+                  publishes.
+                </DialogDescription>
+              </DialogHeader>
+              <form class="space-y-4" :aria-busy="savingPorts" @submit.prevent="savePorts">
+                <div class="space-y-2">
+                  <Label for="ports-default">Default port</Label>
+                  <Input
+                    id="ports-default"
+                    v-model="portsForm.default_port"
+                    type="number"
+                    min="1"
+                    max="65535"
+                    inputmode="numeric"
+                    aria-describedby="ports-default-hint"
+                  />
+                  <p id="ports-default-hint" class="text-xs text-muted-foreground">
+                    Where a request goes when it does not pick a port.
+                  </p>
+                </div>
+                <div class="space-y-2">
+                  <Label for="ports-public">Public ports</Label>
+                  <Input
+                    id="ports-public"
+                    v-model="portsForm.public_ports"
+                    placeholder="8000, 9090"
+                    inputmode="numeric"
+                    aria-describedby="ports-public-hint"
+                  />
+                  <p id="ports-public-hint" class="text-xs text-muted-foreground">
+                    Comma separated. Empty publishes nothing.
+                  </p>
+                </div>
+
+                <FormError id="ports-error" :message="portsError" />
+
+                <DialogFooter>
+                  <DialogClose as-child>
+                    <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                  </DialogClose>
+                  <Button type="submit" class="font-mono text-xs" :disabled="savingPorts">
+                    {{ savingPorts ? 'Saving…' : 'Save' }}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
+
+        <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+          <div>
+            <dt class="eyebrow text-muted-foreground">Default port</dt>
+            <dd class="mt-1 font-mono text-sm">{{ vm.default_port }}</dd>
+          </div>
+          <div>
+            <dt class="eyebrow text-muted-foreground">Public ports</dt>
+            <dd class="mt-1 font-mono text-sm">
+              {{ vm.public_ports?.length ? vm.public_ports.join(', ') : 'none' }}
+            </dd>
           </div>
         </dl>
       </section>

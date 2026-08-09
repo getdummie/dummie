@@ -5,9 +5,15 @@ http: # plaintext HTTP (proxy sniffs Host + hands off a copy)
   listen: ":8080"
   reuseport: true
   hosts:
-    vm1.local: "127.0.0.1:8001"
-    vm2.local: "127.0.0.1:8002"
-  default: "" # empty => 502
+    vm1.local:
+      host: 127.0.0.1
+      public_ports: [8001]
+      default_port: 8001
+    vm2.local:
+      host: 127.0.0.1
+      public_ports: [8002]
+      default_port: 8002
+  default: "" # still host:port; empty => 502
 
 https: # TLS ingress (proxy accepts raw, dpipe terminates)
   listen: ":8443"

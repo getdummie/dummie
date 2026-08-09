@@ -3,9 +3,9 @@ package proxy
 import "testing"
 
 func TestHostBackend(t *testing.T) {
-	cfg := &Config{HTTP: &HTTPConfig{Hosts: map[string]string{
-		"VM1.local": "127.0.0.1:8001",
-		"vm2.local": "127.0.0.1:8002",
+	cfg := &Config{HTTP: &HTTPConfig{Hosts: map[string]HTTPHost{
+		"VM1.local": {Host: "127.0.0.1", PublicPorts: []int{8001}, DefaultPort: 8001},
+		"vm2.local": {Host: "127.0.0.1", DefaultPort: 8002},
 	}}}
 	r := NewRouter(cfg)
 
@@ -31,7 +31,7 @@ func TestHostBackend(t *testing.T) {
 
 func TestHostBackendDefault(t *testing.T) {
 	cfg := &Config{HTTP: &HTTPConfig{
-		Hosts:   map[string]string{"vm1.local": "127.0.0.1:8001"},
+		Hosts:   map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 8001}},
 		Default: "127.0.0.1:9999",
 	}}
 	r := NewRouter(cfg)

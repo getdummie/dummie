@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -68,10 +69,23 @@ type Config struct {
 
 // HTTPConfig is the plaintext HTTP ingress.
 type HTTPConfig struct {
-	Listen    string            `yaml:"listen"`
-	Reuseport bool              `yaml:"reuseport"`
-	Hosts     map[string]string `yaml:"hosts"`
-	Default   string            `yaml:"default"`
+	Listen    string              `yaml:"listen"`
+	Reuseport bool                `yaml:"reuseport"`
+	Hosts     map[string]HTTPHost `yaml:"hosts"`
+	Default   string              `yaml:"default"`
+}
+
+// HTTPHost is one routed hostname: the backend machine and the ports it
+// exposes. Requests arriving for the hostname are routed to default_port.
+type HTTPHost struct {
+	Host        string `yaml:"host"`
+	PublicPorts []int  `yaml:"public_ports"`
+	DefaultPort int    `yaml:"default_port"`
+}
+
+// Target is the backend address requests for this hostname are sent to.
+func (h HTTPHost) Target() string {
+	return net.JoinHostPort(h.Host, strconv.Itoa(h.DefaultPort))
 }
 
 // HTTPSConfig is the TLS ingress. Routing reuses http.hosts via
@@ -153,12 +167,24 @@ func (c *Config) Validate() error {
 			return err
 		}
 		ingress++
-		for host, target := range c.HTTP.Hosts {
+		for host, h := range c.HTTP.Hosts {
 			if host == "" || strings.Contains(host, "*") {
 				return fmt.Errorf("config: http.hosts key %q is invalid (no wildcards)", host)
 			}
-			if err := validHostPort("http.hosts["+host+"]", target); err != nil {
+			field := "http.hosts[" + host + "]"
+			if h.Host == "" || strings.Contains(h.Host, "*") {
+				return fmt.Errorf("config: %s.host %q needs a concrete host", field, h.Host)
+			}
+			if err := validPort(field+".default_port", h.DefaultPort); err != nil {
 				return err
+			}
+			for i, p := range h.PublicPorts {
+				if err := validPort(fmt.Sprintf("%s.public_ports[%d]", field, i), p); err != nil {
+					return err
+				}
+			}
+			if len(h.PublicPorts) > 0 && !slices.Contains(h.PublicPorts, h.DefaultPort) {
+				return fmt.Errorf("config: %s.default_port %d is not listed in public_ports", field, h.DefaultPort)
 			}
 		}
 		if c.HTTP.Default != "" {
@@ -239,6 +265,13 @@ func validHostPort(field, addr string) error {
 	p, err := strconv.Atoi(port)
 	if err != nil || p <= 0 || p > 65535 {
 		return fmt.Errorf("config: %s %q has an invalid port", field, addr)
+	}
+	return nil
+}
+
+func validPort(field string, port int) error {
+	if port <= 0 || port > 65535 {
+		return fmt.Errorf("config: %s %d is not a valid port", field, port)
 	}
 	return nil
 }

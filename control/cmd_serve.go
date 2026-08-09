@@ -193,6 +193,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   vms.POST("/:id/start", userH.StartVM)
   vms.POST("/:id/stop", userH.StopVM)
   vms.POST("/:id/destroy", userH.DestroyVM)
+  vms.PUT("/:id/ports", userH.UpdatePorts)
   vms.GET("/:id/targets", userH.ListTargets)
   vms.POST("/:id/targets", userH.CreateTarget)
   vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)

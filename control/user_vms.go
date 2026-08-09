@@ -168,6 +168,53 @@ type createVMReq struct {
   KernelSHA    string `json:"kernel_sha256"`
   RootfsTar    string `json:"rootfs_tar"`
   RootfsTarSHA string `json:"rootfs_tar_sha256"`
+
+  // DefaultPort is where a request goes when nothing picks a port. 0 means
+  // unset, and becomes defaultVMPort.
+  DefaultPort int32 `json:"default_port"`
+  // PublicPorts is every port the VM publishes. Empty publishes nothing.
+  PublicPorts []int32 `json:"public_ports"`
+}
+
+// defaultVMPort is what a VM gets when the request does not name one. It is the
+// column default too; repeated here so that a request that omits the field and
+// one that sends 0 reach the same row.
+const defaultVMPort = 8000
+
+// maxPublicPorts bounds a list that goes into a generated file on every host.
+// Well above any real use; it exists so one request cannot make every agent's
+// proxy config arbitrarily large.
+const maxPublicPorts = 32
+
+// normalizePorts settles the two port fields together: they are validated the
+// same way, and the default is only meaningful next to the list.
+//
+// The list is de-duplicated but not sorted -- the order is the caller's, and it
+// is the order the generated file lists them in, so reordering it would be a
+// change the caller did not ask for that shows up in a diff on every host.
+func normalizePorts(defaultPort int32, public []int32) (int32, []int32, error) {
+  if defaultPort == 0 {
+    defaultPort = defaultVMPort
+  }
+  if defaultPort < 1 || defaultPort > 65535 {
+    return 0, nil, errors.New("default_port must be between 1 and 65535")
+  }
+  if len(public) > maxPublicPorts {
+    return 0, nil, fmt.Errorf("a vm can publish at most %d ports", maxPublicPorts)
+  }
+  seen := make(map[int32]bool, len(public))
+  ports := make([]int32, 0, len(public))
+  for _, p := range public {
+    if p < 1 || p > 65535 {
+      return 0, nil, errors.New("every public port must be between 1 and 65535")
+    }
+    if seen[p] {
+      continue
+    }
+    seen[p] = true
+    ports = append(ports, p)
+  }
+  return defaultPort, ports, nil
 }
 
 // sizePattern matches what the agent's parseSize accepts: plain bytes or a
@@ -229,7 +276,16 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   if err := c.Bind(&req); err != nil {
     return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
   }
-  req.Name = strings.TrimSpace(req.Name)
+  // Empty is allowed and means "generate one": the name has to be unique across
+  // the fleet, and that is not something to make a person guess at.
+  name, err := validateVMName(req.Name)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+  }
+  defaultPort, publicPorts, err := normalizePorts(req.DefaultPort, req.PublicPorts)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+  }
   req.DiskSize = strings.TrimSpace(req.DiskSize)
   req.Kernel = strings.TrimSpace(req.Kernel)
   req.KernelSHA = strings.TrimSpace(req.KernelSHA)
@@ -336,7 +392,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   // kernel plus a tar-built rootfs, with unrestricted outbound. A user chooses
   // the artifacts and the size, not the policy.
   spec := proto.VMSpec{
-    Name:         req.Name,
     Boot:         "direct",
     Kernel:       req.Kernel,
     KernelSHA:    req.KernelSHA,
@@ -347,24 +402,38 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
     Memory:       int(req.MemoryMiB),
     EgressAny:    true,
   }
-  raw, err := json.Marshal(spec)
-  if err != nil {
-    return echo.NewHTTPError(http.StatusInternalServerError, "could not encode the vm spec")
-  }
-
   // Written before the job is pushed, same as the admin path: a row with no job
   // is a visible failure, a job with no row is a VM nobody knows about.
-  row, err := h.q.CreateVM(ctx, db.CreateVMParams{
-    AgentID:   pgAgentID,
-    Name:      spec.Name,
-    Boot:      spec.Boot,
-    CPUs:      req.CPUs,
-    MemoryMiB: req.MemoryMiB,
-    DiskMiB:   diskMiB,
-    Spec:      raw,
-    CreatedBy: owner,
-  })
-  if err != nil {
+  //
+  // The name is settled by the insert rather than before it, because uniqueness
+  // is the database's answer to give: a generated name that loses the race is
+  // redrawn, and only a name the caller chose comes back as a conflict. The spec
+  // is built inside the loop so the host names the guest whatever the row ended
+  // up holding.
+  var row db.Vm
+  if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
+    spec.Name = name
+    raw, err := json.Marshal(spec)
+    if err != nil {
+      return err
+    }
+    row, err = h.q.CreateVM(ctx, db.CreateVMParams{
+      AgentID:     pgAgentID,
+      Name:        name,
+      Boot:        spec.Boot,
+      CPUs:        req.CPUs,
+      MemoryMiB:   req.MemoryMiB,
+      DiskMiB:     diskMiB,
+      Spec:        raw,
+      CreatedBy:   owner,
+      DefaultPort: defaultPort,
+      PublicPorts: publicPorts,
+    })
+    return err
+  }); err != nil {
+    if errors.Is(err, errVMNameTaken) {
+      return echo.NewHTTPError(http.StatusConflict, "that name is already taken; choose another")
+    }
     return echo.NewHTTPError(http.StatusInternalServerError, "could not record the vm")
   }
   rowID := uuid.UUID(row.ID.Bytes).String()
@@ -506,6 +575,59 @@ func (h *UserHandler) ownedVM(c *echo.Context) (db.Vm, error) {
     return db.Vm{}, echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
   }
   return row, nil
+}
+
+type updateVMPortsReq struct {
+  DefaultPort int32   `json:"default_port"`
+  PublicPorts []int32 `json:"public_ports"`
+}
+
+// UpdatePorts changes what an owner's VM publishes. Ports are the one part of a
+// VM's routing that is safe to change after the fact: the name is a fleet-wide
+// identifier that other people's links point at, and the address belongs to the
+// host, but which port a request lands on is the owner's business and changes
+// whenever they move what they are running.
+//
+// Takes effect on the host as soon as it is written -- the proxy config is
+// regenerated and pushed, the same as a create does.
+func (h *UserHandler) UpdatePorts(c *echo.Context) error {
+  vm, err := h.ownedVM(c)
+  if err != nil {
+    return err
+  }
+
+  var req updateVMPortsReq
+  if err := c.Bind(&req); err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+  }
+  defaultPort, publicPorts, err := normalizePorts(req.DefaultPort, req.PublicPorts)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+  }
+
+  owner, err := callerID(c)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
+  }
+  ctx := c.Request().Context()
+  row, err := h.q.UpdateVMPortsForOwner(ctx, db.UpdateVMPortsForOwnerParams{
+    ID:          vm.ID,
+    CreatedBy:   owner,
+    DefaultPort: defaultPort,
+    PublicPorts: publicPorts,
+  })
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "no such vm")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not save the ports")
+  }
+
+  // Whole-host, like every other write that changes routing: the file covers
+  // every guest on the machine and is regenerated from the database rather than
+  // patched with this row.
+  pushProxyConfig(ctx, h.q, h.hub, vm.AgentID)
+  return c.JSON(http.StatusOK, toVMDTO(row))
 }
 
 func (h *UserHandler) ListTargets(c *echo.Context) error {

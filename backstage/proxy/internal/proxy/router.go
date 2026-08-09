@@ -17,8 +17,8 @@ type Router struct {
 func NewRouter(cfg *Config) *Router {
 	r := &Router{hosts: map[string]string{}, tcp: map[string]TCPRoute{}}
 	if cfg.HTTP != nil {
-		for host, target := range cfg.HTTP.Hosts {
-			r.hosts[httpsniff.NormalizeHost(host)] = target
+		for host, h := range cfg.HTTP.Hosts {
+			r.hosts[httpsniff.NormalizeHost(host)] = h.Target()
 		}
 		r.def = cfg.HTTP.Default
 	}

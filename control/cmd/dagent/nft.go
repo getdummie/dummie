@@ -25,7 +25,13 @@ const (
   setEgress = "egress_allow" // ipv4_addr . ipv4_addr-range (per-VM allowlist)
 
   // metadataPort is where the per-VM identity service listens on the gateway.
-  metadataPort = 80
+  //
+  // Not 80: proxy binds 0.0.0.0:80 for guest http, and a wildcard listener and a
+  // specific-address one cannot share a port on Linux -- so the two services
+  // fought over it and whichever started second failed to bind. This one moved
+  // because it is reachable only from the taps, whereas proxy's listener is the
+  // one the outside world arrives on.
+  metadataPort = 8345
 )
 
 // netConfig is the host-wide network policy: everything that is the same for

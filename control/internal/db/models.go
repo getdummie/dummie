@@ -96,23 +96,25 @@ type User struct {
 }
 
 type Vm struct {
-	ID         pgtype.UUID
-	AgentID    pgtype.UUID
-	VMID       string
-	Name       string
-	Status     string
-	Boot       string
-	CPUs       int32
-	MemoryMiB  int32
-	IP         string
-	Spec       []byte
-	LastError  string
-	CreatedAt  pgtype.Timestamptz
-	UpdatedAt  pgtype.Timestamptz
-	StartedAt  pgtype.Timestamptz
-	ReportedAt pgtype.Timestamptz
-	CreatedBy  pgtype.UUID
-	DiskMiB    int32
+	ID          pgtype.UUID
+	AgentID     pgtype.UUID
+	VMID        string
+	Name        string
+	Status      string
+	Boot        string
+	CPUs        int32
+	MemoryMiB   int32
+	IP          string
+	Spec        []byte
+	LastError   string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	ReportedAt  pgtype.Timestamptz
+	CreatedBy   pgtype.UUID
+	DiskMiB     int32
+	DefaultPort int32
+	PublicPorts []int32
 }
 
 type VmNetworkTarget struct {
