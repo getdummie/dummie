@@ -13,8 +13,13 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
+
+const columns: DataTableColumn[] = [
+  { key: 'tld', label: 'TLD' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · domains' })
@@ -166,41 +171,33 @@ async function confirmDelete() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
-      <p v-if="loading" class="sr-only">Loading domains…</p>
-      <Table label="Domains">
-        <TableHeader>
-          <TableRow>
-            <TableHead>TLD</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <template v-if="loading">
-            <TableRow v-for="n in 3" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 2" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
-            </TableRow>
-          </template>
-          <TableEmpty v-else-if="!items.length" :colspan="2">
-            No domains yet. Agents will enroll without one until you add exactly one.
-          </TableEmpty>
-          <TableRow v-for="d in items" v-else :key="d.id">
-            <TableCell class="font-mono">{{ d.tld }}</TableCell>
-            <TableCell class="text-right">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="text-destructive hover:text-destructive"
-                :aria-label="`Delete domain ${d.tld}`"
-                @click="toDelete = d"
-              >
-                <Trash2 class="size-4" aria-hidden="true" />
-              </Button>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+    <DataTable
+      label="Domains"
+      :columns="columns"
+      :loading="loading"
+      :loading-rows="3"
+      loading-label="Loading domains…"
+      :empty="!items.length"
+      class="mt-6"
+    >
+      <template #empty>
+        No domains yet. Agents will enroll without one until you add exactly one.
+      </template>
+      <TableRow v-for="d in items" :key="d.id">
+        <TableCell class="font-mono">{{ d.tld }}</TableCell>
+        <TableCell class="text-right">
+          <Button
+            variant="ghost"
+            size="icon"
+            class="text-destructive hover:text-destructive"
+            :aria-label="`Delete domain ${d.tld}`"
+            @click="toDelete = d"
+          >
+            <Trash2 class="size-4" aria-hidden="true" />
+          </Button>
+        </TableCell>
+      </TableRow>
+    </DataTable>
 
     <!-- delete confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">

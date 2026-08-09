@@ -17,9 +17,20 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
+
+const columns: DataTableColumn[] = [
+  { key: 'vm', label: 'VM' },
+  { key: 'host', label: 'Host' },
+  { key: 'status', label: 'Status' },
+  { key: 'boot', label: 'Boot' },
+  { key: 'resources', label: 'Resources' },
+  { key: 'address', label: 'Address' },
+  { key: 'created', label: 'Created' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · vms' })
@@ -828,100 +839,85 @@ function closeDialogs() {
 
     <!-- Self-refreshing, so `aria-live="polite"` lets a screen-reader user hear a
          pending VM turn into a running one without re-reading the table. -->
-    <div class="mt-6 overflow-x-auto rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
-      <p v-if="loading" class="sr-only">Loading VMs…</p>
-      <Table label="VMs">
-        <TableHeader>
-          <TableRow>
-            <TableHead>VM</TableHead>
-            <TableHead>Host</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Boot</TableHead>
-            <TableHead>Resources</TableHead>
-            <TableHead>Address</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 8" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
-            </TableRow>
-          </template>
-          <TableEmpty v-else-if="!items.length" :colspan="8">
-            No VMs yet. Connected agents report what they are running every 30s, so
-            anything made with <span class="font-mono">dagent vm create</span> appears
-            here on its own. To ask an agent for one, post to
-            <span class="font-mono">/api/v1/admin/agents/&lt;id&gt;/vms</span>.
-          </TableEmpty>
-          <TableRow v-for="v in items" v-else :key="v.id">
-            <TableCell>
-              <div class="font-mono">{{ v.name || '—' }}</div>
-              <div class="truncate font-mono text-xs text-muted-foreground">
-                :{{ v.default_port }}<template v-if="v.public_ports?.length"> · {{ v.public_ports.join(', ') }}</template>
-              </div>
-              <div class="truncate font-mono text-xs text-muted-foreground">{{ v.vm_id || 'not assigned yet' }}</div>
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ agentLabel(v.agent_id) }}</TableCell>
-            <TableCell>
-              <Badge :variant="statusVariant[displayStatus(v)]" class="font-mono">
-                {{ displayStatus(v) }}
-              </Badge>
-              <!-- A stale badge without the age is just as unhelpful as the wrong
-                   status was: the age is what says whether the host missed one
-                   report or went down an hour ago. -->
-              <div v-if="displayStatus(v) === 'stale'" class="mt-1 text-xs text-muted-foreground">
-                was <span class="font-mono">{{ v.status }}</span>, last seen {{ since(v.reported_at) }}
-              </div>
-              <!-- Any recorded failure, not just a failed create: a stop that the
-                   host refused leaves the status alone and only sets this, which
-                   would otherwise be invisible. title= keeps the full text
-                   reachable when truncated. -->
-              <div
-                v-else-if="v.last_error"
-                class="mt-1 max-w-56 truncate text-xs text-destructive"
-                :title="v.last_error"
-              >
-                {{ v.last_error }}
-              </div>
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ v.boot || '—' }}</TableCell>
-            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
-              {{ v.cpus || '—' }}<span v-if="v.cpus"> vcpu</span> · {{ fmtMemory(v.memory_mib) }}
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
-            <TableCell class="text-muted-foreground whitespace-nowrap">{{ fmtDate(v.created_at) }}</TableCell>
-            <TableCell class="text-right">
-              <div class="flex items-center justify-end gap-1">
-                <!-- One control for the VM's power state: on starts it, off
-                     stops it. Disabled while an action is in flight, so a
-                     double-click cannot queue a stop behind a start. -->
-                <Switch
-                  :model-value="switchOn(v)"
-                  :disabled="!hasGuest(v) || !!isSettling(v) || working"
-                  :aria-label="`${switchOn(v) ? 'Stop' : 'Start'} VM ${v.name || v.vm_id || v.id}`"
-                  class="mr-1"
-                  @update:model-value="(on: boolean) => togglePower(v, on)"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :disabled="!!isSettling(v) || working"
-                  :aria-label="hasGuest(v)
-                    ? `Destroy VM ${v.name || v.vm_id} and its disk`
-                    : `Delete the record for VM ${v.name || v.vm_id || v.id}`"
-                  @click="askRemove(v)"
-                >
-                  <Trash2 class="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+    <DataTable
+      label="VMs"
+      :columns="columns"
+      :loading="loading"
+      loading-label="Loading VMs…"
+      :empty="!items.length"
+      class="mt-6"
+    >
+      <template #empty>
+        No VMs yet. Connected agents report what they are running every 30s, so
+        anything made with <span class="font-mono">dagent vm create</span> appears
+        here on its own. To ask an agent for one, post to
+        <span class="font-mono">/api/v1/admin/agents/&lt;id&gt;/vms</span>.
+      </template>
+      <TableRow v-for="v in items" :key="v.id">
+        <TableCell>
+          <div class="font-mono">{{ v.name || '—' }}</div>
+          <div class="truncate font-mono text-xs text-muted-foreground">
+            :{{ v.default_port }}<template v-if="v.public_ports?.length"> · {{ v.public_ports.join(', ') }}</template>
+          </div>
+          <div class="truncate font-mono text-xs text-muted-foreground">{{ v.vm_id || 'not assigned yet' }}</div>
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ agentLabel(v.agent_id) }}</TableCell>
+        <TableCell>
+          <Badge :variant="statusVariant[displayStatus(v)]" class="font-mono">
+            {{ displayStatus(v) }}
+          </Badge>
+          <!-- A stale badge without the age is just as unhelpful as the wrong
+               status was: the age is what says whether the host missed one
+               report or went down an hour ago. -->
+          <div v-if="displayStatus(v) === 'stale'" class="mt-1 text-xs text-muted-foreground">
+            was <span class="font-mono">{{ v.status }}</span>, last seen {{ since(v.reported_at) }}
+          </div>
+          <!-- Any recorded failure, not just a failed create: a stop that the
+               host refused leaves the status alone and only sets this, which
+               would otherwise be invisible. title= keeps the full text
+               reachable when truncated. -->
+          <div
+            v-else-if="v.last_error"
+            class="mt-1 max-w-56 truncate text-xs text-destructive"
+            :title="v.last_error"
+          >
+            {{ v.last_error }}
+          </div>
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ v.boot || '—' }}</TableCell>
+        <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+          {{ v.cpus || '—' }}<span v-if="v.cpus"> vcpu</span> · {{ fmtMemory(v.memory_mib) }}
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
+        <TableCell class="text-muted-foreground whitespace-nowrap">{{ fmtDate(v.created_at) }}</TableCell>
+        <TableCell class="text-right">
+          <div class="flex items-center justify-end gap-1">
+            <!-- One control for the VM's power state: on starts it, off
+                 stops it. Disabled while an action is in flight, so a
+                 double-click cannot queue a stop behind a start. -->
+            <Switch
+              :model-value="switchOn(v)"
+              :disabled="!hasGuest(v) || !!isSettling(v) || working"
+              :aria-label="`${switchOn(v) ? 'Stop' : 'Start'} VM ${v.name || v.vm_id || v.id}`"
+              class="mr-1"
+              @update:model-value="(on: boolean) => togglePower(v, on)"
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :disabled="!!isSettling(v) || working"
+              :aria-label="hasGuest(v)
+                ? `Destroy VM ${v.name || v.vm_id} and its disk`
+                : `Delete the record for VM ${v.name || v.vm_id || v.id}`"
+              @click="askRemove(v)"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    </DataTable>
 
     <nav aria-label="VMs pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>

@@ -12,8 +12,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
+
+const columns: DataTableColumn[] = [
+  { key: 'user', label: 'User' },
+  { key: 'status', label: 'Status' },
+  { key: 'expires', label: 'Expires' },
+  { key: 'ip', label: 'IP' },
+  { key: 'created', label: 'Created' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · tokens' })
@@ -189,69 +198,58 @@ async function confirmCleanup() {
       <p v-if="notice" class="mt-4 font-mono text-xs text-primary-text">{{ notice }}</p>
     </div>
 
-    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
-      <p v-if="loading" class="sr-only">Loading sessions…</p>
-      <Table label="Sessions">
-        <TableHeader>
-          <TableRow>
-            <TableHead>User</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Expires</TableHead>
-            <TableHead>IP</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 6" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
-            </TableRow>
-          </template>
-          <TableEmpty v-else-if="!items.length" :colspan="6">No tokens found.</TableEmpty>
-          <TableRow v-for="t in items" v-else :key="t.id">
-            <TableCell>
-              <div class="font-mono">{{ t.username }}</div>
-              <div class="text-xs text-muted-foreground">{{ t.email }}</div>
-            </TableCell>
-            <TableCell>
-              <Badge :variant="statusVariant[t.status]" class="font-mono">{{ t.status }}</Badge>
-            </TableCell>
-            <TableCell class="text-muted-foreground">{{ fmtDate(t.expires_at) }}</TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ t.ip || '—' }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ fmtDate(t.created_at) }}</TableCell>
-            <TableCell class="text-right">
-              <div class="flex justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :disabled="t.status !== 'active'"
-                  :aria-label="t.status === 'active'
-                    ? `Blacklist ${t.username}'s session`
-                    : `Cannot blacklist ${t.username}'s session: already inactive`"
-                  @click="toBlacklist = t"
-                >
-                  <Ban class="size-4" aria-hidden="true" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :disabled="t.status === 'active'"
-                  :aria-label="t.status === 'active'
-                    ? `Cannot delete ${t.username}'s session: blacklist it first`
-                    : `Delete ${t.username}'s session`"
-                  @click="toDelete = t"
-                >
-                  <Trash2 class="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+    <DataTable
+      label="Sessions"
+      :columns="columns"
+      :loading="loading"
+      loading-label="Loading sessions…"
+      :empty="!items.length"
+      class="mt-6"
+    >
+      <template #empty>
+        No tokens found.
+      </template>
+      <TableRow v-for="t in items" :key="t.id">
+        <TableCell>
+          <div class="font-mono">{{ t.username }}</div>
+          <div class="text-xs text-muted-foreground">{{ t.email }}</div>
+        </TableCell>
+        <TableCell>
+          <Badge :variant="statusVariant[t.status]" class="font-mono">{{ t.status }}</Badge>
+        </TableCell>
+        <TableCell class="text-muted-foreground">{{ fmtDate(t.expires_at) }}</TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ t.ip || '—' }}</TableCell>
+        <TableCell class="text-muted-foreground">{{ fmtDate(t.created_at) }}</TableCell>
+        <TableCell class="text-right">
+          <div class="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :disabled="t.status !== 'active'"
+              :aria-label="t.status === 'active'
+                ? `Blacklist ${t.username}'s session`
+                : `Cannot blacklist ${t.username}'s session: already inactive`"
+              @click="toBlacklist = t"
+            >
+              <Ban class="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :disabled="t.status === 'active'"
+              :aria-label="t.status === 'active'
+                ? `Cannot delete ${t.username}'s session: blacklist it first`
+                : `Delete ${t.username}'s session`"
+              @click="toDelete = t"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    </DataTable>
 
     <nav aria-label="Sessions pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>

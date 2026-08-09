@@ -15,8 +15,18 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
+
+const columns: DataTableColumn[] = [
+  { key: 'label', label: 'Label' },
+  { key: 'key', label: 'Key' },
+  { key: 'status', label: 'Status' },
+  { key: 'uses', label: 'Uses' },
+  { key: 'expires', label: 'Expires' },
+  { key: 'created', label: 'Created' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · agent keys' })
@@ -301,65 +311,53 @@ async function confirmDelete() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
-      <p v-if="loading" class="sr-only">Loading enrollment keys…</p>
-      <Table label="Enrollment keys">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Label</TableHead>
-            <TableHead>Key</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Uses</TableHead>
-            <TableHead>Expires</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 7" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
-            </TableRow>
-          </template>
-          <TableEmpty v-else-if="!items.length" :colspan="7">No enrollment keys yet.</TableEmpty>
-          <TableRow v-for="k in items" v-else :key="k.id">
-            <TableCell>{{ k.label || '—' }}</TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ k.key_prefix }}…</TableCell>
-            <TableCell>
-              <Badge :variant="statusVariant[k.status]" class="font-mono">{{ k.status }}</Badge>
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ k.uses }} / {{ k.max_uses ?? '∞' }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ fmtDate(k.expires_at) }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ fmtDate(k.created_at) }}</TableCell>
-            <TableCell class="text-right">
-              <div class="flex justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :disabled="k.status !== 'active'"
-                  :aria-label="k.status === 'active'
-                    ? `Revoke enrollment key ${k.label || k.key_prefix}`
-                    : `Cannot revoke enrollment key ${k.label || k.key_prefix}: already inactive`"
-                  @click="toRevoke = k"
-                >
-                  <Ban class="size-4" aria-hidden="true" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :aria-label="`Delete enrollment key ${k.label || k.key_prefix}`"
-                  @click="toDelete = k"
-                >
-                  <Trash2 class="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+    <DataTable
+      label="Enrollment keys"
+      :columns="columns"
+      :loading="loading"
+      loading-label="Loading enrollment keys…"
+      :empty="!items.length"
+      class="mt-6"
+    >
+      <template #empty>
+        No enrollment keys yet.
+      </template>
+      <TableRow v-for="k in items" :key="k.id">
+        <TableCell>{{ k.label || '—' }}</TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ k.key_prefix }}…</TableCell>
+        <TableCell>
+          <Badge :variant="statusVariant[k.status]" class="font-mono">{{ k.status }}</Badge>
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ k.uses }} / {{ k.max_uses ?? '∞' }}</TableCell>
+        <TableCell class="text-muted-foreground">{{ fmtDate(k.expires_at) }}</TableCell>
+        <TableCell class="text-muted-foreground">{{ fmtDate(k.created_at) }}</TableCell>
+        <TableCell class="text-right">
+          <div class="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :disabled="k.status !== 'active'"
+              :aria-label="k.status === 'active'
+                ? `Revoke enrollment key ${k.label || k.key_prefix}`
+                : `Cannot revoke enrollment key ${k.label || k.key_prefix}: already inactive`"
+              @click="toRevoke = k"
+            >
+              <Ban class="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :aria-label="`Delete enrollment key ${k.label || k.key_prefix}`"
+              @click="toDelete = k"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    </DataTable>
 
     <nav aria-label="Enrollment keys pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>

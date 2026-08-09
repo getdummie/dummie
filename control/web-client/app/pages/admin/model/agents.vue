@@ -12,8 +12,22 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
+
+const columns: DataTableColumn[] = [
+  { key: 'agent', label: 'Agent' },
+  { key: 'status', label: 'Status' },
+  { key: 'domain', label: 'Domain' },
+  { key: 'cpu', label: 'CPU' },
+  { key: 'memory', label: 'Memory' },
+  { key: 'disk', label: 'Disk' },
+  { key: 'os', label: 'OS' },
+  { key: 'arch', label: 'Arch' },
+  { key: 'version', label: 'Version' },
+  { key: 'last_seen', label: 'Last seen' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · agents' })
@@ -208,106 +222,88 @@ async function confirmDelete() {
 
     <!-- This table also self-refreshes every 10s. `aria-live="polite"` lets a
          screen-reader user hear status changes without polling it manually. -->
-    <div class="mt-6 overflow-x-auto rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
-      <p v-if="loading" class="sr-only">Loading agents…</p>
-      <Table label="Agents">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Agent</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Domain</TableHead>
-            <TableHead>CPU</TableHead>
-            <TableHead>Memory</TableHead>
-            <TableHead>Disk</TableHead>
-            <TableHead>OS</TableHead>
-            <TableHead>Arch</TableHead>
-            <TableHead>Version</TableHead>
-            <TableHead>Last seen</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 11" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
-            </TableRow>
+    <DataTable
+      label="Agents"
+      :columns="columns"
+      :loading="loading"
+      loading-label="Loading agents…"
+      :empty="!items.length"
+      class="mt-6"
+    >
+      <template #empty>
+        No agents enrolled. Create an enrollment key, then run
+        <span class="font-mono">dagent connect --key …</span> on a machine.
+      </template>
+      <TableRow v-for="a in items" :key="a.id">
+        <TableCell>
+          <div class="font-mono">{{ a.hostname || '—' }}</div>
+          <div class="truncate text-xs text-muted-foreground">{{ a.machine_id }}</div>
+        </TableCell>
+        <TableCell>
+          <Badge :variant="statusVariant[a.status]" class="font-mono">{{ a.status }}</Badge>
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ a.domain || '—' }}</TableCell>
+        <!-- Every metric is zero until the agent reports, so reported_at is
+             what decides between a real number and an em dash. -->
+        <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+          <template v-if="a.metrics?.reported_at">
+            {{ a.metrics.cpu_percent.toFixed(0) }}%
+            <span class="text-xs">/ {{ a.metrics.cpu_count }} cpu</span>
+            <div class="text-xs">load {{ a.metrics.load1.toFixed(2) }}</div>
           </template>
-          <TableEmpty v-else-if="!items.length" :colspan="11">
-            No agents enrolled. Create an enrollment key, then run
-            <span class="font-mono">dagent connect --key …</span> on a machine.
-          </TableEmpty>
-          <TableRow v-for="a in items" v-else :key="a.id">
-            <TableCell>
-              <div class="font-mono">{{ a.hostname || '—' }}</div>
-              <div class="truncate text-xs text-muted-foreground">{{ a.machine_id }}</div>
-            </TableCell>
-            <TableCell>
-              <Badge :variant="statusVariant[a.status]" class="font-mono">{{ a.status }}</Badge>
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ a.domain || '—' }}</TableCell>
-            <!-- Every metric is zero until the agent reports, so reported_at is
-                 what decides between a real number and an em dash. -->
-            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
-              <template v-if="a.metrics?.reported_at">
-                {{ a.metrics.cpu_percent.toFixed(0) }}%
-                <span class="text-xs">/ {{ a.metrics.cpu_count }} cpu</span>
-                <div class="text-xs">load {{ a.metrics.load1.toFixed(2) }}</div>
-              </template>
-              <template v-else>—</template>
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
-              <template v-if="a.metrics?.reported_at">
-                {{ pct(a.metrics.mem_used_bytes, a.metrics.mem_total_bytes) }}%
-                <div class="text-xs">
-                  {{ fmtBytes(a.metrics.mem_used_bytes) }} / {{ fmtBytes(a.metrics.mem_total_bytes) }}
-                </div>
-              </template>
-              <template v-else>—</template>
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
-              <template v-if="a.metrics?.reported_at">
-                {{ pct(a.metrics.disk_used_bytes, a.metrics.disk_total_bytes) }}%
-                <div class="text-xs">
-                  {{ fmtBytes(a.metrics.disk_used_bytes) }} / {{ fmtBytes(a.metrics.disk_total_bytes) }}
-                </div>
-              </template>
-              <template v-else>—</template>
-            </TableCell>
-            <TableCell class="text-muted-foreground">
-              {{ [a.os, a.os_version].filter(Boolean).join(' ') || '—' }}
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ a.arch || '—' }}</TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ a.agent_version || '—' }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ fmtDate(a.last_seen_at) }}</TableCell>
-            <TableCell class="text-right">
-              <div class="flex justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :disabled="a.status === 'revoked'"
-                  :aria-label="a.status === 'revoked'
-                    ? `Cannot revoke ${a.hostname || a.machine_id}: already revoked`
-                    : `Revoke agent token for ${a.hostname || a.machine_id}`"
-                  @click="toRevoke = a"
-                >
-                  <Ban class="size-4" aria-hidden="true" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :aria-label="`Delete agent ${a.hostname || a.machine_id}`"
-                  @click="toDelete = a"
-                >
-                  <Trash2 class="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+          <template v-else>—</template>
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+          <template v-if="a.metrics?.reported_at">
+            {{ pct(a.metrics.mem_used_bytes, a.metrics.mem_total_bytes) }}%
+            <div class="text-xs">
+              {{ fmtBytes(a.metrics.mem_used_bytes) }} / {{ fmtBytes(a.metrics.mem_total_bytes) }}
+            </div>
+          </template>
+          <template v-else>—</template>
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
+          <template v-if="a.metrics?.reported_at">
+            {{ pct(a.metrics.disk_used_bytes, a.metrics.disk_total_bytes) }}%
+            <div class="text-xs">
+              {{ fmtBytes(a.metrics.disk_used_bytes) }} / {{ fmtBytes(a.metrics.disk_total_bytes) }}
+            </div>
+          </template>
+          <template v-else>—</template>
+        </TableCell>
+        <TableCell class="text-muted-foreground">
+          {{ [a.os, a.os_version].filter(Boolean).join(' ') || '—' }}
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ a.arch || '—' }}</TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ a.agent_version || '—' }}</TableCell>
+        <TableCell class="text-muted-foreground">{{ fmtDate(a.last_seen_at) }}</TableCell>
+        <TableCell class="text-right">
+          <div class="flex justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :disabled="a.status === 'revoked'"
+              :aria-label="a.status === 'revoked'
+                ? `Cannot revoke ${a.hostname || a.machine_id}: already revoked`
+                : `Revoke agent token for ${a.hostname || a.machine_id}`"
+              @click="toRevoke = a"
+            >
+              <Ban class="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :aria-label="`Delete agent ${a.hostname || a.machine_id}`"
+              @click="toDelete = a"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    </DataTable>
 
     <nav aria-label="Agents pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>

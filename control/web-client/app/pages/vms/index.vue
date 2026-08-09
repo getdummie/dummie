@@ -17,7 +17,19 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
+
+const columns: DataTableColumn[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'status', label: 'Status' },
+  { key: 'size', label: 'Size' },
+  { key: 'disk', label: 'Disk' },
+  { key: 'address', label: 'Address' },
+  { key: 'created', label: 'Created' },
+  { key: 'power', label: 'Power' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 definePageMeta({ middleware: ['auth'] })
 useHead({ title: 'dummie — vms' })
@@ -694,104 +706,90 @@ async function confirmDestroy() {
       <AlertDescription>{{ actionError }}</AlertDescription>
     </Alert>
 
-    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
-      <p v-if="loading" class="sr-only">Loading your VMs…</p>
-      <Table label="Your VMs">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Size</TableHead>
-            <TableHead>Disk</TableHead>
-            <TableHead>Address</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead>Power</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <template v-if="loading">
-            <TableRow v-for="n in 3" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 8" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
-            </TableRow>
-          </template>
-          <TableEmpty v-else-if="!items.length" :colspan="8">
-            You have no VMs yet.
-          </TableEmpty>
-          <TableRow v-for="v in items" v-else :key="v.id">
-            <TableCell>
-              <NuxtLink
-                :to="`/vms/${v.id}`"
-                class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                :aria-label="`View details for ${v.name || v.vm_id || 'this VM'}`"
-              >
-                {{ v.name || v.vm_id || '—' }}
-              </NuxtLink>
-              <!-- The failure reason is the whole point of a failed row, so it
-                   is shown inline rather than hidden behind a detail view. -->
-              <span v-if="v.status === 'failed' && v.last_error" class="mt-1 block text-xs text-destructive">
-                {{ v.last_error }}
-              </span>
-            </TableCell>
-            <TableCell>
-              <Badge :variant="statusVariant[v.status]" class="font-mono">{{ v.status }}</Badge>
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">
-              {{ v.cpus }} vCPU · {{ fmtMiB(v.memory_mib) }}
-            </TableCell>
-            <!-- An em dash, not '0': the size was never recorded for VMs made
-                 before the column existed or adopted from a host, and 0 would
-                 read as a diskless VM. -->
-            <TableCell class="font-mono text-muted-foreground">
-              {{ v.disk_mib ? fmtMiB(v.disk_mib) : '—' }}
-            </TableCell>
-            <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ fmtDate(v.created_at) }}</TableCell>
-            <TableCell>
-              <!-- One switch per row, so the name has to be in the label or
-                   they all read alike to a screen reader. (WCAG 2.4.6) -->
-              <Switch
-                :model-value="isRunning(v)"
-                :disabled="!switchable(v) || !!settling[v.id]"
-                :aria-label="switchable(v)
-                  ? `${isRunning(v) ? 'Stop' : 'Start'} VM ${v.name || v.vm_id}`
-                  : `Cannot start or stop ${v.name || v.vm_id}: it is ${v.status}`"
-                @update:model-value="(run: boolean) => toggleRunning(v, run)"
-              />
-            </TableCell>
-            <TableCell class="text-right">
-              <div class="flex justify-end gap-1">
-                <!-- Icon-only, one per row: the name has to be in the label or
-                     every button reads the same to a screen reader. (WCAG 2.4.6) -->
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  :disabled="!copyable(v) || !!blockedReason"
-                  :aria-label="!copyable(v)
-                    ? `Cannot copy ${v.name || v.vm_id}: it was created on its host, not here`
-                    : blockedReason ?? `Copy ${v.name || v.vm_id} as a template for a new VM`"
-                  @click="openCopy(v)"
-                >
-                  <Copy class="size-4" aria-hidden="true" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :disabled="!destroyable(v)"
-                  :aria-label="destroyable(v)
-                    ? `Destroy VM ${v.name || v.vm_id}`
-                    : `Cannot destroy ${v.name || v.vm_id}: it does not exist on a host`"
-                  @click="toDestroy = v"
-                >
-                  <Trash2 class="size-4" aria-hidden="true" />
-                </Button>
-              </div>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+    <DataTable
+      label="Your VMs"
+      :columns="columns"
+      :loading="loading"
+      :loading-rows="3"
+      loading-label="Loading your VMs…"
+      :empty="!items.length"
+      class="mt-6"
+    >
+      <template #empty>
+        You have no VMs yet.
+      </template>
+      <TableRow v-for="v in items" :key="v.id">
+        <TableCell>
+          <NuxtLink
+            :to="`/vms/${v.id}`"
+            class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            :aria-label="`View details for ${v.name || v.vm_id || 'this VM'}`"
+          >
+            {{ v.name || v.vm_id || '—' }}
+          </NuxtLink>
+          <!-- The failure reason is the whole point of a failed row, so it
+               is shown inline rather than hidden behind a detail view. -->
+          <span v-if="v.status === 'failed' && v.last_error" class="mt-1 block text-xs text-destructive">
+            {{ v.last_error }}
+          </span>
+        </TableCell>
+        <TableCell>
+          <Badge :variant="statusVariant[v.status]" class="font-mono">{{ v.status }}</Badge>
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">
+          {{ v.cpus }} vCPU · {{ fmtMiB(v.memory_mib) }}
+        </TableCell>
+        <!-- An em dash, not '0': the size was never recorded for VMs made
+             before the column existed or adopted from a host, and 0 would
+             read as a diskless VM. -->
+        <TableCell class="font-mono text-muted-foreground">
+          {{ v.disk_mib ? fmtMiB(v.disk_mib) : '—' }}
+        </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
+        <TableCell class="text-muted-foreground">{{ fmtDate(v.created_at) }}</TableCell>
+        <TableCell>
+          <!-- One switch per row, so the name has to be in the label or
+               they all read alike to a screen reader. (WCAG 2.4.6) -->
+          <Switch
+            :model-value="isRunning(v)"
+            :disabled="!switchable(v) || !!settling[v.id]"
+            :aria-label="switchable(v)
+              ? `${isRunning(v) ? 'Stop' : 'Start'} VM ${v.name || v.vm_id}`
+              : `Cannot start or stop ${v.name || v.vm_id}: it is ${v.status}`"
+            @update:model-value="(run: boolean) => toggleRunning(v, run)"
+          />
+        </TableCell>
+        <TableCell class="text-right">
+          <div class="flex justify-end gap-1">
+            <!-- Icon-only, one per row: the name has to be in the label or
+                 every button reads the same to a screen reader. (WCAG 2.4.6) -->
+            <Button
+              variant="ghost"
+              size="icon"
+              :disabled="!copyable(v) || !!blockedReason"
+              :aria-label="!copyable(v)
+                ? `Cannot copy ${v.name || v.vm_id}: it was created on its host, not here`
+                : blockedReason ?? `Copy ${v.name || v.vm_id} as a template for a new VM`"
+              @click="openCopy(v)"
+            >
+              <Copy class="size-4" aria-hidden="true" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :disabled="!destroyable(v)"
+              :aria-label="destroyable(v)
+                ? `Destroy VM ${v.name || v.vm_id}`
+                : `Cannot destroy ${v.name || v.vm_id}: it does not exist on a host`"
+              @click="toDestroy = v"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+            </Button>
+          </div>
+        </TableCell>
+      </TableRow>
+    </DataTable>
 
     <!-- destroy confirm -->
     <Dialog :open="!!toDestroy" @update:open="(v: boolean) => { if (!v) toDestroy = null }">

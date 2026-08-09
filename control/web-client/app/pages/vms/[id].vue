@@ -17,7 +17,8 @@ import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
 
 definePageMeta({ middleware: ['auth'] })
 
@@ -51,6 +52,15 @@ interface Target {
   note: string
   created_at: string
 }
+
+const targetColumns: DataTableColumn[] = [
+  { key: 'destination', label: 'Destination' },
+  { key: 'matched', label: 'Matched on' },
+  { key: 'transport', label: 'Transport' },
+  { key: 'ports', label: 'Ports' },
+  { key: 'note', label: 'Note' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 const route = useRoute()
 const { authFetch } = useAuth()
@@ -635,47 +645,35 @@ async function confirmRemove() {
           </Dialog>
         </div>
 
-        <Table label="Allowed destinations">
-          <TableHeader>
-            <TableRow>
-              <TableHead>Destination</TableHead>
-              <TableHead>Matched on</TableHead>
-              <TableHead>Transport</TableHead>
-              <TableHead>Ports</TableHead>
-              <TableHead>Note</TableHead>
-              <TableHead class="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            <TableEmpty v-if="!targets.length" :colspan="6">
-              No destinations recorded.
-            </TableEmpty>
-            <TableRow v-for="t in targets" v-else :key="t.id">
-              <TableCell class="font-mono break-all">{{ t.destination }}</TableCell>
-              <TableCell class="font-mono text-xs text-muted-foreground">
-                {{ t.kind === 'domain' ? 'dns · tls sni · http host' : 'address' }}
-              </TableCell>
-              <!-- An em dash, not 'any': these do not apply to a domain row at
-                   all, and 'any' would read as "every transport is allowed". -->
-              <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
-              <TableCell class="font-mono text-muted-foreground">
-                {{ t.kind === 'domain' ? '—' : (t.ports || 'any') }}
-              </TableCell>
-              <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
-              <TableCell class="text-right">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :aria-label="`Remove destination ${t.destination}`"
-                  @click="toRemove = t"
-                >
-                  <Trash2 class="size-4" aria-hidden="true" />
-                </Button>
-              </TableCell>
-            </TableRow>
-          </TableBody>
-        </Table>
+        <DataTable label="Allowed destinations" :columns="targetColumns" :empty="!targets.length" :frame="false">
+          <template #empty>
+            No destinations recorded.
+          </template>
+          <TableRow v-for="t in targets" :key="t.id">
+            <TableCell class="font-mono break-all">{{ t.destination }}</TableCell>
+            <TableCell class="font-mono text-xs text-muted-foreground">
+              {{ t.kind === 'domain' ? 'dns · tls sni · http host' : 'address' }}
+            </TableCell>
+            <!-- An em dash, not 'any': these do not apply to a domain row at
+                 all, and 'any' would read as "every transport is allowed". -->
+            <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
+            <TableCell class="font-mono text-muted-foreground">
+              {{ t.kind === 'domain' ? '—' : (t.ports || 'any') }}
+            </TableCell>
+            <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
+            <TableCell class="text-right">
+              <Button
+                variant="ghost"
+                size="icon"
+                class="text-destructive hover:text-destructive"
+                :aria-label="`Remove destination ${t.destination}`"
+                @click="toRemove = t"
+              >
+                <Trash2 class="size-4" aria-hidden="true" />
+              </Button>
+            </TableCell>
+          </TableRow>
+        </DataTable>
       </section>
     </template>
 

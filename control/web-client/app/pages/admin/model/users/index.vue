@@ -15,8 +15,17 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
-import { Skeleton } from '@/components/ui/skeleton'
-import { Table, TableBody, TableCell, TableEmpty, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
+
+const columns: DataTableColumn[] = [
+  { key: 'username', label: 'Username' },
+  { key: 'email', label: 'Email' },
+  { key: 'name', label: 'Name' },
+  { key: 'role', label: 'Role' },
+  { key: 'created', label: 'Created' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · users' })
@@ -221,68 +230,57 @@ async function confirmDelete() {
 
     <!-- `aria-live` so a page change or a delete announces the new row count
          rather than silently swapping the table out. (WCAG 4.1.3) -->
-    <div class="mt-6 rounded-lg border border-border" aria-live="polite" :aria-busy="loading">
-      <p v-if="loading" class="sr-only">Loading users…</p>
-      <Table label="Users">
-        <TableHeader>
-          <TableRow>
-            <TableHead>Username</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead>Name</TableHead>
-            <TableHead>Role</TableHead>
-            <TableHead>Created</TableHead>
-            <TableHead class="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <template v-if="loading">
-            <TableRow v-for="n in 5" :key="n" aria-hidden="true">
-              <TableCell v-for="c in 6" :key="c"><Skeleton class="h-4 w-full" /></TableCell>
-            </TableRow>
-          </template>
-          <TableEmpty v-else-if="!items.length" :colspan="6">No users found.</TableEmpty>
-          <TableRow v-for="u in items" v-else :key="u.id">
-            <TableCell>
-              <!-- Underlined at rest, not just on hover: in a table of plain
-                   text cells an underline-on-hover link is undiscoverable, and
-                   colour alone would not carry it either. (WCAG 1.4.1) -->
-              <NuxtLink
-                :to="`/admin/model/users/${u.id}`"
-                class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                :aria-label="`View details for ${u.username}`"
-              >
-                {{ u.username }}
-              </NuxtLink>
-            </TableCell>
-            <TableCell class="text-muted-foreground">{{ u.email }}</TableCell>
-            <TableCell>{{ [u.first_name, u.last_name].filter(Boolean).join(' ') || '—' }}</TableCell>
-            <TableCell>
-              <Badge :variant="u.user_type === 'admin' ? 'default' : 'secondary'" class="font-mono">
-                {{ u.user_type }}
-              </Badge>
-            </TableCell>
-            <TableCell class="text-muted-foreground">{{ fmtDate(u.created_at) }}</TableCell>
-            <TableCell class="text-right">
-              <!-- Icon-only, and one per row — so the name has to include the
-                   username, otherwise every button reads "Delete user" and a
-                   screen-reader user can't tell them apart. (WCAG 2.4.6) -->
-              <Button
-                variant="ghost"
-                size="icon"
-                class="text-destructive hover:text-destructive"
-                :disabled="u.id === currentUser?.id"
-                :aria-label="u.id === currentUser?.id
-                  ? `Cannot delete ${u.username}: this is your own account`
-                  : `Delete user ${u.username}`"
-                @click="toDelete = u"
-              >
-                <Trash2 class="size-4" aria-hidden="true" />
-              </Button>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-    </div>
+    <DataTable
+      label="Users"
+      :columns="columns"
+      :loading="loading"
+      loading-label="Loading users…"
+      :empty="!items.length"
+      class="mt-6"
+    >
+      <template #empty>
+        No users found.
+      </template>
+      <TableRow v-for="u in items" :key="u.id">
+        <TableCell>
+          <!-- Underlined at rest, not just on hover: in a table of plain
+               text cells an underline-on-hover link is undiscoverable, and
+               colour alone would not carry it either. (WCAG 1.4.1) -->
+          <NuxtLink
+            :to="`/admin/model/users/${u.id}`"
+            class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            :aria-label="`View details for ${u.username}`"
+          >
+            {{ u.username }}
+          </NuxtLink>
+        </TableCell>
+        <TableCell class="text-muted-foreground">{{ u.email }}</TableCell>
+        <TableCell>{{ [u.first_name, u.last_name].filter(Boolean).join(' ') || '—' }}</TableCell>
+        <TableCell>
+          <Badge :variant="u.user_type === 'admin' ? 'default' : 'secondary'" class="font-mono">
+            {{ u.user_type }}
+          </Badge>
+        </TableCell>
+        <TableCell class="text-muted-foreground">{{ fmtDate(u.created_at) }}</TableCell>
+        <TableCell class="text-right">
+          <!-- Icon-only, and one per row — so the name has to include the
+               username, otherwise every button reads "Delete user" and a
+               screen-reader user can't tell them apart. (WCAG 2.4.6) -->
+          <Button
+            variant="ghost"
+            size="icon"
+            class="text-destructive hover:text-destructive"
+            :disabled="u.id === currentUser?.id"
+            :aria-label="u.id === currentUser?.id
+              ? `Cannot delete ${u.username}: this is your own account`
+              : `Delete user ${u.username}`"
+            @click="toDelete = u"
+          >
+            <Trash2 class="size-4" aria-hidden="true" />
+          </Button>
+        </TableCell>
+      </TableRow>
+    </DataTable>
 
     <nav aria-label="Users pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
       <span>{{ total }} total · page {{ page }} / {{ pageCount }}</span>
