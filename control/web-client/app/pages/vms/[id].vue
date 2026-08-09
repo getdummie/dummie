@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Pencil, Plus, Trash2 } from '@lucide/vue'
+import { ArrowLeft, ExternalLink, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -37,6 +37,9 @@ interface VM {
   memory_mib: number
   disk_mib: number
   ip: string
+  // Where this VM answers http: its name under the domain of the host it runs
+  // on. "" when that host has no domain, so there is no name to route on.
+  url: string
   last_error: string
   created_at: string
   started_at: string
@@ -427,10 +430,6 @@ async function confirmRemove() {
         <h2 id="details-heading" class="text-sm font-semibold">Details</h2>
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
           <div>
-            <dt class="eyebrow text-muted-foreground">Address</dt>
-            <dd class="mt-1 font-mono text-sm">{{ vm.ip || '—' }}</dd>
-          </div>
-          <div>
             <dt class="eyebrow text-muted-foreground">Size</dt>
             <dd class="mt-1 font-mono text-sm">{{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }}</dd>
           </div>
@@ -441,14 +440,6 @@ async function confirmRemove() {
             <dd class="mt-1 font-mono text-sm">
               {{ vm.disk_mib ? fmtMiB(vm.disk_mib) : 'not recorded' }}
             </dd>
-          </div>
-          <div>
-            <dt class="eyebrow text-muted-foreground">Boot mode</dt>
-            <dd class="mt-1 font-mono text-sm">{{ vm.boot || '—' }}</dd>
-          </div>
-          <div>
-            <dt class="eyebrow text-muted-foreground">Host VM id</dt>
-            <dd class="mt-1 font-mono text-sm break-all">{{ vm.vm_id || '—' }}</dd>
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">Created</dt>
@@ -539,7 +530,23 @@ async function confirmRemove() {
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
           <div>
             <dt class="eyebrow text-muted-foreground">Default port</dt>
-            <dd class="mt-1 font-mono text-sm">{{ vm.default_port }}</dd>
+            <dd class="mt-1 flex items-center gap-2 font-mono text-sm">
+              {{ vm.default_port }}
+              <!-- Only when the server worked out a hostname: the host it runs
+                   on has no domain otherwise, and a link to a name nothing
+                   resolves is worse than none. -->
+              <a
+                v-if="vm.url"
+                :href="vm.url"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-muted-foreground transition-colors hover:text-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                :title="vm.url"
+              >
+                <ExternalLink class="size-4" aria-hidden="true" />
+                <span class="sr-only">Open {{ vm.url }} (opens in a new tab)</span>
+              </a>
+            </dd>
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">Public ports</dt>

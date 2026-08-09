@@ -30,6 +30,45 @@ import (
 type UserHandler struct {
   q   *db.Queries
   hub *Hub
+  // prod picks the scheme for the links this hands out: a dev control plane is
+  // served over http, and a link to https it does not answer on is worse than
+  // no link at all.
+  prod bool
+}
+
+// vmURL is where a VM answers http: its name under the domain of the host it
+// runs on, which is exactly the hostname the generated proxy config publishes
+// it under. Worked out here rather than in the browser because both halves are
+// server-side facts -- the agent's domain is not on the VM row, and whether
+// this deployment serves https is not something the client can see.
+//
+// "" when the host has no domain. That is the honest answer rather than a gap:
+// without one there is no name to route on, and inventing a suffix would hand
+// the user a link nothing resolves.
+func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
+  if v.Name == "" {
+    return ""
+  }
+  agent, err := h.q.GetAgentByID(ctx, v.AgentID)
+  if err != nil || !agent.DomainID.Valid {
+    return ""
+  }
+  // No query reads a single domain by id, and an installation holds a handful,
+  // so scanning them beats adding one for this lookup.
+  domains, err := h.q.ListDomains(ctx)
+  if err != nil {
+    return ""
+  }
+  for _, d := range domains {
+    if d.ID == agent.DomainID {
+      scheme := "http"
+      if h.prod {
+        scheme = "https"
+      }
+      return fmt.Sprintf("%s://%s.%s", scheme, v.Name, d.TLD)
+    }
+  }
+  return ""
 }
 
 // callerID reads the uid the JWT middleware put on the context. A route behind
@@ -86,7 +125,9 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
     }
     return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
   }
-  return c.JSON(http.StatusOK, toVMDTO(v))
+  d := toVMDTO(v)
+  d.URL = h.vmURL(c.Request().Context(), v)
+  return c.JSON(http.StatusOK, d)
 }
 
 // quotaDTO is what the create form needs to show a user where they stand before
@@ -627,7 +668,11 @@ func (h *UserHandler) UpdatePorts(c *echo.Context) error {
   // every guest on the machine and is regenerated from the database rather than
   // patched with this row.
   pushProxyConfig(ctx, h.q, h.hub, vm.AgentID)
-  return c.JSON(http.StatusOK, toVMDTO(row))
+  // Carries the url like GetVM does: the detail page shows the saved row
+  // straight back, so leaving it out would make the link vanish on save.
+  d := toVMDTO(row)
+  d.URL = h.vmURL(ctx, row)
+  return c.JSON(http.StatusOK, d)
 }
 
 func (h *UserHandler) ListTargets(c *echo.Context) error {

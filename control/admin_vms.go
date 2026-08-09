@@ -49,6 +49,12 @@ type vmDTO struct {
   // agent's inventory report, or created before ownership was recorded.
   CreatedBy string `json:"created_by"`
 
+  // URL is where the VM answers http, when a caller asked for a view that
+  // resolves it. "" when the host has no domain, or when the endpoint does not
+  // work it out -- the list endpoints do not, since resolving it per row would
+  // be a query per VM.
+  URL string `json:"url"`
+
   // ReportedAt is when the host last confirmed this VM; "" means it never has.
   // 'running' is the host's claim as of that moment, not a live observation, so
   // a reader has to weigh the status against this timestamp -- a status of
