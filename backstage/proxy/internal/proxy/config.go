@@ -75,17 +75,28 @@ type HTTPConfig struct {
 	Default   string              `yaml:"default"`
 }
 
-// HTTPHost is one routed hostname: the backend machine and the ports it
-// exposes. Requests arriving for the hostname are routed to default_port.
+// portSeparator marks an explicit port in a hostname: one--9922.vm.local routes
+// to port 9922 on the host configured as one.vm.local.
+const portSeparator = "--"
+
+// HTTPHost is one routed hostname: the backend machine, the port requests are
+// routed to, and which of its ports may be reached without authenticating.
 type HTTPHost struct {
-	Host        string `yaml:"host"`
-	PublicPorts []int  `yaml:"public_ports"`
-	DefaultPort int    `yaml:"default_port"`
+	Host                 string `yaml:"host"`
+	UnauthenticatedPorts []int  `yaml:"unauthenticated_ports"`
+	DefaultPort          int    `yaml:"default_port"`
 }
 
 // Target is the backend address requests for this hostname are sent to.
 func (h HTTPHost) Target() string {
 	return net.JoinHostPort(h.Host, strconv.Itoa(h.DefaultPort))
+}
+
+// NeedsAuth reports whether reaching port on this host requires an
+// authenticated user. Ports absent from unauthenticated_ports are protected, so
+// an empty or omitted list protects everything.
+func (h HTTPHost) NeedsAuth(port int) bool {
+	return !slices.Contains(h.UnauthenticatedPorts, port)
 }
 
 // HTTPSConfig is the TLS ingress. Routing reuses http.hosts via
@@ -171,6 +182,13 @@ func (c *Config) Validate() error {
 			if host == "" || strings.Contains(host, "*") {
 				return fmt.Errorf("config: http.hosts key %q is invalid (no wildcards)", host)
 			}
+			// "--" is reserved for the name--port form, which is resolved
+			// against the base hostname's entry. A literal key containing it
+			// would be a second, ambiguous source for the same request.
+			if strings.Contains(host, portSeparator) {
+				return fmt.Errorf("config: http.hosts key %q must not contain %q (reserved for the name%sport form)",
+					host, portSeparator, portSeparator)
+			}
 			field := "http.hosts[" + host + "]"
 			if h.Host == "" || strings.Contains(h.Host, "*") {
 				return fmt.Errorf("config: %s.host %q needs a concrete host", field, h.Host)
@@ -178,13 +196,10 @@ func (c *Config) Validate() error {
 			if err := validPort(field+".default_port", h.DefaultPort); err != nil {
 				return err
 			}
-			for i, p := range h.PublicPorts {
-				if err := validPort(fmt.Sprintf("%s.public_ports[%d]", field, i), p); err != nil {
+			for i, p := range h.UnauthenticatedPorts {
+				if err := validPort(fmt.Sprintf("%s.unauthenticated_ports[%d]", field, i), p); err != nil {
 					return err
 				}
-			}
-			if len(h.PublicPorts) > 0 && !slices.Contains(h.PublicPorts, h.DefaultPort) {
-				return fmt.Errorf("config: %s.default_port %d is not listed in public_ports", field, h.DefaultPort)
 			}
 		}
 		if c.HTTP.Default != "" {

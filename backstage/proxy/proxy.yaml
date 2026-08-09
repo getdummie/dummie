@@ -5,13 +5,16 @@ http: # plaintext HTTP (proxy sniffs Host + hands off a copy)
   listen: ":8080"
   reuseport: true
   hosts:
-    vm1.local:
+    # A request is routed to host:default_port. A port absent from
+    # unauthenticated_ports requires an authenticated user, so an empty or
+    # omitted list protects every port.
+    one.vm.local:
       host: 127.0.0.1
-      public_ports: [8001]
+      unauthenticated_ports: [8001]
       default_port: 8001
-    vm2.local:
+    two.vm.local: # reachable only after authenticating
       host: 127.0.0.1
-      public_ports: [8002]
+      unauthenticated_ports: []
       default_port: 8002
   default: "" # still host:port; empty => 502
 

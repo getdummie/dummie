@@ -55,7 +55,7 @@ func hostEntry(t *testing.T, addr string) HTTPHost {
 	if err != nil {
 		t.Fatalf("port %q: %v", port, err)
 	}
-	return HTTPHost{Host: host, PublicPorts: []int{p}, DefaultPort: p}
+	return HTTPHost{Host: host, UnauthenticatedPorts: []int{p}, DefaultPort: p}
 }
 
 func startFakeDpipe(t *testing.T) *fakeDpipe {
@@ -204,30 +204,30 @@ func TestHTTPHostRouting(t *testing.T) {
 	cfg := &Config{
 		ControlSocket: f.path,
 		HTTP: &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{
-			"vm1.local": hostEntry(t, backend.Listener.Addr().String()),
+			"one.vm.local": hostEntry(t, backend.Listener.Addr().String()),
 		}},
 	}
 	p := startProxy(t, cfg, 1)
 	addr := p.Addrs()[0]
 	client := httpClientVia(addr)
 
-	resp, err := client.Get("http://vm1.local/hello")
+	resp, err := client.Get("http://one.vm.local/hello")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if got, want := string(body), "GET host=vm1.local body="; got != want {
+	if got, want := string(body), "GET host=one.vm.local body="; got != want {
 		t.Fatalf("GET body = %q, want %q", got, want)
 	}
 
-	presp, err := client.Post("http://vm1.local/submit", "text/plain", strings.NewReader("payload-bytes"))
+	presp, err := client.Post("http://one.vm.local/submit", "text/plain", strings.NewReader("payload-bytes"))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
 	pbody, _ := io.ReadAll(presp.Body)
 	presp.Body.Close()
-	if got, want := string(pbody), "POST host=vm1.local body=payload-bytes"; got != want {
+	if got, want := string(pbody), "POST host=one.vm.local body=payload-bytes"; got != want {
 		t.Fatalf("POST body = %q, want %q", got, want)
 	}
 }
@@ -236,11 +236,11 @@ func TestHTTPUnknownHostIs502(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 1}}},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 1}}},
 	}
 	p := startProxy(t, cfg, 1)
 
-	resp, err := httpClientVia(p.Addrs()[0]).Get("http://nope.local/")
+	resp, err := httpClientVia(p.Addrs()[0]).Get("http://nope.vm.local/")
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 1}}},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 1}}},
 		HTTPS:         &HTTPSConfig{Listen: "127.0.0.1:0"},
 		SSH: &SSHConfig{Listen: "127.0.0.1:0", Users: []SSHUser{{
 			PubKey:     authorizedLine(newTestKey(t), " test@example"),
@@ -366,7 +366,7 @@ func TestResolveOverControlConnection(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 8001}}},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 8001}}},
 		HTTPS:         &HTTPSConfig{Listen: "127.0.0.1:0"},
 	}
 	startProxy(t, cfg, 2)
@@ -377,7 +377,7 @@ func TestResolveOverControlConnection(t *testing.T) {
 
 	hit, err := peer.Request(ctx, control.Msg{
 		V: control.Version, Type: control.TypeResolve, ID: control.NewID(),
-		Kind: control.KindHTTP, Host: "vm1.local", SNI: "vm1.local", ClientIP: "127.0.0.1",
+		Kind: control.KindHTTP, Host: "one.vm.local", SNI: "one.vm.local", ClientIP: "127.0.0.1",
 	}, nil)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -388,7 +388,7 @@ func TestResolveOverControlConnection(t *testing.T) {
 
 	miss, err := peer.Request(ctx, control.Msg{
 		V: control.Version, Type: control.TypeResolve, ID: control.NewID(),
-		Kind: control.KindHTTP, Host: "nope.local",
+		Kind: control.KindHTTP, Host: "nope.vm.local",
 	}, nil)
 	if err != nil {
 		t.Fatalf("resolve: %v", err)

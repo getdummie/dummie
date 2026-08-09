@@ -67,13 +67,13 @@ http:                       # plaintext HTTP (proxy sniffs + hands off copy)
   listen: ":8080"
   reuseport: true
   hosts:
-    vm1.local:
+    one.vm.local:
       host: 127.0.0.1
-      public_ports: [8001]
+      unauthenticated_ports: [8001]   # ports reachable without auth
       default_port: 8001
-    vm2.local:
+    two.vm.local:
       host: 127.0.0.1
-      public_ports: [8002]
+      unauthenticated_ports: []       # empty => every port needs auth
       default_port: 8002
   default: ""               # host:port; empty => 502
 

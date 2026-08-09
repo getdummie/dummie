@@ -134,13 +134,17 @@ func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByAgentRow)
     for _, u := range usable {
       fmt.Fprintf(b, "    %s:\n", u.host)
       fmt.Fprintf(b, "      host: %s\n", yamlString(u.row.VMIP))
+      // `unauthenticated_ports` on the wire, `public_ports` everywhere else in
+      // here: the file is what an operator reads to answer "what can be reached
+      // without signing in", and "public" understates that. Only the emitted key
+      // is renamed -- the column, the API and the UI still say public_ports.
       if len(u.row.PublicPorts) == 0 {
         // Spelled, not omitted, for the same reason as the table above: a VM
         // that publishes nothing is a fact, and it should not read as a VM
         // whose ports were never configured.
-        b.WriteString("      public_ports: []\n")
+        b.WriteString("      unauthenticated_ports: []\n")
       } else {
-        b.WriteString("      public_ports:\n")
+        b.WriteString("      unauthenticated_ports:\n")
         for _, p := range u.row.PublicPorts {
           fmt.Fprintf(b, "        - %d\n", p)
         }

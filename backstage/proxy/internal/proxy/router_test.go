@@ -4,8 +4,8 @@ import "testing"
 
 func TestHostBackend(t *testing.T) {
 	cfg := &Config{HTTP: &HTTPConfig{Hosts: map[string]HTTPHost{
-		"VM1.local": {Host: "127.0.0.1", PublicPorts: []int{8001}, DefaultPort: 8001},
-		"vm2.local": {Host: "127.0.0.1", DefaultPort: 8002},
+		"ONE.vm.local": {Host: "127.0.0.1", UnauthenticatedPorts: []int{8001}, DefaultPort: 8001},
+		"two.vm.local": {Host: "127.0.0.1", DefaultPort: 8002},
 	}}}
 	r := NewRouter(cfg)
 
@@ -14,11 +14,11 @@ func TestHostBackend(t *testing.T) {
 		want   string
 		wantOK bool
 	}{
-		{"vm1.local", "127.0.0.1:8001", true},
-		{"VM1.LOCAL", "127.0.0.1:8001", true},
-		{"vm1.local:8443", "127.0.0.1:8001", true},
-		{"vm2.local", "127.0.0.1:8002", true},
-		{"nope.local", "", false},
+		{"one.vm.local", "127.0.0.1:8001", true},
+		{"ONE.VM.LOCAL", "127.0.0.1:8001", true},
+		{"one.vm.local:8443", "127.0.0.1:8001", true},
+		{"two.vm.local", "127.0.0.1:8002", true},
+		{"nope.vm.local", "", false},
 		{"", "", false},
 	}
 	for _, c := range cases {
@@ -31,7 +31,7 @@ func TestHostBackend(t *testing.T) {
 
 func TestHostBackendDefault(t *testing.T) {
 	cfg := &Config{HTTP: &HTTPConfig{
-		Hosts:   map[string]HTTPHost{"vm1.local": {Host: "127.0.0.1", DefaultPort: 8001}},
+		Hosts:   map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 8001}},
 		Default: "127.0.0.1:9999",
 	}}
 	r := NewRouter(cfg)

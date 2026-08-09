@@ -64,6 +64,14 @@ func (p *Proxy) Run(ctx context.Context) error {
 	if p.cfg.HTTPS != nil {
 		p.log.Info("https ingress enabled: dpipe.tls.enabled must be true, certificates live in dpipe")
 	}
+	if p.cfg.HTTP != nil {
+		// The auth verdict is derived from unauthenticated_ports, so log it
+		// rather than making operators compute it from the config.
+		for host, h := range p.cfg.HTTP.Hosts {
+			p.log.Info("http host", "host", host, "target", h.Target(),
+				"auth_required", h.NeedsAuth(h.DefaultPort))
+		}
+	}
 
 	go p.ctrl.Run(ctx)
 	if err := p.ctrl.WaitReady(ctx); err != nil {

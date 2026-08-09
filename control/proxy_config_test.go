@@ -25,7 +25,9 @@ type parsedProxyConfig struct {
     Listen string `yaml:"listen"`
     Hosts  map[string]struct {
       Host        string `yaml:"host"`
-      PublicPorts []int  `yaml:"public_ports"`
+      // The emitted key, which is deliberately not the name the column, the
+      // API or the UI uses for the same list.
+      UnauthPorts []int  `yaml:"unauthenticated_ports"`
       DefaultPort int    `yaml:"default_port"`
     } `yaml:"hosts"`
     Default string `yaml:"default"`
@@ -115,15 +117,15 @@ func TestGenerateProxyConfigHTTPHosts(t *testing.T) {
   if one.DefaultPort != 8000 {
     t.Errorf("default_port is %d, want 8000", one.DefaultPort)
   }
-  if len(one.PublicPorts) != 1 || one.PublicPorts[0] != 8000 {
-    t.Errorf("public_ports is %v, want [8000]", one.PublicPorts)
+  if len(one.UnauthPorts) != 1 || one.UnauthPorts[0] != 8000 {
+    t.Errorf("unauthenticated_ports is %v, want [8000]", one.UnauthPorts)
   }
 
   // The list is written in the order it was given, not sorted: that order is the
   // caller's, and reordering it would show up as a diff on every host.
   two := got.HTTP.Hosts["quirky-curie.example.com"]
-  if len(two.PublicPorts) != 2 || two.PublicPorts[0] != 3000 || two.PublicPorts[1] != 9090 {
-    t.Errorf("public_ports is %v, want [3000 9090]", two.PublicPorts)
+  if len(two.UnauthPorts) != 2 || two.UnauthPorts[0] != 3000 || two.UnauthPorts[1] != 9090 {
+    t.Errorf("unauthenticated_ports is %v, want [3000 9090]", two.UnauthPorts)
   }
 
   // An unmatched Host header must miss rather than land on some arbitrary guest.
@@ -140,12 +142,12 @@ func TestGenerateProxyConfigHTTPNoPublicPorts(t *testing.T) {
   }
 
   out := generateProxyConfig(nil, rows)
-  if !strings.Contains(out, "public_ports: []") {
+  if !strings.Contains(out, "unauthenticated_ports: []") {
     t.Errorf("a vm with no published ports did not emit an empty list:\n%s", out)
   }
   got := parseProxyConfig(t, out)
-  if n := len(got.HTTP.Hosts["quirky-curie.example.com"].PublicPorts); n != 0 {
-    t.Errorf("got %d public ports, want 0", n)
+  if n := len(got.HTTP.Hosts["quirky-curie.example.com"].UnauthPorts); n != 0 {
+    t.Errorf("got %d unauthenticated ports, want 0", n)
   }
 }
 
