@@ -151,6 +151,37 @@ func (h *AdminHandler) GetVM(c *echo.Context) error {
   return c.JSON(http.StatusOK, toVMDTO(v))
 }
 
+// ListVMTargets is the admin's view of what a VM is allowed to reach. Read-only
+// on purpose: the list is the owner's own declaration of what their VM needs,
+// and nothing enforces it yet, so an admin quietly editing it would leave the
+// owner looking at a list they did not write. Seeing it is what an admin needs
+// -- to answer why a VM is reaching somewhere, or what it will need when this
+// does start being enforced.
+func (h *AdminHandler) ListVMTargets(c *echo.Context) error {
+  pgID, err := parseUUID(c.Param("id"))
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid vm id")
+  }
+  ctx := c.Request().Context()
+  // Read the VM first, so an id that matches nothing is a 404 rather than an
+  // empty list that reads as "this VM is allowed nowhere".
+  if _, err := h.q.GetVM(ctx, pgID); err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "no such vm")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
+  }
+  rows, err := h.q.ListVMNetworkTargets(ctx, pgID)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not list destinations")
+  }
+  items := make([]vmTargetDTO, 0, len(rows))
+  for _, t := range rows {
+    items = append(items, toVMTargetDTO(t))
+  }
+  return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
 // adminCreateVMReq is the agent's own VM spec, inline, plus the routing the
 // control plane owns. Embedded rather than nested so the body stays the spec
 // `dagent vm create` accepts, with two more fields on it.

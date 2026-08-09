@@ -15,6 +15,8 @@ import {
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
+import { TableCell, TableRow } from '@/components/ui/table'
+import type { DataTableColumn } from '@/lib/table'
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 
@@ -41,6 +43,24 @@ interface AdminVM {
   // When the host last confirmed this VM; "" if it never has.
   reported_at: string
 }
+
+interface Target {
+  id: string
+  destination: string
+  kind: 'domain' | 'ip'
+  transport: '' | 'tcp' | 'udp' | 'any'
+  ports: string
+  note: string
+  created_at: string
+}
+
+const targetColumns: DataTableColumn[] = [
+  { key: 'destination', label: 'Destination' },
+  { key: 'matched', label: 'Matched on' },
+  { key: 'transport', label: 'Transport' },
+  { key: 'ports', label: 'Ports' },
+  { key: 'note', label: 'Note' },
+]
 
 const route = useRoute()
 const { authFetch } = useAuth()
@@ -170,6 +190,31 @@ async function loadOwner(userID: string) {
   }
 }
 
+// --- allowed destinations ---
+//
+// Its own request and its own error: nothing here can be acted on, so a failure
+// to read the list is a gap in one card rather than a reason to blank the page.
+// Fetched once — this page cannot change the list, and neither can the host.
+const targets = ref<Target[]>([])
+const targetsLoading = ref(true)
+const targetsError = ref<string | null>(null)
+
+async function loadTargets() {
+  targetsLoading.value = true
+  targetsError.value = null
+  try {
+    const res = await authFetch(`/admin/vms/${id.value}/targets`)
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    targets.value = (await res.json()).items ?? []
+  }
+  catch (e) {
+    targetsError.value = e instanceof Error ? e.message : 'Failed to load destinations'
+  }
+  finally {
+    targetsLoading.value = false
+  }
+}
+
 const specJSON = computed(() => JSON.stringify(vm.value?.spec ?? {}, null, 2))
 const hasSpec = computed(() => Object.keys(vm.value?.spec ?? {}).length > 0)
 
@@ -194,6 +239,7 @@ async function load(quiet = false) {
 }
 onMounted(() => {
   load()
+  loadTargets()
   // Well under staleAfterMs, so the badge turns within a few seconds of the
   // claim actually going stale rather than on the next poll.
   clock = setInterval(() => (now.value = Date.now()), 10_000)
@@ -405,7 +451,14 @@ async function confirmForget() {
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <dt class="eyebrow text-muted-foreground">Host</dt>
-            <dd class="mt-1 font-mono text-sm break-all">{{ hostname || vm.agent_id }}</dd>
+            <dd class="mt-1 text-sm">
+              <NuxtLink
+                :to="`/admin/model/agents/${vm.agent_id}`"
+                class="font-mono break-all text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              >
+                {{ hostname || vm.agent_id }}
+              </NuxtLink>
+            </dd>
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">Owner</dt>
@@ -489,6 +542,49 @@ async function confirmForget() {
             </dd>
           </div>
         </dl>
+      </section>
+
+      <!-- destinations -->
+      <section aria-labelledby="targets-heading" class="mt-6 rounded-lg border border-border">
+        <div class="p-4 sm:p-6">
+          <h2 id="targets-heading" class="text-sm font-semibold">Allowed destinations</h2>
+          <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Domains and addresses this VM's owner declared it needs to reach. Recorded only for
+            now — nothing enforces this list yet. Its owner adds and removes entries from their
+            own VM page.
+          </p>
+          <Alert v-if="targetsError" variant="destructive" class="mt-4">
+            <AlertTitle>Could not load destinations</AlertTitle>
+            <AlertDescription>{{ targetsError }}</AlertDescription>
+          </Alert>
+        </div>
+        <DataTable
+          v-if="!targetsError"
+          label="Allowed destinations"
+          :columns="targetColumns"
+          :loading="targetsLoading"
+          :loading-rows="2"
+          loading-label="Loading destinations…"
+          :empty="!targets.length"
+          :frame="false"
+        >
+          <template #empty>
+            No destinations recorded.
+          </template>
+          <TableRow v-for="t in targets" :key="t.id">
+            <TableCell class="font-mono break-all">{{ t.destination }}</TableCell>
+            <TableCell class="font-mono text-xs text-muted-foreground">
+              {{ t.kind === 'domain' ? 'dns · tls sni · http host' : 'address' }}
+            </TableCell>
+            <!-- An em dash, not 'any': these do not apply to a domain row at
+                 all, and 'any' would read as "every transport is allowed". -->
+            <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
+            <TableCell class="font-mono text-muted-foreground">
+              {{ t.kind === 'domain' ? '—' : (t.ports || 'any') }}
+            </TableCell>
+            <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
+          </TableRow>
+        </DataTable>
       </section>
 
       <!-- spec -->

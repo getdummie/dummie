@@ -236,7 +236,16 @@ async function confirmDelete() {
       </template>
       <TableRow v-for="a in items" :key="a.id">
         <TableCell>
-          <div class="font-mono">{{ a.hostname || '—' }}</div>
+          <!-- Underlined at rest, not just on hover: in a table of plain text
+               cells an underline-on-hover link is undiscoverable, and colour
+               alone would not carry it either. (WCAG 1.4.1) -->
+          <NuxtLink
+            :to="`/admin/model/agents/${a.id}`"
+            class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            :aria-label="`View details for ${a.hostname || a.machine_id}`"
+          >
+            {{ a.hostname || '—' }}
+          </NuxtLink>
           <div class="truncate text-xs text-muted-foreground">{{ a.machine_id }}</div>
         </TableCell>
         <TableCell>

@@ -1,11 +1,13 @@
 package main
 
 import (
+  "errors"
   "net/http"
   "strings"
   "time"
 
   "github.com/google/uuid"
+  "github.com/jackc/pgx/v5"
   "github.com/jackc/pgx/v5/pgtype"
   "github.com/labstack/echo/v5"
 
@@ -243,6 +245,39 @@ func (h *AdminHandler) ListAgents(c *echo.Context) error {
     items = append(items, toAgentDTO(r.Agent, h.hub.Connected(id), r.DomainTLD.String))
   }
   return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
+}
+
+func (h *AdminHandler) GetAgent(c *echo.Context) error {
+  id := c.Param("id")
+  pgID, err := parseUUID(id)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid agent id")
+  }
+  ctx := c.Request().Context()
+  a, err := h.q.GetAgentByID(ctx, pgID)
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "no such agent")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not read agent")
+  }
+
+  // The list endpoint joins the domain in; one row does not have a query that
+  // does, and an installation holds a handful of domains, so it is cheaper to
+  // scan them than to add a join for a single lookup. Best-effort: a failure
+  // here costs the TLD, not the agent.
+  domain := ""
+  if a.DomainID.Valid {
+    if rows, err := h.q.ListDomains(ctx); err == nil {
+      for _, d := range rows {
+        if d.ID == a.DomainID {
+          domain = d.TLD
+          break
+        }
+      }
+    }
+  }
+  return c.JSON(http.StatusOK, toAgentDTO(a, h.hub.Connected(id), domain))
 }
 
 // RevokeAgent invalidates the agent's token and kicks its live socket, so the
