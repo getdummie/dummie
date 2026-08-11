@@ -74,6 +74,9 @@ type AdminHandler struct {
   q   *db.Queries
   cfg authConfig
   hub *Hub
+  // nil when no bucket is configured; only the kernel routes need it, and they
+  // report it as an operator's omission rather than failing at startup.
+  blobs *blobStore
 }
 
 // --- helpers ---------------------------------------------------------------

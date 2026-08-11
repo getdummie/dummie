@@ -147,7 +147,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
   }
 
   // Admin: user management + refresh-token session management, JWT + admin gated.
-  adminH := &AdminHandler{q: q, cfg: cfg, hub: hub}
+  adminH := &AdminHandler{q: q, cfg: cfg, hub: hub, blobs: loadBlobStore(context.Background())}
   admin := api.Group("/admin", adminJWT(cfg))
   admin.GET("/users", adminH.ListUsers)
   admin.POST("/users", adminH.CreateUser)
@@ -179,6 +179,11 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
   admin.GET("/domains", adminH.ListDomains)
   admin.POST("/domains", adminH.CreateDomain)
   admin.DELETE("/domains/:id", adminH.DeleteDomain)
+  admin.GET("/kernels", adminH.ListKernels)
+  admin.POST("/kernels", adminH.CreateKernel)
+  admin.GET("/kernels/:id", adminH.GetKernel)
+  admin.PUT("/kernels/:id/description", adminH.UpdateKernelDescription)
+  admin.DELETE("/kernels/:id", adminH.DeleteKernel)
   admin.GET("/settings", adminH.ListSettings)
   admin.PUT("/settings/:key", adminH.UpdateSetting)
 

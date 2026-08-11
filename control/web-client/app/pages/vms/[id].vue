@@ -512,6 +512,21 @@ async function confirmRemove() {
             <span role="status" aria-live="polite" class="sr-only">
               {{ sshCopied ? 'SSH command copied to clipboard' : '' }}
             </span>
+            <Button
+              v-if="vm.url"
+              as="a"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :href="vm.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="vm.url"
+            >
+              <ExternalLink class="size-4" aria-hidden="true" />
+              Web
+              <span class="sr-only">: open {{ vm.url }} in a new tab</span>
+            </Button>
             <Dialog v-model:open="portsOpen">
               <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
                 <Pencil class="size-4" aria-hidden="true" />
