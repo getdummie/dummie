@@ -34,6 +34,8 @@ type UserHandler struct {
   // served over http, and a link to https it does not answer on is worse than
   // no link at all.
   prod bool
+  // proxy is carried only to be handed to pushProxyConfig.
+  proxy proxyAuthConfig
 }
 
 // vmURL is where a VM answers http: its name under the domain of the host it
@@ -667,7 +669,7 @@ func (h *UserHandler) UpdatePorts(c *echo.Context) error {
   // Whole-host, like every other write that changes routing: the file covers
   // every guest on the machine and is regenerated from the database rather than
   // patched with this row.
-  pushProxyConfig(ctx, h.q, h.hub, vm.AgentID)
+  pushProxyConfig(ctx, h.q, h.hub, h.proxy, vm.AgentID)
   // Carries the url like GetVM does: the detail page shows the saved row
   // straight back, so leaving it out would make the link vanish on save.
   d := toVMDTO(row)

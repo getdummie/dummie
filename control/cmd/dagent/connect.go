@@ -426,7 +426,7 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
     }
     // Off the read loop like the rest: this restarts a unit, and a systemctl
     // that blocks must not stop the socket answering pings.
-    go l.applyProxy(ctx, env.ID, job.Proxy.Config)
+    go l.applyProxy(ctx, env.ID, *job.Proxy)
   default:
     l.reply(ctx, env.ID, proto.JobResult{
       Kind:  job.Kind,
@@ -482,16 +482,16 @@ func (l *link) applyRules(ctx context.Context, jobID, rules string) {
 // applyProxy installs a pushed proxy.yaml. Detached for the same reason as the
 // ruleset: a write that has begun should finish, since abandoning it leaves the
 // host routing by a table the control plane believes it replaced.
-func (l *link) applyProxy(ctx context.Context, jobID, config string) {
+func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConfig) {
   ctx = context.WithoutCancel(ctx)
-  changed, err := applyProxyConfig(ctx, config)
+  changed, err := applyProxyConfig(ctx, cfg)
   if err != nil {
     log.Printf("job %s: could not apply the proxy config: %v", jobID, err)
     l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, Error: err.Error()})
     return
   }
   if changed {
-    log.Printf("job %s: wrote a new proxy config and restarted %s", jobID, proxyService)
+    log.Printf("job %s: installed a new proxy config or key and restarted %s", jobID, proxyService)
   }
   l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, OK: true})
 }

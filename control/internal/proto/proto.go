@@ -128,6 +128,20 @@ type SuricataRules struct {
 // which VM, and that is knowable only in the control plane.
 type ProxyConfig struct {
   Config string `json:"config"`
+  // CookieSecret is the key proxy verifies login tokens with, and the same
+  // bytes the control server signs them with. It travels with the config
+  // because the config names the file it belongs in: provisioned separately,
+  // a host could end up with an auth block pointing at a key it does not have.
+  //
+  // The agent writes it to CookieSecretPath verbatim -- no trailing newline,
+  // no re-encoding -- and the file is the agent's to create with 0600 and a
+  // 0700 parent. It must never be logged or echoed back in a result frame.
+  //
+  // Empty when the control server has no key configured, which is also when
+  // the config carries no auth block; the agent should leave any existing file
+  // alone in that case rather than truncating it.
+  CookieSecret     string `json:"cookie_secret,omitempty"`
+  CookieSecretPath string `json:"cookie_secret_path,omitempty"`
 }
 
 // VMSpec is one VM creation request. It is the same shape the agent's own unix

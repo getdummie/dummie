@@ -48,14 +48,46 @@ const proxyLoginPath = "/login"
 // not the bytes it spells -- so its length here is its length there.
 const proxySecretMinLen = 32
 
-// proxyAuthConfig holds the key shared with every host's proxy. Same bytes as
-// its cookie_secret_file: either point PROXY_AUTH_SECRET_FILE at that file, or
-// put the value in PROXY_AUTH_SECRET.
+// proxyAuthConfigDefaultControlURL is where a dev box's control server is, and
+// matches the default API port. There is no sane default for a real deployment,
+// so prod has to say.
+const proxyAuthConfigDefaultControlURL = "http://localhost:1323"
+
+// proxyAuthConfig is everything both ends of the hand-off need to agree on: the
+// key, where the browser is sent to get a token, and whether the cookie the
+// proxy sets afterwards is Secure.
+//
+// secret is the same bytes as each host's cookie_secret_file -- either point
+// PROXY_AUTH_SECRET_FILE at that file, or put the value in PROXY_AUTH_SECRET.
+// It is also what the agent is told to write into that file, so the two cannot
+// drift: there is one value, and it is set here.
 type proxyAuthConfig struct {
   secret string
+  // controlURL is the origin browsers reach this server on, NOT the address it
+  // binds. Behind a proxy or on another network those differ, and the hosts'
+  // users are the ones who have to be able to open it.
+  controlURL string
+  // cookieSecure is what proxy puts on the session cookie it sets after
+  // verifying a token. Off in dev because guests are served over plain http
+  // there, and a Secure cookie on http is one the browser silently drops.
+  cookieSecure bool
+}
+
+// loginURL is what goes in the generated proxy.yaml: the control server's
+// origin plus the hand-off path, so there is one place that decides that path.
+func (c proxyAuthConfig) loginURL() string {
+  return strings.TrimRight(c.controlURL, "/") + proxyLoginPath
 }
 
 func loadProxyAuthConfig(prod bool) proxyAuthConfig {
+  controlURL := strings.TrimSpace(os.Getenv("CONTROL_URL"))
+  if controlURL == "" {
+    if prod {
+      log.Fatal("CONTROL_URL must be set when APP_ENV=prod")
+    }
+    controlURL = proxyAuthConfigDefaultControlURL
+  }
+
   secret := os.Getenv("PROXY_AUTH_SECRET")
   if path := os.Getenv("PROXY_AUTH_SECRET_FILE"); path != "" {
     b, err := os.ReadFile(path)
@@ -79,7 +111,11 @@ func loadProxyAuthConfig(prod bool) proxyAuthConfig {
     // not starting.
     log.Fatalf("the proxy auth secret must be at least %d bytes", proxySecretMinLen)
   }
-  return proxyAuthConfig{secret: secret}
+  return proxyAuthConfig{
+    secret:       secret,
+    controlURL:   controlURL,
+    cookieSecure: prod,
+  }
 }
 
 // proxyTokenPayload is the whole token body. Field order is the emitted JSON

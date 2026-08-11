@@ -84,6 +84,17 @@ func TestMintProxyTokenSignatureCoversThePayload(t *testing.T) {
   }
 }
 
+// CONTROL_URL is an origin an operator types, so it may or may not end in a
+// slash; the path it gets is this server's, not theirs.
+func TestProxyAuthConfigLoginURL(t *testing.T) {
+  for _, in := range []string{"http://control.example.com:1323", "http://control.example.com:1323/"} {
+    got := proxyAuthConfig{controlURL: in}.loginURL()
+    if want := "http://control.example.com:1323/login"; got != want {
+      t.Errorf("loginURL() for %q = %q, want %q", in, got, want)
+    }
+  }
+}
+
 func TestParseRedirectTarget(t *testing.T) {
   cases := []struct {
     name string

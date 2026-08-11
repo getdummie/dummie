@@ -32,6 +32,11 @@ const (
   // authorized_keys. Both names are the ones defaultDpipeConfig points at.
   dpipeHostKeyPath   = dpipeKeyDir + "/dpipe_host_ed25519"
   dpipeClientKeyPath = dpipeKeyDir + "/dpipe_client_ed25519"
+
+  // dpipeCookieSecretPath holds the key proxy verifies login tokens with. Not
+  // generated here like the two above: it is the control server's, shared with
+  // every host in the fleet, and arrives with the proxy config that names it.
+  dpipeCookieSecretPath = dpipeKeyDir + "/cookie_secret"
 )
 
 // ensureDpipeKeys creates the key directory and both keypairs if they are not

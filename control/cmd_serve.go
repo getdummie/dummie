@@ -190,7 +190,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
   me.PUT("", profileH.UpdateMe)
 
   // Self-service VMs: any signed-in account. Every route scopes to the caller.
-  userH := &UserHandler{q: q, hub: hub, prod: cfg.prod}
+  userH := &UserHandler{q: q, hub: hub, prod: cfg.prod, proxy: proxyCfg}
   vms := api.Group("/vms", userJWT(cfg))
   vms.GET("", userH.ListVMs)
   vms.POST("", userH.CreateVM)
@@ -207,7 +207,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
 
   // Agents: enrollment + the persistent socket the server pushes jobs down.
   // Authenticated by enrollment key / agent token, not by the user JWT.
-  agentH := &AgentHandler{q: q, pool: pool, hub: hub}
+  agentH := &AgentHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg}
   ag := api.Group("/agent")
   ag.POST("/enroll", agentH.Enroll)
   ag.GET("/connect", agentH.Connect)

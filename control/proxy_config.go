@@ -84,17 +84,49 @@ http_sniff_max_bytes: 65536
 log_level: info
 `
 
+// proxyCookieSecretPath is where the agent writes the shared key and where proxy
+// reads it. A path rather than the value inline: proxy.yaml is world-readable on
+// the host, and the key is what tokens for every guest on it are signed with.
+const proxyCookieSecretPath = "/etc/dpipe/keys/cookie_secret"
+
+// proxyCookieTTL is how long the session cookie proxy sets after verifying a
+// token is good for. Much longer than the token's five minutes on purpose: the
+// token is the hand-off, this is the session it buys.
+const proxyCookieTTL = "1h"
+
 // generateProxyConfig compiles every reachable VM on one host into a proxy.yaml.
 // Rows arrive in the order the queries fix, so an unchanged fleet compiles to a
 // byte-identical file -- which is what lets the agent skip the restart.
-func generateProxyConfig(ssh []db.ListProxySSHUsersByAgentRow, http []db.ListProxyHTTPRoutesByAgentRow) string {
+func generateProxyConfig(auth proxyAuthConfig, ssh []db.ListProxySSHUsersByAgentRow, http []db.ListProxyHTTPRoutesByAgentRow) string {
   var b strings.Builder
   b.WriteString(proxyConfigHeader)
   b.WriteString(proxyStaticConfig)
+  writeProxyAuth(&b, auth)
   writeProxyHTTP(&b, http)
   writeProxySSH(&b, ssh)
   b.WriteString(proxyConfigFooter)
   return b.String()
+}
+
+// writeProxyAuth emits the block that points proxy back at this server: where to
+// send a browser that has no session cookie for a guest, and where to find the
+// key the token it comes back with is signed with.
+//
+// Omitted entirely when no key is configured, rather than written with an empty
+// secret path: a half-filled auth block would have proxy send users to a /login
+// that cannot mint anything, which fails at the end of a redirect chain instead
+// of not being offered at all. Without it proxy serves guests as it did before.
+func writeProxyAuth(b *strings.Builder, auth proxyAuthConfig) {
+  if auth.secret == "" {
+    return
+  }
+  b.WriteString("\nauth:\n")
+  fmt.Fprintf(b, "  control_url: %s\n", yamlString(auth.loginURL()))
+  fmt.Fprintf(b, "  cookie_secret_file: %s\n", yamlString(proxyCookieSecretPath))
+  fmt.Fprintf(b, "  cookie_ttl: %s\n", proxyCookieTTL)
+  // false in dev: guests are plain http there, and a browser drops a Secure
+  // cookie sent over http -- which reads as "login did nothing".
+  fmt.Fprintf(b, "  cookie_secure: %t\n", auth.cookieSecure)
 }
 
 // writeProxyHTTP emits the virtual-host table: one entry per VM, keyed by the
@@ -222,7 +254,7 @@ func yamlComment(s string) string {
 // failing the caller would report that something did not happen when it did. An
 // offline agent picks the config up on its next connect, which is why the connect
 // path pushes one unconditionally.
-func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, agentID pgtype.UUID) {
+func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAuthConfig, agentID pgtype.UUID) {
   id := uuid.UUID(agentID.Bytes).String()
   sshRows, err := q.ListProxySSHUsersByAgent(ctx, agentID)
   if err != nil {
@@ -237,9 +269,16 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, agentID pgtyp
     log.Printf("could not read the http routes for agent %s: %v", id, err)
     return
   }
+  // The key rides with the config rather than being provisioned separately: the
+  // file it lands in is named by the config, so a host that has one and not the
+  // other has an auth block pointing at a key that is not there.
   env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
-    Kind:  proto.KindProxyConfig,
-    Proxy: &proto.ProxyConfig{Config: generateProxyConfig(sshRows, httpRows)},
+    Kind: proto.KindProxyConfig,
+    Proxy: &proto.ProxyConfig{
+      Config:           generateProxyConfig(auth, sshRows, httpRows),
+      CookieSecret:     auth.secret,
+      CookieSecretPath: proxyCookieSecretPath,
+    },
   })
   if err != nil {
     log.Printf("could not build the proxy config job for agent %s: %v", id, err)

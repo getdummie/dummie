@@ -4,9 +4,12 @@ import (
   "context"
   "errors"
   "fmt"
+  "log"
   "os"
   "path/filepath"
   "strings"
+
+  "control/internal/proto"
 )
 
 // proxy.yaml is written by the control server, not by this host: its ssh user
@@ -19,13 +22,14 @@ import (
 // the control plane -- and there would be no way to express a removal, since a
 // merged-in entry looks the same as one that was never taken out.
 
-// applyProxyConfig installs a pushed proxy.yaml and restarts proxy if it changed.
+// applyProxyConfig installs a pushed proxy.yaml -- and the key its auth block
+// names -- and restarts proxy if either changed.
 //
 // It reports whether anything changed, so the caller can say so. An identical
 // file is not written and the service is not restarted: the server sends one on
 // every connect and on every inventory tick, and restarting proxy each time
 // would drop every live ssh session on the host every few seconds.
-func applyProxyConfig(ctx context.Context, config string) (bool, error) {
+func applyProxyConfig(ctx context.Context, cfg proto.ProxyConfig) (bool, error) {
   // Read here rather than passed in: `dagent connect` does not otherwise hold
   // the config, and the answer only matters when a file arrives.
   //
@@ -33,16 +37,25 @@ func applyProxyConfig(ctx context.Context, config string) (bool, error) {
   // so writing it would leave a routing table on disk that nothing serves and
   // that would take effect the day someone enabled the feature. Saying so is
   // more useful than silently half-doing it.
-  cfg, err := loadConfig("")
+  dcfg, err := loadConfig("")
   if err != nil {
     return false, fmt.Errorf("could not read the dagent config: %w", err)
   }
-  if !cfg.Proxy.Enable {
+  if !dcfg.Proxy.Enable {
     return false, errors.New("proxy is not enabled on this host, so the config was not installed")
   }
 
+  config := cfg.Config
   if !strings.HasSuffix(config, "\n") {
     config += "\n"
+  }
+
+  // The key first: the config about to be written names the file, so a proxy
+  // restarted between the two would come up pointing at a key that is not there
+  // -- or, on a rotation, at the previous one.
+  secretChanged, err := writeProxyCookieSecret(cfg.CookieSecretPath, cfg.CookieSecret)
+  if err != nil {
+    return false, err
   }
 
   path := serviceConfigPath(proxyService)
@@ -50,12 +63,15 @@ func applyProxyConfig(ctx context.Context, config string) (bool, error) {
   if err != nil && !os.IsNotExist(err) {
     return false, fmt.Errorf("could not read %s: %w", path, err)
   }
-  if err == nil && string(existing) == config {
+  configChanged := err != nil || string(existing) != config
+  if !configChanged && !secretChanged {
     return false, nil
   }
 
-  if err := writeFileAtomic(path, []byte(config), 0o644); err != nil {
-    return false, err
+  if configChanged {
+    if err := writeFileAtomic(path, []byte(config), 0o644); err != nil {
+      return false, err
+    }
   }
 
   // restart, not reload: proxy holds listening sockets and reads its config once
@@ -67,6 +83,54 @@ func applyProxyConfig(ctx context.Context, config string) (bool, error) {
     // table the control plane believes it replaced.
     return true, fmt.Errorf("wrote %s but could not restart %s: %w", path, proxyService, err)
   }
+  return true, nil
+}
+
+// writeProxyCookieSecret puts the key the control server signs login tokens with
+// where the auth block in proxy.yaml says it is. It reports whether the file
+// changed, so the caller restarts proxy on a rotation even when the config it
+// arrived with is byte-identical -- proxy reads the key once, at start.
+//
+// An empty secret leaves any existing file alone rather than truncating it: it
+// means the control server has no key configured, and the config it sent carries
+// no auth block, so there is nothing on this host that would read the file.
+// Truncating it would turn "auth is off" into "auth is on with an empty key" the
+// moment someone configured the server again.
+//
+// The value is written verbatim -- no trailing newline, no re-encoding. It is
+// used as raw bytes on both ends, so a byte added here is a byte the control
+// server did not sign with, and every token would fail to verify.
+func writeProxyCookieSecret(path, secret string) (bool, error) {
+  if secret == "" {
+    return false, nil
+  }
+  if path == "" {
+    // Older control servers send the key without saying where it goes. The
+    // default is the one this fleet's configs name.
+    path = dpipeCookieSecretPath
+  }
+
+  existing, err := os.ReadFile(path)
+  if err != nil && !os.IsNotExist(err) {
+    return false, fmt.Errorf("could not read %s: %w", path, err)
+  }
+  if err == nil && string(existing) == secret {
+    return false, nil
+  }
+
+  dir := filepath.Dir(path)
+  // 0700 for the same reason the ssh key directory is: what is in here is what
+  // a session on any guest of this host can be forged with.
+  if err := os.MkdirAll(dir, 0o700); err != nil {
+    return false, fmt.Errorf("could not create %s: %w", dir, err)
+  }
+  // 0600 from the moment it exists -- writeNewFile stages through a CreateTemp,
+  // which is 0600 before the rename. The error deliberately does not carry the
+  // value, and neither does any log line on this path.
+  if err := writeNewFile(path, []byte(secret), 0o600); err != nil {
+    return false, fmt.Errorf("could not write the proxy cookie secret to %s: %w", path, err)
+  }
+  log.Printf("wrote the proxy cookie secret to %s", path)
   return true, nil
 }
 

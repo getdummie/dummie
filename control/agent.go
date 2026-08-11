@@ -37,6 +37,9 @@ type AgentHandler struct {
   q    *db.Queries
   pool *pgxpool.Pool
   hub  *Hub
+  // proxy is carried only to be handed to pushProxyConfig: the generated
+  // proxy.yaml names this server and carries the key its hosts verify with.
+  proxy proxyAuthConfig
 }
 
 // openEnrollment reports whether a machine may join the fleet unauthenticated.
@@ -261,7 +264,7 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
   // Same reasoning for proxy.yaml: VMs may have come or gone while the host was
   // away. Cheap to send unconditionally -- the agent compares the file it is
   // given against the one on disk and only restarts proxy when they differ.
-  pushProxyConfig(ctx, h.q, h.hub, agent.ID)
+  pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
 
   h.readLoop(ctx, conn, agent, agentID)
 }
@@ -397,7 +400,7 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     // address that is about to belong to somebody else's guest.
     if res.OK {
       pushSuricataRules(ctx, h.q, h.hub, agent.ID)
-      pushProxyConfig(ctx, h.q, h.hub, agent.ID)
+      pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
     }
   default:
     log.Printf("agent %s: result for job %s of unknown kind %q", agentID, env.ID, res.Kind)
@@ -485,7 +488,7 @@ func (h *AgentHandler) settleCreate(ctx context.Context, agent db.Agent, agentID
   // host and is not knowable until this frame, and an entry with no target to
   // point at is not an entry. After the commit, so the generator reads the row
   // this result just wrote.
-  pushProxyConfig(ctx, h.q, h.hub, agent.ID)
+  pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
 }
 
 // handleInventory reconciles the agent's report against the registry. This is
@@ -559,7 +562,7 @@ func (h *AgentHandler) handleInventory(ctx context.Context, agent db.Agent, agen
   // tick rather than only when the report changed something: the agent restarts
   // proxy only when the file it receives differs from the one on disk, so an
   // unchanged fleet costs a frame and a comparison.
-  pushProxyConfig(ctx, h.q, h.hub, agent.ID)
+  pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
 }
 
 func (h *AgentHandler) handleMetrics(ctx context.Context, agent db.Agent, agentID string, env proto.Envelope) {
