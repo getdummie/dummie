@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +30,7 @@ type Proxy struct {
 	log      *slog.Logger
 	router   *Router
 	resolver *Resolver
+	auth     *Authenticator
 	ctrl     *Client
 
 	mu        sync.Mutex
@@ -44,11 +47,16 @@ func New(cfg *Config, log *slog.Logger) (*Proxy, error) {
 	if err != nil {
 		return nil, err
 	}
+	auth, err := NewAuthenticator(cfg.Auth)
+	if err != nil {
+		return nil, err
+	}
 	p := &Proxy{
 		cfg:      cfg,
 		log:      log,
 		router:   router,
 		resolver: resolver,
+		auth:     auth,
 		stopped:  make(chan struct{}),
 	}
 	p.ctrl = NewClient(cfg.ControlSocket, resolver, log)
@@ -208,6 +216,74 @@ func (p *Proxy) handleTCP(route TCPRoute, client net.Conn) {
 	p.handoffCopy(id, client, backend, control.ProtoTCP)
 }
 
+// authorizeHTTP applies the auth policy for one connection. It reports whether
+// the connection may proceed to the backend; when it may not, the response has
+// already been written and the caller closes.
+//
+// The check is per connection, not per request: once the first request passes,
+// the rest of the keep-alive connection is relayed unexamined. Those requests
+// come from the client that just authenticated, so this is a revocation delay
+// rather than a bypass — bound it with the backend's idle timeout.
+func (p *Proxy) authorizeHTTP(log *slog.Logger, client net.Conn, host string, prefix []byte) bool {
+	entry, ok := p.router.HostEntry(host)
+	if !ok || !entry.NeedsAuth(entry.DefaultPort) {
+		return true
+	}
+	// Tokens are scoped to the bare hostname, so a dev listener on a non-default
+	// port does not change what the control server has to sign.
+	host = httpsniff.NormalizeHost(host)
+
+	req, err := parseRequest(prefix)
+	if err != nil {
+		log.Warn("http auth: unparsable request", "host", host, "err", err)
+		writeQuick(client, 400)
+		return false
+	}
+
+	// The callback is how a user becomes authenticated, so it cannot itself
+	// require authentication.
+	if req.URL.Path == CallbackPath {
+		p.completeLogin(log, client, host, req)
+		return false
+	}
+
+	if c, err := req.Cookie(p.auth.CookieName()); err == nil {
+		if sub, ok := p.auth.Verify(c.Value, host); ok {
+			log.Info("http auth ok", "host", host, "sub", sub)
+			return true
+		}
+		log.Info("http auth: rejected cookie", "host", host)
+	}
+
+	if !wantsHTML(req) {
+		log.Info("http auth: unauthenticated non-browser request", "host", host, "path", req.URL.Path)
+		writeUnauthorized(client)
+		return false
+	}
+	login := p.auth.LoginURL(host, req.URL.RequestURI())
+	log.Info("http auth: redirecting to control server", "host", host, "path", req.URL.Path)
+	writeRedirect(client, login, "")
+	return false
+}
+
+// completeLogin handles CallbackPath: verify the token the control server
+// signed, swap it for a host-scoped session cookie and send the user on.
+func (p *Proxy) completeLogin(log *slog.Logger, client net.Conn, host string, req *http.Request) {
+	token := req.URL.Query().Get("token")
+	sub, ok := p.auth.Verify(token, host)
+	if !ok {
+		log.Warn("http auth: invalid callback token", "host", host)
+		writeUnauthorized(client)
+		return
+	}
+	next := req.URL.Query().Get("next")
+	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
+		next = "/" // never bounce to an attacker-supplied absolute URL
+	}
+	log.Info("http auth: session established", "host", host, "sub", sub)
+	writeRedirect(client, next, p.auth.SetCookie(p.auth.Mint(sub, host)))
+}
+
 // handleHTTP: plaintext HTTP, routed per connection by the first request's Host.
 func (p *Proxy) handleHTTP(client net.Conn) {
 	id := control.NewID()
@@ -227,6 +303,10 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 	if !ok {
 		log.Info("http deny: unknown host", "host", host)
 		writeQuick(client, 502)
+		_ = client.Close()
+		return
+	}
+	if !p.authorizeHTTP(log, client, host, prefix) {
 		_ = client.Close()
 		return
 	}

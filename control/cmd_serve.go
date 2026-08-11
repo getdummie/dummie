@@ -100,12 +100,13 @@ func runServe(host string, port int) error {
     os.Exit(0)
   }()
 
-  return runEchoServer(host, port, pool, loadAuthConfig())
+  cfg := loadAuthConfig()
+  return runEchoServer(host, port, pool, cfg, loadProxyAuthConfig(cfg.prod))
 }
 
 // runEchoServer starts the Echo API server: /api/v1/* is handled here, every
 // other path is reverse-proxied to the Nuxt dev server.
-func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) error {
+func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, proxyCfg proxyAuthConfig) error {
   e := echo.New()
 
   e.Use(middleware.RequestLogger())
@@ -124,6 +125,10 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
   api.POST("/signin", ah.Signin)
   api.POST("/token_refresh", ah.TokenRefresh)
   api.POST("/signout", ah.Signout)
+
+  // The proxy's login hand-off. Not under /api/ because a browser is redirected
+  // here by another host's proxy, and the path is part of that contract.
+  e.GET(proxyLoginPath, (&ProxyLoginHandler{q: q, cfg: cfg, proxy: proxyCfg}).Login)
 
   // The hub only knows about agents connected to *this* process, so any row
   // left 'online' by a previous run is stale.
@@ -232,7 +237,9 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig) er
 }
 
 // proxyToNuxt proxies every request whose path does NOT start with /api/ to the
-// Nuxt dev server. API requests fall through to the next handler.
+// Nuxt dev server. API requests fall through to the next handler, as does
+// /login: the SPA has no page there, and the proxy hand-off has to be answered
+// by this server because only it holds the signing key.
 func proxyToNuxt(target string) echo.MiddlewareFunc {
   u, err := url.Parse(target)
   if err != nil {
@@ -245,7 +252,7 @@ func proxyToNuxt(target string) echo.MiddlewareFunc {
 
   return func(next echo.HandlerFunc) echo.HandlerFunc {
     return func(c *echo.Context) error {
-      if strings.HasPrefix(c.Request().URL.Path, "/api/") {
+      if path := c.Request().URL.Path; strings.HasPrefix(path, "/api/") || path == proxyLoginPath {
         return next(c)
       }
       proxy.ServeHTTP(c.Response(), c.Request())

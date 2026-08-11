@@ -139,6 +139,33 @@ LIMIT $2 OFFSET $3;
 SELECT * FROM vms
 WHERE id = $1 AND created_by = $2;
 
+-- name: GetVMForOwnerByHostname :one
+-- GetVMForOwnerByHostname resolves the name proxy routes on -- a VM's name under
+-- the domain of the agent running it -- back to the VM, and checks in the same
+-- statement that the caller may reach it. Used by the /login hand-off, which is
+-- handed a hostname and nothing else.
+--
+-- The ownership test is in the WHERE for the same reason it is in GetVMForOwner:
+-- written as a read followed by a comparison in Go, it is a check a later edit
+-- can drop without the query stopping working.
+--
+-- is_admin widens it to any VM rather than being a second query, so there is one
+-- statement that decides who may be handed a token for a host. An unowned VM
+-- (created on the host, created_by NULL) is reachable only by an admin -- there
+-- is no user to match, and treating "nobody owns it" as "everybody owns it"
+-- would publish every adopted guest to every account.
+--
+-- 'gone' rows are excluded: the name may since have been re-used, and a token
+-- for a hostname that no longer routes anywhere is not worth minting.
+SELECT v.id
+FROM vms v
+JOIN agents a ON a.id = v.agent_id
+JOIN domains d ON d.id = a.domain_id
+WHERE v.name = sqlc.arg(name)
+  AND d.tld = sqlc.arg(domain_tld)
+  AND v.status <> 'gone'
+  AND (sqlc.arg(is_admin)::boolean OR v.created_by = sqlc.arg(owner_id));
+
 -- name: SumActiveVMUsageByOwner :one
 -- SumActiveVMUsageByOwner totals what a user is currently holding, for the
 -- quota check on create.

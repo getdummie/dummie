@@ -18,6 +18,15 @@ http: # plaintext HTTP (proxy sniffs Host + hands off a copy)
       default_port: 8002
   default: "" # still host:port; empty => 502
 
+# Required once any host protects a port. The control server signs login tokens
+# with the same secret, so rotating it means restarting the proxy — not dpipe.
+auth:
+  control_url: "http://control.local/login"
+  cookie_name: dpipe_session
+  cookie_secret_file: /etc/dpipe/keys/cookie_secret # >= 32 bytes
+  cookie_ttl: 12h
+  cookie_secure: false # true once served over HTTPS
+
 https: # TLS ingress (proxy accepts raw, dpipe terminates)
   listen: ":8443"
   reuseport: true

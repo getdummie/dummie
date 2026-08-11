@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -58,6 +59,7 @@ type Config struct {
 	HTTPS *HTTPSConfig `yaml:"https"`
 	TCP   []TCPRoute   `yaml:"tcp"`
 	SSH   *SSHConfig   `yaml:"ssh"`
+	Auth  *AuthConfig  `yaml:"auth"`
 
 	ListenForwards []ForwardConfig `yaml:"listen_forwards"`
 
@@ -97,6 +99,16 @@ func (h HTTPHost) Target() string {
 // an empty or omitted list protects everything.
 func (h HTTPHost) NeedsAuth(port int) bool {
 	return !slices.Contains(h.UnauthenticatedPorts, port)
+}
+
+// AuthConfig points at the control server that authenticates users and holds
+// the secret it shares with the proxy. Required once any host protects a port.
+type AuthConfig struct {
+	ControlURL       string   `yaml:"control_url"`
+	CookieName       string   `yaml:"cookie_name"`
+	CookieSecretFile string   `yaml:"cookie_secret_file"`
+	CookieTTL        Duration `yaml:"cookie_ttl"`
+	CookieSecure     bool     `yaml:"cookie_secure"`
 }
 
 // HTTPSConfig is the TLS ingress. Routing reuses http.hosts via
@@ -201,6 +213,21 @@ func (c *Config) Validate() error {
 					return err
 				}
 			}
+			// Fail closed: a host that wants auth but has nowhere to send the
+			// user would otherwise serve the site unauthenticated.
+			if h.NeedsAuth(h.DefaultPort) {
+				if c.Auth == nil {
+					return fmt.Errorf("config: %s requires auth (port %d is not in unauthenticated_ports) but auth: is not configured",
+						field, h.DefaultPort)
+				}
+				// The https ingress hands the raw socket to dpipe, which
+				// terminates TLS — the proxy never sees the request and cannot
+				// apply this policy there.
+				if c.HTTPS != nil {
+					return fmt.Errorf("config: %s requires auth, which is not enforced on the https ingress yet; remove https: or make the port unauthenticated",
+						field)
+				}
+			}
 		}
 		if c.HTTP.Default != "" {
 			if err := validHostPort("http.default", c.HTTP.Default); err != nil {
@@ -251,6 +278,18 @@ func (c *Config) Validate() error {
 	}
 	if ingress == 0 {
 		return errors.New("config: at least one ingress (http, https, tcp or ssh) is required")
+	}
+
+	if c.Auth != nil {
+		if c.Auth.ControlURL == "" {
+			return errors.New("config: auth.control_url is required")
+		}
+		if _, err := url.Parse(c.Auth.ControlURL); err != nil {
+			return fmt.Errorf("config: auth.control_url %q: %w", c.Auth.ControlURL, err)
+		}
+		if c.Auth.CookieSecretFile == "" {
+			return errors.New("config: auth.cookie_secret_file is required")
+		}
 	}
 
 	for i, f := range c.ListenForwards {

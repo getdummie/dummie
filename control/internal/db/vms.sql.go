@@ -241,6 +241,53 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 	return i, err
 }
 
+const getVMForOwnerByHostname = `-- name: GetVMForOwnerByHostname :one
+SELECT v.id
+FROM vms v
+JOIN agents a ON a.id = v.agent_id
+JOIN domains d ON d.id = a.domain_id
+WHERE v.name = $1
+  AND d.tld = $2
+  AND v.status <> 'gone'
+  AND ($3::boolean OR v.created_by = $4)
+`
+
+type GetVMForOwnerByHostnameParams struct {
+	Name      string
+	DomainTLD string
+	IsAdmin   bool
+	OwnerID   pgtype.UUID
+}
+
+// GetVMForOwnerByHostname resolves the name proxy routes on -- a VM's name under
+// the domain of the agent running it -- back to the VM, and checks in the same
+// statement that the caller may reach it. Used by the /login hand-off, which is
+// handed a hostname and nothing else.
+//
+// The ownership test is in the WHERE for the same reason it is in GetVMForOwner:
+// written as a read followed by a comparison in Go, it is a check a later edit
+// can drop without the query stopping working.
+//
+// is_admin widens it to any VM rather than being a second query, so there is one
+// statement that decides who may be handed a token for a host. An unowned VM
+// (created on the host, created_by NULL) is reachable only by an admin -- there
+// is no user to match, and treating "nobody owns it" as "everybody owns it"
+// would publish every adopted guest to every account.
+//
+// 'gone' rows are excluded: the name may since have been re-used, and a token
+// for a hostname that no longer routes anywhere is not worth minting.
+func (q *Queries) GetVMForOwnerByHostname(ctx context.Context, arg GetVMForOwnerByHostnameParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getVMForOwnerByHostname,
+		arg.Name,
+		arg.DomainTLD,
+		arg.IsAdmin,
+		arg.OwnerID,
+	)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const listProxyHTTPRoutesByAgent = `-- name: ListProxyHTTPRoutesByAgent :many
 SELECT v.name AS vm_name, v.ip AS vm_ip, v.vm_id AS host_vm_id,
        v.default_port, v.public_ports, d.tld AS domain_tld

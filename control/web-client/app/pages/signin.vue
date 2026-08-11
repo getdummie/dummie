@@ -4,11 +4,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { safeRedirect } from '@/lib/redirect'
 
 definePageMeta({ middleware: 'guest' })
 useHead({ title: 'dummie — sign in' })
 
 const { signin } = useAuth()
+const route = useRoute()
 
 const identifier = ref('')
 const password = ref('')
@@ -20,7 +22,11 @@ async function onSubmit() {
   loading.value = true
   try {
     await signin(identifier.value, password.value)
-    await navigateTo('/dashboard')
+    // ?redirect is how /login (the proxy hand-off, served by the API and not by
+    // Nuxt) gets the browser back to itself with its params intact. external:
+    // true because it is not a route in this app.
+    const back = safeRedirect(route.query.redirect)
+    await navigateTo(back ?? '/dashboard', back ? { external: true } : undefined)
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Sign in failed'

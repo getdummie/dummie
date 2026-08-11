@@ -8,6 +8,7 @@ import (
 // reads it directly, the HTTPS path reads it via resolve{kind:"http"}.
 type Router struct {
 	hosts   map[string]string
+	entries map[string]HTTPHost
 	def     string
 	tcp     map[string]TCPRoute
 	tcpList []TCPRoute
@@ -15,10 +16,11 @@ type Router struct {
 
 // NewRouter builds the routing tables from the configuration.
 func NewRouter(cfg *Config) *Router {
-	r := &Router{hosts: map[string]string{}, tcp: map[string]TCPRoute{}}
+	r := &Router{hosts: map[string]string{}, entries: map[string]HTTPHost{}, tcp: map[string]TCPRoute{}}
 	if cfg.HTTP != nil {
 		for host, h := range cfg.HTTP.Hosts {
 			r.hosts[httpsniff.NormalizeHost(host)] = h.Target()
+			r.entries[httpsniff.NormalizeHost(host)] = h
 		}
 		r.def = cfg.HTTP.Default
 	}
@@ -44,6 +46,13 @@ func (r *Router) HostBackend(host string) (string, bool) {
 		return r.def, true
 	}
 	return "", false
+}
+
+// HostEntry returns the configured entry for a host. The http.default fallback
+// has no entry, so a request routed there is never treated as protected.
+func (r *Router) HostEntry(host string) (HTTPHost, bool) {
+	h, ok := r.entries[httpsniff.NormalizeHost(host)]
+	return h, ok
 }
 
 // TCPRoutes returns the configured opaque TCP routes.
