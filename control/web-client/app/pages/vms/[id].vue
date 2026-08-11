@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, ExternalLink, Pencil, Plus, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ExternalLink, Pencil, Plus, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -227,6 +227,32 @@ const portsOpen = ref(false)
 const savingPorts = ref(false)
 const portsError = ref<string | null>(null)
 const portsForm = reactive({ default_port: '8000', public_ports: '' })
+
+// The hostname the server published this VM under -- name plus the domain of
+// its host. Taken from the url rather than built here because the domain half
+// is not on the VM row, and "" when the host has no domain at all.
+const sshHost = computed(() => {
+  if (!vm.value?.url) return ''
+  try {
+    return new URL(vm.value.url).hostname
+  }
+  catch {
+    return ''
+  }
+})
+const sshCommand = computed(() => `ssh ${sshHost.value}`)
+const sshCopied = ref(false)
+
+async function copySsh() {
+  try {
+    await navigator.clipboard.writeText(sshCommand.value)
+    sshCopied.value = true
+    setTimeout(() => (sshCopied.value = false), 2000)
+  }
+  catch {
+    actionError.value = `Could not copy to the clipboard; the command is: ${sshCommand.value}`
+  }
+}
 
 /** "8000, 9090" -> [8000, 9090]. Blank entries are dropped, not zeroed. */
 function parsePorts(s: string): number[] {
@@ -468,63 +494,82 @@ async function confirmRemove() {
               one. Changes reach the host straight away.
             </p>
           </div>
-          <Dialog v-model:open="portsOpen">
-            <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
-              <Pencil class="size-4" aria-hidden="true" />
-              Edit
+          <div class="flex flex-wrap items-center gap-2">
+            <!-- Only when there is a hostname: without a domain there is nothing
+                 to ssh to, and a bare name would copy a command that fails. -->
+            <Button
+              v-if="sshHost"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :title="sshCommand"
+              :aria-label="`Copy ${sshCommand} to the clipboard`"
+              @click="copySsh"
+            >
+              <component :is="sshCopied ? Check : Terminal" class="size-4" aria-hidden="true" />
+              {{ sshCopied ? 'Copied' : 'SSH' }}
             </Button>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Edit ports</DialogTitle>
-                <DialogDescription>
-                  Requests reach this VM as
-                  <span class="font-mono text-foreground">{{ vm.name }}</span>, whichever ports it
-                  publishes.
-                </DialogDescription>
-              </DialogHeader>
-              <form class="space-y-4" :aria-busy="savingPorts" @submit.prevent="savePorts">
-                <div class="space-y-2">
-                  <Label for="ports-default">Default port</Label>
-                  <Input
-                    id="ports-default"
-                    v-model="portsForm.default_port"
-                    type="number"
-                    min="1"
-                    max="65535"
-                    inputmode="numeric"
-                    aria-describedby="ports-default-hint"
-                  />
-                  <p id="ports-default-hint" class="text-xs text-muted-foreground">
-                    Where a request goes when it does not pick a port.
-                  </p>
-                </div>
-                <div class="space-y-2">
-                  <Label for="ports-public">Public ports</Label>
-                  <Input
-                    id="ports-public"
-                    v-model="portsForm.public_ports"
-                    placeholder="8000, 9090"
-                    inputmode="numeric"
-                    aria-describedby="ports-public-hint"
-                  />
-                  <p id="ports-public-hint" class="text-xs text-muted-foreground">
-                    Comma separated. Empty publishes nothing.
-                  </p>
-                </div>
+            <span role="status" aria-live="polite" class="sr-only">
+              {{ sshCopied ? 'SSH command copied to clipboard' : '' }}
+            </span>
+            <Dialog v-model:open="portsOpen">
+              <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
+                <Pencil class="size-4" aria-hidden="true" />
+                Edit
+              </Button>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Edit ports</DialogTitle>
+                  <DialogDescription>
+                    Requests reach this VM as
+                    <span class="font-mono text-foreground">{{ vm.name }}</span>, whichever ports it
+                    publishes.
+                  </DialogDescription>
+                </DialogHeader>
+                <form class="space-y-4" :aria-busy="savingPorts" @submit.prevent="savePorts">
+                  <div class="space-y-2">
+                    <Label for="ports-default">Default port</Label>
+                    <Input
+                      id="ports-default"
+                      v-model="portsForm.default_port"
+                      type="number"
+                      min="1"
+                      max="65535"
+                      inputmode="numeric"
+                      aria-describedby="ports-default-hint"
+                    />
+                    <p id="ports-default-hint" class="text-xs text-muted-foreground">
+                      Where a request goes when it does not pick a port.
+                    </p>
+                  </div>
+                  <div class="space-y-2">
+                    <Label for="ports-public">Public ports</Label>
+                    <Input
+                      id="ports-public"
+                      v-model="portsForm.public_ports"
+                      placeholder="8000, 9090"
+                      inputmode="numeric"
+                      aria-describedby="ports-public-hint"
+                    />
+                    <p id="ports-public-hint" class="text-xs text-muted-foreground">
+                      Comma separated. Empty publishes nothing.
+                    </p>
+                  </div>
 
-                <FormError id="ports-error" :message="portsError" />
+                  <FormError id="ports-error" :message="portsError" />
 
-                <DialogFooter>
-                  <DialogClose as-child>
-                    <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
-                  </DialogClose>
-                  <Button type="submit" class="font-mono text-xs" :disabled="savingPorts">
-                    {{ savingPorts ? 'Saving…' : 'Save' }}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+                  <DialogFooter>
+                    <DialogClose as-child>
+                      <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                    </DialogClose>
+                    <Button type="submit" class="font-mono text-xs" :disabled="savingPorts">
+                      {{ savingPorts ? 'Saving…' : 'Save' }}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
