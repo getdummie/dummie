@@ -36,6 +36,9 @@ type UserHandler struct {
   prod bool
   // proxy is carried only to be handed to pushProxyConfig.
   proxy proxyAuthConfig
+  // blobs mints the download link a host fetches a chosen kernel from. nil when
+  // no bucket is configured, which is what makes a create impossible to serve.
+  blobs *blobStore
 }
 
 // vmURL is where a VM answers http: its name under the domain of the host it
@@ -194,6 +197,42 @@ func (h *UserHandler) ListHosts(c *echo.Context) error {
   return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
+// userKernelDTO is a kernel as the create form shows it. No object key and no
+// download link: a user picks a kernel, and the link a host fetches it from is
+// minted server-side when the job is built.
+type userKernelDTO struct {
+  ID          string `json:"id"`
+  Name        string `json:"name"`
+  Description string `json:"description"`
+  SizeBytes   int64  `json:"size_bytes"`
+  CreatedAt   string `json:"created_at"`
+}
+
+// maxKernelChoices bounds the list handed to the picker. Well above any real
+// catalogue; it exists so the form is not asked to render an unbounded list.
+const maxKernelChoices = 100
+
+// ListKernels offers the catalogue, newest first, to any signed-in caller.
+// Withdrawn kernels are not in it: the query leaves them out, which is what
+// stops a user choosing one the create would then refuse.
+func (h *UserHandler) ListKernels(c *echo.Context) error {
+  rows, err := h.q.ListKernels(c.Request().Context(), db.ListKernelsParams{Limit: maxKernelChoices})
+  if err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not list kernels")
+  }
+  items := make([]userKernelDTO, 0, len(rows))
+  for _, k := range rows {
+    items = append(items, userKernelDTO{
+      ID:          uuid.UUID(k.ID.Bytes).String(),
+      Name:        k.Name,
+      Description: k.Description,
+      SizeBytes:   k.SizeBytes,
+      CreatedAt:   k.CreatedAt.Time.Format(time.RFC3339),
+    })
+  }
+  return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
 // createVMReq is deliberately narrower than proto.VMSpec. A self-service caller
 // gets the size, the two artifacts and their checksums; boot mode, addressing
 // and egress policy are decided here, not by the request.
@@ -206,9 +245,12 @@ type createVMReq struct {
   // the base image, which is cached by the tar's digest alone and shared by
   // every VM built from that tar -- so a per-user value there would be silently
   // ignored for everyone after the first.
-  DiskSize     string `json:"disk_size"`
-  Kernel       string `json:"kernel"`
-  KernelSHA    string `json:"kernel_sha256"`
+  DiskSize string `json:"disk_size"`
+  // KernelID names a row in the kernels catalogue. A caller picks from what an
+  // admin uploaded rather than supplying a url: the artifact a guest boots is
+  // the installation's decision, and an arbitrary url would make every VM's
+  // kernel a fetch from wherever its creator pointed.
+  KernelID     string `json:"kernel_id"`
   RootfsTar    string `json:"rootfs_tar"`
   RootfsTarSHA string `json:"rootfs_tar_sha256"`
 
@@ -330,8 +372,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusBadRequest, err.Error())
   }
   req.DiskSize = strings.TrimSpace(req.DiskSize)
-  req.Kernel = strings.TrimSpace(req.Kernel)
-  req.KernelSHA = strings.TrimSpace(req.KernelSHA)
+  req.KernelID = strings.TrimSpace(req.KernelID)
   req.RootfsTar = strings.TrimSpace(req.RootfsTar)
   req.RootfsTarSHA = strings.TrimSpace(req.RootfsTarSHA)
 
@@ -341,8 +382,12 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   if req.MemoryMiB < 64 {
     return echo.NewHTTPError(http.StatusBadRequest, "memory_mib must be at least 64")
   }
-  if req.Kernel == "" {
-    return echo.NewHTTPError(http.StatusBadRequest, "a kernel url is required")
+  if req.KernelID == "" {
+    return echo.NewHTTPError(http.StatusBadRequest, "a kernel is required")
+  }
+  pgKernelID, err := parseUUID(req.KernelID)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid kernel id")
   }
   if req.RootfsTar == "" {
     return echo.NewHTTPError(http.StatusBadRequest, "a root filesystem tar url is required")
@@ -353,9 +398,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   diskMiB, err := parseSizeMiB(req.DiskSize)
   if err != nil {
     return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
-  }
-  if req.KernelSHA != "" && !sha256Pattern.MatchString(req.KernelSHA) {
-    return echo.NewHTTPError(http.StatusBadRequest, "the kernel sha256 must be 64 hex characters")
   }
   if req.RootfsTarSHA != "" && !sha256Pattern.MatchString(req.RootfsTarSHA) {
     return echo.NewHTTPError(http.StatusBadRequest, "the root filesystem tar sha256 must be 64 hex characters")
@@ -431,13 +473,36 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusConflict, "that host is not connected")
   }
 
+  // The chosen kernel becomes a link the host can fetch. Minted here, at the
+  // moment the job is built, because it expires: a link stored earlier and used
+  // later is a create that fails for no reason the user can see.
+  if h.blobs == nil {
+    return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
+  }
+  kernel, err := h.q.GetKernel(ctx, pgKernelID)
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "no such kernel")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not read the kernel")
+  }
+  if kernel.SoftDeletedAt.Valid {
+    return echo.NewHTTPError(http.StatusConflict, "that kernel has been withdrawn; choose another")
+  }
+  // Signed for the public endpoint, since the host doing the download sits
+  // outside this server's network -- the same reason a browser needs that name.
+  kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
+  if err != nil {
+    log.Printf("could not presign kernel %s for a create: %v", req.KernelID, err)
+    return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the kernel download")
+  }
+
   // Boot mode and egress are fixed for self-service creates: direct boot from a
   // kernel plus a tar-built rootfs, with unrestricted outbound. A user chooses
   // the artifacts and the size, not the policy.
   spec := proto.VMSpec{
     Boot:         "direct",
-    Kernel:       req.Kernel,
-    KernelSHA:    req.KernelSHA,
+    Kernel:       kernelURL,
     RootfsTar:    req.RootfsTar,
     RootfsTarSHA: req.RootfsTarSHA,
     DiskSize:     req.DiskSize,

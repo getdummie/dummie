@@ -1,8 +1,16 @@
 <script setup lang="ts">
-import { Copy, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { Check, ChevronsUpDown, Copy, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import {
   Dialog,
   DialogClose,
@@ -14,6 +22,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
@@ -99,6 +108,18 @@ function fmtMiB(mib: number) {
   if (mib < 1024) return `${mib} MiB`
   const gib = mib / 1024
   return Number.isInteger(gib) ? `${gib} GiB` : `${gib.toFixed(1)} GiB`
+}
+
+function fmtBytes(n: number) {
+  if (!n) return '—'
+  const units = ['B', 'KiB', 'MiB', 'GiB', 'TiB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`
 }
 
 // 11th–13th are the exception the mod-10 rule gets wrong.
@@ -230,6 +251,35 @@ function hostLabel(h: Host) {
   return h.hostname || `${h.id.slice(0, 8)}…`
 }
 
+// --- kernels ---
+//
+// The catalogue an admin uploaded, newest first as the API returns it. A user
+// picks from it rather than typing a url: what a guest boots is the
+// installation's decision.
+interface Kernel {
+  id: string
+  name: string
+  description: string
+  size_bytes: number
+  created_at: string
+}
+
+const kernels = ref<Kernel[]>([])
+const kernelsError = ref<string | null>(null)
+const kernelOpen = ref(false)
+
+async function loadKernels() {
+  kernelsError.value = null
+  try {
+    const res = await authFetch('/vms/kernels')
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    kernels.value = (await res.json()).items ?? []
+  }
+  catch (e) {
+    kernelsError.value = e instanceof Error ? e.message : 'Could not load kernels'
+  }
+}
+
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref<string | null>(null)
@@ -243,12 +293,18 @@ const blankForm = {
   public_ports: '',
   // Sizes the per-VM overlay, not the shared base image built from the tar.
   disk_size: '2G',
-  kernel: '',
-  kernel_sha256: '',
+  kernel_id: '',
   rootfs_tar: '',
   rootfs_tar_sha256: '',
 }
 const form = reactive({ ...blankForm })
+
+const selectedKernel = computed(() => kernels.value.find(k => k.id === form.kernel_id) ?? null)
+
+function pickKernel(id: string) {
+  form.kernel_id = id
+  kernelOpen.value = false
+}
 
 function resetForm() {
   Object.assign(form, blankForm)
@@ -263,10 +319,15 @@ async function openCreate() {
   resetForm()
   copiedFrom.value = null
   createOpen.value = true
-  // A host that came online since the page loaded should be pickable now.
-  await loadHosts()
+  // A host that came online since the page loaded should be pickable now, and
+  // so should a kernel uploaded since then.
+  await Promise.all([loadHosts(), loadKernels()])
   // Preselect when there is no choice to make; with several, the pick is real.
   if (hosts.value.length === 1) form.agent_id = hosts.value[0]!.id
+  // The newest kernel is the one almost always wanted, and the list arrives in
+  // that order, so it starts selected rather than making an empty pick the
+  // default state of the form.
+  form.kernel_id = kernels.value[0]?.id ?? ''
 }
 
 // Only a VM this server created has a spec to copy. One adopted from a host's
@@ -295,13 +356,15 @@ async function openCopy(v: VM) {
   // From the spec, not from disk_mib: the spec holds what was typed ("2G"),
   // which is what belongs back in the field. disk_mib is the parsed number.
   form.disk_size = specStr(v.spec, 'disk_size') || '2G'
-  form.kernel = specStr(v.spec, 'kernel')
-  form.kernel_sha256 = specStr(v.spec, 'kernel_sha256')
   form.rootfs_tar = specStr(v.spec, 'rootfs_tar')
   form.rootfs_tar_sha256 = specStr(v.spec, 'rootfs_tar_sha256')
 
   createOpen.value = true
-  await loadHosts()
+  await Promise.all([loadHosts(), loadKernels()])
+  // The kernel is not copied: the spec holds the expiring link the host was
+  // given, not which catalogue entry it came from. The newest is preselected,
+  // same as a fresh create.
+  form.kernel_id = kernels.value[0]?.id ?? ''
   // The original host only if it is still connected — otherwise the create
   // would be rejected, and preselecting an unusable host hides why.
   if (hosts.value.some(h => h.id === v.agent_id)) form.agent_id = v.agent_id
@@ -366,15 +429,13 @@ function validate(): string | null {
   const memory = Number(form.memory_mib)
   if (!Number.isInteger(cpus) || cpus < 1) return 'vCPU must be a whole number of at least 1.'
   if (!Number.isInteger(memory) || memory < 64) return 'Memory must be at least 64 MiB.'
-  if (!form.kernel.trim()) return 'A kernel URL is required.'
+  if (!form.kernel_id) return 'Choose a kernel.'
   if (!form.rootfs_tar.trim()) return 'A root filesystem tar URL is required.'
   if (form.disk_size.trim() && !/^\d+[KkMmGgTt]?$/.test(form.disk_size.trim())) {
     return 'Disk size must be a number, optionally with a K, M, G or T suffix — e.g. 2G.'
   }
-  for (const [label, v] of [['kernel', form.kernel_sha256], ['root filesystem tar', form.rootfs_tar_sha256]] as const) {
-    if (v.trim() && !/^[0-9a-f]{64}$/i.test(v.trim())) {
-      return `The ${label} SHA256 must be 64 hex characters.`
-    }
+  if (form.rootfs_tar_sha256.trim() && !/^[0-9a-f]{64}$/i.test(form.rootfs_tar_sha256.trim())) {
+    return 'The root filesystem tar SHA256 must be 64 hex characters.'
   }
   return null
 }
@@ -399,8 +460,7 @@ async function create() {
         default_port: Number(form.default_port),
         public_ports: parsePorts(form.public_ports),
         disk_size: form.disk_size,
-        kernel: form.kernel,
-        kernel_sha256: form.kernel_sha256,
+        kernel_id: form.kernel_id,
         rootfs_tar: form.rootfs_tar,
         rootfs_tar_sha256: form.rootfs_tar_sha256,
       }),
@@ -609,14 +669,60 @@ async function confirmDestroy() {
               </div>
 
               <div class="space-y-2">
-                <Label for="vm-kernel">Kernel URL</Label>
-                <Input id="vm-kernel" v-model="form.kernel" required placeholder="https://…/vmlinuz" />
-                <Input
-                  v-model="form.kernel_sha256"
-                  class="font-mono text-xs"
-                  placeholder="sha256 (optional)"
-                  aria-label="Kernel SHA256, optional"
-                />
+                <Label for="vm-kernel">Kernel</Label>
+                <Popover v-model:open="kernelOpen">
+                  <PopoverTrigger as-child>
+                    <Button
+                      id="vm-kernel"
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      :aria-expanded="kernelOpen"
+                      class="w-full justify-between font-mono text-xs font-normal"
+                      :disabled="!kernels.length"
+                    >
+                      <span class="truncate">
+                        {{ selectedKernel?.name ?? (kernels.length ? 'Choose a kernel' : 'No kernels available') }}
+                      </span>
+                      <ChevronsUpDown class="size-4 shrink-0 opacity-50" aria-hidden="true" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent class="w-(--reka-popover-trigger-width) p-0">
+                    <Command>
+                      <CommandInput placeholder="Search kernels…" />
+                      <CommandList>
+                        <CommandEmpty>No kernel matches that.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem
+                            v-for="k in kernels"
+                            :key="k.id"
+                            :value="k.name"
+                            class="gap-2"
+                            @select="pickKernel(k.id)"
+                          >
+                            <Check
+                              class="size-4 shrink-0"
+                              :class="k.id === form.kernel_id ? 'opacity-100' : 'opacity-0'"
+                              aria-hidden="true"
+                            />
+                            <span class="truncate font-mono text-xs">{{ k.name }}</span>
+                            <span class="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                              {{ fmtBytes(k.size_bytes) }}
+                            </span>
+                          </CommandItem>
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <!-- Uploaded by an admin under Kernels; a user picks from the
+                     catalogue rather than pointing at an arbitrary url. -->
+                <p v-if="selectedKernel?.description" class="text-xs text-muted-foreground">
+                  {{ selectedKernel.description }}
+                </p>
+                <p v-else-if="!kernels.length" class="text-xs text-muted-foreground">
+                  {{ kernelsError ?? 'No kernels have been uploaded yet. Ask an admin to add one.' }}
+                </p>
               </div>
 
               <div class="space-y-2">
