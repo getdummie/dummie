@@ -251,11 +251,11 @@ function hostLabel(h: Host) {
   return h.hostname || `${h.id.slice(0, 8)}…`
 }
 
-// --- kernels ---
+// --- kernels and os images ---
 //
-// The catalogue an admin uploaded, newest first as the API returns it. A user
-// picks from it rather than typing a url: what a guest boots is the
-// installation's decision.
+// The catalogues an admin uploaded, newest first as the API returns them. A user
+// picks from them rather than typing urls: what a guest boots is the
+// installation's decision. Both lists carry the same fields, so one shape does.
 interface Kernel {
   id: string
   name: string
@@ -268,6 +268,10 @@ const kernels = ref<Kernel[]>([])
 const kernelsError = ref<string | null>(null)
 const kernelOpen = ref(false)
 
+const osImages = ref<Kernel[]>([])
+const osImagesError = ref<string | null>(null)
+const osImageOpen = ref(false)
+
 async function loadKernels() {
   kernelsError.value = null
   try {
@@ -277,6 +281,18 @@ async function loadKernels() {
   }
   catch (e) {
     kernelsError.value = e instanceof Error ? e.message : 'Could not load kernels'
+  }
+}
+
+async function loadOSImages() {
+  osImagesError.value = null
+  try {
+    const res = await authFetch('/vms/osimages')
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    osImages.value = (await res.json()).items ?? []
+  }
+  catch (e) {
+    osImagesError.value = e instanceof Error ? e.message : 'Could not load OS images'
   }
 }
 
@@ -294,16 +310,21 @@ const blankForm = {
   // Sizes the per-VM overlay, not the shared base image built from the tar.
   disk_size: '2G',
   kernel_id: '',
-  rootfs_tar: '',
-  rootfs_tar_sha256: '',
+  osimage_id: '',
 }
 const form = reactive({ ...blankForm })
 
 const selectedKernel = computed(() => kernels.value.find(k => k.id === form.kernel_id) ?? null)
+const selectedOSImage = computed(() => osImages.value.find(o => o.id === form.osimage_id) ?? null)
 
 function pickKernel(id: string) {
   form.kernel_id = id
   kernelOpen.value = false
+}
+
+function pickOSImage(id: string) {
+  form.osimage_id = id
+  osImageOpen.value = false
 }
 
 function resetForm() {
@@ -319,15 +340,16 @@ async function openCreate() {
   resetForm()
   copiedFrom.value = null
   createOpen.value = true
-  // A host that came online since the page loaded should be pickable now, and
-  // so should a kernel uploaded since then.
-  await Promise.all([loadHosts(), loadKernels()])
+  // A host that came online since the page loaded should be pickable now, and so
+  // should an artifact uploaded since then.
+  await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
   // Preselect when there is no choice to make; with several, the pick is real.
   if (hosts.value.length === 1) form.agent_id = hosts.value[0]!.id
-  // The newest kernel is the one almost always wanted, and the list arrives in
-  // that order, so it starts selected rather than making an empty pick the
+  // The newest of each is the one almost always wanted, and the lists arrive in
+  // that order, so they start selected rather than making an empty pick the
   // default state of the form.
   form.kernel_id = kernels.value[0]?.id ?? ''
+  form.osimage_id = osImages.value[0]?.id ?? ''
 }
 
 // Only a VM this server created has a spec to copy. One adopted from a host's
@@ -356,15 +378,14 @@ async function openCopy(v: VM) {
   // From the spec, not from disk_mib: the spec holds what was typed ("2G"),
   // which is what belongs back in the field. disk_mib is the parsed number.
   form.disk_size = specStr(v.spec, 'disk_size') || '2G'
-  form.rootfs_tar = specStr(v.spec, 'rootfs_tar')
-  form.rootfs_tar_sha256 = specStr(v.spec, 'rootfs_tar_sha256')
 
   createOpen.value = true
-  await Promise.all([loadHosts(), loadKernels()])
-  // The kernel is not copied: the spec holds the expiring link the host was
-  // given, not which catalogue entry it came from. The newest is preselected,
-  // same as a fresh create.
+  await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
+  // Neither artifact is copied: the spec holds the expiring links the host was
+  // given, not which catalogue entries they came from. The newest of each is
+  // preselected, same as a fresh create.
   form.kernel_id = kernels.value[0]?.id ?? ''
+  form.osimage_id = osImages.value[0]?.id ?? ''
   // The original host only if it is still connected — otherwise the create
   // would be rejected, and preselecting an unusable host hides why.
   if (hosts.value.some(h => h.id === v.agent_id)) form.agent_id = v.agent_id
@@ -430,12 +451,9 @@ function validate(): string | null {
   if (!Number.isInteger(cpus) || cpus < 1) return 'vCPU must be a whole number of at least 1.'
   if (!Number.isInteger(memory) || memory < 64) return 'Memory must be at least 64 MiB.'
   if (!form.kernel_id) return 'Choose a kernel.'
-  if (!form.rootfs_tar.trim()) return 'A root filesystem tar URL is required.'
+  if (!form.osimage_id) return 'Choose an OS image.'
   if (form.disk_size.trim() && !/^\d+[KkMmGgTt]?$/.test(form.disk_size.trim())) {
     return 'Disk size must be a number, optionally with a K, M, G or T suffix — e.g. 2G.'
-  }
-  if (form.rootfs_tar_sha256.trim() && !/^[0-9a-f]{64}$/i.test(form.rootfs_tar_sha256.trim())) {
-    return 'The root filesystem tar SHA256 must be 64 hex characters.'
   }
   return null
 }
@@ -461,8 +479,7 @@ async function create() {
         public_ports: parsePorts(form.public_ports),
         disk_size: form.disk_size,
         kernel_id: form.kernel_id,
-        rootfs_tar: form.rootfs_tar,
-        rootfs_tar_sha256: form.rootfs_tar_sha256,
+        osimage_id: form.osimage_id,
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -731,14 +748,58 @@ async function confirmDestroy() {
               </div>
 
               <div class="space-y-2">
-                <Label for="vm-rootfs-tar">Root filesystem tar URL</Label>
-                <Input id="vm-rootfs-tar" v-model="form.rootfs_tar" required placeholder="https://…/rootfs.tar" />
-                <Input
-                  v-model="form.rootfs_tar_sha256"
-                  class="font-mono text-xs"
-                  placeholder="sha256 (optional)"
-                  aria-label="Root filesystem tar SHA256, optional"
-                />
+                <Label for="vm-osimage">OS image</Label>
+                <Popover v-model:open="osImageOpen">
+                  <PopoverTrigger as-child>
+                    <Button
+                      id="vm-osimage"
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      :aria-expanded="osImageOpen"
+                      class="w-full justify-between font-mono text-xs font-normal"
+                      :disabled="!osImages.length"
+                    >
+                      <span class="truncate">
+                        {{ selectedOSImage?.name ?? (osImages.length ? 'Choose an OS image' : 'No OS images available') }}
+                      </span>
+                      <ChevronsUpDown class="size-4 shrink-0 opacity-50" aria-hidden="true" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent class="w-(--reka-popover-trigger-width) p-0">
+                    <Command>
+                      <CommandInput placeholder="Search OS images…" />
+                      <CommandList>
+                        <CommandEmpty>No OS image matches that.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem
+                            v-for="o in osImages"
+                            :key="o.id"
+                            :value="o.name"
+                            class="gap-2"
+                            @select="pickOSImage(o.id)"
+                          >
+                            <Check
+                              class="size-4 shrink-0"
+                              :class="o.id === form.osimage_id ? 'opacity-100' : 'opacity-0'"
+                              aria-hidden="true"
+                            />
+                            <span class="truncate font-mono text-xs">{{ o.name }}</span>
+                            <span class="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                              {{ fmtBytes(o.size_bytes) }}
+                            </span>
+                          </CommandItem>
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <p v-if="selectedOSImage?.description" class="text-xs text-muted-foreground">
+                  {{ selectedOSImage.description }}
+                </p>
+                <p v-else-if="!osImages.length" class="text-xs text-muted-foreground">
+                  {{ osImagesError ?? 'No OS images have been uploaded yet. Ask an admin to add one.' }}
+                </p>
               </div>
 
               <p v-if="wouldExceed" class="text-sm text-destructive">

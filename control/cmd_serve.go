@@ -207,6 +207,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
   vms.GET("/quota", userH.GetQuota)
   vms.GET("/hosts", userH.ListHosts)
   vms.GET("/kernels", userH.ListKernels)
+  vms.GET("/osimages", userH.ListOSImages)
   vms.GET("/:id", userH.GetVM)
   vms.POST("/:id/start", userH.StartVM)
   vms.POST("/:id/stop", userH.StopVM)

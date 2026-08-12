@@ -197,10 +197,11 @@ func (h *UserHandler) ListHosts(c *echo.Context) error {
   return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
-// userKernelDTO is a kernel as the create form shows it. No object key and no
-// download link: a user picks a kernel, and the link a host fetches it from is
-// minted server-side when the job is built.
-type userKernelDTO struct {
+// userArtifactDTO is one catalogue entry -- a kernel or an OS image -- as the
+// create form shows it. No object key and no download link: a user picks an
+// entry, and the link a host fetches it from is minted server-side when the job
+// is built.
+type userArtifactDTO struct {
   ID          string `json:"id"`
   Name        string `json:"name"`
   Description string `json:"description"`
@@ -208,26 +209,46 @@ type userKernelDTO struct {
   CreatedAt   string `json:"created_at"`
 }
 
-// maxKernelChoices bounds the list handed to the picker. Well above any real
+// maxArtifactChoices bounds the list handed to the picker. Well above any real
 // catalogue; it exists so the form is not asked to render an unbounded list.
-const maxKernelChoices = 100
+const maxArtifactChoices = 100
 
 // ListKernels offers the catalogue, newest first, to any signed-in caller.
 // Withdrawn kernels are not in it: the query leaves them out, which is what
 // stops a user choosing one the create would then refuse.
 func (h *UserHandler) ListKernels(c *echo.Context) error {
-  rows, err := h.q.ListKernels(c.Request().Context(), db.ListKernelsParams{Limit: maxKernelChoices})
+  rows, err := h.q.ListKernels(c.Request().Context(), db.ListKernelsParams{Limit: maxArtifactChoices})
   if err != nil {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not list kernels")
   }
-  items := make([]userKernelDTO, 0, len(rows))
+  items := make([]userArtifactDTO, 0, len(rows))
   for _, k := range rows {
-    items = append(items, userKernelDTO{
+    items = append(items, userArtifactDTO{
       ID:          uuid.UUID(k.ID.Bytes).String(),
       Name:        k.Name,
       Description: k.Description,
       SizeBytes:   k.SizeBytes,
       CreatedAt:   k.CreatedAt.Time.Format(time.RFC3339),
+    })
+  }
+  return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
+// ListOSImages offers the OS image catalogue on the same terms as the kernel
+// one: newest first, withdrawn entries left out, no keys or links.
+func (h *UserHandler) ListOSImages(c *echo.Context) error {
+  rows, err := h.q.ListOSImages(c.Request().Context(), db.ListOSImagesParams{Limit: maxArtifactChoices})
+  if err != nil {
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not list os images")
+  }
+  items := make([]userArtifactDTO, 0, len(rows))
+  for _, o := range rows {
+    items = append(items, userArtifactDTO{
+      ID:          uuid.UUID(o.ID.Bytes).String(),
+      Name:        o.Name,
+      Description: o.Description,
+      SizeBytes:   o.SizeBytes,
+      CreatedAt:   o.CreatedAt.Time.Format(time.RFC3339),
     })
   }
   return c.JSON(http.StatusOK, map[string]any{"items": items})
@@ -250,9 +271,10 @@ type createVMReq struct {
   // admin uploaded rather than supplying a url: the artifact a guest boots is
   // the installation's decision, and an arbitrary url would make every VM's
   // kernel a fetch from wherever its creator pointed.
-  KernelID     string `json:"kernel_id"`
-  RootfsTar    string `json:"rootfs_tar"`
-  RootfsTarSHA string `json:"rootfs_tar_sha256"`
+  KernelID string `json:"kernel_id"`
+  // OSImageID names a row in the OS images catalogue, and is the root
+  // filesystem half of the same arrangement as KernelID.
+  OSImageID string `json:"osimage_id"`
 
   // DefaultPort is where a request goes when nothing picks a port. 0 means
   // unset, and becomes defaultVMPort.
@@ -373,8 +395,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   }
   req.DiskSize = strings.TrimSpace(req.DiskSize)
   req.KernelID = strings.TrimSpace(req.KernelID)
-  req.RootfsTar = strings.TrimSpace(req.RootfsTar)
-  req.RootfsTarSHA = strings.TrimSpace(req.RootfsTarSHA)
+  req.OSImageID = strings.TrimSpace(req.OSImageID)
 
   if req.CPUs < 1 {
     return echo.NewHTTPError(http.StatusBadRequest, "cpus must be at least 1")
@@ -389,8 +410,12 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   if err != nil {
     return echo.NewHTTPError(http.StatusBadRequest, "invalid kernel id")
   }
-  if req.RootfsTar == "" {
-    return echo.NewHTTPError(http.StatusBadRequest, "a root filesystem tar url is required")
+  if req.OSImageID == "" {
+    return echo.NewHTTPError(http.StatusBadRequest, "an os image is required")
+  }
+  pgOSImageID, err := parseUUID(req.OSImageID)
+  if err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid os image id")
   }
   if req.DiskSize != "" && !sizePattern.MatchString(req.DiskSize) {
     return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
@@ -398,9 +423,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   diskMiB, err := parseSizeMiB(req.DiskSize)
   if err != nil {
     return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
-  }
-  if req.RootfsTarSHA != "" && !sha256Pattern.MatchString(req.RootfsTarSHA) {
-    return echo.NewHTTPError(http.StatusBadRequest, "the root filesystem tar sha256 must be 64 hex characters")
   }
 
   ctx := c.Request().Context()
@@ -473,8 +495,8 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusConflict, "that host is not connected")
   }
 
-  // The chosen kernel becomes a link the host can fetch. Minted here, at the
-  // moment the job is built, because it expires: a link stored earlier and used
+  // Both chosen artifacts become links the host can fetch. Minted here, at the
+  // moment the job is built, because they expire: a link stored earlier and used
   // later is a create that fails for no reason the user can see.
   if h.blobs == nil {
     return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
@@ -489,6 +511,16 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
   if kernel.SoftDeletedAt.Valid {
     return echo.NewHTTPError(http.StatusConflict, "that kernel has been withdrawn; choose another")
   }
+  osImage, err := h.q.GetOSImage(ctx, pgOSImageID)
+  if err != nil {
+    if errors.Is(err, pgx.ErrNoRows) {
+      return echo.NewHTTPError(http.StatusNotFound, "no such os image")
+    }
+    return echo.NewHTTPError(http.StatusInternalServerError, "could not read the os image")
+  }
+  if osImage.SoftDeletedAt.Valid {
+    return echo.NewHTTPError(http.StatusConflict, "that os image has been withdrawn; choose another")
+  }
   // Signed for the public endpoint, since the host doing the download sits
   // outside this server's network -- the same reason a browser needs that name.
   kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
@@ -496,19 +528,23 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
     log.Printf("could not presign kernel %s for a create: %v", req.KernelID, err)
     return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the kernel download")
   }
+  osImageURL, err := h.blobs.PresignGet(ctx, osImage.ObjectKey, osImage.FileName)
+  if err != nil {
+    log.Printf("could not presign os image %s for a create: %v", req.OSImageID, err)
+    return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the os image download")
+  }
 
   // Boot mode and egress are fixed for self-service creates: direct boot from a
   // kernel plus a tar-built rootfs, with unrestricted outbound. A user chooses
   // the artifacts and the size, not the policy.
   spec := proto.VMSpec{
-    Boot:         "direct",
-    Kernel:       kernelURL,
-    RootfsTar:    req.RootfsTar,
-    RootfsTarSHA: req.RootfsTarSHA,
-    DiskSize:     req.DiskSize,
-    CPUs:         int(req.CPUs),
-    Memory:       int(req.MemoryMiB),
-    EgressAny:    true,
+    Boot:      "direct",
+    Kernel:    kernelURL,
+    RootfsTar: osImageURL,
+    DiskSize:  req.DiskSize,
+    CPUs:      int(req.CPUs),
+    Memory:    int(req.MemoryMiB),
+    EgressAny: true,
   }
   // Written before the job is pushed, same as the admin path: a row with no job
   // is a visible failure, a job with no row is a VM nobody knows about.
