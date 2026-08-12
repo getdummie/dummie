@@ -15,9 +15,11 @@ import (
   "github.com/aws/aws-sdk-go-v2/credentials"
   "github.com/aws/aws-sdk-go-v2/feature/s3/manager"
   "github.com/aws/aws-sdk-go-v2/service/s3"
+  "github.com/google/uuid"
 )
 
-// blobStore is the S3 bucket uploaded kernel images live in.
+// blobStore is the S3 bucket uploaded artifacts -- kernels and OS images --
+// live in.
 //
 // The bucket is private: nothing here ever hands out a bare object URL. Reads
 // go through a presigned GET minted per request, so access is bounded in time
@@ -26,7 +28,8 @@ type blobStore struct {
   client  *s3.Client
   presign *s3.PresignClient
   bucket  string
-  // Key prefix, always with a trailing slash. Lets one bucket hold other things.
+  // Key prefix, "" or ending in a slash. Lets one bucket hold other things;
+  // each kind of artifact adds its own segment under it (see newKey).
   prefix string
   // How long a presigned download link stays valid.
   presignTTL time.Duration
@@ -75,9 +78,11 @@ func loadBlobStore(ctx context.Context) *blobStore {
     }
   }
 
-  prefix := strings.TrimSpace(os.Getenv("S3_PREFIX"))
-  if prefix == "" {
-    prefix = "kernels"
+  // Optional: unset means the bucket's root, under which each kind of artifact
+  // still gets its own segment.
+  prefix := strings.Trim(strings.TrimSpace(os.Getenv("S3_PREFIX")), "/")
+  if prefix != "" {
+    prefix += "/"
   }
 
   // envInt takes any number it can parse, and zero or less means "no download
@@ -98,7 +103,7 @@ func loadBlobStore(ctx context.Context) *blobStore {
     client:         client,
     presign:        s3.NewPresignClient(presignClient),
     bucket:         bucket,
-    prefix:         strings.Trim(prefix, "/") + "/",
+    prefix:         prefix,
     presignTTL:     time.Duration(presignMins) * time.Minute,
     maxUploadBytes: int64(maxUploadMiB) * 1024 * 1024,
   }
@@ -148,6 +153,17 @@ func s3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
       o.UsePathStyle = true
     }
   }), nil
+}
+
+// newKey is where a freshly uploaded artifact goes: the configured prefix, the
+// kind of thing it is, and a uuid.
+//
+// The uuid, not the operator's name, is what makes the key unique -- a key
+// derived from a name would collide with the object of a withdrawn entry that
+// had the same one. fileName is kept as the last segment so the key alone says
+// what the object is when read from a bucket listing.
+func (b *blobStore) newKey(kind, fileName string) string {
+  return b.prefix + kind + "/" + uuid.New().String() + "/" + fileName
 }
 
 // Put streams r into the bucket under key. The uploader splits large bodies

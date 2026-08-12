@@ -466,9 +466,14 @@ async function create() {
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const created = await res.json()
     createOpen.value = false
     resetForm()
-    await load(true)
+    // Straight to the new VM: it is still pending, and its own page is where the
+    // build is watched. Falls back to refreshing the list if the response
+    // carried no id, which would otherwise navigate to /vms/undefined.
+    if (created?.id) await navigateTo(`/vms/${created.id}`)
+    else await load(true)
   }
   catch (e) {
     createError.value = e instanceof Error ? e.message : 'Could not create the VM'

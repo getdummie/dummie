@@ -10,6 +10,7 @@ const links = [
   { label: 'Keys', to: '/admin/model/agent-keys' },
   { label: 'Domains', to: '/admin/model/domains' },
   { label: 'Kernels', to: '/admin/model/kernels' },
+  { label: 'OS images', to: '/admin/model/osimages' },
 ]
 
 function isActive(to: string) {

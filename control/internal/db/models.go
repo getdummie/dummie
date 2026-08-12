@@ -72,6 +72,17 @@ type Kernel struct {
 	SoftDeletedAt pgtype.Timestamptz
 }
 
+type Osimage struct {
+	ID            pgtype.UUID
+	Name          string
+	Description   string
+	ObjectKey     string
+	FileName      string
+	SizeBytes     int64
+	CreatedAt     pgtype.Timestamptz
+	SoftDeletedAt pgtype.Timestamptz
+}
+
 type RefreshToken struct {
 	ID        pgtype.UUID
 	UserID    pgtype.UUID

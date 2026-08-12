@@ -184,6 +184,11 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
   admin.GET("/kernels/:id", adminH.GetKernel)
   admin.PUT("/kernels/:id/description", adminH.UpdateKernelDescription)
   admin.DELETE("/kernels/:id", adminH.DeleteKernel)
+  admin.GET("/osimages", adminH.ListOSImages)
+  admin.POST("/osimages", adminH.CreateOSImage)
+  admin.GET("/osimages/:id", adminH.GetOSImage)
+  admin.PUT("/osimages/:id/description", adminH.UpdateOSImageDescription)
+  admin.DELETE("/osimages/:id", adminH.DeleteOSImage)
   admin.GET("/settings", adminH.ListSettings)
   admin.PUT("/settings/:key", adminH.UpdateSetting)
 
