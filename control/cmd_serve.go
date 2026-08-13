@@ -214,6 +214,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
   vms.POST("/:id/destroy", userH.DestroyVM)
   vms.PUT("/:id/ports", userH.UpdatePorts)
   vms.POST("/:id/console-token", userH.ConsoleToken)
+  vms.POST("/:id/web-session", userH.WebSession)
   vms.GET("/:id/targets", userH.ListTargets)
   vms.POST("/:id/targets", userH.CreateTarget)
   vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)

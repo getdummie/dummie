@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Columns2, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -718,6 +718,27 @@ async function confirmRemove() {
               <SquareTerminal class="size-4" aria-hidden="true" />
               Console
               <span class="sr-only">: open a terminal in a new tab</span>
+            </Button>
+            <!-- The two web frames and a shell in one screen. A new tab for the
+                 same reason the console is: it holds a live session. -->
+            <Button
+              v-if="vm.url"
+              as="a"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :href="`/vms/${vm.id}/workspace`"
+              target="_blank"
+              rel="noopener"
+              :aria-disabled="vm.status !== 'running'"
+              :class="vm.status !== 'running' && 'pointer-events-none opacity-50'"
+              :title="vm.status === 'running'
+                ? `Open the desktop, mobile and console panes for ${vm.name}`
+                : `Cannot open a workspace: this VM is ${vm.status}`"
+            >
+              <Columns2 class="size-4" aria-hidden="true" />
+              Workspace
+              <span class="sr-only">: open previews and a terminal in a new tab</span>
             </Button>
             <!-- One control, two targets: the wide half opens whichever editor
                  was used last, the chevron changes which that is. Same

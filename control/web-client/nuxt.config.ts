@@ -37,6 +37,18 @@ export default defineNuxtConfig({
     plugins: [
       tailwindcss(),
     ],
+    server: {
+      // Echo proxies to this dev server without rewriting Host, so vite sees
+      // whatever hostname the browser used and rejects anything it does not
+      // know. Reaching the UI under the VMs' domain -- which is what makes a
+      // guest same-site with this page, and so what makes the work view's
+      // frames able to carry their session cookie -- means naming it here.
+      // Comma separated; a leading dot covers every subdomain.
+      allowedHosts: (process.env.DEV_ALLOWED_HOSTS ?? '')
+        .split(',')
+        .map(h => h.trim())
+        .filter(Boolean),
+    },
   },
 
   modules: ['shadcn-nuxt', '@nuxtjs/color-mode'],

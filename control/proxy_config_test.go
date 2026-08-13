@@ -25,6 +25,7 @@ type parsedProxyConfig struct {
     CookieSecretFile string `yaml:"cookie_secret_file"`
     CookieTTL        string `yaml:"cookie_ttl"`
     CookieSecure     bool   `yaml:"cookie_secure"`
+    CookieSameSite   string `yaml:"cookie_samesite"`
   } `yaml:"auth"`
   SSH struct {
     Listen string `yaml:"listen"`
@@ -241,6 +242,11 @@ func TestGenerateProxyConfigAuthBlock(t *testing.T) {
   if got.Auth.CookieSecure {
     t.Error("cookie_secure is on for a dev control plane, so the browser will drop the cookie over http")
   }
+  // Same reasoning: SameSite=None is only kept by a browser alongside Secure, so
+  // a dev fleet has to stay lax or the cookie is dropped on every request.
+  if got.Auth.CookieSameSite != "lax" {
+    t.Errorf("cookie_samesite = %q for a dev control plane, want \"lax\"", got.Auth.CookieSameSite)
+  }
 
   // The key itself is never in the file -- it is written to a 0600 file the
   // block names, and proxy.yaml is readable by anyone on the host.
@@ -291,8 +297,15 @@ func TestGenerateProxyConfigCookieSecureInProd(t *testing.T) {
   auth := testProxyAuth
   auth.cookieSecure = true
 
-  if got := parseProxyConfig(t, generateProxyConfig(auth, nil, nil)); !got.Auth.CookieSecure {
+  got := parseProxyConfig(t, generateProxyConfig(auth, nil, nil))
+  if !got.Auth.CookieSecure {
     t.Error("cookie_secure is off in prod")
+  }
+  // The control plane and the guests are different domains in prod, so the work
+  // view frames a guest cross-site. Lax there is a cookie the browser never
+  // sends, which reads as every request being unauthenticated.
+  if got.Auth.CookieSameSite != "none" {
+    t.Errorf("cookie_samesite = %q in prod, want \"none\"", got.Auth.CookieSameSite)
   }
 }
 

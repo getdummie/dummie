@@ -111,6 +111,19 @@ type AuthConfig struct {
 	CookieSecretFile string   `yaml:"cookie_secret_file"`
 	CookieTTL        Duration `yaml:"cookie_ttl"`
 	CookieSecure     bool     `yaml:"cookie_secure"`
+	// CookieSameSite decides whether a guest can be reached from a page on
+	// another site -- which is what the control server's work view does when it
+	// frames a guest, since the control plane and the guests are deliberately on
+	// different domains.
+	//
+	// "lax" (the default) means the browser sends the cookie only when the guest
+	// and the top-level page are the same site, so a framed guest gets no cookie
+	// and every request looks unauthenticated. "none" lifts that, and the browser
+	// then requires Secure, so it is only usable where guests are served over
+	// https. Partitioned is set with it: the cookie a framed guest gets is keyed
+	// to the page framing it, so it is not the same session as a direct visit and
+	// cannot be reached from anywhere else that embeds the same guest.
+	CookieSameSite string `yaml:"cookie_samesite"`
 }
 
 // ConsoleConfig enables the browser terminal. Its presence is what claims the
@@ -325,6 +338,18 @@ func (c *Config) Validate() error {
 		}
 		if c.Auth.CookieSecretFile == "" {
 			return errors.New("config: auth.cookie_secret_file is required")
+		}
+		switch strings.ToLower(strings.TrimSpace(c.Auth.CookieSameSite)) {
+		case "", "lax":
+		case "none":
+			// Rejected rather than corrected: a browser silently drops a
+			// SameSite=None cookie that is not Secure, and the failure that
+			// follows looks like "login did nothing" on every request.
+			if !c.Auth.CookieSecure {
+				return errors.New("config: auth.cookie_samesite: none requires auth.cookie_secure: true (browsers drop such a cookie over plaintext)")
+			}
+		default:
+			return fmt.Errorf("config: auth.cookie_samesite %q must be \"lax\" or \"none\"", c.Auth.CookieSameSite)
 		}
 	}
 

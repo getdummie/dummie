@@ -26,6 +26,11 @@ auth:
   cookie_secret_file: /etc/dpipe/keys/cookie_secret # >= 32 bytes
   cookie_ttl: 12h
   cookie_secure: false # true once served over HTTPS
+  # lax: the session cookie is only sent when the guest and the top-level page
+  # are the same site, so a guest framed by a page on another domain looks
+  # unauthenticated. none: it is sent from a frame too (and Partitioned, so the
+  # framed session is keyed to the page framing it) — requires cookie_secure.
+  cookie_samesite: lax
 
 https: # TLS ingress (proxy accepts raw, dpipe terminates)
   listen: ":8443"

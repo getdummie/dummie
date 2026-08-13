@@ -79,6 +79,17 @@ func (c proxyAuthConfig) loginURL() string {
   return strings.TrimRight(c.controlURL, "/") + proxyLoginPath
 }
 
+// cookieSameSite is what the hosts are told to put on the session cookie they
+// set. "none" only where guests are served over https, because that is the only
+// place a browser keeps such a cookie -- which is the same condition
+// cookieSecure already tracks.
+func (c proxyAuthConfig) cookieSameSite() string {
+  if c.cookieSecure {
+    return "none"
+  }
+  return "lax"
+}
+
 func loadProxyAuthConfig(prod bool) proxyAuthConfig {
   controlURL := strings.TrimSpace(os.Getenv("CONTROL_URL"))
   if controlURL == "" {

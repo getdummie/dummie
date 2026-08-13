@@ -139,6 +139,13 @@ func writeProxyAuth(b *strings.Builder, auth proxyAuthConfig) {
   // false in dev: guests are plain http there, and a browser drops a Secure
   // cookie sent over http -- which reads as "login did nothing".
   fmt.Fprintf(b, "  cookie_secure: %t\n", auth.cookieSecure)
+  // Tied to the same fact, because it depends on it: "none" is what lets the
+  // workspace view frame a guest from this server's own domain, and a browser only
+  // keeps such a cookie when it is Secure. In dev, where guests are plaintext,
+  // it stays "lax" -- so framing a guest there requires reaching this server
+  // under the same domain the guests are on, which is same-site and needs no
+  // exemption.
+  fmt.Fprintf(b, "  cookie_samesite: %s\n", auth.cookieSameSite())
 }
 
 // writeProxyConsole emits the block that claims the console hostnames. proxy
