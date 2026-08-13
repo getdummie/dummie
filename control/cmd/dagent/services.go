@@ -126,7 +126,7 @@ http:
 # Empty, not absent: the control server fills this in, and until it does nobody
 # may connect. A missing key would read as "not configured" instead.
 ssh:
-  listen: "0.0.0.0:2222"
+  listen: "0.0.0.0:22"
   reuseport: true
   users: []
 

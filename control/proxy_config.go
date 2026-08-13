@@ -34,7 +34,7 @@ import (
 // proxySSHListen is where proxy accepts guest ssh. Fixed rather than configurable
 // for now: the port is the same on every host, and a per-host value would have to
 // reach the user somehow before it is worth having.
-const proxySSHListen = "0.0.0.0:2222"
+const proxySSHListen = "0.0.0.0:22"
 
 // proxyRemoteUser is the account inside the guest. Every image this fleet builds
 // has the same one, and it is the user whose authorized_keys dagent writes at
@@ -43,7 +43,7 @@ const proxySSHListen = "0.0.0.0:2222"
 const proxyRemoteUser = "ubuntu"
 
 // proxyGuestSSHPort is sshd in the guest. Not the listen port above: proxy
-// accepts on 2222 and dials 22.
+// accepts on 22 and dials 22.
 const proxyGuestSSHPort = 22
 
 // proxyHTTPListen is where proxy accepts guest http, virtual-hosted by the
