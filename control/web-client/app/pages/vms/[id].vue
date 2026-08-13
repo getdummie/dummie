@@ -1,8 +1,14 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Code, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Dialog,
   DialogClose,
@@ -245,6 +251,29 @@ const sshHost = computed(() => {
 })
 const sshCommand = computed(() => `ssh ${sshHost.value}`)
 const sshCopied = ref(false)
+
+// Where an editor lands inside the guest. Every image this fleet builds runs as
+// the same account (the control server's proxyRemoteUser), which is what the
+// generated proxy config sends an ssh session to.
+const remoteHome = '/home/ubuntu'
+
+// The three editors all reach the VM the same way the SSH button does -- by
+// hostname, over the host's proxy, authorised by the key the user already has
+// registered -- so none of them needs a username or a port here. What differs
+// is only the url each one registers with the OS.
+//
+// The schemes are not interchangeable: Cursor is a VS Code fork and kept the
+// `vscode-remote` authority while changing the scheme, and Zed's remote form is
+// `zed://ssh/`, not `zed://` on its own.
+const editors = computed(() => {
+  const host = sshHost.value
+  if (!host) return []
+  return [
+    { key: 'vscode', label: 'VS Code', href: `vscode://vscode-remote/ssh-remote+${host}${remoteHome}` },
+    { key: 'cursor', label: 'Cursor', href: `cursor://vscode-remote/ssh-remote+${host}${remoteHome}` },
+    { key: 'zed', label: 'Zed', href: `zed://ssh/${host}${remoteHome}` },
+  ]
+})
 
 async function copySsh() {
   try {
@@ -553,6 +582,33 @@ async function confirmRemove() {
               Console
               <span class="sr-only">: open a terminal in a new tab</span>
             </Button>
+            <!-- Same reachability rule as the SSH button: without a hostname
+                 there is nothing for an editor to connect to. -->
+            <DropdownMenu v-if="sshHost">
+              <DropdownMenuTrigger as-child>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="font-mono text-xs"
+                  :disabled="vm.status !== 'running'"
+                  :title="vm.status === 'running'
+                    ? `Open ${sshHost} in an editor over SSH`
+                    : `Cannot open an editor: this VM is ${vm.status}`"
+                >
+                  <Code class="size-4" aria-hidden="true" />
+                  Open in editor
+                  <ChevronDown class="size-3.5 opacity-60" aria-hidden="true" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem v-for="e in editors" :key="e.key" as-child>
+                  <a :href="e.href" :title="e.href">
+                    {{ e.label }}
+                    <span class="sr-only">: open {{ sshHost }} over SSH in {{ e.label }}</span>
+                  </a>
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Dialog v-model:open="portsOpen">
               <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
                 <Pencil class="size-4" aria-hidden="true" />
