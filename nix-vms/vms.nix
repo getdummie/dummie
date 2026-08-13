@@ -73,11 +73,6 @@
         source = "/home/cc/Projects/.personal/dummie-v2/control";
         mountPoint = "/home/ubuntu/app";
       }
-      {
-        tag = "pipe";
-        source = "/home/cc/Projects/.personal/dummie-v2/backstage";
-        mountPoint = "/home/ubuntu/backstage";
-      }
     ];
 
     # Guest user identity. uid AND gid MUST match the host owner of the shared
