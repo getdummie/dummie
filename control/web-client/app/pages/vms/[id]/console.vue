@@ -5,9 +5,9 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import VmTerminal from '@/components/VmTerminal.vue'
 
-// Its own route rather than a child of /vms/[id], which would turn that page
-// into a layout: a terminal wants the whole viewport, and it is opened in a new
-// tab from the VM page anyway.
+// layout: false because a terminal wants the whole viewport, and a new tab from
+// the VM page rather than an in-app link because the shell lives in this
+// component: navigating within the app would unmount it and drop the session.
 definePageMeta({ middleware: ['auth'], layout: false })
 
 interface VM {

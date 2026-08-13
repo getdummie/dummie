@@ -706,7 +706,7 @@ async function confirmRemove() {
               variant="outline"
               size="sm"
               class="font-mono text-xs"
-              :href="`/console/${vm.id}`"
+              :href="`/vms/${vm.id}/console`"
               target="_blank"
               rel="noopener"
               :aria-disabled="vm.status !== 'running'"
