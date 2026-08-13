@@ -120,6 +120,33 @@ rule-files:
   - suricata.rules
   - local.rules
 
+# The one record of what the ruleset actually did to a guest's traffic. Without
+# it a drop is indistinguishable from a network fault from inside the VM, and
+# from outside there is nothing at all to look at.
+#
+# http and tls are logged in their own right, not just as context on an alert.
+# An alert only carries the hostname when the rule that fired matched a
+# transaction -- a port-level drop fires at the SYN, before any ClientHello, so
+# it can only ever name an address. These two types answer "where was this guest
+# going" for every handshake that got far enough to say so, allowed or denied.
+outputs:
+  - eve-log:
+      enabled: yes
+      filetype: regular
+      filename: eve.json
+      types:
+        - alert:
+            # Attaches the app-layer record of the flow that alerted, which is
+            # what puts tls.sni and http.hostname on a hostname-matched drop.
+            metadata: yes
+        - http:
+            extended: yes
+        - tls:
+            extended: yes
+        - dns
+        - drop
+        - anomaly
+
 unix-command:
   enabled: yes
 `
