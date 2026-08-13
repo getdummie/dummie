@@ -1,12 +1,20 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Code, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { useLocalStorage } from '@vueuse/core'
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
@@ -257,23 +265,50 @@ const sshCopied = ref(false)
 // generated proxy config sends an ssh session to.
 const remoteHome = '/home/ubuntu'
 
-// The three editors all reach the VM the same way the SSH button does -- by
-// hostname, over the host's proxy, authorised by the key the user already has
-// registered -- so none of them needs a username or a port here. What differs
-// is only the url each one registers with the OS.
+// Every editor reaches the VM the same way the SSH button does -- by hostname,
+// over the host's proxy, authorised by the key the user already has registered
+// -- so none of them needs a username or a port here. What differs is only the
+// url each one registers with the OS.
 //
-// The schemes are not interchangeable: Cursor is a VS Code fork and kept the
-// `vscode-remote` authority while changing the scheme, and Zed's remote form is
-// `zed://ssh/`, not `zed://` on its own.
+// The schemes are not interchangeable. The VS Code forks change the scheme but
+// keep the `vscode-remote` authority, so `cursor://cursor-remote/...` is not a
+// working substitution; Zed's remote form is `zed://ssh/`, not `zed://` on its
+// own. The `ssh-remote+` resolver is contributed by a remote-ssh extension, so
+// each editor needs one installed before its link resolves.
 const editors = computed(() => {
   const host = sshHost.value
   if (!host) return []
+  const vscodeRemote = (scheme: string) =>
+    `${scheme}://vscode-remote/ssh-remote+${host}${remoteHome}`
   return [
-    { key: 'vscode', label: 'VS Code', href: `vscode://vscode-remote/ssh-remote+${host}${remoteHome}` },
-    { key: 'cursor', label: 'Cursor', href: `cursor://vscode-remote/ssh-remote+${host}${remoteHome}` },
+    { key: 'vscode', label: 'VS Code', href: vscodeRemote('vscode') },
+    { key: 'vscodium', label: 'VSCodium', href: vscodeRemote('vscodium') },
+    { key: 'cursor', label: 'Cursor', href: vscodeRemote('cursor') },
     { key: 'zed', label: 'Zed', href: `zed://ssh/${host}${remoteHome}` },
   ]
 })
+
+// Which editor the button opens on a plain click. Remembered across visits and
+// across VMs -- which editor someone uses is a property of their machine, not of
+// the guest they are opening -- so it is stored under one key rather than per id.
+const editorKey = useLocalStorage('dummie:vm-editor', 'vscode')
+const editorMenuOpen = ref(false)
+
+// Falls back to the first entry rather than trusting the stored value: it comes
+// from localStorage, so it can name an editor that has since been removed here.
+const activeEditor = computed(() =>
+  editors.value.find(e => e.key === editorKey.value) ?? editors.value[0])
+
+// Choosing from the menu both switches the default and opens that editor, so
+// picking one is never a two-step action.
+function chooseEditor(key: string) {
+  editorKey.value = key
+  editorMenuOpen.value = false
+  const target = editors.value.find(e => e.key === key)
+  // Assigning location rather than following a link: a custom scheme is handed
+  // to the OS, so the page it was clicked from stays where it is.
+  if (target) window.location.href = target.href
+}
 
 async function copySsh() {
   try {
@@ -526,89 +561,10 @@ async function confirmRemove() {
               one. Changes reach the host straight away.
             </p>
           </div>
+          <!-- Edit alone up here: it changes what this panel says, while the
+               rest act on the VM the panel describes and read better under the
+               values they use. -->
           <div class="flex flex-wrap items-center gap-2">
-            <!-- Only when there is a hostname: without a domain there is nothing
-                 to ssh to, and a bare name would copy a command that fails. -->
-            <Button
-              v-if="sshHost"
-              variant="outline"
-              size="sm"
-              class="font-mono text-xs"
-              :title="sshCommand"
-              :aria-label="`Copy ${sshCommand} to the clipboard`"
-              @click="copySsh"
-            >
-              <component :is="sshCopied ? Check : Terminal" class="size-4" aria-hidden="true" />
-              {{ sshCopied ? 'Copied' : 'SSH' }}
-            </Button>
-            <span role="status" aria-live="polite" class="sr-only">
-              {{ sshCopied ? 'SSH command copied to clipboard' : '' }}
-            </span>
-            <Button
-              v-if="vm.url"
-              as="a"
-              variant="outline"
-              size="sm"
-              class="font-mono text-xs"
-              :href="vm.url"
-              target="_blank"
-              rel="noopener noreferrer"
-              :title="vm.url"
-            >
-              <ExternalLink class="size-4" aria-hidden="true" />
-              Web
-              <span class="sr-only">: open {{ vm.url }} in a new tab</span>
-            </Button>
-            <!-- A new tab, not a route change: a terminal is a session, and
-                 navigating the page away from it would drop the shell. Only
-                 when the VM is running, since the console opens an ssh
-                 connection to it and a stopped VM has nothing listening. -->
-            <Button
-              v-if="vm.console_url"
-              as="a"
-              variant="outline"
-              size="sm"
-              class="font-mono text-xs"
-              :href="`/console/${vm.id}`"
-              target="_blank"
-              rel="noopener"
-              :aria-disabled="vm.status !== 'running'"
-              :class="vm.status !== 'running' && 'pointer-events-none opacity-50'"
-              :title="vm.status === 'running'
-                ? `Open a terminal on ${vm.name}`
-                : `Cannot open a console: this VM is ${vm.status}`"
-            >
-              <SquareTerminal class="size-4" aria-hidden="true" />
-              Console
-              <span class="sr-only">: open a terminal in a new tab</span>
-            </Button>
-            <!-- Same reachability rule as the SSH button: without a hostname
-                 there is nothing for an editor to connect to. -->
-            <DropdownMenu v-if="sshHost">
-              <DropdownMenuTrigger as-child>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  class="font-mono text-xs"
-                  :disabled="vm.status !== 'running'"
-                  :title="vm.status === 'running'
-                    ? `Open ${sshHost} in an editor over SSH`
-                    : `Cannot open an editor: this VM is ${vm.status}`"
-                >
-                  <Code class="size-4" aria-hidden="true" />
-                  Open in editor
-                  <ChevronDown class="size-3.5 opacity-60" aria-hidden="true" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem v-for="e in editors" :key="e.key" as-child>
-                  <a :href="e.href" :title="e.href">
-                    {{ e.label }}
-                    <span class="sr-only">: open {{ sshHost }} over SSH in {{ e.label }}</span>
-                  </a>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
             <Dialog v-model:open="portsOpen">
               <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
                 <Pencil class="size-4" aria-hidden="true" />
@@ -697,6 +653,138 @@ async function confirmRemove() {
             </dd>
           </div>
         </dl>
+
+        <!-- Ways in, under the routing they use. SSH is kept apart from the
+             others: it only copies a command to the clipboard, while the rest
+             navigate somewhere. The left group is rendered even when there is
+             no hostname so the others stay right-aligned without it. -->
+        <div class="mt-6 flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <!-- Only when there is a hostname: without a domain there is
+                 nothing to ssh to, and a bare name would copy a command that
+                 fails. -->
+            <Button
+              v-if="sshHost"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :title="sshCommand"
+              :aria-label="`Copy ${sshCommand} to the clipboard`"
+              @click="copySsh"
+            >
+              <component :is="sshCopied ? Check : Terminal" class="size-4" aria-hidden="true" />
+              {{ sshCopied ? 'Copied' : 'SSH' }}
+            </Button>
+            <span role="status" aria-live="polite" class="sr-only">
+              {{ sshCopied ? 'SSH command copied to clipboard' : '' }}
+            </span>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2 sm:justify-end">
+            <Button
+              v-if="vm.url"
+              as="a"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :href="vm.url"
+              target="_blank"
+              rel="noopener noreferrer"
+              :title="vm.url"
+            >
+              <ExternalLink class="size-4" aria-hidden="true" />
+              Web
+              <span class="sr-only">: open {{ vm.url }} in a new tab</span>
+            </Button>
+            <!-- A new tab, not a route change: a terminal is a session, and
+                 navigating the page away from it would drop the shell. Only
+                 when the VM is running, since the console opens an ssh
+                 connection to it and a stopped VM has nothing listening. -->
+            <Button
+              v-if="vm.console_url"
+              as="a"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :href="`/console/${vm.id}`"
+              target="_blank"
+              rel="noopener"
+              :aria-disabled="vm.status !== 'running'"
+              :class="vm.status !== 'running' && 'pointer-events-none opacity-50'"
+              :title="vm.status === 'running'
+                ? `Open a terminal on ${vm.name}`
+                : `Cannot open a console: this VM is ${vm.status}`"
+            >
+              <SquareTerminal class="size-4" aria-hidden="true" />
+              Console
+              <span class="sr-only">: open a terminal in a new tab</span>
+            </Button>
+            <!-- One control, two targets: the wide half opens whichever editor
+                 was used last, the chevron changes which that is. Same
+                 reachability rule as the SSH button -- without a hostname there
+                 is nothing for an editor to connect to. -->
+            <div v-if="sshHost && activeEditor" class="inline-flex items-center">
+              <Button
+                as="a"
+                variant="outline"
+                size="sm"
+                class="rounded-r-none border-r-0 font-mono text-xs"
+                :href="activeEditor.href"
+                :aria-disabled="vm.status !== 'running'"
+                :class="vm.status !== 'running' && 'pointer-events-none opacity-50'"
+                :title="vm.status === 'running'
+                  ? `Open ${sshHost} in ${activeEditor.label} over SSH`
+                  : `Cannot open an editor: this VM is ${vm.status}`"
+              >
+                <EditorIcon :name="activeEditor.key" class="size-4" />
+                Open {{ activeEditor.label }}
+              </Button>
+              <DropdownMenu v-model:open="editorMenuOpen">
+                <DropdownMenuTrigger as-child>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="rounded-l-none px-2"
+                    :disabled="vm.status !== 'running'"
+                    aria-label="Choose a different editor"
+                  >
+                    <ChevronDown class="size-3.5 opacity-60" aria-hidden="true" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <!-- p-0: Command brings its own padding, and the menu's would
+                     otherwise inset the search field from the menu edge. -->
+                <DropdownMenuContent align="end" class="w-56 p-0">
+                  <Command>
+                    <CommandInput placeholder="Search editors…" />
+                    <CommandList>
+                      <CommandEmpty>No editor found.</CommandEmpty>
+                      <CommandGroup>
+                        <CommandItem
+                          v-for="e in editors"
+                          :key="e.key"
+                          :value="e.label"
+                          class="font-mono text-xs"
+                          @select="chooseEditor(e.key)"
+                        >
+                          <EditorIcon :name="e.key" class="size-4" />
+                          {{ e.label }}
+                          <Check
+                            v-if="e.key === activeEditor.key"
+                            class="ml-auto size-4"
+                            aria-hidden="true"
+                          />
+                          <span class="sr-only">
+                            : open {{ sshHost }} over SSH in {{ e.label }}
+                          </span>
+                        </CommandItem>
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- destinations -->
