@@ -46,3 +46,77 @@ mkdir -p rustfs-data rustfs-logs
 sudo chown -R 10001:10001 ./rustfs-data ./rustfs-logs
 ```
 
+Running the control server
+
+```sh
+docker compose up -d
+docker compose logs -f
+```
+
+## QEMU Host Configuration
+
+Starting the host VM
+
+```sh
+just vm-start
+```
+
+SSH into the host VM
+
+```sh
+just vm-ssh
+```
+
+Starting a VM inside the host VM
+
+```sh
+sudo tee /etc/dagent/config.yaml > /dev/null <<'EOF'
+control_url: http://10.68.0.1:1323
+# enrollment_key: paste-once-then-it-is-ignored
+insecure: true
+
+data_dir: /var/lib/dagent
+socket: /run/dagent/dagent.sock
+group: dagent
+
+features:
+  ip_forward: true
+  kvm_access: true
+  nftables: true
+  docker_compat: true
+  suricata: true
+  dhcp: true
+  metadata: true
+
+network:
+  pool: 10.64.0.0/16
+  gateway: 10.64.0.1
+  uplink: enp0s2
+  dns: 1.1.1.1
+  queues: 4
+
+dpipe:
+  enable: true
+  download_url: http://10.68.0.1:8081/backstage/dpipe/dpipe
+
+proxy:
+  enable: true
+  download_url: http://10.68.0.1:8081/backstage/proxy/proxy
+EOF
+
+sudo systemctl restart dagent
+```
+
+Getting into the VM
+
+```sh
+dagent vm console alpha
+```
+
+Running a python server inside the VM
+
+```sh
+python3 -m http.server 8000
+
+curl -sS -H 'Host: app.example.com' http://10.68.0.2:8080/
+```
