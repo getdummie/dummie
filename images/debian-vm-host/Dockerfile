@@ -63,6 +63,9 @@ RUN set -ex \
   && systemctl enable docker \
   && adduser ubuntu docker
 
+RUN set -ex \
+  && sed -i 's/^#\?Port .*/Port 2222/' /etc/ssh/sshd_config
+
 USER ubuntu
 RUN set -ex \
   && mkdir -p /home/ubuntu/.ssh/ \

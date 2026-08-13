@@ -32,6 +32,7 @@ vm-ssh:
   ssh -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null \
       -o LogLevel=ERROR \
+      -p 2222 \
       ubuntu@10.68.0.2
 
 # attach to the VM's serial console via QEMU (no ssh/network needed). Ctrl-] to detach.
