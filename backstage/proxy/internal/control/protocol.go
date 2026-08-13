@@ -26,6 +26,11 @@ const (
 	// descriptor, which can exceed MaxFDs; per-type fd counts are validated by
 	// the handlers.
 	MaxRecvFDs = 64
+
+	// MaxConsolePrefix bounds the bytes a client may pipeline behind a console
+	// upgrade request. They travel base64-encoded inside a console_accept, which
+	// MaxMsgSize caps, so the limit has to leave room for every other field.
+	MaxConsolePrefix = 512
 )
 
 // Message types.
@@ -33,6 +38,7 @@ const (
 	TypeCopy          = "copy"
 	TypeSSHAccept     = "ssh_accept"
 	TypeTLSAccept     = "tls_accept"
+	TypeConsoleAccept = "console_accept"
 	TypeListenForward = "listen_forward"
 	TypeStop          = "stop"
 	TypeStatus        = "status"
@@ -53,12 +59,13 @@ const (
 	KindHTTP = "http"
 )
 
-// protocol values for copy / ssh_accept / tls_accept.
+// protocol values for copy / ssh_accept / tls_accept / console_accept.
 const (
-	ProtoTCP  = "tcp"
-	ProtoHTTP = "http"
-	ProtoSSH  = "ssh"
-	ProtoTLS  = "tls"
+	ProtoTCP     = "tcp"
+	ProtoHTTP    = "http"
+	ProtoSSH     = "ssh"
+	ProtoTLS     = "tls"
+	ProtoConsole = "console"
 )
 
 // socket kinds used by the handover handshake.
@@ -75,9 +82,9 @@ type Msg struct {
 	Type string `json:"type"`
 	ID   string `json:"id,omitempty"`
 
-	Protocol string `json:"protocol,omitempty"` // copy / ssh_accept / tls_accept
+	Protocol string `json:"protocol,omitempty"` // copy / ssh_accept / tls_accept / console_accept
 	Listen   string `json:"listen,omitempty"`
-	Target   string `json:"target,omitempty"` // listen_forward / resolved
+	Target   string `json:"target,omitempty"` // listen_forward / resolved / console_accept
 
 	Kind string `json:"kind,omitempty"` // resolve: "ssh" | "http"
 
@@ -85,8 +92,17 @@ type Msg struct {
 	SSHPubKey      string `json:"ssh_pubkey,omitempty"`
 	SSHFingerprint string `json:"ssh_fp,omitempty"`
 
-	Host string `json:"host,omitempty"` // resolve http
+	Host string `json:"host,omitempty"` // resolve http / console_accept
 	SNI  string `json:"sni,omitempty"`  // resolve http
+
+	// console_accept only. Sub is who the proxy authenticated and is carried for
+	// the audit log; dpipe never re-decides it. WSKey is the client's
+	// Sec-WebSocket-Key, which dpipe needs to answer a handshake the proxy has
+	// already validated. Prefix is base64 of whatever the client pipelined behind
+	// the upgrade request, bounded by MaxConsolePrefix.
+	Sub    string `json:"sub,omitempty"`
+	WSKey  string `json:"ws_key,omitempty"`
+	Prefix string `json:"prefix,omitempty"`
 
 	ClientIP string `json:"client_ip,omitempty"`
 

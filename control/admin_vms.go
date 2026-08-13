@@ -55,6 +55,12 @@ type vmDTO struct {
   // be a query per VM.
   URL string `json:"url"`
 
+  // ConsoleURL is the websocket endpoint the browser terminal talks to, filled
+  // in on the same views that fill in URL and empty under the same conditions.
+  // It is not a credential: opening it needs a token from POST
+  // /vms/:id/console-token, which is minted per user and expires.
+  ConsoleURL string `json:"console_url"`
+
   // ReportedAt is when the host last confirmed this VM; "" means it never has.
   // 'running' is the host's claim as of that moment, not a live observation, so
   // a reader has to weigh the status against this timestamp -- a status of

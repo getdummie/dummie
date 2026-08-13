@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -55,11 +56,12 @@ func (d Duration) Or(def time.Duration) time.Duration {
 type Config struct {
 	ControlSocket string `yaml:"control_socket"`
 
-	HTTP  *HTTPConfig  `yaml:"http"`
-	HTTPS *HTTPSConfig `yaml:"https"`
-	TCP   []TCPRoute   `yaml:"tcp"`
-	SSH   *SSHConfig   `yaml:"ssh"`
-	Auth  *AuthConfig  `yaml:"auth"`
+	HTTP    *HTTPConfig    `yaml:"http"`
+	HTTPS   *HTTPSConfig   `yaml:"https"`
+	TCP     []TCPRoute     `yaml:"tcp"`
+	SSH     *SSHConfig     `yaml:"ssh"`
+	Auth    *AuthConfig    `yaml:"auth"`
+	Console *ConsoleConfig `yaml:"console"`
 
 	ListenForwards []ForwardConfig `yaml:"listen_forwards"`
 
@@ -109,6 +111,40 @@ type AuthConfig struct {
 	CookieSecretFile string   `yaml:"cookie_secret_file"`
 	CookieTTL        Duration `yaml:"cookie_ttl"`
 	CookieSecure     bool     `yaml:"cookie_secure"`
+}
+
+// ConsoleConfig enables the browser terminal. Its presence is what claims the
+// console hostnames: with no console: block those names route nowhere, so the
+// endpoint cannot be reached on a host that was not meant to offer it.
+type ConsoleConfig struct {
+	// Label is the extra hostname label that marks a console host, so
+	// "<vm>.console.<domain>" is the terminal for "<vm>.<domain>". Configurable
+	// only because it also has to match a DNS record and a certificate, which are
+	// cut outside this file.
+	Label string `yaml:"label"`
+	// RemoteUser is the account the shell runs as inside the guest.
+	RemoteUser string `yaml:"remote_user"`
+}
+
+const defaultConsoleLabel = "console"
+
+// hostLabelPattern is one DNS label. The label is spliced out of a hostname to
+// find the VM behind a console name, so a value containing a dot would make one
+// console name mean two different things.
+var hostLabelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+func (c *ConsoleConfig) label() string {
+	if c.Label != "" {
+		return c.Label
+	}
+	return defaultConsoleLabel
+}
+
+func (c *ConsoleConfig) remoteUser() string {
+	if c.RemoteUser != "" {
+		return c.RemoteUser
+	}
+	return defaultConsoleRemoteUser
 }
 
 // HTTPSConfig is the TLS ingress. Routing reuses http.hosts via
@@ -289,6 +325,29 @@ func (c *Config) Validate() error {
 		}
 		if c.Auth.CookieSecretFile == "" {
 			return errors.New("config: auth.cookie_secret_file is required")
+		}
+	}
+
+	if c.Console != nil {
+		// The console is a shell. A signed token is the only thing between the
+		// internet and it, and without auth: there is no key to verify one with.
+		if c.Auth == nil {
+			return errors.New("config: console requires auth (the console token is verified with auth.cookie_secret_file)")
+		}
+		// Console hostnames are derived from the http host table, so without one
+		// there is nothing a console name could resolve to.
+		if c.HTTP == nil {
+			return errors.New("config: console requires http.hosts (a console host is derived from a VM's host entry)")
+		}
+		// dpipe terminates TLS and routes the https ingress by Host alone, so the
+		// proxy never sees these requests and could not claim the name there --
+		// which would leave the console reachable only on plaintext while looking
+		// configured for both.
+		if c.HTTPS != nil {
+			return errors.New("config: console is not supported on the https ingress yet; remove https: or console:")
+		}
+		if l := c.Console.label(); !hostLabelPattern.MatchString(l) {
+			return fmt.Errorf("config: console.label %q is not a single hostname label", l)
 		}
 	}
 

@@ -56,8 +56,39 @@ type Config struct {
 	DrainTimeout  Duration `yaml:"drain_timeout"`
 	LogLevel      string   `yaml:"log_level"`
 
-	SSH SSHConfig `yaml:"ssh"`
-	TLS TLSConfig `yaml:"tls"`
+	SSH     SSHConfig     `yaml:"ssh"`
+	TLS     TLSConfig     `yaml:"tls"`
+	Console ConsoleConfig `yaml:"console"`
+}
+
+// ConsoleConfig configures the browser terminal. Who may open one is the proxy's
+// decision and is never revisited here; these are the resource limits dpipe puts
+// on what it is handed.
+type ConsoleConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// IdleTimeout ends a session with no traffic in either direction. A terminal
+	// holds an SSH connection and a pty in the guest open for as long as the tab
+	// exists, which is otherwise forever.
+	IdleTimeout Duration `yaml:"idle_timeout"`
+	// MaxSessionsPerHost caps concurrent terminals per VM. Per VM rather than
+	// global so one guest's open tabs cannot lock every other guest out.
+	MaxSessionsPerHost int `yaml:"max_sessions_per_host"`
+}
+
+const (
+	defaultConsoleIdleTimeout = 30 * time.Minute
+	defaultConsoleMaxPerHost  = 3
+)
+
+func (c ConsoleConfig) idleTimeout() time.Duration {
+	return c.IdleTimeout.Or(defaultConsoleIdleTimeout)
+}
+
+func (c ConsoleConfig) maxPerHost() int {
+	if c.MaxSessionsPerHost <= 0 {
+		return defaultConsoleMaxPerHost
+	}
+	return c.MaxSessionsPerHost
 }
 
 // SSHConfig configures SSH termination.
@@ -121,6 +152,12 @@ func (c *Config) validate() error {
 		if c.SSH.HostKey == "" || c.SSH.ClientKey == "" {
 			return errors.New("config: ssh.enabled requires host_key and client_key")
 		}
+	}
+	// The console opens an SSH session to the guest with dpipe's client key under
+	// the same host-key policy as the SSH ingress, so without ssh: there is no
+	// key to authenticate with and nothing to verify the guest against.
+	if c.Console.Enabled && !c.SSH.Enabled {
+		return errors.New("config: console.enabled requires ssh.enabled (the console opens its shell with dpipe's ssh client key)")
 	}
 	if c.TLS.Enabled {
 		if len(c.TLS.Certs) == 0 && (c.TLS.DefaultCert == "" || c.TLS.DefaultKey == "") {

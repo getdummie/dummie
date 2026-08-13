@@ -198,6 +198,18 @@ func (c *Client) TLSAccept(_ context.Context, id string, clientFD int) error {
 	}, []int{clientFD})
 }
 
+// ConsoleAccept hands the browser's socket to dpipe together with the verdict
+// the proxy reached on it. Fire-and-forget for the same reason Copy is: a
+// successful sendmsg means dpipe owns a duplicate, and waiting for a verdict
+// here would hold a connection open on a decision the proxy cannot change.
+func (c *Client) ConsoleAccept(_ context.Context, m control.Msg, clientFD int) error {
+	p, err := c.peerOrErr()
+	if err != nil {
+		return err
+	}
+	return p.Send(m, []int{clientFD})
+}
+
 // ListenForward programs a forwarding listener in dpipe and returns its id.
 func (c *Client) ListenForward(ctx context.Context, listen, target string) (string, error) {
 	p, err := c.peerOrErr()

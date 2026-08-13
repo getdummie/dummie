@@ -84,6 +84,17 @@ http_sniff_max_bytes: 65536
 log_level: info
 `
 
+// proxyConsoleLabel is the extra hostname label the browser terminal answers
+// under: "<vm>.console.<domain>" is the console for "<vm>.<domain>". Fixed
+// rather than configurable because it is also what the DNS record and the
+// certificate for the fleet have to be cut for, and neither of those is
+// something this file can change.
+//
+// Note that a wildcard for "*.<domain>" does NOT cover it -- a wildcard matches
+// one label -- so "*.console.<domain>" needs its own record and its own name on
+// the certificate.
+const proxyConsoleLabel = "console"
+
 // proxyCookieSecretPath is where the agent writes the shared key and where proxy
 // reads it. A path rather than the value inline: proxy.yaml is world-readable on
 // the host, and the key is what tokens for every guest on it are signed with.
@@ -102,6 +113,7 @@ func generateProxyConfig(auth proxyAuthConfig, ssh []db.ListProxySSHUsersByAgent
   b.WriteString(proxyConfigHeader)
   b.WriteString(proxyStaticConfig)
   writeProxyAuth(&b, auth)
+  writeProxyConsole(&b, auth)
   writeProxyHTTP(&b, http)
   writeProxySSH(&b, ssh)
   b.WriteString(proxyConfigFooter)
@@ -127,6 +139,23 @@ func writeProxyAuth(b *strings.Builder, auth proxyAuthConfig) {
   // false in dev: guests are plain http there, and a browser drops a Secure
   // cookie sent over http -- which reads as "login did nothing".
   fmt.Fprintf(b, "  cookie_secure: %t\n", auth.cookieSecure)
+}
+
+// writeProxyConsole emits the block that claims the console hostnames. proxy
+// derives each of them from the http table below -- "<vm>.console.<domain>" is
+// the terminal for "<vm>.<domain>" -- so there is nothing per VM to list here,
+// and a VM that stops being published stops having a console in the same edit.
+//
+// Tied to the auth block for the same reason it is: the console token is
+// verified with that key, so without one there is nothing standing between the
+// internet and a root shell, and the honest thing is not to offer it at all.
+func writeProxyConsole(b *strings.Builder, auth proxyAuthConfig) {
+  if auth.secret == "" {
+    return
+  }
+  b.WriteString("\nconsole:\n")
+  fmt.Fprintf(b, "  label: %s\n", yamlString(proxyConsoleLabel))
+  fmt.Fprintf(b, "  remote_user: %s\n", yamlString(proxyRemoteUser))
 }
 
 // writeProxyHTTP emits the virtual-host table: one entry per VM, keyed by the

@@ -110,6 +110,13 @@ ssh:
 
 tls:
   enabled: false
+
+# The browser terminal. proxy decides who may open one; these are only the
+# limits on what dpipe will run once it has been handed a session.
+console:
+  enabled: true
+  idle_timeout: 30m
+  max_sessions_per_host: 3
 `
 
 const defaultProxyConfig = `control_socket: /run/dpipe/control.sock

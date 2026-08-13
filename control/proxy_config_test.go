@@ -45,6 +45,10 @@ type parsedProxyConfig struct {
     } `yaml:"hosts"`
     Default string `yaml:"default"`
   } `yaml:"http"`
+  Console struct {
+    Label      string `yaml:"label"`
+    RemoteUser string `yaml:"remote_user"`
+  } `yaml:"console"`
 }
 
 func parseProxyConfig(t *testing.T, out string) parsedProxyConfig {
@@ -255,6 +259,29 @@ func TestGenerateProxyConfigAuthBlockOmittedWithoutASecret(t *testing.T) {
   // were before the hand-off existed.
   if got := parseProxyConfig(t, out); got.HTTP.Listen != proxyHTTPListen {
     t.Errorf("http listen is %q, want %q", got.HTTP.Listen, proxyHTTPListen)
+  }
+}
+
+func TestGenerateProxyConfigConsoleBlock(t *testing.T) {
+  got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, nil, nil))
+
+  if got.Console.Label != proxyConsoleLabel {
+    t.Errorf("console label is %q, want %q", got.Console.Label, proxyConsoleLabel)
+  }
+  // The shell runs as the account the images actually have a key for; anything
+  // else would be a terminal that cannot log in.
+  if got.Console.RemoteUser != proxyRemoteUser {
+    t.Errorf("console remote_user is %q, want %q", got.Console.RemoteUser, proxyRemoteUser)
+  }
+}
+
+// The console token is verified with the key the auth block names, so a fleet
+// with no key must not be told to answer on the console hostnames at all.
+func TestGenerateProxyConfigConsoleOmittedWithoutASecret(t *testing.T) {
+  out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, nil, nil)
+
+  if strings.Contains(out, "console:") {
+    t.Errorf("a console block was written with no key to verify tokens with:\n%s", out)
   }
 }
 

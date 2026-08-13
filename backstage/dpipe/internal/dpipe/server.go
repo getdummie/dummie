@@ -33,6 +33,9 @@ type Server struct {
 
 	mu    sync.Mutex
 	peers map[*control.Peer]struct{}
+	// consoles counts live terminal sessions per console hostname. Entries are
+	// deleted at zero, so this does not grow one key per VM that ever opened one.
+	consoles map[string]int
 
 	stopOnce sync.Once
 	stopped  chan struct{} // accepting has stopped
@@ -51,9 +54,10 @@ func New(cfg *Config, log *slog.Logger) (*Server, error) {
 		cfg:     cfg,
 		log:     log,
 		mat:     mat,
-		peers:   map[*control.Peer]struct{}{},
-		stopped: make(chan struct{}),
-		exitCh:  make(chan struct{}),
+		peers:    map[*control.Peer]struct{}{},
+		consoles: map[string]int{},
+		stopped:  make(chan struct{}),
+		exitCh:   make(chan struct{}),
 	}
 	s.fwd = NewForwardManager(log, nil)
 	s.reg = NewRegistry(s.fwd.Count)
@@ -134,6 +138,8 @@ func (s *Server) handle(p *control.Peer, m control.Msg, fds []int) {
 		s.handleSSHAccept(p, m, fds)
 	case control.TypeTLSAccept:
 		s.handleTLSAccept(p, m, fds)
+	case control.TypeConsoleAccept:
+		s.handleConsoleAccept(p, m, fds)
 	case control.TypeListenForward:
 		control.CloseFDs(fds)
 		s.handleListenForward(p, m)

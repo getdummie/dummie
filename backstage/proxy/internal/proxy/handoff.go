@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 
+	"proxy/internal/control"
 	"proxy/internal/xnet"
 )
 
@@ -29,6 +30,15 @@ func (p *Proxy) handoffCopy(id string, client, backend net.Conn, protocol string
 func (p *Proxy) handoffSSHAccept(id string, client net.Conn) error {
 	return xnet.WithFD(client, func(fd int) error {
 		return p.ctrl.SSHAccept(context.Background(), id, fd)
+	})
+}
+
+// handoffConsoleAccept passes the browser's socket to dpipe along with
+// everything it needs to answer the upgrade and open the shell. The caller
+// closes the connection afterwards either way.
+func (p *Proxy) handoffConsoleAccept(m control.Msg, client net.Conn) error {
+	return xnet.WithFD(client, func(fd int) error {
+		return p.ctrl.ConsoleAccept(context.Background(), m, fd)
 	})
 }
 

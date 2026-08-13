@@ -299,6 +299,18 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 		return
 	}
 
+	// A console hostname is the proxy's own and is answered here. The VM host
+	// table is consulted first, so a name that is genuinely a published VM always
+	// routes to that VM -- a domain whose own first label happens to be the
+	// console label can only cost someone a terminal, never open one by accident.
+	if _, published := p.router.HostEntry(host); !published {
+		if vmHost, ok := p.consoleVMHost(host); ok {
+			log.Info("console route", "host", host, "vm_host", vmHost)
+			p.handleConsole(log, client, host, vmHost, prefix)
+			return
+		}
+	}
+
 	target, ok := p.router.HostBackend(host)
 	if !ok {
 		log.Info("http deny: unknown host", "host", host)
@@ -363,6 +375,8 @@ func writeQuick(w io.Writer, code int) {
 	switch code {
 	case 400:
 		reason = "Bad Request"
+	case 404:
+		reason = "Not Found"
 	case 502:
 		reason = "Bad Gateway"
 	case 503:

@@ -51,6 +51,21 @@ type UserHandler struct {
 // without one there is no name to route on, and inventing a suffix would hand
 // the user a link nothing resolves.
 func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
+  tld := h.vmDomainTLD(ctx, v)
+  if tld == "" {
+    return ""
+  }
+  scheme := "http"
+  if h.prod {
+    scheme = "https"
+  }
+  return fmt.Sprintf("%s://%s.%s", scheme, v.Name, tld)
+}
+
+// vmDomainTLD is the domain of the host a VM runs on, or "" when it has none or
+// the VM has no name to sit under one. Split out of vmURL because the console
+// hostname is built from the same two halves under a different shape.
+func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
   if v.Name == "" {
     return ""
   }
@@ -66,11 +81,7 @@ func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
   }
   for _, d := range domains {
     if d.ID == agent.DomainID {
-      scheme := "http"
-      if h.prod {
-        scheme = "https"
-      }
-      return fmt.Sprintf("%s://%s.%s", scheme, v.Name, d.TLD)
+      return d.TLD
     }
   }
   return ""
@@ -132,6 +143,7 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
   }
   d := toVMDTO(v)
   d.URL = h.vmURL(c.Request().Context(), v)
+  d.ConsoleURL = h.consoleURL(c.Request().Context(), v)
   return c.JSON(http.StatusOK, d)
 }
 
@@ -771,10 +783,11 @@ func (h *UserHandler) UpdatePorts(c *echo.Context) error {
   // every guest on the machine and is regenerated from the database rather than
   // patched with this row.
   pushProxyConfig(ctx, h.q, h.hub, h.proxy, vm.AgentID)
-  // Carries the url like GetVM does: the detail page shows the saved row
-  // straight back, so leaving it out would make the link vanish on save.
+  // Carries the urls like GetVM does: the detail page shows the saved row
+  // straight back, so leaving them out would make the links vanish on save.
   d := toVMDTO(row)
   d.URL = h.vmURL(ctx, row)
+  d.ConsoleURL = h.consoleURL(ctx, row)
   return c.JSON(http.StatusOK, d)
 }
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ExternalLink, Pencil, Plus, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -40,6 +40,9 @@ interface VM {
   // Where this VM answers http: its name under the domain of the host it runs
   // on. "" when that host has no domain, so there is no name to route on.
   url: string
+  // The websocket endpoint the browser terminal talks to. "" under the same
+  // condition that leaves url empty: the host it runs on has no domain.
+  console_url: string
   last_error: string
   created_at: string
   started_at: string
@@ -526,6 +529,29 @@ async function confirmRemove() {
               <ExternalLink class="size-4" aria-hidden="true" />
               Web
               <span class="sr-only">: open {{ vm.url }} in a new tab</span>
+            </Button>
+            <!-- A new tab, not a route change: a terminal is a session, and
+                 navigating the page away from it would drop the shell. Only
+                 when the VM is running, since the console opens an ssh
+                 connection to it and a stopped VM has nothing listening. -->
+            <Button
+              v-if="vm.console_url"
+              as="a"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :href="`/console/${vm.id}`"
+              target="_blank"
+              rel="noopener"
+              :aria-disabled="vm.status !== 'running'"
+              :class="vm.status !== 'running' && 'pointer-events-none opacity-50'"
+              :title="vm.status === 'running'
+                ? `Open a terminal on ${vm.name}`
+                : `Cannot open a console: this VM is ${vm.status}`"
+            >
+              <SquareTerminal class="size-4" aria-hidden="true" />
+              Console
+              <span class="sr-only">: open a terminal in a new tab</span>
             </Button>
             <Dialog v-model:open="portsOpen">
               <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
