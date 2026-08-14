@@ -9,3 +9,7 @@ rustfs-data/
 
 postgres-data/
 .postgres.env
+.pgweb.env
+
+clickhouse-data/
+.clickhouse.env

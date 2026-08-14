@@ -12,59 +12,93 @@ import (
   "strconv"
 
   "github.com/golang-migrate/migrate/v4"
-  _ "github.com/golang-migrate/migrate/v4/database/pgx/v5" // registers scheme "pgx5"
-  _ "github.com/golang-migrate/migrate/v4/source/file"     // registers scheme "file"
+  _ "github.com/golang-migrate/migrate/v4/database/clickhouse" // registers scheme "clickhouse"
+  _ "github.com/golang-migrate/migrate/v4/database/pgx/v5"     // registers scheme "pgx5"
+  _ "github.com/golang-migrate/migrate/v4/source/file"         // registers scheme "file"
   "github.com/urfave/cli/v3"
 )
 
-const migrationsDir = "migrations"
+// migrationSet is one database's migrations: its own directory, its own DSN, and
+// its own schema_migrations table. The two are versioned independently because
+// they hold unrelated things -- postgres the control plane's own state,
+// clickhouse the event stream shipped off the qemu hosts -- and a single version
+// counter over both would make either one's history a lie.
+type migrationSet struct {
+  command string
+  name    string
+  dir     string
+  env     string
+  // dsn adapts what the operator wrote to what the migrate driver expects.
+  dsn func(*url.URL)
+}
 
-func migrateCommand() *cli.Command {
+var postgresMigrations = migrationSet{
+  command: "migrate",
+  name:    "postgres",
+  dir:     "migrations",
+  env:     "DATABASE_URL",
+  // The pgx/v5 migrate driver registers the scheme "pgx5".
+  dsn: func(u *url.URL) { u.Scheme = "pgx5" },
+}
+
+var clickhouseMigrations = migrationSet{
+  command: "migrate-clickhouse",
+  name:    "clickhouse",
+  dir:     "migrations-clickhouse",
+  env:     "CLICKHOUSE_URL",
+  // Without this the driver hands the whole file to the server as one
+  // statement, which fails on any migration that is more than a single DDL.
+  dsn: func(u *url.URL) {
+    q := u.Query()
+    q.Set("x-multi-statement", "true")
+    u.RawQuery = q.Encode()
+  },
+}
+
+func migrateCommand(set migrationSet) *cli.Command {
   return &cli.Command{
-    Name:  "migrate",
-    Usage: "apply or revert database migrations",
+    Name:  set.command,
+    Usage: "apply or revert " + set.name + " migrations",
     Commands: []*cli.Command{
       // The argument is read with StringArg, not Args().First(): a declared
       // cli.Argument is consumed during parsing, so Args() is empty by the time
       // the action runs and every target silently became "all".
       {
         Name:      "up",
-        Usage:     "apply migrations (optionally up to a target version, e.g. `migrate up 10`)",
+        Usage:     "apply migrations (optionally up to a target version, e.g. `up 10`)",
         Arguments: []cli.Argument{&cli.StringArg{Name: "target"}},
         Action: func(ctx context.Context, cmd *cli.Command) error {
-          return runMigrate(true, cmd.StringArg("target"))
+          return runMigrate(set, true, cmd.StringArg("target"))
         },
       },
       {
         Name:      "down",
-        Usage:     "revert migrations (optionally down to a target version, e.g. `migrate down 10`)",
+        Usage:     "revert migrations (optionally down to a target version, e.g. `down 10`)",
         Arguments: []cli.Argument{&cli.StringArg{Name: "target"}},
         Action: func(ctx context.Context, cmd *cli.Command) error {
-          return runMigrate(false, cmd.StringArg("target"))
+          return runMigrate(set, false, cmd.StringArg("target"))
         },
       },
     },
   }
 }
 
-// newMigrator builds a *migrate.Migrate from DATABASE_URL. The pgx/v5 migrate
-// driver registers the scheme "pgx5", so we rewrite the DSN scheme accordingly.
-func newMigrator() (*migrate.Migrate, error) {
-  dsn := os.Getenv("DATABASE_URL")
+func newMigrator(set migrationSet) (*migrate.Migrate, error) {
+  dsn := os.Getenv(set.env)
   if dsn == "" {
-    return nil, errors.New("DATABASE_URL is not set")
+    return nil, errors.New(set.env + " is not set")
   }
   u, err := url.Parse(dsn)
   if err != nil {
-    return nil, fmt.Errorf("invalid DATABASE_URL: %w", err)
+    return nil, fmt.Errorf("invalid %s: %w", set.env, err)
   }
-  u.Scheme = "pgx5"
-  return migrate.New("file://"+migrationsDir, u.String())
+  set.dsn(u)
+  return migrate.New("file://"+set.dir, u.String())
 }
 
 // versionsInDir returns the sorted, de-duplicated migration versions on disk.
-func versionsInDir() ([]uint, error) {
-  entries, err := os.ReadDir(migrationsDir)
+func versionsInDir(dir string) ([]uint, error) {
+  entries, err := os.ReadDir(dir)
   if err != nil {
     return nil, err
   }
@@ -96,14 +130,14 @@ func versionsInDir() ([]uint, error) {
 //
 // So the number is always "the migration I want executed", rather than meaning
 // a version to end at going up and a version to stop above going down.
-func runMigrate(up bool, targetArg string) error {
-  m, err := newMigrator()
+func runMigrate(set migrationSet, up bool, targetArg string) error {
+  m, err := newMigrator(set)
   if err != nil {
     return err
   }
   defer func() { _, _ = m.Close() }()
 
-  versions, err := versionsInDir()
+  versions, err := versionsInDir(set.dir)
   if err != nil {
     return err
   }
@@ -116,7 +150,7 @@ func runMigrate(up bool, targetArg string) error {
     return err
   }
   if dirty {
-    return fmt.Errorf("database is dirty at version %04d; resolve manually", cur)
+    return fmt.Errorf("%s is dirty at version %04d; resolve manually", set.name, cur)
   }
 
   // target: 0 means "all".
@@ -130,7 +164,7 @@ func runMigrate(up bool, targetArg string) error {
     // A version with no file is a typo, and silently treating it as a bound
     // would run every migration up to it -- the opposite of asking for less.
     if !slices.Contains(versions, target) {
-      return fmt.Errorf("no migration %04d in %s/", target, migrationsDir)
+      return fmt.Errorf("no migration %04d in %s/", target, set.dir)
     }
   }
 
@@ -157,7 +191,7 @@ func runMigrate(up bool, targetArg string) error {
       }
       ran++
     }
-    return reportVersion(m, ran, "applied")
+    return reportVersion(m, set, ran, "applied")
   }
 
   // down: revert from the current version downward, running target's own down
@@ -183,21 +217,21 @@ func runMigrate(up bool, targetArg string) error {
     }
     ran++
   }
-  return reportVersion(m, ran, "reverted")
+  return reportVersion(m, set, ran, "reverted")
 }
 
 // reportVersion prints where the database ended up. Worth the extra query: the
 // per-migration lines say what was attempted, not what the schema_migrations
 // table now says, and those differ if a step stopped early.
-func reportVersion(m *migrate.Migrate, ran int, verb string) error {
+func reportVersion(m *migrate.Migrate, set migrationSet, ran int, verb string) error {
   v, _, err := m.Version()
   switch {
   case errors.Is(err, migrate.ErrNilVersion):
-    fmt.Printf("%d %s; database is now at no version\n", ran, verb)
+    fmt.Printf("%d %s; %s is now at no version\n", ran, verb, set.name)
   case err != nil:
     return err
   default:
-    fmt.Printf("%d %s; database is now at version %04d\n", ran, verb, v)
+    fmt.Printf("%d %s; %s is now at version %04d\n", ran, verb, set.name, v)
   }
   return nil
 }

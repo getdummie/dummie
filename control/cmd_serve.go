@@ -15,6 +15,7 @@ import (
   "syscall"
   "time"
 
+  "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
   "github.com/jackc/pgx/v5/pgxpool"
   "github.com/labstack/echo/v5"
   "github.com/labstack/echo/v5/middleware"
@@ -73,6 +74,16 @@ func runServe(host string, port int) error {
     log.Print("DATABASE_URL not set; healthcheck will report db:false")
   }
 
+  ch, err := openClickHouse()
+  if err != nil {
+    return err
+  }
+  if ch == nil {
+    log.Print("CLICKHOUSE_URL not set; healthcheck will report clickhouse:false")
+  } else {
+    defer ch.Close()
+  }
+
   nuxt := exec.Command("bun", "run", "dev")
   nuxt.Dir = "web-client"
   nuxt.Stdout, nuxt.Stderr = os.Stdout, os.Stderr
@@ -101,12 +112,12 @@ func runServe(host string, port int) error {
   }()
 
   cfg := loadAuthConfig()
-  return runEchoServer(host, port, pool, cfg, loadProxyAuthConfig(cfg.prod))
+  return runEchoServer(host, port, pool, ch, cfg, loadProxyAuthConfig(cfg.prod))
 }
 
 // runEchoServer starts the Echo API server: /api/v1/* is handled here, every
 // other path is reverse-proxied to the Nuxt dev server.
-func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, proxyCfg proxyAuthConfig) error {
+func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cfg authConfig, proxyCfg proxyAuthConfig) error {
   e := echo.New()
 
   e.Use(middleware.RequestLogger())
@@ -230,15 +241,22 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, cfg authConfig, pr
   api.GET("/ht/", func(c *echo.Context) error {
     apiOK := true
     dbOK := false
+    chOK := false
+    ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
+    defer cancel()
     if pool != nil {
-      ctx, cancel := context.WithTimeout(c.Request().Context(), 2*time.Second)
-      defer cancel()
       dbOK = pool.Ping(ctx) == nil
     }
+    if ch != nil {
+      chOK = ch.Ping(ctx) == nil
+    }
+    // clickhouse is deliberately not in "all": it holds observability data, and
+    // a control plane that cannot reach it can still create and run vms.
     return c.JSON(http.StatusOK, map[string]bool{
-      "all": apiOK && dbOK,
-      "db":  dbOK,
-      "api": apiOK,
+      "all":        apiOK && dbOK,
+      "db":         dbOK,
+      "clickhouse": chOK,
+      "api":        apiOK,
     })
   })
 

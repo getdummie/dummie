@@ -18,7 +18,8 @@ func main() {
     Usage: "control plane dev orchestrator + API server",
     Commands: []*cli.Command{
       serveCommand(),
-      migrateCommand(),
+      migrateCommand(postgresMigrations),
+      migrateCommand(clickhouseMigrations),
     },
   }
 

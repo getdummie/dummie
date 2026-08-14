@@ -25,6 +25,21 @@ services:
     working_dir: /app
     entrypoint: sh -c 'cd /app/dpipe && go build -o dpipe ./cmd/dpipe/ && cd /app/proxy && go build -o proxy ./cmd/proxy/ && echo "Building proxy and dpipe complete" && sleep inf'
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.7.3.19
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    ports:
+      - 8123:8123
+      - 9010:9000
+    volumes:
+      - ./clickhouse-data:/var/lib/clickhouse/
+    env_file:
+      - .clickhouse.env
+
   rustfs:
     image: rustfs/rustfs:1.0.0-beta.10
     security_opt:
@@ -49,6 +64,20 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  pgweb:
+    image: sosedoff/pgweb:0.17.0
+    restart: unless-stopped
+    env_file:
+      - .pgweb.env
+    ports:
+      - 8082:8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nc", "-vz", "127.0.0.1", "8081"]
+      interval: 5s
 
   postgres:
     image: postgres:18.4-alpine3.24
