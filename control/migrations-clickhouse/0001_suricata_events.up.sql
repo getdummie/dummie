@@ -68,8 +68,10 @@ CREATE TABLE suricata_events
     http__method    LowCardinality(String) DEFAULT '',
     http__status    UInt16 DEFAULT 0,
 
-    -- ---- escape hatch ----
-    raw             String CODEC(ZSTD(3)),
+    -- ---- anomaly.* ----
+    anomaly__type   LowCardinality(String) DEFAULT '',
+    anomaly__event  LowCardinality(String) DEFAULT '',
+    anomaly__layer  LowCardinality(String) DEFAULT '',
 
     -- ---- derived, for domain queries across event types ----
     domain          String MATERIALIZED coalesce(
