@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { TriangleAlert } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -8,14 +10,24 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · settings' })
 
+type SettingKind = 'bool' | 'string' | 'secret'
+
 interface SettingRow {
   key: string
+  kind: SettingKind
   label: string
   description: string
+  placeholder?: string
   warn: boolean
-  value: boolean
+  value: string
+  is_set: boolean
   updated_at: string
 }
+
+// A secret never comes back from the server, so its field starts empty on every
+// load and submitting an empty one is a no-op rather than a way to clear it by
+// accident. Kept out of `items` so a reload cannot echo a typed credential.
+const drafts = ref<Record<string, string>>({})
 
 const { authFetch } = useAuth()
 
@@ -61,6 +73,9 @@ async function load() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     items.value = data.items ?? []
+    drafts.value = Object.fromEntries(
+      items.value.filter(s => s.kind !== 'bool').map(s => [s.key, s.kind === 'secret' ? '' : s.value]),
+    )
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load settings'
@@ -71,11 +86,12 @@ async function load() {
 }
 onMounted(load)
 
-async function save(row: SettingRow, value: boolean) {
+async function save(row: SettingRow, value: boolean | string) {
   const previous = row.value
-  // Optimistic: the switch has already moved under the pointer, so reverting on
-  // failure reads better than snapping back and forth on every success.
-  row.value = value
+  // Optimistic for the switch only: it has already moved under the pointer, so
+  // reverting on failure reads better than snapping back and forth on every
+  // success. A text field has not changed the row yet.
+  if (typeof value === 'boolean') row.value = String(value)
   saving.value = { ...saving.value, [row.key]: true }
   saveError.value = null
   savedKey.value = null
@@ -88,7 +104,12 @@ async function save(row: SettingRow, value: boolean) {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const saved = await res.json()
     row.value = saved.value
+    row.is_set = saved.is_set
     row.updated_at = saved.updated_at
+    // Typed credentials are dropped as soon as they are stored; everything else
+    // re-syncs with what the server actually kept after trimming.
+    if (row.kind === 'secret') drafts.value = { ...drafts.value, [row.key]: '' }
+    else if (row.kind === 'string') drafts.value = { ...drafts.value, [row.key]: saved.value }
     savedKey.value = row.key
   }
   catch (e) {
@@ -100,6 +121,14 @@ async function save(row: SettingRow, value: boolean) {
     delete next[row.key]
     saving.value = next
   }
+}
+
+// An unchanged text field should not be savable: it would push the same value
+// to every agent in the fleet for nothing.
+function isDirty(row: SettingRow) {
+  const draft = drafts.value[row.key] ?? ''
+  if (row.kind === 'secret') return draft !== ''
+  return draft !== row.value
 }
 </script>
 
@@ -157,7 +186,7 @@ async function save(row: SettingRow, value: boolean) {
               <!-- Button, not a bare icon: a tooltip that only opens on hover is
                    unreachable by keyboard, and this is the only place the risk is
                    spelled out. (WCAG 1.4.13) -->
-              <Tooltip v-if="s.warn && s.value">
+              <Tooltip v-if="s.warn && s.value === 'true'">
                 <TooltipTrigger as-child>
                   <button
                     type="button"
@@ -175,17 +204,41 @@ async function save(row: SettingRow, value: boolean) {
             <p :id="`setting-${s.key}-desc`" class="mt-1 max-w-2xl text-sm text-muted-foreground">{{ s.description }}</p>
             <p class="mt-1.5 font-mono text-xs text-muted-foreground">
               {{ s.key }} · changed {{ fmtDate(s.updated_at) }}
+              <span v-if="s.kind === 'secret'">· {{ s.is_set ? 'set' : 'not set' }}</span>
             </p>
           </div>
 
           <Switch
-            :model-value="s.value"
+            v-if="s.kind === 'bool'"
+            :model-value="s.value === 'true'"
             :disabled="saving[s.key]"
             :aria-labelledby="`setting-${s.key}-label`"
             :aria-describedby="`setting-${s.key}-desc`"
             class="shrink-0 sm:mt-1"
             @update:model-value="(v: boolean) => save(s, v)"
           />
+
+          <form
+            v-else
+            class="flex w-full shrink-0 gap-2 sm:w-80"
+            @submit.prevent="save(s, drafts[s.key] ?? '')"
+          >
+            <Input
+              :id="`setting-${s.key}-input`"
+              v-model="drafts[s.key]"
+              :type="s.kind === 'secret' ? 'password' : 'text'"
+              :placeholder="s.kind === 'secret' && s.is_set ? '••••••••' : s.placeholder"
+              :disabled="saving[s.key]"
+              :autocomplete="s.kind === 'secret' ? 'new-password' : 'off'"
+              spellcheck="false"
+              :aria-labelledby="`setting-${s.key}-label`"
+              :aria-describedby="`setting-${s.key}-desc`"
+              class="min-w-0 flex-1 font-mono text-sm"
+            />
+            <Button type="submit" variant="secondary" :disabled="saving[s.key] || !isDirty(s)">
+              Save
+            </Button>
+          </form>
         </div>
       </div>
 

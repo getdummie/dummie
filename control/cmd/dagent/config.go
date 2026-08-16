@@ -33,6 +33,18 @@ type Config struct {
   // default like everything else that changes the host.
   Proxy ServiceConfig `yaml:"proxy"`
   Dpipe ServiceConfig `yaml:"dpipe"`
+
+  // Vector ships suricata's events off the host. It has no download_url or
+  // version here because both, and the clickhouse it ships to, are fleet-wide
+  // decisions made in the control server's settings -- this only says whether
+  // the host takes part.
+  Vector VectorService `yaml:"vector"`
+}
+
+// VectorService is the host's half of the vector decision: on or off. What it
+// runs and where it ships arrive over the control link.
+type VectorService struct {
+  Enable bool `yaml:"enable"`
 }
 
 // Features is every part of `serve` that changes something outside dagent's own

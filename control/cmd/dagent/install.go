@@ -246,6 +246,12 @@ const exampleConfig = `# control_url: https://control.example.com
 # proxy:
 #   enable: false
 #   download_url: http://10.68.0.1:8081/backstage/proxy/proxy
+#
+# vector:
+#   enable: false           # ships suricata's eve.json to clickhouse; needs suricata.
+#                           # no version or url here: which release runs, and which
+#                           # clickhouse it ships to, come from the control server's
+#                           # settings, so the fleet moves together
 `
 
 // ensureGroup creates the group if it is missing. groupadd rather than writing

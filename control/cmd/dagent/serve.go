@@ -139,6 +139,10 @@ func runServe(ctx context.Context, cfg Config) error {
       log.Printf("%s is installed and running as %s.service", svc.name, svc.name)
     }
   }
+  // vector is not in that loop because there is nothing to install from here:
+  // its version and its clickhouse come from the control server, so all a start
+  // can do is restart what a previous push already put down.
+  ensureVectorRunning(ctx, cfg.Vector)
 
   errs := make(chan error, 4)
 

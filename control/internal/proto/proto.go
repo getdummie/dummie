@@ -98,6 +98,14 @@ const (
   // entry for every VM on the host is one list that has to be written together.
   // A file carrying only the VM that just changed would revoke the rest.
   KindProxyConfig JobKind = "proxy.config"
+
+  // KindVectorConfig replaces the host's whole vector.yaml and names the vector
+  // release to run it. Compiled by the control server for the same reason the
+  // two above are: the transform in it writes exactly the columns this repo's
+  // clickhouse migrations create, so the file and the schema have to ship in
+  // one deployable. Rendered on the host, a schema change would mean rolling a
+  // new agent to every machine in the fleet before the columns could be used.
+  KindVectorConfig JobKind = "vector.config"
 )
 
 // Job is the payload of a TypeJob envelope. Which fields are set is chosen by
@@ -112,6 +120,30 @@ type Job struct {
   Suricata *SuricataRules `json:"suricata,omitempty"`
   // Proxy is set when Kind is KindProxyConfig.
   Proxy *ProxyConfig `json:"proxy,omitempty"`
+  // Vector is set when Kind is KindVectorConfig.
+  Vector *VectorConfig `json:"vector,omitempty"`
+}
+
+// VectorConfig is a complete vector.yaml plus the release meant to run it. The
+// agent writes the file as given and never merges: the transform in it is the
+// control plane's statement about how eve.json maps onto its own clickhouse
+// schema, and a host holding an opinion about that would be a second answer
+// nobody can audit from the control plane.
+type VectorConfig struct {
+  // Version is a bare release number, e.g. "0.57.0". The agent builds the
+  // download URL from it, so the server validates the shape before storing it:
+  // this ends up in a URL whose contents are installed and run as root. The
+  // agent checks it again rather than trusting that.
+  Version string `json:"version"`
+
+  // Config is the whole file. Empty means the fleet has no clickhouse endpoint
+  // configured, and the agent should install nothing rather than write a config
+  // pointing nowhere.
+  //
+  // It contains the clickhouse password, so it must not be logged or echoed
+  // back in a result frame, and the file it lands in is the agent's to create
+  // 0600.
+  Config string `json:"config,omitempty"`
 }
 
 // SuricataRules carries a complete local.rules. The control server compiles it

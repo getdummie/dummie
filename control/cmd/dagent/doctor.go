@@ -58,6 +58,7 @@ var checks = []check{
   {"an uplink for egress exists", checkUplink},
   {"nfqueue matches the suricata configuration", checkQueues},
   {"the suricata container is running", checkSuricata},
+  {"vector is shipping suricata events", checkVector},
   {"docker is not dropping vm traffic", checkDockerCompat},
   {"data directory is writable", checkDataDir},
 }

@@ -345,7 +345,7 @@ func systemctl(ctx context.Context, args ...string) error {
 // started them, so dagent stops them rather than leaving units behind pointing
 // at a config directory that is no longer maintained.
 func removeManagedServices(ctx context.Context) {
-  for _, name := range []string{proxyService, dpipeService} {
+  for _, name := range []string{proxyService, dpipeService, vectorService} {
     if _, err := os.Stat(serviceUnitPath(name)); err != nil {
       continue
     }

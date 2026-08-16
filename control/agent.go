@@ -265,6 +265,10 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
   // away. Cheap to send unconditionally -- the agent compares the file it is
   // given against the one on disk and only restarts proxy when they differ.
   pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
+  // And vector.yaml: the settings it is built from may have changed while the
+  // host was away, and this is also what installs vector on a host that has
+  // just enrolled.
+  pushVectorConfig(ctx, h.q, h.hub, agent.ID)
 
   h.readLoop(ctx, conn, agent, agentID)
 }
@@ -373,6 +377,14 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
   if res.Kind == proto.KindProxyConfig {
     if !res.OK {
       log.Printf("agent %s: could not apply the proxy config: %s", agentID, res.Error)
+    }
+    return
+  }
+  // Same for vector: the settings are already stored, and this only says
+  // whether the host has managed to install and start it.
+  if res.Kind == proto.KindVectorConfig {
+    if !res.OK {
+      log.Printf("agent %s: could not apply the vector config: %s", agentID, res.Error)
     }
     return
   }

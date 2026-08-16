@@ -427,6 +427,14 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
     // Off the read loop like the rest: this restarts a unit, and a systemctl
     // that blocks must not stop the socket answering pings.
     go l.applyProxy(ctx, env.ID, *job.Proxy)
+  case proto.KindVectorConfig:
+    if job.Vector == nil {
+      l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no vector config"})
+      return
+    }
+    // Off the read loop for a stronger reason than the rest: this one may
+    // download a release tarball, which takes as long as the link is slow.
+    go l.applyVector(ctx, env.ID, *job.Vector)
   default:
     l.reply(ctx, env.ID, proto.JobResult{
       Kind:  job.Kind,
@@ -494,6 +502,24 @@ func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConf
     log.Printf("job %s: installed a new proxy config or key and restarted %s", jobID, proxyService)
   }
   l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, OK: true})
+}
+
+// applyVector installs the vector release the control server named and the
+// config built from its settings. Detached like the rest: an install that has
+// begun should finish, since abandoning it half way leaves a binary on disk
+// that no version marker claims.
+func (l *link) applyVector(ctx context.Context, jobID string, cfg proto.VectorConfig) {
+  ctx = context.WithoutCancel(ctx)
+  changed, err := applyVectorConfig(ctx, l.data, cfg)
+  if err != nil {
+    log.Printf("job %s: could not apply the vector config: %v", jobID, err)
+    l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVectorConfig, Error: err.Error()})
+    return
+  }
+  if changed {
+    log.Printf("job %s: installed vector %s and restarted it", jobID, cfg.Version)
+  }
+  l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVectorConfig, OK: true})
 }
 
 // runVMAction handles the three jobs that act on a VM which already exists. All

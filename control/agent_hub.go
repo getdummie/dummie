@@ -161,6 +161,33 @@ func (h *Hub) Send(agentID string, env proto.Envelope) error {
   return c.enqueue(env)
 }
 
+// Broadcast queues a frame for every connected agent and reports how many it
+// reached. For frames that carry no per-host fact: building one envelope and
+// sending it to everyone is the difference between one settings read and one
+// per host in the fleet.
+//
+// A send failure is dropped rather than returned. The frames that go this way
+// are all "here is the current state of the world", so the agent that missed
+// one gets the same thing on its next connect.
+func (h *Hub) Broadcast(env proto.Envelope) int {
+  h.mu.RLock()
+  conns := make([]*agentConn, 0, len(h.conns))
+  for _, c := range h.conns {
+    conns = append(conns, c)
+  }
+  h.mu.RUnlock()
+
+  sent := 0
+  for _, c := range conns {
+    if err := c.enqueue(env); err != nil {
+      log.Printf("agent %s: could not deliver a broadcast: %v", c.agentID, err)
+      continue
+    }
+    sent++
+  }
+  return sent
+}
+
 // Kick closes an agent's connection, if any. Used when an agent is revoked or
 // deleted so the socket does not outlive its authorization.
 func (h *Hub) Kick(agentID, reason string) {
