@@ -73,6 +73,22 @@ interface Target {
   created_at: string
 }
 
+// A domain this VM tried to reach on a flow suricata blocked. Attempts is per
+// domain over the window the server queries, not per flow.
+interface DeniedDomain {
+  domain: string
+  attempts: number
+  last_seen: string
+  signature: string
+}
+
+const deniedColumns: DataTableColumn[] = [
+  { key: 'domain', label: 'Domain' },
+  { key: 'signature', label: 'Denied by' },
+  { key: 'attempts', label: 'Attempts', align: 'right' },
+  { key: 'last_seen', label: 'Last attempt', align: 'right' },
+]
+
 const targetColumns: DataTableColumn[] = [
   { key: 'destination', label: 'Destination' },
   { key: 'matched', label: 'Matched on' },
@@ -88,6 +104,11 @@ const id = computed(() => String(route.params.id))
 
 const vm = ref<VM | null>(null)
 const targets = ref<Target[]>([])
+const denied = ref<DeniedDomain[]>([])
+// Whether the answer above is trustworthy. An empty list means two different
+// things -- nothing was denied, or nothing is collecting events -- and the
+// panel has to be able to say which.
+const deniedAvailable = ref(true)
 const loading = ref(true)
 const error = ref<string | null>(null)
 const actionError = ref<string | null>(null)
@@ -144,6 +165,9 @@ async function load(quiet = false) {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     vm.value = await res.json()
     await loadTargets()
+    // Not awaited with the rest: this one reads clickhouse, and a slow or
+    // missing event store must not hold up the page it is a panel on.
+    loadDenied()
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load this VM'
@@ -157,6 +181,29 @@ async function loadTargets() {
   const res = await authFetch(`/vms/${id.value}/targets`)
   if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
   targets.value = (await res.json()).items ?? []
+}
+
+const deniedLoading = ref(true)
+
+// Never throws: a failure here reports itself in the panel rather than
+// replacing the whole page with an error, since nothing else on it depends on
+// the event store being reachable.
+async function loadDenied() {
+  deniedLoading.value = true
+  try {
+    const res = await authFetch(`/vms/${id.value}/denied-domains`)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    denied.value = data.items ?? []
+    deniedAvailable.value = data.available ?? false
+  }
+  catch {
+    denied.value = []
+    deniedAvailable.value = false
+  }
+  finally {
+    deniedLoading.value = false
+  }
 }
 onMounted(() => load())
 
@@ -930,6 +977,43 @@ async function confirmRemove() {
                 <Trash2 class="size-4" aria-hidden="true" />
               </Button>
             </TableCell>
+          </TableRow>
+        </DataTable>
+      </section>
+
+      <!-- denied domains -->
+      <section aria-labelledby="denied-heading" class="mt-6 rounded-lg border border-border">
+        <div class="p-4 sm:p-6">
+          <h2 id="denied-heading" class="text-sm font-semibold">Denied domains</h2>
+          <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Names this VM tried to reach on connections the ruleset blocked, over the last 7 days.
+            A domain here is one of two things: a destination worth adding above, or something the
+            guest should not have been reaching at all.
+          </p>
+        </div>
+
+        <!-- Said plainly rather than shown as an empty table: with no event
+             store, "nothing was denied" and "nothing is being recorded" look
+             identical, and only one of them is reassuring. -->
+        <p v-if="!deniedLoading && !deniedAvailable" class="px-4 pb-6 text-sm text-muted-foreground sm:px-6">
+          No event store is reachable, so denials are not being recorded. This says nothing about
+          whether this VM has been blocked.
+        </p>
+
+        <div v-else-if="deniedLoading" class="space-y-2 px-4 pb-6 sm:px-6" aria-busy="true">
+          <p class="sr-only">Loading denied domains…</p>
+          <Skeleton v-for="n in 3" :key="n" class="h-8 w-full" aria-hidden="true" />
+        </div>
+
+        <DataTable v-else label="Denied domains" :columns="deniedColumns" :empty="!denied.length" :frame="false">
+          <template #empty>
+            Nothing this VM reached by name has been blocked.
+          </template>
+          <TableRow v-for="d in denied" :key="d.domain">
+            <TableCell class="font-mono break-all">{{ d.domain }}</TableCell>
+            <TableCell class="text-xs text-muted-foreground">{{ d.signature || '—' }}</TableCell>
+            <TableCell class="text-right font-mono tabular-nums">{{ d.attempts }}</TableCell>
+            <TableCell class="text-right text-sm text-muted-foreground">{{ fmtDate(d.last_seen) }}</TableCell>
           </TableRow>
         </DataTable>
       </section>

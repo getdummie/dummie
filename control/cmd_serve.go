@@ -211,7 +211,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
   me.PUT("", profileH.UpdateMe)
 
   // Self-service VMs: any signed-in account. Every route scopes to the caller.
-  userH := &UserHandler{q: q, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs}
+  userH := &UserHandler{q: q, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
   vms := api.Group("/vms", userJWT(cfg))
   vms.GET("", userH.ListVMs)
   vms.POST("", userH.CreateVM)
@@ -227,6 +227,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
   vms.POST("/:id/console-token", userH.ConsoleToken)
   vms.POST("/:id/web-session", userH.WebSession)
   vms.GET("/:id/targets", userH.ListTargets)
+  vms.GET("/:id/denied-domains", userH.ListDeniedDomains)
   vms.POST("/:id/targets", userH.CreateTarget)
   vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 

@@ -13,6 +13,7 @@ import (
   "strings"
   "time"
 
+  "github.com/ClickHouse/clickhouse-go/v2/lib/driver"
   "github.com/google/uuid"
   "github.com/jackc/pgx/v5"
   "github.com/jackc/pgx/v5/pgconn"
@@ -39,6 +40,10 @@ type UserHandler struct {
   // blobs mints the download link a host fetches a chosen kernel from. nil when
   // no bucket is configured, which is what makes a create impossible to serve.
   blobs *blobStore
+  // ch reads the suricata events agents ship. nil when no clickhouse is
+  // configured, which the routes that use it report as "unavailable" rather
+  // than as an empty result.
+  ch driver.Conn
 }
 
 // vmURL is where a VM answers http: its name under the domain of the host it
