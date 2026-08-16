@@ -986,9 +986,9 @@ async function confirmRemove() {
         <div class="p-4 sm:p-6">
           <h2 id="denied-heading" class="text-sm font-semibold">Denied domains</h2>
           <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Names this VM tried to reach on connections the ruleset blocked, over the last 7 days.
-            A domain here is one of two things: a destination worth adding above, or something the
-            guest should not have been reaching at all.
+            Names this VM tried to reach on connections the ruleset blocked, since it was created
+            and at most 7 days back. A domain here is one of two things: a destination worth adding
+            above, or something the guest should not have been reaching at all.
           </p>
         </div>
 

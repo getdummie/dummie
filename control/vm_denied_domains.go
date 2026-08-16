@@ -44,7 +44,7 @@ WITH blocked AS (
     SELECT flow_id, argMax(alert__signature, timestamp) AS signature
     FROM suricata_events
     WHERE src_ip = toIPv6(?)
-      AND timestamp >= now() - INTERVAL ? SECOND
+      AND timestamp >= ?
       AND alert__action = 'blocked'
     GROUP BY flow_id
 )
@@ -56,7 +56,7 @@ SELECT
 FROM suricata_events AS e
 INNER JOIN blocked AS b ON e.flow_id = b.flow_id
 WHERE e.src_ip = toIPv6(?)
-  AND e.timestamp >= now() - INTERVAL ? SECOND
+  AND e.timestamp >= ?
   AND e.domain != ''
 GROUP BY domain
 ORDER BY last_seen DESC
@@ -103,7 +103,7 @@ func (h *UserHandler) ListDeniedDomains(c *echo.Context) error {
     return c.JSON(http.StatusOK, empty)
   }
 
-  items, err := queryDeniedDomains(c.Request().Context(), h, v.IP)
+  items, err := queryDeniedDomains(c.Request().Context(), h, v.IP, deniedDomainsSince(v))
   if err != nil {
     // Not a 500: clickhouse being down says nothing about the VM, and the rest
     // of the page is fine. The panel says it could not read rather than
@@ -114,12 +114,27 @@ func (h *UserHandler) ListDeniedDomains(c *echo.Context) error {
   return c.JSON(http.StatusOK, map[string]any{"items": items, "available": true})
 }
 
-func queryDeniedDomains(ctx context.Context, h *UserHandler, ip string) ([]deniedDomainDTO, error) {
+// deniedDomainsSince is the lower bound on the events this VM may be shown:
+// whichever of the window and its own creation time is later.
+//
+// The creation half is not an optimisation, it is a correctness fix. A
+// destroyed VM's address goes back to the pool and is handed to somebody else's
+// guest, so without this a new VM inherits the browsing history of whatever
+// held its address before it -- attributed to the wrong owner, on a screen
+// built for exactly one person to read.
+func deniedDomainsSince(v db.Vm) time.Time {
+  since := time.Now().Add(-deniedDomainsWindow)
+  if v.CreatedAt.Valid && v.CreatedAt.Time.After(since) {
+    return v.CreatedAt.Time
+  }
+  return since
+}
+
+func queryDeniedDomains(ctx context.Context, h *UserHandler, ip string, since time.Time) ([]deniedDomainDTO, error) {
   ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
   defer cancel()
 
-  window := int64(deniedDomainsWindow / time.Second)
-  rows, err := h.ch.Query(ctx, deniedDomainsQuery, ip, window, ip, window, deniedDomainsLimit)
+  rows, err := h.ch.Query(ctx, deniedDomainsQuery, ip, since.UTC(), ip, since.UTC(), deniedDomainsLimit)
   if err != nil {
     return nil, err
   }
