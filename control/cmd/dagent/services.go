@@ -90,11 +90,11 @@ WantedBy=multi-user.target
 // control server has said anything. Never rewritten from here: clobbering a
 // running service's listeners on every restart would be an outage.
 //
-// dpipe.yaml is the operator's after that. proxy.yaml is NOT: the control server
-// regenerates it in full whenever the set of VMs on this host changes, because
-// its ssh user list maps a public key to its owner's VM and only the control
-// plane knows that mapping. This default is what proxy runs on until the first
-// push arrives.
+// Both are bootstrap only. The control server compiles the real version of each
+// and pushes it -- proxy.yaml whenever the set of VMs on this host changes,
+// dpipe.yaml on every connect -- and the agent replaces the file wholesale when
+// it does. What is below is what each service runs on until the first push
+// arrives, which is also all a host with no control server ever gets.
 const defaultDpipeConfig = `control_socket: /run/dpipe/control.sock
 upgrade_socket: /run/dpipe/upgrade.sock
 drain_timeout: 0s

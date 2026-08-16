@@ -100,52 +100,29 @@ func ensureSuricata(cfg netConfig) {
   log.Printf("started the suricata container on %d queues", cfg.Queues)
 }
 
-// suricataConfigTemplate is the config a fresh host gets. HOME_NET is the VM
-// pool, so a rule written against $HOME_NET means "our guests" on every host
-// regardless of what pool it was given -- hardcoding the default would silently
-// make every VM external on a host that changed it.
+// suricataConfigTemplate is the bootstrap config only, and it is deliberately
+// the smallest thing that starts.
 //
-// Everything else is left to Suricata's built-in defaults; this file only says
-// what dagent knows and the defaults cannot.
+// The real config is compiled by the control server -- it decides the eve-log
+// types, and those decide which fields exist in the clickhouse rows it queries.
+// This one exists for the window before the first push: a fresh host, or one
+// whose control link is down. Without it the container cannot start at all, and
+// on a suricata-mode host that means every queued packet is dropped.
+//
+// HOME_NET is the VM pool, so a rule written against $HOME_NET means "our
+// guests" regardless of what pool this host was given -- hardcoding the default
+// would silently make every VM external on a host that changed it.
 const suricataConfigTemplate = `%%YAML 1.1
 ---
-# Written by dagent on first start. Edits are preserved: dagent only creates this
-# file when it is missing, and never rewrites it.
+# Written by dagent so suricata can start before the control server has sent a
+# config. It is replaced wholesale by the one the control server compiles.
 vars:
   address-groups:
     HOME_NET: "[%s]"
 
 default-rule-path: /var/lib/suricata/rules
 rule-files:
-  - suricata.rules
   - local.rules
-
-# The one record of what the ruleset actually did to a guest's traffic. Without
-# it a drop is indistinguishable from a network fault from inside the VM, and
-# from outside there is nothing at all to look at.
-#
-# http and tls are logged in their own right, not just as context on an alert.
-# An alert only carries the hostname when the rule that fired matched a
-# transaction -- a port-level drop fires at the SYN, before any ClientHello, so
-# it can only ever name an address. These two types answer "where was this guest
-# going" for every handshake that got far enough to say so, allowed or denied.
-outputs:
-  - eve-log:
-      enabled: yes
-      filetype: regular
-      filename: eve.json
-      types:
-        - alert:
-            # Attaches the app-layer record of the flow that alerted, which is
-            # what puts tls.sni and http.hostname on a hostname-matched drop.
-            metadata: yes
-        - http:
-            extended: yes
-        - tls:
-            extended: yes
-        - dns
-        - drop
-        - anomaly
 
 unix-command:
   enabled: yes
@@ -191,14 +168,12 @@ func seedSuricataConfig(cfg netConfig) error {
     return err
   }
 
-  // suricata.rules is suricata-update's output. Seeded empty because it is
-  // listed in rule-files and Suricata treats a listed file it cannot open as a
-  // startup error -- an empty one means "no signatures yet", not "will not run".
+  // Both are bootstrap only: the control server replaces each of them, and
+  // neither is rewritten from here once it exists.
   for _, f := range []struct{ path, body, note string }{
-    {filepath.Join(suricataConfigDir, "suricata.yaml"),
-      fmt.Sprintf(suricataConfigTemplate, cfg.Pool), "HOME_NET " + cfg.Pool},
+    {suricataConfigPath(),
+      fmt.Sprintf(suricataConfigTemplate, cfg.Pool), "bootstrap config, HOME_NET " + cfg.Pool},
     {localRulesPath, localRules, "deny all egress until the control server sends a ruleset"},
-    {filepath.Join(rules, "suricata.rules"), "", "empty; run suricata-update to fill it"},
   } {
     if _, err := os.Stat(f.path); err == nil {
       continue
@@ -213,9 +188,13 @@ func seedSuricataConfig(cfg netConfig) error {
   return nil
 }
 
-// localRulesPath is the one file the control server owns. Everything else under
-// suricataLibDir is either suricata-update's or the operator's.
+// localRulesPath is the whole ruleset. There is no second rule file: what
+// suricata enforces on this host is what the control server compiled, and a
+// host-local signature set would be policy nobody could audit from the control
+// plane.
 var localRulesPath = filepath.Join(suricataLibDir, "rules", "local.rules")
+
+func suricataConfigPath() string { return filepath.Join(suricataConfigDir, "suricata.yaml") }
 
 // applySuricataRules replaces local.rules with what the control server compiled
 // and makes the running container pick it up.

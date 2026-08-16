@@ -249,7 +249,8 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
     cancel()
   }()
 
-  if err := h.handshake(ctx, conn, agent, agentID); err != nil {
+  hello, err := h.handshake(ctx, conn, agent, agentID)
+  if err != nil {
     log.Printf("agent %s: handshake failed: %v", agentID, err)
     conn.close(websocket.StatusPolicyViolation, "handshake failed")
     return
@@ -269,6 +270,13 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
   // host was away, and this is also what installs vector on a host that has
   // just enrolled.
   pushVectorConfig(ctx, h.q, h.hub, agent.ID)
+  // suricata.yaml and dpipe.yaml are sent here and nowhere else: neither is
+  // built from anything that changes while a host is connected, so a connect is
+  // the only moment either can be out of date. The suricata one needs the pool
+  // the hello just carried, which is why it is not sent from anywhere that has
+  // only an agent id.
+  pushSuricataConfig(ctx, h.hub, agent.ID, hello.Pool)
+  pushDpipeConfig(ctx, h.hub, agent.ID)
 
   h.readLoop(ctx, conn, agent, agentID)
 }
@@ -276,21 +284,22 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
 // handshake requires `hello` as the very first frame and answers `hello_ack`.
 // The facts it carries refresh the agent row -- an agent that was upgraded or
 // renamed since enrollment reports the truth here.
-func (h *AgentHandler) handshake(ctx context.Context, conn *agentConn, agent db.Agent, agentID string) error {
+func (h *AgentHandler) handshake(ctx context.Context, conn *agentConn, agent db.Agent, agentID string) (proto.Hello, error) {
+  var hello proto.Hello
+
   hctx, cancel := context.WithTimeout(ctx, helloTimeout)
   defer cancel()
 
   env, err := readEnvelope(hctx, conn.ws)
   if err != nil {
-    return err
+    return hello, err
   }
   if env.Type != proto.TypeHello {
-    return errors.New("expected hello, got " + string(env.Type))
+    return hello, errors.New("expected hello, got " + string(env.Type))
   }
 
-  var hello proto.Hello
   if err := json.Unmarshal(env.Payload, &hello); err != nil {
-    return err
+    return hello, err
   }
 
   if err := h.q.UpdateAgentFacts(hctx, db.UpdateAgentFactsParams{
@@ -309,11 +318,11 @@ func (h *AgentHandler) handshake(ctx context.Context, conn *agentConn, agent db.
     ServerTime: time.Now().UTC(),
   })
   if err != nil {
-    return err
+    return hello, err
   }
   // Straight to this connection, not via the hub: if a replacement socket has
   // already displaced us, the ack must not go to it.
-  return conn.enqueue(ack)
+  return hello, conn.enqueue(ack)
 }
 
 // readLoop drains frames until the connection dies.
@@ -377,6 +386,13 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
   if res.Kind == proto.KindProxyConfig {
     if !res.OK {
       log.Printf("agent %s: could not apply the proxy config: %s", agentID, res.Error)
+    }
+    return
+  }
+  // The two whole-file config pushes, same again.
+  if res.Kind == proto.KindSuricataConfig || res.Kind == proto.KindDpipeConfig {
+    if !res.OK {
+      log.Printf("agent %s: could not apply the %s config: %s", agentID, res.Kind, res.Error)
     }
     return
   }

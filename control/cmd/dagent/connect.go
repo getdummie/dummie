@@ -339,6 +339,11 @@ func sendHello(ctx context.Context, ws *websocket.Conn) error {
     OS:        osName,
     OSVersion: osVersion,
     Arch:      runtime.GOARCH,
+    // The pool is what the server's suricata.yaml needs for HOME_NET. Read
+    // fresh on every connect rather than stored server-side: an operator who
+    // renumbers a host and restarts dagent should not have to tell the control
+    // plane separately.
+    Pool: localPool(),
   })
   if err != nil {
     return err
@@ -435,6 +440,14 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
     // Off the read loop for a stronger reason than the rest: this one may
     // download a release tarball, which takes as long as the link is slow.
     go l.applyVector(ctx, env.ID, *job.Vector)
+  case proto.KindSuricataConfig, proto.KindDpipeConfig:
+    if job.File == nil {
+      l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
+      return
+    }
+    // Off the read loop like the rest: both restart something, and a slow
+    // docker or systemctl must not stop the socket answering pings.
+    go l.applyHostConfig(ctx, env.ID, job.Kind, job.File.Config)
   default:
     l.reply(ctx, env.ID, proto.JobResult{
       Kind:  job.Kind,
@@ -502,6 +515,31 @@ func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConf
     log.Printf("job %s: installed a new proxy config or key and restarted %s", jobID, proxyService)
   }
   l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, OK: true})
+}
+
+// applyHostConfig installs one of the two whole-file configs the control server
+// owns. Detached like the rest: a write that has begun should finish, since
+// abandoning it leaves the host running a config the control plane believes it
+// replaced.
+func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.JobKind, config string) {
+  ctx = context.WithoutCancel(ctx)
+
+  apply := applySuricataConfig
+  name := "suricata"
+  if kind == proto.KindDpipeConfig {
+    apply, name = applyDpipeConfig, dpipeService
+  }
+
+  changed, err := apply(ctx, config)
+  if err != nil {
+    log.Printf("job %s: could not apply the %s config: %v", jobID, name, err)
+    l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+    return
+  }
+  if changed {
+    log.Printf("job %s: installed a new %s config and restarted it", jobID, name)
+  }
+  l.reply(ctx, jobID, proto.JobResult{Kind: kind, OK: true})
 }
 
 // applyVector installs the vector release the control server named and the

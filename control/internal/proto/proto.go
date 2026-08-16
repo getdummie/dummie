@@ -60,6 +60,16 @@ type Hello struct {
   OS        string `json:"os"`
   OSVersion string `json:"os_version"`
   Arch      string `json:"arch"`
+
+  // Pool is the host's VM subnet in CIDR form. Reported because the suricata
+  // config the server compiles needs it for HOME_NET, and the pool is the one
+  // thing in that file the control plane cannot know: it is set per host, and
+  // guessing it would make every guest external on a host that changed it.
+  //
+  // Empty from an agent with no network config, or an older one. The server
+  // treats that as "cannot compile a config for this host" rather than
+  // substituting a default.
+  Pool string `json:"pool,omitempty"`
 }
 
 type HelloAck struct {
@@ -99,6 +109,20 @@ const (
   // A file carrying only the VM that just changed would revoke the rest.
   KindProxyConfig JobKind = "proxy.config"
 
+  // KindSuricataConfig replaces the host's whole suricata.yaml. It is the
+  // control plane's file for the same reason local.rules is -- and for one more
+  // that only became true once events were shipped off the host: the eve-log
+  // types it enables decide which fields exist in the clickhouse rows the
+  // control server queries. Left on the host, adding a column to that schema
+  // would mean editing a file on every machine before anything could fill it.
+  KindSuricataConfig JobKind = "suricata.config"
+
+  // KindDpipeConfig replaces the host's whole dpipe.yaml. Session limits and
+  // timeouts are fleet policy rather than facts about a machine, so they belong
+  // where they can be changed once. The key paths it names stay the host's --
+  // the keys are generated there and never leave.
+  KindDpipeConfig JobKind = "dpipe.config"
+
   // KindVectorConfig replaces the host's whole vector.yaml and names the vector
   // release to run it. Compiled by the control server for the same reason the
   // two above are: the transform in it writes exactly the columns this repo's
@@ -122,6 +146,18 @@ type Job struct {
   Proxy *ProxyConfig `json:"proxy,omitempty"`
   // Vector is set when Kind is KindVectorConfig.
   Vector *VectorConfig `json:"vector,omitempty"`
+  // File is set when Kind is KindSuricataConfig or KindDpipeConfig. Both carry
+  // nothing but a whole file, so they share one payload rather than each having
+  // a struct with a single Config field in it.
+  File *FileConfig `json:"file,omitempty"`
+}
+
+// FileConfig is a complete config file for a service on the host. The agent
+// writes it as given and never merges, then restarts whatever reads it -- only
+// if the content actually changed, because both services it is used for are
+// disruptive to restart.
+type FileConfig struct {
+  Config string `json:"config"`
 }
 
 // VectorConfig is a complete vector.yaml plus the release meant to run it. The
