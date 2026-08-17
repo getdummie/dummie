@@ -102,6 +102,9 @@ dpipe:
 proxy:
   enable: true
   download_url: http://10.68.0.1:8081/backstage/proxy/proxy
+
+vector:
+  enable: true
 EOF
 
 sudo systemctl restart dagent
