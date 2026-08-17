@@ -63,6 +63,10 @@ interface VM {
   // The spec as it was sent to the client. Empty for a VM adopted from a host's
   // inventory report -- nobody here asked for it, so there is nothing to copy.
   spec: Record<string, unknown>
+  // When a temporary VM is due to be destroyed, and "" for one with no TTL. It
+  // comes from the pending scheduled task, so it disappears the moment the
+  // expiry is cancelled or has run.
+  expires_at: string
 }
 
 interface Quota {
@@ -134,6 +138,32 @@ function fmtDate(s: string) {
   if (Number.isNaN(d.getTime())) return s
   const date = `${ordinal(d.getDate())} ${d.toLocaleString(undefined, { month: 'long' })} ${d.getFullYear()}`
   return `${date}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
+}
+
+// A ticking clock for the TTL countdowns. Coarse on purpose: the label is
+// in minutes and hours, so a second-by-second tick would re-render the table for
+// no visible change.
+const nowMs = ref(Date.now())
+let ttlClock: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  ttlClock = setInterval(() => { nowMs.value = Date.now() }, 30_000)
+})
+onBeforeUnmount(() => {
+  if (ttlClock) clearInterval(ttlClock)
+})
+
+// How long a temporary VM has left. Past its deadline it says so rather than
+// counting up: the VM is still there, and the control plane has not got to it.
+function expiryLabel(s: string) {
+  if (!s) return ''
+  const at = new Date(s).getTime()
+  if (Number.isNaN(at)) return ''
+  const left = at - nowMs.value
+  if (left <= 0) return 'due to be destroyed'
+  const mins = Math.round(left / 60_000)
+  if (mins < 60) return `destroyed in ${Math.max(1, mins)}m`
+  const hours = Math.round(mins / 60)
+  return hours < 24 ? `destroyed in ${hours}h` : `destroyed in ${Math.round(hours / 24)}d`
 }
 
 async function load(quiet = false) {
@@ -311,6 +341,10 @@ const blankForm = {
   disk_size: '2G',
   kernel_id: '',
   osimage_id: '',
+  // '0' is a VM that lives until somebody destroys it. Anything else makes it a
+  // temporary sandbox: the control plane destroys it that many seconds after it
+  // is created, and the clock keeps running while the VM is stopped.
+  ttl_seconds: '0',
 }
 const form = reactive({ ...blankForm })
 
@@ -455,6 +489,12 @@ function validate(): string | null {
   if (form.disk_size.trim() && !/^\d+[KkMmGgTt]?$/.test(form.disk_size.trim())) {
     return 'Disk size must be a number, optionally with a K, M, G or T suffix — e.g. 2G.'
   }
+  // The same bounds the server enforces, said here so a typo is caught before the
+  // request rather than coming back as a 400.
+  const ttl = Number(form.ttl_seconds)
+  if (!Number.isInteger(ttl) || ttl < 0) return 'TTL must be a whole number of seconds, or 0 for no limit.'
+  if (ttl > 0 && ttl < 10) return 'A TTL must be at least 10 seconds. Use 0 for no limit.'
+  if (ttl > 30 * 24 * 3600) return 'A TTL must be at most 30 days (2592000 seconds).'
   return null
 }
 
@@ -480,6 +520,7 @@ async function create() {
         disk_size: form.disk_size,
         kernel_id: form.kernel_id,
         osimage_id: form.osimage_id,
+        ttl_seconds: Number(form.ttl_seconds),
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -688,6 +729,27 @@ async function confirmDestroy() {
                   Size of this VM's disk. The guest still has to grow its own filesystem to use the space.
                 </p>
                 <p class="font-mono text-xs text-muted-foreground">{{ fmtMiB(diskRemaining) }} left</p>
+              </div>
+
+              <div class="space-y-2">
+                <Label for="vm-ttl">TTL (seconds)</Label>
+                <Input
+                  id="vm-ttl"
+                  v-model="form.ttl_seconds"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputmode="numeric"
+                  aria-describedby="vm-ttl-hint"
+                />
+                <!-- Both halves of what a TTL means, because neither is guessable:
+                     it is destroyed rather than stopped, and stopping it does not
+                     buy more time. -->
+                <p id="vm-ttl-hint" class="text-xs text-muted-foreground">
+                  0 means no limit. Anything else is a time to live in seconds: the VM is destroyed
+                  automatically when it runs out and the disk goes with it. The clock starts now and
+                  keeps running while the VM is stopped.
+                </p>
               </div>
 
               <div class="space-y-2">
@@ -903,6 +965,12 @@ async function confirmDestroy() {
                is shown inline rather than hidden behind a detail view. -->
           <span v-if="v.status === 'failed' && v.last_error" class="mt-1 block text-xs text-destructive">
             {{ v.last_error }}
+          </span>
+          <!-- A temporary VM says so where its name is, not in a column: it
+               changes what the row means, and a column would be empty for
+               almost every row. -->
+          <span v-if="v.expires_at && v.status !== 'gone'" class="mt-1 block font-mono text-xs text-muted-foreground">
+            {{ expiryLabel(v.expires_at) }}
           </span>
         </TableCell>
         <TableCell>

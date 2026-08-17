@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"time"
@@ -61,6 +62,15 @@ type vmDTO struct {
 	// /vms/:id/console-token, which is minted per user and expires.
 	ConsoleURL string `json:"console_url"`
 
+	// ExpiresAt is when a TTL'd VM is due to be destroyed, and "" for one with no
+	// TTL. It comes from the pending scheduled task, which is the only place the
+	// deadline is written -- there is no expires_at column, so that the answer to
+	// "when does this die" cannot be two different things.
+	//
+	// A deadline in the past means the runner has not got to it yet. That is worth
+	// showing as-is rather than hiding: the VM really is still there.
+	ExpiresAt string `json:"expires_at"`
+
 	// ReportedAt is when the host last confirmed this VM; "" means it never has.
 	// 'running' is the host's claim as of that moment, not a live observation, so
 	// a reader has to weigh the status against this timestamp -- a status of
@@ -106,6 +116,31 @@ func toVMDTO(v db.Vm) vmDTO {
 	return d
 }
 
+// fillVMExpiries adds the TTL deadline to a page of VM DTOs. One query for the
+// whole page, which is the reason the lookup is batched at all: resolving it per
+// row would be a query per VM on every render of a list.
+//
+// Called by every route that returns VMs. A route that forgot would show a
+// temporary sandbox as though it were permanent, which is worse than showing no
+// deadline at all -- so it goes next to toVMDTO where it is hard to miss.
+func fillVMExpiries(ctx context.Context, q *db.Queries, items []vmDTO) {
+	if len(items) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(items))
+	for _, d := range items {
+		if id, err := parseUUID(d.ID); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	deadlines := liveTaskDeadlines(ctx, q, subjectVM, ids)
+	for i := range items {
+		if at, ok := deadlines[items[i].ID]; ok {
+			items[i].ExpiresAt = at.Format(time.RFC3339)
+		}
+	}
+}
+
 func (h *AdminHandler) ListVMs(c *echo.Context) error {
 	ctx := c.Request().Context()
 	limit, offset := pageParams(c)
@@ -121,6 +156,7 @@ func (h *AdminHandler) ListVMs(c *echo.Context) error {
 	for _, v := range rows {
 		items = append(items, toVMDTO(v))
 	}
+	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }
 
@@ -145,6 +181,7 @@ func (h *AdminHandler) ListClientVMs(c *echo.Context) error {
 	for _, v := range rows {
 		items = append(items, toVMDTO(v))
 	}
+	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }
 
@@ -153,14 +190,17 @@ func (h *AdminHandler) GetVM(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid vm id")
 	}
-	v, err := h.q.GetVM(c.Request().Context(), pgID)
+	ctx := c.Request().Context()
+	v, err := h.q.GetVM(ctx, pgID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "no such vm")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
 	}
-	return c.JSON(http.StatusOK, toVMDTO(v))
+	items := []vmDTO{toVMDTO(v)}
+	fillVMExpiries(ctx, h.q, items)
+	return c.JSON(http.StatusOK, items[0])
 }
 
 // ListVMTargets is the admin's view of what a VM is allowed to reach. Read-only
@@ -191,6 +231,7 @@ func (h *AdminHandler) ListVMTargets(c *echo.Context) error {
 	for _, t := range rows {
 		items = append(items, toVMTargetDTO(t))
 	}
+	fillTargetExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
@@ -201,6 +242,10 @@ type adminCreateVMReq struct {
 	proto.VMSpec
 	DefaultPort int32   `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
+	// TTLSeconds destroys the VM this many seconds after the row is written. Same
+	// meaning as on the self-service create, and measured the same way -- from the
+	// create, running while the VM is stopped.
+	TTLSeconds int64 `json:"ttl_seconds"`
 }
 
 // CreateVM asks an client to spin up a VM. The body is the client's own VM spec,
@@ -228,6 +273,10 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	defaultPort, publicPorts, err := normalizePorts(req.DefaultPort, req.PublicPorts)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	ttl, err := parseTTLSeconds(req.TTLSeconds)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
@@ -277,15 +326,41 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
 	// as a conflict. The spec is encoded inside the loop so the host names the
 	// guest whatever the row ended up holding.
 	var row db.Vm
-	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
+	insert := func(ctx context.Context, q *db.Queries, name string) error {
 		spec.Name = name
 		raw, err := json.Marshal(spec)
 		if err != nil {
 			return err
 		}
 		params.Name, params.Spec = name, raw
-		row, err = h.q.CreateVM(ctx, params)
+		row, err = q.CreateVM(ctx, params)
+		if err != nil || ttl == 0 {
+			return err
+		}
+		// Written in the same transaction as the row, for the reason spelled out on
+		// the self-service path: the deadline lives only here, so a row without its
+		// task is a sandbox nothing will ever destroy.
+		_, err = scheduleTask(ctx, q, scheduleTaskParams{
+			Kind:        taskVMExpire,
+			SubjectKind: subjectVM,
+			SubjectID:   row.ID,
+			Payload:     vmExpirePayload{VMName: name, TTLSeconds: req.TTLSeconds},
+			Reason:      fmt.Sprintf("temporary sandbox: created with a %s ttl", formatTTL(ttl)),
+			CreatedBy:   params.CreatedBy,
+			After:       ttl,
+			MaxAttempts: taskExpireAttempts,
+		})
 		return err
+	}
+	// A transaction per name attempt: a unique violation aborts the one it happens
+	// in, so a redrawn name needs a fresh transaction to insert under.
+	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
+		if ttl == 0 {
+			return insert(ctx, h.q, name)
+		}
+		return inTx(ctx, h.pool, h.q, func(q *db.Queries) error {
+			return insert(ctx, q, name)
+		})
 	}); err != nil {
 		if errors.Is(err, errVMNameTaken) {
 			return echo.NewHTTPError(http.StatusConflict, "that name is already taken; choose another")
@@ -385,6 +460,14 @@ func (h *AdminHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 		return echo.NewHTTPError(http.StatusConflict, "could not deliver the job to the host")
 	}
 
+	// A destroy makes any pending expiry moot -- the task checks the VM's status
+	// first and would cancel itself anyway, so this is about not leaving the queue
+	// full of expiries for VMs that are already gone.
+	if kind == proto.KindVMDestroy {
+		cancelTasksForSubject(ctx, h.q, subjectVM, row.ID,
+			"the vm was destroyed before its ttl ran out")
+	}
+
 	// 202: the guest is given time to shut down cleanly, so the row settles when
 	// the client reports back rather than by the time this returns.
 	return c.JSON(http.StatusAccepted, toVMDTO(row))
@@ -399,9 +482,19 @@ func (h *AdminHandler) DeleteVM(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid vm id")
 	}
-	if err := h.q.DeleteVM(c.Request().Context(), pgID); err != nil {
+	ctx := c.Request().Context()
+	if err := h.q.DeleteVM(ctx, pgID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete vm")
 	}
+	// The row is gone, so an expiry against it has nothing to read. Cancelled
+	// rather than left to work that out on its own run, for the same reason as
+	// everywhere else: the pending queue should list work that will happen.
+	//
+	// Note this deletes the record but not the guest, so a VM re-adopted from its
+	// host's next inventory report comes back without a TTL. That is the honest
+	// outcome -- the deadline was on the row somebody deleted, and inventing a new
+	// one for an adopted VM would be the control plane making up a promise.
+	cancelTasksForSubject(ctx, h.q, subjectVM, pgID, "the vm record was deleted")
 	return c.NoContent(http.StatusNoContent)
 }
 

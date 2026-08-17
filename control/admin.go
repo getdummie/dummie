@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v5"
 
 	"control/internal/db"
@@ -77,6 +78,13 @@ type AdminHandler struct {
 	// nil when no bucket is configured; only the kernel routes need it, and they
 	// report it as an operator's omission rather than failing at startup.
 	blobs *blobStore
+	// pool is for the one write that needs a transaction: a VM row and the task
+	// that expires it have to land together, or a TTL'd sandbox never expires.
+	pool *pgxpool.Pool
+	// tasks is the background runner, carried for the scheduled-task routes: they
+	// report how far behind it is, which is a fact about the process rather than
+	// about the table.
+	tasks *taskRunner
 }
 
 // --- helpers ---------------------------------------------------------------

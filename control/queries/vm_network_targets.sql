@@ -15,6 +15,28 @@ RETURNING *;
 DELETE FROM vm_network_targets
 WHERE id = $1 AND vm_id = $2;
 
+-- name: GetVMNetworkTargetForExpiry :one
+-- GetVMNetworkTargetForExpiry reads a target by id alone, with the host of the VM
+-- that owns it. Unscoped by owner unlike every other route's read, because the
+-- caller is the task runner: an expiry was authorized when it was scheduled, and
+-- there is no user on the request to check it against.
+--
+-- The client id comes back in the same statement because it is what the ruleset
+-- and Corefile are regenerated for, and after the delete there is nothing left to
+-- look it up from.
+SELECT t.id, t.vm_id, t.destination, t.kind, t.transport, t.ports, t.note,
+       v.client_id, v.name AS vm_name
+FROM vm_network_targets t
+JOIN vms v ON v.id = t.vm_id
+WHERE t.id = $1;
+
+-- name: DeleteVMNetworkTargetByID :execrows
+-- DeleteVMNetworkTargetByID is the expiry's delete. By id alone, for the same
+-- reason the read above is: there is no owner on the request to scope it to.
+-- The row count distinguishes "expired it" from "somebody already removed it",
+-- which is the difference between a done task and a cancelled one.
+DELETE FROM vm_network_targets WHERE id = $1;
+
 -- name: ListVMNetworkTargetsByClient :many
 -- ListVMNetworkTargetsByClient is the input to the rule generator and the
 -- Corefile generator: every allowance on the host, carrying the address of the

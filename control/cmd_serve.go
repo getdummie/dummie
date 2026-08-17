@@ -157,8 +157,27 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 		cancel()
 	}
 
+	// Background work the control plane owes the future: TTL expiries, and the
+	// housekeeping that prunes their audit trail. In this process rather than a
+	// worker of its own because every handler ends in a push down a socket the hub
+	// holds, and only this process has those.
+	//
+	// Nil pool means no database, which is the one case there is nothing to poll;
+	// starting the runner then would be a log line every second saying so.
+	tasks := newTaskRunner(q, hub)
+	if pool != nil {
+		runnerCtx, stopRunner := context.WithCancel(context.Background())
+		defer stopRunner()
+		go tasks.run(runnerCtx)
+	} else {
+		log.Print("DATABASE_URL not set; scheduled tasks will not run")
+	}
+
 	// Admin: user management + refresh-token session management, JWT + admin gated.
-	adminH := &AdminHandler{q: q, cfg: cfg, hub: hub, blobs: loadBlobStore(context.Background())}
+	adminH := &AdminHandler{
+		q: q, pool: pool, cfg: cfg, hub: hub,
+		blobs: loadBlobStore(context.Background()), tasks: tasks,
+	}
 	admin := api.Group("/admin", adminJWT(cfg))
 	admin.GET("/users", adminH.ListUsers)
 	admin.POST("/users", adminH.CreateUser)
@@ -202,6 +221,10 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 	admin.DELETE("/osimages/:id", adminH.DeleteOSImage)
 	admin.GET("/settings", adminH.ListSettings)
 	admin.PUT("/settings/:key", adminH.UpdateSetting)
+	admin.GET("/tasks", adminH.ListScheduledTasks)
+	admin.GET("/tasks/:id", adminH.GetScheduledTask)
+	admin.POST("/tasks/:id/cancel", adminH.CancelScheduledTask)
+	admin.POST("/tasks/:id/run-now", adminH.RunScheduledTaskNow)
 
 	// Own profile: no id in the path, so the only account either route can reach
 	// is the one the JWT names.
@@ -211,7 +234,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 	me.PUT("", profileH.UpdateMe)
 
 	// Self-service VMs: any signed-in account. Every route scopes to the caller.
-	userH := &UserHandler{q: q, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
+	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
 	vms := api.Group("/vms", userJWT(cfg))
 	vms.GET("", userH.ListVMs)
 	vms.POST("", userH.CreateVM)
@@ -254,12 +277,27 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 		}
 		// clickhouse is deliberately not in "all": it holds observability data, and
 		// a control plane that cannot reach it can still create and run vms.
-		return c.JSON(http.StatusOK, map[string]bool{
+		body := map[string]any{
 			"all":        apiOK && dbOK,
 			"db":         dbOK,
 			"clickhouse": chOK,
 			"api":        apiOK,
-		})
+		}
+		// The task runner is reported but does not count towards "all", for the
+		// opposite reason clickhouse does not: a control plane whose poller has
+		// stalled serves every request correctly and quietly stops keeping the
+		// promise attached to a TTL. That needs to be visible, not to fail a
+		// liveness probe that would restart the process into the same state.
+		if last := tasks.lastTickAt(); !last.IsZero() {
+			body["tasks_last_tick_at"] = last.Format(time.RFC3339)
+			body["tasks_ticking"] = time.Since(last) < 30*time.Second
+		}
+		if pool != nil {
+			if overdue, err := tasks.overdue(ctx); err == nil {
+				body["tasks_overdue"] = overdue
+			}
+		}
+		return c.JSON(http.StatusOK, body)
 	})
 
 	addr := host + ":" + strconv.Itoa(port)

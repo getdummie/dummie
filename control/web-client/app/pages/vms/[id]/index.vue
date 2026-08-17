@@ -62,6 +62,10 @@ interface VM {
   created_at: string
   started_at: string
   reported_at: string
+  // When a temporary VM is due to be destroyed, and "" for one with no limit.
+  // Read from the pending scheduled task -- the deadline is not a column on the
+  // VM, so this is empty the moment the expiry is cancelled or has run.
+  expires_at: string
 }
 
 interface Target {
@@ -75,6 +79,9 @@ interface Target {
   ports: string
   note: string
   created_at: string
+  // When a temporary allowance is due to be withdrawn, and "" for a permanent
+  // one. Same source as the VM's: the scheduled task that will do it.
+  expires_at: string
 }
 
 // What a domain row's ports field can say. Only 80 and 443 because those are the
@@ -140,6 +147,7 @@ const targetColumns: DataTableColumn[] = [
   { key: 'transport', label: 'Transport' },
   { key: 'ports', label: 'Ports' },
   { key: 'note', label: 'Note' },
+  { key: 'expires', label: 'Expires' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
 
@@ -516,6 +524,9 @@ const blankTarget = {
   domainPorts: '80,443',
   note: '',
   preset: 'custom',
+  // Seconds. '0' is a permanent allowance; anything else has the control plane
+  // withdraw it that many seconds from now.
+  ttl_seconds: '0',
 }
 const form = reactive({ ...blankTarget })
 
@@ -568,6 +579,11 @@ const presetWarning = computed(() =>
     : '')
 
 async function addTarget() {
+  const problem = ttlProblem(form.ttl_seconds)
+  if (problem) {
+    addError.value = problem
+    return
+  }
   adding.value = true
   addError.value = null
   try {
@@ -580,6 +596,7 @@ async function addTarget() {
         transport: form.transport,
         ports: form.kind === 'domain' ? form.domainPorts : form.ports,
         note: form.note,
+        ttl_seconds: Number(form.ttl_seconds),
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -693,6 +710,9 @@ const resolveAddresses = ref<string[]>([])
 const resolveChosen = ref<string[]>([])
 const resolveTruncated = ref(false)
 const addingResolved = ref(false)
+// Seconds, '0' for permanent, matching the main form. Kept separate from it
+// because both dialogs can be filled in before either is submitted.
+const resolveTTL = ref('0')
 
 function resetResolveForm() {
   resolveHost.value = ''
@@ -703,6 +723,44 @@ function resetResolveForm() {
   resolveAddresses.value = []
   resolveChosen.value = []
   resolveTruncated.value = false
+  resolveTTL.value = '0'
+}
+
+// A ticking clock for the countdowns on this page. Coarse: the labels are in
+// minutes, so a faster tick would re-render for no visible change.
+const nowMs = ref(Date.now())
+let ttlClock: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  ttlClock = setInterval(() => { nowMs.value = Date.now() }, 30_000)
+})
+onBeforeUnmount(() => {
+  if (ttlClock) clearInterval(ttlClock)
+})
+
+// How long is left, or that the deadline has passed. Past it the row says
+// "overdue" rather than counting up: the allowance is still in force, and the
+// control plane has not caught up -- which is exactly what a reader needs to know.
+// The bounds the server enforces, checked here so a typo is caught before the
+// request. Both dialogs that take a TTL use this rather than each spelling the
+// numbers out.
+function ttlProblem(raw: string) {
+  const ttl = Number(raw)
+  if (!Number.isInteger(ttl) || ttl < 0) return 'TTL must be a whole number of seconds, or 0 for no limit.'
+  if (ttl > 0 && ttl < 10) return 'A TTL must be at least 10 seconds. Use 0 for no limit.'
+  if (ttl > 30 * 24 * 3600) return 'A TTL must be at most 30 days (2592000 seconds).'
+  return null
+}
+
+function timeLeft(s: string) {
+  if (!s) return ''
+  const at = new Date(s).getTime()
+  if (Number.isNaN(at)) return ''
+  const left = at - nowMs.value
+  if (left <= 0) return 'overdue'
+  const mins = Math.round(left / 60_000)
+  if (mins < 60) return `${Math.max(1, mins)}m`
+  const hours = Math.round(mins / 60)
+  return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`
 }
 
 // What the address rows will actually say, whichever way the user got there. One
@@ -760,7 +818,7 @@ function toggleResolved(addr: string, on: boolean) {
     : resolveChosen.value.filter(a => a !== addr)
 }
 
-async function postTarget(body: Record<string, string>) {
+async function postTarget(body: Record<string, string | number>) {
   const res = await authFetch(`/vms/${id.value}/targets`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -775,17 +833,27 @@ async function postTarget(body: Record<string, string>) {
 
 async function addResolved() {
   if (!resolveChosen.value.length) return
+  const problem = ttlProblem(resolveTTL.value)
+  if (problem) {
+    resolveError.value = problem
+    return
+  }
   const spec = resolveSpec.value
   addingResolved.value = true
   resolveError.value = null
   try {
     // The lookup-only row first. Without it the guest cannot resolve the name, and
     // the address rows below would only be reachable by typing an IP.
+    // The same TTL on every row this flow writes, including the lookup-only one:
+    // leaving the name resolvable after its addresses expire would be an allowance
+    // that half-survives, which is harder to reason about than either outcome.
+    const ttl = Number(resolveTTL.value)
     await postTarget({
       kind: 'domain',
       destination: resolveHost.value,
       ports: 'none',
       note: `lookup for ${spec.label}`,
+      ttl_seconds: ttl,
     })
     for (const addr of resolveChosen.value) {
       await postTarget({
@@ -794,6 +862,7 @@ async function addResolved() {
         transport: spec.transport,
         ports: spec.ports,
         note: `${resolveHost.value} — ${spec.label}`,
+        ttl_seconds: ttl,
       })
     }
     resolveOpen.value = false
@@ -933,6 +1002,17 @@ async function confirmRemove() {
                  reading, so the age of that claim belongs next to it. -->
             <dt class="eyebrow text-muted-foreground">Last confirmed by host</dt>
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.reported_at) }}</dd>
+          </div>
+          <!-- Only for a temporary VM. A "TTL: none" row on every other VM
+               would be a field nobody reads, and this one has to be read. -->
+          <div v-if="vm.expires_at">
+            <dt class="eyebrow text-muted-foreground">Destroyed</dt>
+            <dd class="mt-1 text-sm">
+              <span :class="timeLeft(vm.expires_at) === 'overdue' ? 'text-destructive' : ''">
+                {{ timeLeft(vm.expires_at) === 'overdue' ? 'overdue' : `in ${timeLeft(vm.expires_at)}` }}
+              </span>
+              <span class="text-muted-foreground"> · {{ fmtDate(vm.expires_at) }}</span>
+            </dd>
           </div>
         </dl>
       </section>
@@ -1297,6 +1377,24 @@ async function confirmRemove() {
                   </p>
                 </div>
 
+                <div class="space-y-2">
+                  <Label for="r-ttl">TTL (seconds)</Label>
+                  <Input
+                    id="r-ttl"
+                    v-model="resolveTTL"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                    aria-describedby="r-ttl-hint"
+                  />
+                  <p id="r-ttl-hint" class="text-xs text-muted-foreground">
+                    0 keeps these until you remove them. Anything else applies to every entry this
+                    writes, the lookup included — an address that expired while its name stayed
+                    resolvable would be half an allowance.
+                  </p>
+                </div>
+
                 <FormError id="resolve-error" :message="resolveError" />
               </form>
 
@@ -1429,6 +1527,23 @@ async function confirmRemove() {
                   <Label for="t-note">Note</Label>
                   <Input id="t-note" v-model="form.note" placeholder="why this is needed" />
                 </div>
+                <div class="space-y-2">
+                  <Label for="t-ttl">TTL (seconds)</Label>
+                  <Input
+                    id="t-ttl"
+                    v-model="form.ttl_seconds"
+                    type="number"
+                    min="0"
+                    step="1"
+                    inputmode="numeric"
+                    aria-describedby="t-ttl-hint"
+                  />
+                  <p id="t-ttl-hint" class="text-xs text-muted-foreground">
+                    0 keeps this until you remove it. Anything else is a time to live in seconds: the
+                    allowance is removed for you when it runs out, and the host's policy is rewritten
+                    without it.
+                  </p>
+                </div>
 
                 <FormError id="add-target-error" :message="addError" />
 
@@ -1460,6 +1575,14 @@ async function confirmRemove() {
             <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
             <TableCell class="font-mono text-muted-foreground">{{ portsLabel(t) }}</TableCell>
             <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
+            <!-- An em dash for a permanent allowance, which is most of them. The
+                 ones with a deadline are the ones worth reading. -->
+            <TableCell class="font-mono text-xs">
+              <span v-if="!t.expires_at" class="text-muted-foreground">—</span>
+              <span v-else :class="timeLeft(t.expires_at) === 'overdue' ? 'text-destructive' : 'text-muted-foreground'">
+                {{ timeLeft(t.expires_at) }}
+              </span>
+            </TableCell>
             <TableCell class="text-right">
               <Button
                 variant="ghost"

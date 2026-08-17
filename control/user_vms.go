@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/labstack/echo/v5"
 
 	"control/internal/db"
@@ -30,8 +31,12 @@ import (
 // each query filters on created_by so one user's id is never enough to reach
 // another user's row.
 type UserHandler struct {
-	q   *db.Queries
-	hub *Hub
+	q *db.Queries
+	// pool is here for the one thing q cannot do: write a row and the scheduled
+	// task that expires it in a single transaction. nil when no database is
+	// configured, which the routes that need it report rather than panic on.
+	pool *pgxpool.Pool
+	hub  *Hub
 	// prod picks the scheme for the links this hands out: a dev control plane is
 	// served over http, and a link to https it does not answer on is worse than
 	// no link at all.
@@ -124,6 +129,7 @@ func (h *UserHandler) ListVMs(c *echo.Context) error {
 	for _, v := range rows {
 		items = append(items, toVMDTO(v))
 	}
+	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }
 
@@ -147,10 +153,12 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
 	}
-	d := toVMDTO(v)
-	d.URL = h.vmURL(c.Request().Context(), v)
-	d.ConsoleURL = h.consoleURL(c.Request().Context(), v)
-	return c.JSON(http.StatusOK, d)
+	ctx := c.Request().Context()
+	items := []vmDTO{toVMDTO(v)}
+	items[0].URL = h.vmURL(ctx, v)
+	items[0].ConsoleURL = h.consoleURL(ctx, v)
+	fillVMExpiries(ctx, h.q, items)
+	return c.JSON(http.StatusOK, items[0])
 }
 
 // quotaDTO is what the create form needs to show a user where they stand before
@@ -299,6 +307,16 @@ type createVMReq struct {
 	DefaultPort int32 `json:"default_port"`
 	// PublicPorts is every port the VM publishes. Empty publishes nothing.
 	PublicPorts []int32 `json:"public_ports"`
+
+	// TTLSeconds makes this a temporary sandbox: the control plane destroys the VM
+	// this many seconds after the row is written. 0 is the ordinary case -- a VM
+	// that lives until somebody destroys it.
+	//
+	// Measured from the create, and it keeps running while the VM is stopped. A
+	// clock that paused on stop would make the TTL evadable by exactly the trick
+	// the quota already refuses to reward, and what a temporary sandbox is
+	// bounding is wall-clock exposure rather than uptime.
+	TTLSeconds int64 `json:"ttl_seconds"`
 }
 
 // defaultVMPort is what a VM gets when the request does not name one. It is the
@@ -408,6 +426,10 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 	defaultPort, publicPorts, err := normalizePorts(req.DefaultPort, req.PublicPorts)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	ttl, err := parseTTLSeconds(req.TTLSeconds)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
@@ -573,13 +595,13 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	// is built inside the loop so the host names the guest whatever the row ended
 	// up holding.
 	var row db.Vm
-	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
+	insert := func(ctx context.Context, q *db.Queries, name string) error {
 		spec.Name = name
 		raw, err := json.Marshal(spec)
 		if err != nil {
 			return err
 		}
-		row, err = h.q.CreateVM(ctx, db.CreateVMParams{
+		row, err = q.CreateVM(ctx, db.CreateVMParams{
 			ClientID:    pgClientID,
 			Name:        name,
 			Boot:        spec.Boot,
@@ -591,7 +613,37 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			DefaultPort: defaultPort,
 			PublicPorts: publicPorts,
 		})
+		if err != nil || ttl == 0 {
+			return err
+		}
+		// The deadline is written here and nowhere else -- there is no expires_at on
+		// vms -- so this insert failing has to take the VM row with it. A sandbox
+		// whose expiry was never recorded is one nothing will ever destroy, and
+		// nothing would notice either.
+		_, err = scheduleTask(ctx, q, scheduleTaskParams{
+			Kind:        taskVMExpire,
+			SubjectKind: subjectVM,
+			SubjectID:   row.ID,
+			Payload:     vmExpirePayload{VMName: name, TTLSeconds: req.TTLSeconds},
+			Reason:      fmt.Sprintf("temporary sandbox: created with a %s ttl", formatTTL(ttl)),
+			CreatedBy:   owner,
+			After:       ttl,
+			// A host that is down must not turn into a VM that outlives its TTL
+			// silently, but it must not exhaust the budget in ten minutes either.
+			MaxAttempts: taskExpireAttempts,
+		})
 		return err
+	}
+	// One transaction per name attempt rather than one around the loop: a unique
+	// violation aborts the transaction it happens in, so a redrawn name needs a
+	// fresh one to insert under.
+	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
+		if ttl == 0 {
+			return insert(ctx, h.q, name)
+		}
+		return inTx(ctx, h.pool, h.q, func(q *db.Queries) error {
+			return insert(ctx, q, name)
+		})
 	}); err != nil {
 		if errors.Is(err, errVMNameTaken) {
 			return echo.NewHTTPError(http.StatusConflict, "that name is already taken; choose another")
@@ -687,6 +739,15 @@ func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 		return echo.NewHTTPError(http.StatusConflict, "could not deliver the job to the host")
 	}
 
+	// A destroy makes any pending expiry moot. The task would work that out for
+	// itself on its next run -- it checks the VM's status first -- so this is about
+	// the audit view: a queue of expiries for VMs that no longer exist is one an
+	// operator learns to scroll past.
+	if kind == proto.KindVMDestroy {
+		cancelTasksForSubject(ctx, h.q, subjectVM, row.ID,
+			"the vm was destroyed before its ttl ran out")
+	}
+
 	// 202: the row settles when the client reports back, not by the time this
 	// returns.
 	return c.JSON(http.StatusAccepted, toVMDTO(row))
@@ -702,6 +763,10 @@ type vmTargetDTO struct {
 	Ports       string `json:"ports"`     // ip rows only; "" = any
 	Note        string `json:"note"`
 	CreatedAt   string `json:"created_at"`
+	// ExpiresAt is when a temporary allowance is due to be withdrawn, and "" for a
+	// permanent one. Read from the pending scheduled task rather than from a column
+	// on the row: the deadline is written in one place, and this is a view of it.
+	ExpiresAt string `json:"expires_at"`
 }
 
 func toVMTargetDTO(t db.VmNetworkTarget) vmTargetDTO {
@@ -713,6 +778,26 @@ func toVMTargetDTO(t db.VmNetworkTarget) vmTargetDTO {
 		Ports:       t.Ports,
 		Note:        t.Note,
 		CreatedAt:   t.CreatedAt.Time.Format(time.RFC3339),
+	}
+}
+
+// fillTargetExpiries is fillVMExpiries for allowances: one query for the whole
+// list, resolving which of them are temporary and when they end.
+func fillTargetExpiries(ctx context.Context, q *db.Queries, items []vmTargetDTO) {
+	if len(items) == 0 {
+		return
+	}
+	ids := make([]pgtype.UUID, 0, len(items))
+	for _, d := range items {
+		if id, err := parseUUID(d.ID); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	deadlines := liveTaskDeadlines(ctx, q, subjectVMTarget, ids)
+	for i := range items {
+		if at, ok := deadlines[items[i].ID]; ok {
+			items[i].ExpiresAt = at.Format(time.RFC3339)
+		}
 	}
 }
 
@@ -802,7 +887,8 @@ func (h *UserHandler) ListTargets(c *echo.Context) error {
 	if err != nil {
 		return err
 	}
-	rows, err := h.q.ListVMNetworkTargets(c.Request().Context(), vm.ID)
+	ctx := c.Request().Context()
+	rows, err := h.q.ListVMNetworkTargets(ctx, vm.ID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not list destinations")
 	}
@@ -810,6 +896,7 @@ func (h *UserHandler) ListTargets(c *echo.Context) error {
 	for _, t := range rows {
 		items = append(items, toVMTargetDTO(t))
 	}
+	fillTargetExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
@@ -829,6 +916,11 @@ type createTargetReq struct {
 	// suricata_rules.go, and domainTargetPorts below for what is accepted.
 	Ports string `json:"ports"`
 	Note  string `json:"note"`
+
+	// TTLSeconds makes this a temporary allowance: the control plane removes it
+	// this many seconds from now and regenerates the host's policy. 0 is a
+	// permanent one, which is what an omitted field means.
+	TTLSeconds int64 `json:"ttl_seconds"`
 }
 
 // portsPattern is Suricata's port syntax, restricted to the forms worth
@@ -896,6 +988,11 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	req.Note = strings.TrimSpace(req.Note)
 	req.Transport = strings.ToLower(strings.TrimSpace(req.Transport))
 
+	ttl, err := parseTTLSeconds(req.TTLSeconds)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
 	if req.Destination == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "a destination is required")
 	}
@@ -959,14 +1056,51 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 		}
 	}
 
-	t, err := h.q.CreateVMNetworkTarget(c.Request().Context(), db.CreateVMNetworkTargetParams{
+	ctx := c.Request().Context()
+	params := db.CreateVMNetworkTargetParams{
 		VMID:        vm.ID,
 		Destination: req.Destination,
 		Kind:        kind,
 		Transport:   req.Transport,
 		Ports:       req.Ports,
 		Note:        req.Note,
-	})
+	}
+	// With a TTL the row and its expiry are written together, for the same reason
+	// as a VM's: the deadline exists only as a task, so an allowance recorded
+	// without one is a temporary grant that turns out to be permanent -- the exact
+	// failure this feature is meant to prevent.
+	var t db.VmNetworkTarget
+	var expiry db.ScheduledTask
+	create := func(q *db.Queries) error {
+		var err error
+		t, err = q.CreateVMNetworkTarget(ctx, params)
+		if err != nil || ttl == 0 {
+			return err
+		}
+		expiry, err = scheduleTask(ctx, q, scheduleTaskParams{
+			Kind:        taskVMTargetExpire,
+			SubjectKind: subjectVMTarget,
+			SubjectID:   t.ID,
+			Payload: vmTargetExpirePayload{
+				VMID:        uuid.UUID(vm.ID.Bytes).String(),
+				VMName:      vm.Name,
+				Destination: req.Destination,
+				TTLSeconds:  req.TTLSeconds,
+			},
+			Reason:    fmt.Sprintf("temporary access to %s for %s", req.Destination, formatTTL(ttl)),
+			CreatedBy: vm.CreatedBy,
+			After:     ttl,
+			// Removing an allowance only needs the database; the push that follows is
+			// best-effort and self-heals when the host reconnects. So the default budget
+			// is plenty -- unlike a VM expiry, this does not wait on a machine.
+		})
+		return err
+	}
+	if ttl > 0 {
+		err = inTx(ctx, h.pool, h.q, create)
+	} else {
+		err = create(h.q)
+	}
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -978,9 +1112,17 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	// are regenerated from the database rather than patched with this row. The
 	// Corefile is what lets the guest resolve the name at all, so a ruleset sent
 	// without it is an allowance that cannot be used.
-	pushSuricataRules(c.Request().Context(), h.q, h.hub, vm.ClientID)
-	pushCoreDNSConfig(c.Request().Context(), h.q, h.hub, vm.ClientID)
-	return c.JSON(http.StatusCreated, toVMTargetDTO(t))
+	pushSuricataRules(ctx, h.q, h.hub, vm.ClientID)
+	pushCoreDNSConfig(ctx, h.q, h.hub, vm.ClientID)
+
+	dto := toVMTargetDTO(t)
+	if expiry.RunAt.Valid {
+		// The deadline the database computed, not now()+ttl worked out here: those
+		// differ by however far this process's clock is off, and the row is the one
+		// that decides when the allowance ends.
+		dto.ExpiresAt = expiry.RunAt.Time.Format(time.RFC3339)
+	}
+	return c.JSON(http.StatusCreated, dto)
 }
 
 // Resolving a name for the user is a convenience with a sharp edge, so both are
@@ -1098,17 +1240,23 @@ func (h *UserHandler) DeleteTarget(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid destination id")
 	}
-	if err := h.q.DeleteVMNetworkTarget(c.Request().Context(), db.DeleteVMNetworkTargetParams{
+	ctx := c.Request().Context()
+	if err := h.q.DeleteVMNetworkTarget(ctx, db.DeleteVMNetworkTargetParams{
 		ID: targetID, VMID: vm.ID,
 	}); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not remove the destination")
 	}
+	// The row is gone, so its expiry has nothing to expire. Withdrawn here rather
+	// than left for the task to discover, so the pending queue stays a list of
+	// things that are actually going to happen.
+	cancelTasksForSubject(ctx, h.q, subjectVMTarget, targetID,
+		"the destination was removed before its ttl ran out")
 	// A removal has to reach the host even more urgently than an addition: until
 	// it does, the guest still has the access the user just revoked. The Corefile
 	// withdraws the name and the ruleset withdraws the access; whichever arrives
 	// second is the one that finishes the revocation.
-	pushSuricataRules(c.Request().Context(), h.q, h.hub, vm.ClientID)
-	pushCoreDNSConfig(c.Request().Context(), h.q, h.hub, vm.ClientID)
+	pushSuricataRules(ctx, h.q, h.hub, vm.ClientID)
+	pushCoreDNSConfig(ctx, h.q, h.hub, vm.ClientID)
 	return c.NoContent(http.StatusNoContent)
 }
 

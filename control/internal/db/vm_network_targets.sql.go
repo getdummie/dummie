@@ -68,6 +68,67 @@ func (q *Queries) DeleteVMNetworkTarget(ctx context.Context, arg DeleteVMNetwork
 	return err
 }
 
+const deleteVMNetworkTargetByID = `-- name: DeleteVMNetworkTargetByID :execrows
+DELETE FROM vm_network_targets WHERE id = $1
+`
+
+// DeleteVMNetworkTargetByID is the expiry's delete. By id alone, for the same
+// reason the read above is: there is no owner on the request to scope it to.
+// The row count distinguishes "expired it" from "somebody already removed it",
+// which is the difference between a done task and a cancelled one.
+func (q *Queries) DeleteVMNetworkTargetByID(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteVMNetworkTargetByID, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const getVMNetworkTargetForExpiry = `-- name: GetVMNetworkTargetForExpiry :one
+SELECT t.id, t.vm_id, t.destination, t.kind, t.transport, t.ports, t.note,
+       v.client_id, v.name AS vm_name
+FROM vm_network_targets t
+JOIN vms v ON v.id = t.vm_id
+WHERE t.id = $1
+`
+
+type GetVMNetworkTargetForExpiryRow struct {
+	ID          pgtype.UUID
+	VMID        pgtype.UUID
+	Destination string
+	Kind        string
+	Transport   string
+	Ports       string
+	Note        string
+	ClientID    pgtype.UUID
+	VMName      string
+}
+
+// GetVMNetworkTargetForExpiry reads a target by id alone, with the host of the VM
+// that owns it. Unscoped by owner unlike every other route's read, because the
+// caller is the task runner: an expiry was authorized when it was scheduled, and
+// there is no user on the request to check it against.
+//
+// The client id comes back in the same statement because it is what the ruleset
+// and Corefile are regenerated for, and after the delete there is nothing left to
+// look it up from.
+func (q *Queries) GetVMNetworkTargetForExpiry(ctx context.Context, id pgtype.UUID) (GetVMNetworkTargetForExpiryRow, error) {
+	row := q.db.QueryRow(ctx, getVMNetworkTargetForExpiry, id)
+	var i GetVMNetworkTargetForExpiryRow
+	err := row.Scan(
+		&i.ID,
+		&i.VMID,
+		&i.Destination,
+		&i.Kind,
+		&i.Transport,
+		&i.Ports,
+		&i.Note,
+		&i.ClientID,
+		&i.VMName,
+	)
+	return i, err
+}
+
 const listVMNetworkTargets = `-- name: ListVMNetworkTargets :many
 SELECT id, vm_id, kind, destination, transport, ports, note, created_at, updated_at FROM vm_network_targets
 WHERE vm_id = $1

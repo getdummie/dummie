@@ -152,6 +152,49 @@ func (q *Queries) GetClientByTokenHash(ctx context.Context, tokenHash string) (C
 	return i, err
 }
 
+const listAvailableHosts = `-- name: ListAvailableHosts :many
+SELECT id, hostname FROM clients
+WHERE revoked = false
+ORDER BY (
+    SELECT count(*) FROM vms
+    WHERE vms.client_id = clients.id AND vms.status IN ('pending', 'running')
+) ASC, last_seen_at DESC NULLS LAST
+`
+
+type ListAvailableHostsRow struct {
+	ID       pgtype.UUID
+	Hostname string
+}
+
+// ListAvailableHosts is the host list a self-service caller picks from, least
+// busy first so the default choice spreads load instead of piling onto whichever
+// client happens to sort first.
+//
+// Deliberately NOT filtered on status: that column is a cached copy of
+// connectivity and goes stale -- startup sets every client 'offline', and a
+// reconnect that has not written back yet would hide a host that is genuinely
+// there. The hub is the authority, and the caller filters on it. Matching what
+// the admin screen does, which reads connectivity only from the hub.
+func (q *Queries) ListAvailableHosts(ctx context.Context) ([]ListAvailableHostsRow, error) {
+	rows, err := q.db.Query(ctx, listAvailableHosts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAvailableHostsRow
+	for rows.Next() {
+		var i ListAvailableHostsRow
+		if err := rows.Scan(&i.ID, &i.Hostname); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listClients = `-- name: ListClients :many
 SELECT clients.id, clients.machine_id, clients.hostname, clients.token_hash, clients.status, clients.os, clients.os_version, clients.arch, clients.client_version, clients.last_seen_at, clients.last_ip, clients.enrolled_key_id, clients.revoked, clients.created_at, clients.updated_at, clients.cpu_count, clients.cpu_percent, clients.load1, clients.load5, clients.load15, clients.mem_total_bytes, clients.mem_used_bytes, clients.disk_total_bytes, clients.disk_used_bytes, clients.uptime_seconds, clients.metrics_at, clients.domain_id, d.tld AS domain_tld
 FROM clients
@@ -221,49 +264,6 @@ func (q *Queries) ListClients(ctx context.Context, arg ListClientsParams) ([]Lis
 	return items, nil
 }
 
-const listAvailableHosts = `-- name: ListAvailableHosts :many
-SELECT id, hostname FROM clients
-WHERE revoked = false
-ORDER BY (
-    SELECT count(*) FROM vms
-    WHERE vms.client_id = clients.id AND vms.status IN ('pending', 'running')
-) ASC, last_seen_at DESC NULLS LAST
-`
-
-type ListAvailableHostsRow struct {
-	ID       pgtype.UUID
-	Hostname string
-}
-
-// ListAvailableHosts is the host list a self-service caller picks from, least
-// busy first so the default choice spreads load instead of piling onto whichever
-// client happens to sort first.
-//
-// Deliberately NOT filtered on status: that column is a cached copy of
-// connectivity and goes stale -- startup sets every client 'offline', and a
-// reconnect that has not written back yet would hide a host that is genuinely
-// there. The hub is the authority, and the caller filters on it. Matching what
-// the admin screen does, which reads connectivity only from the hub.
-func (q *Queries) ListAvailableHosts(ctx context.Context) ([]ListAvailableHostsRow, error) {
-	rows, err := q.db.Query(ctx, listAvailableHosts)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListAvailableHostsRow
-	for rows.Next() {
-		var i ListAvailableHostsRow
-		if err := rows.Scan(&i.ID, &i.Hostname); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const revokeClient = `-- name: RevokeClient :exec
 UPDATE clients
 SET revoked = true, status = 'offline', updated_at = now()
@@ -272,6 +272,19 @@ WHERE id = $1
 
 func (q *Queries) RevokeClient(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, revokeClient, id)
+	return err
+}
+
+const setAllClientsOffline = `-- name: SetAllClientsOffline :exec
+UPDATE clients
+SET status = 'offline', updated_at = now()
+WHERE status <> 'offline'
+`
+
+// SetAllClientsOffline runs at startup: the hub is in-memory, so any 'online'
+// row left behind by a previous process is stale.
+func (q *Queries) SetAllClientsOffline(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, setAllClientsOffline)
 	return err
 }
 
@@ -299,19 +312,6 @@ type SetClientOnlineParams struct {
 
 func (q *Queries) SetClientOnline(ctx context.Context, arg SetClientOnlineParams) error {
 	_, err := q.db.Exec(ctx, setClientOnline, arg.ID, arg.LastIP)
-	return err
-}
-
-const setAllClientsOffline = `-- name: SetAllClientsOffline :exec
-UPDATE clients
-SET status = 'offline', updated_at = now()
-WHERE status <> 'offline'
-`
-
-// SetAllClientsOffline runs at startup: the hub is in-memory, so any 'online'
-// row left behind by a previous process is stale.
-func (q *Queries) SetAllClientsOffline(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, setAllClientsOffline)
 	return err
 }
 

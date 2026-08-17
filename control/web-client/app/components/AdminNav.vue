@@ -7,6 +7,7 @@ const links = [
   { label: 'Tokens', to: '/admin/model/tokens' },
   { label: 'Clients', to: '/admin/model/clients' },
   { label: 'VMs', to: '/admin/model/vms' },
+  { label: 'Scheduled tasks', to: '/admin/model/scheduled-tasks' },
   { label: 'Keys', to: '/admin/model/client-keys' },
   { label: 'Domains', to: '/admin/model/domains' },
   { label: 'Kernels', to: '/admin/model/kernels' },

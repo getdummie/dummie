@@ -94,6 +94,26 @@ type RefreshToken struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type ScheduledTask struct {
+	ID          pgtype.UUID
+	Kind        string
+	SubjectKind string
+	SubjectID   pgtype.UUID
+	Payload     []byte
+	Status      string
+	RunAt       pgtype.Timestamptz
+	Attempts    int32
+	MaxAttempts int32
+	Detail      string
+	Reason      string
+	CreatedBy   pgtype.UUID
+	LockedBy    string
+	LockedAt    pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	FinishedAt  pgtype.Timestamptz
+}
+
 type Setting struct {
 	Key       string
 	Value     string
