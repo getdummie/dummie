@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type Agent struct {
+type Client struct {
 	ID             pgtype.UUID
 	MachineID      string
 	Hostname       string
@@ -17,7 +17,7 @@ type Agent struct {
 	OS             string
 	OSVersion      string
 	Arch           string
-	AgentVersion   string
+	ClientVersion  string
 	LastSeenAt     pgtype.Timestamptz
 	LastIP         string
 	EnrolledKeyID  pgtype.UUID
@@ -38,7 +38,7 @@ type Agent struct {
 	DomainID       pgtype.UUID
 }
 
-type AgentEnrollmentKey struct {
+type ClientEnrollmentKey struct {
 	ID        pgtype.UUID
 	KeyHash   string
 	KeyPrefix string
@@ -119,7 +119,7 @@ type User struct {
 
 type Vm struct {
 	ID          pgtype.UUID
-	AgentID     pgtype.UUID
+	ClientID    pgtype.UUID
 	VMID        string
 	Name        string
 	Status      string

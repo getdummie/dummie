@@ -39,7 +39,7 @@ definePageMeta({ middleware: ['auth'] })
 
 interface VM {
   id: string
-  agent_id: string
+  client_id: string
   vm_id: string
   // Unique across the fleet, and the key its http route is published under.
   // Generated when the create request leaves it empty.

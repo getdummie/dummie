@@ -45,7 +45,7 @@ useHead({ title: 'dummie — vms' })
 
 interface VM {
   id: string
-  agent_id: string
+  client_id: string
   vm_id: string
   // Unique across the fleet, and the key its http route is published under.
   // Generated when the create request leaves it empty.
@@ -60,7 +60,7 @@ interface VM {
   ip: string
   last_error: string
   created_at: string
-  // The spec as it was sent to the agent. Empty for a VM adopted from a host's
+  // The spec as it was sent to the client. Empty for a VM adopted from a host's
   // inventory report -- nobody here asked for it, so there is nothing to copy.
   spec: Record<string, unknown>
 }
@@ -162,12 +162,12 @@ async function load(quiet = false) {
 }
 onMounted(() => load())
 
-// A create takes minutes on the host — the agent downloads images and builds a
+// A create takes minutes on the host — the client downloads images and builds a
 // filesystem — so the row sits at 'pending' and only a poll moves it. Polling
 // stops as soon as nothing is in flight rather than running forever.
 const anyPending = computed(() => items.value.some(v => v.status === 'pending'))
 
-// A start or stop is answered with 202 and settles when the agent reports back,
+// A start or stop is answered with 202 and settles when the client reports back,
 // so the row keeps its old status for a moment. Tracking which rows are waiting
 // keeps the poll running and the switch honest until they land.
 const settleTimeoutMs = 60_000
@@ -301,7 +301,7 @@ const creating = ref(false)
 const createError = ref<string | null>(null)
 
 const blankForm = {
-  agent_id: '',
+  client_id: '',
   name: '',
   cpus: '1',
   memory_mib: '512',
@@ -344,7 +344,7 @@ async function openCreate() {
   // should an artifact uploaded since then.
   await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
   // Preselect when there is no choice to make; with several, the pick is real.
-  if (hosts.value.length === 1) form.agent_id = hosts.value[0]!.id
+  if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
   // The newest of each is the one almost always wanted, and the lists arrive in
   // that order, so they start selected rather than making an empty pick the
   // default state of the form.
@@ -388,8 +388,8 @@ async function openCopy(v: VM) {
   form.osimage_id = osImages.value[0]?.id ?? ''
   // The original host only if it is still connected — otherwise the create
   // would be rejected, and preselecting an unusable host hides why.
-  if (hosts.value.some(h => h.id === v.agent_id)) form.agent_id = v.agent_id
-  else if (hosts.value.length === 1) form.agent_id = hosts.value[0]!.id
+  if (hosts.value.some(h => h.id === v.client_id)) form.client_id = v.client_id
+  else if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
 }
 
 // Mirrors the server's parseSizeMiB: same units, same rounding up, so the form
@@ -431,7 +431,7 @@ function parsePorts(s: string): number[] {
 }
 
 function validate(): string | null {
-  if (!form.agent_id) return 'Choose a host to run this VM on.'
+  if (!form.client_id) return 'Choose a host to run this VM on.'
   const name = form.name.trim()
   if (name && (name.length < 3 || name.length > 52)) {
     return 'A name must be between 3 and 52 characters.'
@@ -471,7 +471,7 @@ async function create() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        agent_id: form.agent_id,
+        client_id: form.client_id,
         name: form.name,
         cpus: Number(form.cpus),
         memory_mib: Number(form.memory_mib),
@@ -605,7 +605,7 @@ async function confirmDestroy() {
             <form class="space-y-4" :aria-busy="creating" @submit.prevent="create">
               <div class="space-y-2">
                 <Label for="vm-host">Host</Label>
-                <Select v-model="form.agent_id">
+                <Select v-model="form.client_id">
                   <SelectTrigger id="vm-host" class="w-full">
                     <SelectValue placeholder="Choose a host…" />
                   </SelectTrigger>

@@ -1,2 +1,2 @@
-ALTER TABLE agents DROP COLUMN domain_id;
+ALTER TABLE clients DROP COLUMN domain_id;
 DROP TABLE domains;

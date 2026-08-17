@@ -1,7 +1,7 @@
 -- 0009_vm_created_by: who asked for this VM.
 --
 -- Nullable, and that is not a gap to be filled later: a VM adopted from an
--- agent's inventory report was created on the host with `dagent vm create` and
+-- client's inventory report was created on the host with `dclient vm create` and
 -- has no user behind it at all. NULL means unowned, which is a real answer.
 -- Rows that predate this column are unowned for the same reason -- the server
 -- genuinely does not know.

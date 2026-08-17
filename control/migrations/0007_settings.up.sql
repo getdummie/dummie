@@ -19,4 +19,4 @@ CREATE TABLE settings (
 
 -- Seeded off. This one lets any machine that can reach /enroll join the fleet
 -- without a key, so the safe value is the one a fresh install gets.
-INSERT INTO settings (key, value) VALUES ('agent_open_enrollment', 'false');
+INSERT INTO settings (key, value) VALUES ('client_open_enrollment', 'false');

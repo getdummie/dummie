@@ -129,7 +129,7 @@ async function confirmDelete() {
         <p class="eyebrow mb-2 text-primary-text">// admin · domains</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Domains</h1>
         <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-          DNS suffixes this installation owns. While exactly one exists, every agent that enrolls is
+          DNS suffixes this installation owns. While exactly one exists, every client that enrolls is
           assigned it automatically.
         </p>
       </div>
@@ -181,7 +181,7 @@ async function confirmDelete() {
       class="mt-6"
     >
       <template #empty>
-        No domains yet. Agents will enroll without one until you add exactly one.
+        No domains yet. Clients will enroll without one until you add exactly one.
       </template>
       <TableRow v-for="d in items" :key="d.id">
         <TableCell class="font-mono">{{ d.tld }}</TableCell>
@@ -206,7 +206,7 @@ async function confirmDelete() {
           <DialogTitle>Delete domain</DialogTitle>
           <DialogDescription>
             Remove <span class="font-mono text-foreground">{{ toDelete?.tld }}</span>.
-            Agents assigned to it are kept, but lose their domain.
+            Clients assigned to it are kept, but lose their domain.
           </DialogDescription>
         </DialogHeader>
         <FormError id="delete-domain-error" :message="actionError" />

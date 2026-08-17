@@ -37,7 +37,7 @@ useHead({ title: 'dummie — admin · vms' })
 
 interface VMRow {
   id: string
-  agent_id: string
+  client_id: string
   vm_id: string
   // Unique across the fleet, and the key its http route is published under.
   // Generated when the create request leaves it empty.
@@ -71,13 +71,13 @@ const hostReported = new Set(['running', 'stopped'])
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 
-// An action is acknowledged with 202 and settles when the agent's result frame
+// An action is acknowledged with 202 and settles when the client's result frame
 // gets back, which is a second or two -- far quicker than the ordinary poll but
 // not instant. So a row with an action in flight is tracked here: the table
 // shows where it is going, and a fast poll runs until it arrives.
 //
 // `from` is the status at the moment the action was sent, which is how we
-// recognise that the row has moved. `until` bounds the wait, so an agent that
+// recognise that the row has moved. `until` bounds the wait, so an client that
 // never answers leaves the row telling the truth rather than spinning forever.
 interface Settling {
   verb: string
@@ -152,7 +152,7 @@ const offset = ref(0)
 const loading = ref(true)
 const error = ref<string | null>(null)
 
-interface AgentOption {
+interface ClientOption {
   id: string
   hostname: string
   machine_id: string
@@ -160,17 +160,17 @@ interface AgentOption {
   status: string
 }
 
-// A VM row carries only its agent's id. Rather than widen the API with a join,
-// the agent list is fetched alongside and resolved here -- an admin fleet is
-// small enough that one extra page of agents is cheaper than a new endpoint.
+// A VM row carries only its client's id. Rather than widen the API with a join,
+// the client list is fetched alongside and resolved here -- an admin fleet is
+// small enough that one extra page of clients is cheaper than a new endpoint.
 // The same list is the create form's host picker.
-const agents = ref<AgentOption[]>([])
+const clients = ref<ClientOption[]>([])
 const hostnames = computed<Record<string, string>>(() =>
-  Object.fromEntries(agents.value.filter(a => a.hostname).map(a => [a.id, a.hostname])))
+  Object.fromEntries(clients.value.filter(a => a.hostname).map(a => [a.id, a.hostname])))
 
-// Only a connected agent can be sent a job -- the server rejects the rest with a
+// Only a connected client can be sent a job -- the server rejects the rest with a
 // 409 -- so an offline host is shown but not selectable.
-const targetable = computed(() => agents.value.filter(a => a.connected && a.status !== 'revoked'))
+const targetable = computed(() => clients.value.filter(a => a.connected && a.status !== 'revoked'))
 
 async function readMessage(res: Response): Promise<string | null> {
   try {
@@ -193,7 +193,7 @@ function fmtMemory(mib: number) {
   return mib >= 1024 ? `${(mib / 1024).toFixed(mib % 1024 ? 1 : 0)} GiB` : `${mib} MiB`
 }
 
-function agentLabel(id: string) {
+function clientLabel(id: string) {
   return hostnames.value[id] || `${id.slice(0, 8)}…`
 }
 
@@ -237,12 +237,12 @@ async function load(silent = false) {
 
 // Best-effort: an unresolved hostname falls back to a short id, so a failure
 // here must not surface as an error on a table that otherwise loaded fine.
-async function loadAgents() {
+async function loadClients() {
   try {
-    const res = await authFetch('/admin/agents?limit=100')
+    const res = await authFetch('/admin/clients?limit=100')
     if (!res.ok) return
     const data = await res.json()
-    agents.value = (data.items ?? []).map((a: AgentOption) => ({
+    clients.value = (data.items ?? []).map((a: ClientOption) => ({
       id: a.id,
       hostname: a.hostname,
       machine_id: a.machine_id,
@@ -278,7 +278,7 @@ const pollInterval = 60_000
 let poll: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   load()
-  loadAgents()
+  loadClients()
   poll = setInterval(() => load(true), pollInterval)
   // Well under staleAfterMs, so a row turns stale within a few seconds of
   // actually being stale rather than on the next poll.
@@ -301,7 +301,7 @@ async function syncNow() {
   syncing.value = true
   clearInterval(poll)
   try {
-    await Promise.all([load(true), loadAgents()])
+    await Promise.all([load(true), loadClients()])
   }
   finally {
     poll = setInterval(() => load(true), pollInterval)
@@ -326,8 +326,8 @@ function prev() {
 
 // --- create ---
 //
-// The form mirrors the two boot modes dagent actually has, which take disjoint
-// inputs. Rather than accept everything and let the agent reject the wrong
+// The form mirrors the two boot modes dclient actually has, which take disjoint
+// inputs. Rather than accept everything and let the client reject the wrong
 // combination minutes later, only the fields belonging to the chosen mode are
 // rendered — the shape of the form is the validation.
 const createOpen = ref(false)
@@ -335,12 +335,12 @@ const creating = ref(false)
 const createError = ref<string | null>(null)
 
 const blankForm = {
-  agent_id: '',
+  client_id: '',
   name: '',
   default_port: '8000',
   public_ports: '',
   boot: 'direct',
-  // 'image' is a ready-made ext4 rootfs; 'tar' is a `docker export` the agent
+  // 'image' is a ready-made ext4 rootfs; 'tar' is a `docker export` the client
   // builds one from. Direct boot needs exactly one of them.
   source: 'image',
   kernel: '',
@@ -373,16 +373,16 @@ function openCreate() {
   createError.value = null
   // Preselect the only sensible default; with several hosts the choice is real
   // and is left to the operator.
-  form.agent_id = targetable.value.length === 1 ? targetable.value[0]!.id : ''
+  form.client_id = targetable.value.length === 1 ? targetable.value[0]!.id : ''
   createOpen.value = true
   // A host that enrolled since the last poll should be pickable now.
-  loadAgents()
+  loadClients()
 }
 
-// Mirrors the checks in the agent's createVM so a mistake is caught here rather
+// Mirrors the checks in the client's createVM so a mistake is caught here rather
 // than becoming a failed row a minute later.
 function validate(): string | null {
-  if (!form.agent_id) return 'Choose a host to run this VM on.'
+  if (!form.client_id) return 'Choose a host to run this VM on.'
   const cpus = Number(form.cpus)
   const memory = Number(form.memory_mib)
   if (!Number.isInteger(cpus) || cpus < 1) return 'cpus must be a whole number of at least 1.'
@@ -399,7 +399,7 @@ function validate(): string | null {
 }
 
 // Every field on the wire is omitempty, so an empty one is simply left out --
-// sending "" would otherwise override an agent-side default with nothing.
+// sending "" would otherwise override an client-side default with nothing.
 function buildSpec() {
   const spec: Record<string, unknown> = { boot: form.boot }
   const put = (key: string, value: string) => {
@@ -412,7 +412,7 @@ function buildSpec() {
   }
 
   put('name', form.name)
-  // Not part of the agent's spec: these are the control plane's routing, and the
+  // Not part of the client's spec: these are the control plane's routing, and the
   // endpoint reads them off the same body.
   spec.default_port = Number(form.default_port)
   spec.public_ports = form.public_ports.split(',').map(p => p.trim()).filter(Boolean).map(Number)
@@ -465,14 +465,14 @@ async function create() {
   creating.value = true
   createError.value = null
   try {
-    const res = await authFetch(`/admin/agents/${form.agent_id}/vms`, {
+    const res = await authFetch(`/admin/clients/${form.client_id}/vms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildSpec()),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     createOpen.value = false
-    // The row lands as 'pending' and settles when the agent reports back, so the
+    // The row lands as 'pending' and settles when the client reports back, so the
     // newest page is where the operator wants to be looking.
     offset.value = 0
     await load()
@@ -603,7 +603,7 @@ function closeDialogs() {
             <DialogHeader>
               <DialogTitle>New VM</DialogTitle>
               <DialogDescription>
-                Pushed to a connected agent, which resolves the images and boots it.
+                Pushed to a connected client, which resolves the images and boots it.
                 That takes minutes — the row appears as <span class="font-mono">pending</span>
                 and settles when the host reports back.
               </DialogDescription>
@@ -611,9 +611,9 @@ function closeDialogs() {
 
             <form class="space-y-4" :aria-busy="creating" @submit.prevent="create">
               <div class="space-y-2">
-                <Label for="vm-agent">Host</Label>
+                <Label for="vm-client">Host</Label>
                 <div class="*:w-full">
-                  <NativeSelect id="vm-agent" v-model="form.agent_id">
+                  <NativeSelect id="vm-client" v-model="form.client_id">
                     <NativeSelectOption value="" disabled>Choose a host…</NativeSelectOption>
                     <NativeSelectOption v-for="a in targetable" :key="a.id" :value="a.id">
                       {{ a.hostname || a.machine_id }}
@@ -621,7 +621,7 @@ function closeDialogs() {
                   </NativeSelect>
                 </div>
                 <p v-if="!targetable.length" class="text-xs text-muted-foreground">
-                  No agent is connected. A VM can only be pushed to a live host.
+                  No client is connected. A VM can only be pushed to a live host.
                 </p>
               </div>
 
@@ -848,10 +848,10 @@ function closeDialogs() {
       class="mt-6"
     >
       <template #empty>
-        No VMs yet. Connected agents report what they are running every 30s, so
-        anything made with <span class="font-mono">dagent vm create</span> appears
-        here on its own. To ask an agent for one, post to
-        <span class="font-mono">/api/v1/admin/agents/&lt;id&gt;/vms</span>.
+        No VMs yet. Connected clients report what they are running every 30s, so
+        anything made with <span class="font-mono">dclient vm create</span> appears
+        here on its own. To ask an client for one, post to
+        <span class="font-mono">/api/v1/admin/clients/&lt;id&gt;/vms</span>.
       </template>
       <TableRow v-for="v in items" :key="v.id">
         <TableCell>
@@ -870,7 +870,7 @@ function closeDialogs() {
           </div>
           <div class="truncate font-mono text-xs text-muted-foreground">{{ v.vm_id || 'not assigned yet' }}</div>
         </TableCell>
-        <TableCell class="font-mono text-muted-foreground">{{ agentLabel(v.agent_id) }}</TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ clientLabel(v.client_id) }}</TableCell>
         <TableCell>
           <Badge :variant="statusVariant[displayStatus(v)]" class="font-mono">
             {{ displayStatus(v) }}
@@ -943,7 +943,7 @@ function closeDialogs() {
           <DialogTitle>Stop VM</DialogTitle>
           <DialogDescription>
             Shut down <span class="font-mono text-foreground">{{ toStop?.name || toStop?.vm_id }}</span>
-            on <span class="font-mono text-foreground">{{ agentLabel(toStop?.agent_id ?? '') }}</span>.
+            on <span class="font-mono text-foreground">{{ clientLabel(toStop?.client_id ?? '') }}</span>.
             The guest is asked to power off cleanly and killed if it will not.
             Its disk and address are kept, so nothing is lost.
           </DialogDescription>
@@ -967,7 +967,7 @@ function closeDialogs() {
           <DialogTitle>Destroy VM</DialogTitle>
           <DialogDescription>
             Stop <span class="font-mono text-foreground">{{ toDestroy?.name || toDestroy?.vm_id }}</span>
-            on <span class="font-mono text-foreground">{{ agentLabel(toDestroy?.agent_id ?? '') }}</span>
+            on <span class="font-mono text-foreground">{{ clientLabel(toDestroy?.client_id ?? '') }}</span>
             and delete its disk and directory on the host. This cannot be undone.
             The record is kept and becomes <span class="font-mono">gone</span>.
           </DialogDescription>

@@ -1,13 +1,13 @@
 package main
 
 import (
-  "context"
-  "log"
+	"context"
+	"log"
 
-  "github.com/google/uuid"
-  "github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
-  "control/internal/proto"
+	"control/internal/proto"
 )
 
 // dpipe.yaml is compiled here for a narrower reason than proxy.yaml. It holds
@@ -18,10 +18,10 @@ import (
 // The key paths it names stay the host's. Those files are generated on the host
 // by ensureDpipeKeys and never leave it, so this only says where to look.
 //
-// dagent keeps a bootstrap copy of its own for the window before the first
+// dclient keeps a bootstrap copy of its own for the window before the first
 // push -- dpipe has to be able to start on a host that has never reached a
 // control server.
-const dpipeConfigTemplate = `# Written by the control server and installed by dagent. Edits on the host are
+const dpipeConfigTemplate = `# Written by the control server and installed by dclient. Edits on the host are
 # overwritten: this file is replaced whenever the control server changes it.
 control_socket: /run/dpipe/control.sock
 upgrade_socket: /run/dpipe/upgrade.sock
@@ -51,19 +51,19 @@ console:
 
 func generateDpipeConfig() string { return dpipeConfigTemplate }
 
-// pushDpipeConfig sends one agent its dpipe.yaml. Carries no per-host fact, so
+// pushDpipeConfig sends one client its dpipe.yaml. Carries no per-host fact, so
 // every host gets the same bytes.
-func pushDpipeConfig(ctx context.Context, hub *Hub, agentID pgtype.UUID) {
-  id := uuid.UUID(agentID.Bytes).String()
-  env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
-    Kind: proto.KindDpipeConfig,
-    File: &proto.FileConfig{Config: generateDpipeConfig()},
-  })
-  if err != nil {
-    log.Printf("could not build the dpipe config job for agent %s: %v", id, err)
-    return
-  }
-  if err := hub.Send(id, env); err != nil {
-    log.Printf("could not deliver the dpipe config to agent %s: %v", id, err)
-  }
+func pushDpipeConfig(ctx context.Context, hub *Hub, clientID pgtype.UUID) {
+	id := uuid.UUID(clientID.Bytes).String()
+	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
+		Kind: proto.KindDpipeConfig,
+		File: &proto.FileConfig{Config: generateDpipeConfig()},
+	})
+	if err != nil {
+		log.Printf("could not build the dpipe config job for client %s: %v", id, err)
+		return
+	}
+	if err := hub.Send(id, env); err != nil {
+		log.Printf("could not deliver the dpipe config to client %s: %v", id, err)
+	}
 }

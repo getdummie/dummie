@@ -1,25 +1,25 @@
 package main
 
 import (
-  "context"
-  "log"
-  "strings"
+	"context"
+	"log"
+	"strings"
 
-  "github.com/google/uuid"
-  "github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
-  "control/internal/db"
-  "control/internal/proto"
+	"control/internal/db"
+	"control/internal/proto"
 )
 
 // vector.yaml is compiled here rather than on the host, and the reason is the
 // transform below: it writes exactly the columns migrations-clickhouse creates.
 // The two have to move together, and they only do if they ship in the same
-// binary. Rendered on the host, adding a column would mean rolling a new agent
+// binary. Rendered on the host, adding a column would mean rolling a new client
 // to every machine in the fleet before anything could write to it.
 //
 // So a schema change is: write the migration, update the transform beside it,
-// `migrate-clickhouse up`, deploy. Agents are sent the new file on their next
+// `migrate-clickhouse up`, deploy. Clients are sent the new file on their next
 // connect, or immediately if they are online.
 //
 // Order matters in one direction only. Adding columns is safe either way round
@@ -28,29 +28,29 @@ import (
 // batch, which is forgiving and quiet in equal measure. Renames and drops need
 // expand/contract: add, write both, then drop.
 
-// eveLogPath is where dagent's suricata writes its events. Named here because
-// this file is the source of the config, but it is dagent's decision -- see
-// suricataLogDir in cmd/dagent/suricata.go.
+// eveLogPath is where dclient's suricata writes its events. Named here because
+// this file is the source of the config, but it is dclient's decision -- see
+// suricataLogDir in cmd/dclient/suricata.go.
 const eveLogPath = "/var/log/suricata/eve.json"
 
 // The destination is fixed rather than a setting: the transform writes exactly
 // what migrations-clickhouse creates, so pointing it at another table could
 // only ever produce rejected inserts.
 const (
-  vectorClickHouseDatabase = "dummie"
-  vectorClickHouseTable    = "suricata_events"
-  vectorDNSTable           = "dns_queries"
+	vectorClickHouseDatabase = "dummie"
+	vectorClickHouseTable    = "suricata_events"
+	vectorDNSTable           = "dns_queries"
 )
 
 // corednsLogContainer is the container vector reads the resolver's query log from.
-// Named here because this file is the source of the config, but it is dagent's
-// decision -- see corednsContainer in cmd/dagent/coredns.go.
+// Named here because this file is the source of the config, but it is dclient's
+// decision -- see corednsContainer in cmd/dclient/coredns.go.
 const corednsLogContainer = "coredns"
 
 // vectorConfigTemplate is filled by renderVectorConfig. Placeholders rather
 // than fmt verbs because the VRL is dense with %-formatted timestamps, and
 // every one of them would have to be escaped.
-const vectorConfigTemplate = `# Written by dagent from the control server's settings. Edits are overwritten:
+const vectorConfigTemplate = `# Written by dclient from the control server's settings. Edits are overwritten:
 # this file is replaced whenever those settings or the control server change.
 sources:
   eve:
@@ -223,82 +223,82 @@ sinks:
 // whatever an operator typed, and one containing a colon or a leading brace
 // would otherwise turn the sink block into something else entirely.
 func renderVectorConfig(url, user, password string) string {
-  return strings.NewReplacer(
-    // Both of these are constants in this repo rather than operator input, so
-    // they are substituted raw into quotes the template already has -- the same
-    // way eveLogPath's include: line does it. yamlString is for the settings
-    // below, whose contents are whatever somebody typed.
-    "__EVE_LOG__", eveLogPath,
-    "__COREDNS_CONTAINER__", corednsLogContainer,
-    "__DNS_MARKER__", corednsLogMarker,
-    "__CLICKHOUSE_URL__", yamlString(url),
-    "__CLICKHOUSE_USER__", yamlString(user),
-    "__CLICKHOUSE_PASSWORD__", yamlString(password),
-    "__DATABASE__", yamlString(vectorClickHouseDatabase),
-    "__TABLE__", yamlString(vectorClickHouseTable),
-    "__DNS_TABLE__", yamlString(vectorDNSTable),
-  ).Replace(vectorConfigTemplate)
+	return strings.NewReplacer(
+		// Both of these are constants in this repo rather than operator input, so
+		// they are substituted raw into quotes the template already has -- the same
+		// way eveLogPath's include: line does it. yamlString is for the settings
+		// below, whose contents are whatever somebody typed.
+		"__EVE_LOG__", eveLogPath,
+		"__COREDNS_CONTAINER__", corednsLogContainer,
+		"__DNS_MARKER__", corednsLogMarker,
+		"__CLICKHOUSE_URL__", yamlString(url),
+		"__CLICKHOUSE_USER__", yamlString(user),
+		"__CLICKHOUSE_PASSWORD__", yamlString(password),
+		"__DATABASE__", yamlString(vectorClickHouseDatabase),
+		"__TABLE__", yamlString(vectorClickHouseTable),
+		"__DNS_TABLE__", yamlString(vectorDNSTable),
+	).Replace(vectorConfigTemplate)
 }
 
 func isVectorSetting(key string) bool {
-  switch key {
-  case settingVectorVersion, settingClickHouseURL, settingClickHouseUser, settingClickHousePassword:
-    return true
-  }
-  return false
+	switch key {
+	case settingVectorVersion, settingClickHouseURL, settingClickHouseUser, settingClickHousePassword:
+		return true
+	}
+	return false
 }
 
 // vectorConfigFromSettings builds the job payload. An unset clickhouse url
 // yields an empty Config, which is how an operator turns event shipping off:
-// the agent installs nothing rather than writing a config pointing nowhere.
+// the client installs nothing rather than writing a config pointing nowhere.
 func vectorConfigFromSettings(ctx context.Context, q *db.Queries) proto.VectorConfig {
-  cfg := proto.VectorConfig{Version: setting(ctx, q, settingVectorVersion)}
-  url := setting(ctx, q, settingClickHouseURL)
-  if url == "" {
-    return cfg
-  }
-  cfg.Config = renderVectorConfig(url,
-    setting(ctx, q, settingClickHouseUser),
-    setting(ctx, q, settingClickHousePassword))
-  return cfg
+	cfg := proto.VectorConfig{Version: setting(ctx, q, settingVectorVersion)}
+	url := setting(ctx, q, settingClickHouseURL)
+	if url == "" {
+		return cfg
+	}
+	cfg.Config = renderVectorConfig(url,
+		setting(ctx, q, settingClickHouseUser),
+		setting(ctx, q, settingClickHousePassword))
+	return cfg
 }
 
-// pushVectorConfig sends one agent its vector.yaml. Called on every connect and
+// pushVectorConfig sends one client its vector.yaml. Called on every connect and
 // whenever an admin changes one of the settings.
 //
 // Failures are logged rather than returned: nothing the caller is doing depends
-// on the host having caught up, and an offline agent is the normal case rather
+// on the host having caught up, and an offline client is the normal case rather
 // than an error -- it is sent one as soon as it reconnects.
-func pushVectorConfig(ctx context.Context, q *db.Queries, hub *Hub, agentID pgtype.UUID) {
-  id := uuid.UUID(agentID.Bytes).String()
-  env, err := buildVectorConfigEnvelope(ctx, q)
-  if err != nil {
-    log.Printf("could not build the vector config job for agent %s: %v", id, err)
-    return
-  }
-  if err := hub.Send(id, env); err != nil {
-    log.Printf("could not deliver the vector config to agent %s: %v", id, err)
-  }
+func pushVectorConfig(ctx context.Context, q *db.Queries, hub *Hub, clientID pgtype.UUID) {
+	id := uuid.UUID(clientID.Bytes).String()
+	env, err := buildVectorConfigEnvelope(ctx, q)
+	if err != nil {
+		log.Printf("could not build the vector config job for client %s: %v", id, err)
+		return
+	}
+	if err := hub.Send(id, env); err != nil {
+		log.Printf("could not deliver the vector config to client %s: %v", id, err)
+	}
 }
 
-// pushVectorConfigToAll sends every connected agent the current config. It
+// pushVectorConfigToAll sends every connected client the current config. It
 // carries no per-host fact, so this is one envelope broadcast rather than a
-// render per agent.
+// render per client.
 func pushVectorConfigToAll(ctx context.Context, q *db.Queries, hub *Hub) {
-  env, err := buildVectorConfigEnvelope(ctx, q)
-  if err != nil {
-    log.Printf("could not build the vector config job: %v", err)
-    return
-  }
-  if n := hub.Broadcast(env); n > 0 {
-    log.Printf("pushed the vector config to %d connected agent(s)", n)
-  }
+	env, err := buildVectorConfigEnvelope(ctx, q)
+	if err != nil {
+		log.Printf("could not build the vector config job: %v", err)
+		return
+	}
+	if n := hub.Broadcast(env); n > 0 {
+		log.Printf("pushed the vector config to %d connected client(s)", n)
+	}
 }
 
 func buildVectorConfigEnvelope(ctx context.Context, q *db.Queries) (proto.Envelope, error) {
-  cfg := vectorConfigFromSettings(ctx, q)
-  return proto.NewEnvelope(proto.TypeJob, "", proto.Job{
-    Kind:   proto.KindVectorConfig,
-    Vector: &cfg,
-  })
+	cfg := vectorConfigFromSettings(ctx, q)
+	return proto.NewEnvelope(proto.TypeJob, "", proto.Job{
+		Kind:   proto.KindVectorConfig,
+		Vector: &cfg,
+	})
 }

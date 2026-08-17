@@ -13,12 +13,12 @@ env_files = [".env"]
 
 [build]
 # Array of commands to run before each build
-pre_cmd = ["rm -f ./tmp/main ./tmp/dagent"]
+pre_cmd = ["rm -f ./tmp/main ./tmp/dclient"]
 # Just plain old shell command. You could use `make` as well.
-# The agent is built too, so a change that breaks it is caught here rather than
-# on the next manual build. Only ./tmp/main is run; ./tmp/dagent is a compile
+# The client is built too, so a change that breaks it is caught here rather than
+# on the next manual build. Only ./tmp/main is run; ./tmp/dclient is a compile
 # check you can also just execute.
-cmd = "go build -buildvcs=false -o ./tmp/main . && go build -buildvcs=false -o ./tmp/dagent ./cmd/dagent"
+cmd = "go build -buildvcs=false -o ./tmp/main . && go build -buildvcs=false -o ./tmp/dclient ./cmd/dclient"
 # Array of commands to run after ^C
 post_cmd = []
 # Binary file yields from 'cmd', will be deprecated soon, recommend using entrypoint.

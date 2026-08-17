@@ -15,8 +15,8 @@ RETURNING *;
 DELETE FROM vm_network_targets
 WHERE id = $1 AND vm_id = $2;
 
--- name: ListVMNetworkTargetsByAgent :many
--- ListVMNetworkTargetsByAgent is the input to the rule generator and the
+-- name: ListVMNetworkTargetsByClient :many
+-- ListVMNetworkTargetsByClient is the input to the rule generator and the
 -- Corefile generator: every allowance on the host, carrying the address of the
 -- VM that owns it.
 --
@@ -50,7 +50,7 @@ SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name,
        COALESCE(t.note, '') AS note
 FROM vms v
 LEFT JOIN vm_network_targets t ON t.vm_id = v.id
-WHERE v.agent_id = $1
+WHERE v.client_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
 ORDER BY v.ip, kind, destination, transport, ports;

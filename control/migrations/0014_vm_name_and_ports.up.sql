@@ -45,7 +45,7 @@ ALTER TABLE vms
 -- Every port the VM publishes. An array rather than a side table: it is a short
 -- list that is only ever read and written whole, as part of the row, and a table
 -- would add a join to the one query that has to stay cheap -- the proxy config
--- is regenerated on every inventory tick from every agent.
+-- is regenerated on every inventory tick from every client.
 --
 -- Empty by default: a VM publishes nothing until someone says which port.
 ALTER TABLE vms

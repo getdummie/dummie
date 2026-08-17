@@ -22,7 +22,7 @@ definePageMeta({ middleware: ['auth', 'admin'] })
 
 interface AdminVM {
   id: string
-  agent_id: string
+  client_id: string
   vm_id: string
   name: string
   default_port: number
@@ -134,7 +134,7 @@ let clock: ReturnType<typeof setInterval> | undefined
 
 const settleTimeoutMs = 60_000
 // `from` is the status at the moment the action was sent, which is how we
-// recognise that the row has moved. `until` bounds the wait, so an agent that
+// recognise that the row has moved. `until` bounds the wait, so an client that
 // never answers leaves the page telling the truth rather than spinning forever.
 const settling = ref<{ verb: string, running: boolean, from: string, until: number } | null>(null)
 
@@ -180,12 +180,12 @@ const statusVariant: Record<string, BadgeVariant> = {
 const hostname = ref('')
 const owner = ref<{ id: string, username: string } | null>(null)
 
-async function loadHost(agentID: string) {
+async function loadHost(clientID: string) {
   try {
-    const res = await authFetch('/admin/agents?limit=100')
+    const res = await authFetch('/admin/clients?limit=100')
     if (!res.ok) return
     const data = await res.json()
-    const match = (data.items ?? []).find((a: { id: string }) => a.id === agentID)
+    const match = (data.items ?? []).find((a: { id: string }) => a.id === clientID)
     if (match?.hostname) hostname.value = match.hostname
   }
   catch {
@@ -242,7 +242,7 @@ async function load(quiet = false) {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const data: AdminVM = await res.json()
     vm.value = data
-    if (!hostname.value && data.agent_id) loadHost(data.agent_id)
+    if (!hostname.value && data.client_id) loadHost(data.client_id)
     if (!owner.value && data.created_by) loadOwner(data.created_by)
   }
   catch (e) {
@@ -468,10 +468,10 @@ async function confirmForget() {
             <dt class="eyebrow text-muted-foreground">Host</dt>
             <dd class="mt-1 text-sm">
               <NuxtLink
-                :to="`/admin/model/agents/${vm.agent_id}`"
+                :to="`/admin/model/clients/${vm.client_id}`"
                 class="font-mono break-all text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
               >
-                {{ hostname || vm.agent_id }}
+                {{ hostname || vm.client_id }}
               </NuxtLink>
             </dd>
           </div>
@@ -604,7 +604,7 @@ async function confirmForget() {
       <section aria-labelledby="spec-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="spec-heading" class="text-sm font-semibold">Spec</h2>
         <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Exactly what the host was asked to build. Empty for a VM adopted from an agent's
+          Exactly what the host was asked to build. Empty for a VM adopted from an client's
           inventory, since nothing here asked for it.
         </p>
         <pre

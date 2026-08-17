@@ -1,14 +1,14 @@
 package main
 
 import (
-  "context"
-  "log"
-  "strings"
+	"context"
+	"log"
+	"strings"
 
-  "github.com/google/uuid"
-  "github.com/jackc/pgx/v5/pgtype"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 
-  "control/internal/proto"
+	"control/internal/proto"
 )
 
 // suricata.yaml is compiled here rather than seeded on the host, for two
@@ -26,17 +26,17 @@ import (
 // this is the third leg of the same tripod.
 //
 // The host keeps a minimal bootstrap copy of its own (see seedSuricataConfig in
-// cmd/dagent/suricata.go): the container has to be able to start before this
+// cmd/dclient/suricata.go): the container has to be able to start before this
 // server has ever spoken to it, or a host that cannot reach the control plane
 // drops all VM egress.
 
 // suricataConfigTemplate is filled by generateSuricataConfig. HOME_NET is the
-// only substitution, and it is a host fact -- reported in the agent's hello --
+// only substitution, and it is a host fact -- reported in the client's hello --
 // so a rule written against $HOME_NET means "our guests" on every host
 // regardless of what pool it was given.
 const suricataConfigTemplate = `%YAML 1.1
 ---
-# Written by the control server and installed by dagent. Edits on the host are
+# Written by the control server and installed by dclient. Edits on the host are
 # overwritten: this file is replaced whenever the control server changes it.
 vars:
   address-groups:
@@ -158,10 +158,10 @@ unix-command:
 // generateSuricataConfig renders the file for one host. pool is the host's VM
 // subnet, which only it knows.
 func generateSuricataConfig(pool string) string {
-  return strings.NewReplacer("__HOME_NET__", pool).Replace(suricataConfigTemplate)
+	return strings.NewReplacer("__HOME_NET__", pool).Replace(suricataConfigTemplate)
 }
 
-// pushSuricataConfig sends one agent its suricata.yaml. Called on connect,
+// pushSuricataConfig sends one client its suricata.yaml. Called on connect,
 // which is the only time the pool is known -- it arrives in the hello frame and
 // is not stored, because nothing else needs it and a column would be a second
 // copy of a fact the host restates every time it connects.
@@ -170,21 +170,21 @@ func generateSuricataConfig(pool string) string {
 // HOME_NET: that would judge every guest as external and quietly stop every
 // $HOME_NET rule from matching, which is worse than leaving the bootstrap file
 // in place.
-func pushSuricataConfig(ctx context.Context, hub *Hub, agentID pgtype.UUID, pool string) {
-  id := uuid.UUID(agentID.Bytes).String()
-  if pool == "" {
-    log.Printf("agent %s reported no vm pool, so no suricata config was sent", id)
-    return
-  }
-  env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
-    Kind: proto.KindSuricataConfig,
-    File: &proto.FileConfig{Config: generateSuricataConfig(pool)},
-  })
-  if err != nil {
-    log.Printf("could not build the suricata config job for agent %s: %v", id, err)
-    return
-  }
-  if err := hub.Send(id, env); err != nil {
-    log.Printf("could not deliver the suricata config to agent %s: %v", id, err)
-  }
+func pushSuricataConfig(ctx context.Context, hub *Hub, clientID pgtype.UUID, pool string) {
+	id := uuid.UUID(clientID.Bytes).String()
+	if pool == "" {
+		log.Printf("client %s reported no vm pool, so no suricata config was sent", id)
+		return
+	}
+	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
+		Kind: proto.KindSuricataConfig,
+		File: &proto.FileConfig{Config: generateSuricataConfig(pool)},
+	})
+	if err != nil {
+		log.Printf("could not build the suricata config job for client %s: %v", id, err)
+		return
+	}
+	if err := hub.Send(id, env); err != nil {
+		log.Printf("could not deliver the suricata config to client %s: %v", id, err)
+	}
 }

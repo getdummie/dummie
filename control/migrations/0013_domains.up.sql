@@ -1,5 +1,5 @@
 -- 0013_domains: the set of DNS suffixes this installation owns, and the one an
--- agent belongs to.
+-- client belongs to.
 
 CREATE TABLE domains (
     id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -7,7 +7,7 @@ CREATE TABLE domains (
 );
 
 -- SET NULL rather than RESTRICT: removing a domain is an operator decision about
--- the domain, and it should not be blocked by, or take down with it, the agents
+-- the domain, and it should not be blocked by, or take down with it, the clients
 -- that happen to point at it.
-ALTER TABLE agents
+ALTER TABLE clients
     ADD COLUMN domain_id UUID REFERENCES domains(id) ON DELETE SET NULL;

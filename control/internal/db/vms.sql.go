@@ -22,13 +22,13 @@ func (q *Queries) CountVMs(ctx context.Context) (int64, error) {
 	return count, err
 }
 
-const countVMsByAgent = `-- name: CountVMsByAgent :one
+const countVMsByClient = `-- name: CountVMsByClient :one
 SELECT count(*) FROM vms
-WHERE agent_id = $1
+WHERE client_id = $1
 `
 
-func (q *Queries) CountVMsByAgent(ctx context.Context, agentID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countVMsByAgent, agentID)
+func (q *Queries) CountVMsByClient(ctx context.Context, clientID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countVMsByClient, clientID)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -47,13 +47,13 @@ func (q *Queries) CountVMsByOwner(ctx context.Context, createdBy pgtype.UUID) (i
 }
 
 const createVM = `-- name: CreateVM :one
-INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
+INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports
 `
 
 type CreateVMParams struct {
-	AgentID     pgtype.UUID
+	ClientID    pgtype.UUID
 	Name        string
 	Boot        string
 	CPUs        int32
@@ -65,12 +65,12 @@ type CreateVMParams struct {
 	PublicPorts []int32
 }
 
-// CreateVM records the intent before the job is pushed to the agent. The row id
+// CreateVM records the intent before the job is pushed to the client. The row id
 // doubles as the job's correlation id, which is what lets the result frame find
 // its way back to exactly this row.
 func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) {
 	row := q.db.QueryRow(ctx, createVM,
-		arg.AgentID,
+		arg.ClientID,
 		arg.Name,
 		arg.Boot,
 		arg.CPUs,
@@ -84,7 +84,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 	var i Vm
 	err := row.Scan(
 		&i.ID,
-		&i.AgentID,
+		&i.ClientID,
 		&i.VMID,
 		&i.Name,
 		&i.Status,
@@ -108,22 +108,22 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 
 const deleteAdoptedVM = `-- name: DeleteAdoptedVM :exec
 DELETE FROM vms
-WHERE agent_id = $1 AND vm_id = $2 AND id <> $3
+WHERE client_id = $1 AND vm_id = $2 AND id <> $3
 `
 
 type DeleteAdoptedVMParams struct {
-	AgentID pgtype.UUID
-	VMID    string
-	ID      pgtype.UUID
+	ClientID pgtype.UUID
+	VMID     string
+	ID       pgtype.UUID
 }
 
 // DeleteAdoptedVM resolves the one race between the two ways a row is born: an
-// inventory report can land after the agent has written vm.json but before its
+// inventory report can land after the client has written vm.json but before its
 // result frame arrives, adopting a VM that already has a pending row waiting for
 // it. The adopted duplicate is dropped so the pending row -- which holds the
 // spec that was asked for -- is the one that survives.
 func (q *Queries) DeleteAdoptedVM(ctx context.Context, arg DeleteAdoptedVMParams) error {
-	_, err := q.db.Exec(ctx, deleteAdoptedVM, arg.AgentID, arg.VMID, arg.ID)
+	_, err := q.db.Exec(ctx, deleteAdoptedVM, arg.ClientID, arg.VMID, arg.ID)
 	return err
 }
 
@@ -150,27 +150,27 @@ func (q *Queries) FailAllPendingVMs(ctx context.Context, lastError string) error
 	return err
 }
 
-const failPendingVMsForAgent = `-- name: FailPendingVMsForAgent :exec
+const failPendingVMsForClient = `-- name: FailPendingVMsForClient :exec
 UPDATE vms
 SET status = 'failed', last_error = $2, updated_at = now()
-WHERE agent_id = $1 AND status = 'pending'
+WHERE client_id = $1 AND status = 'pending'
 `
 
-type FailPendingVMsForAgentParams struct {
-	AgentID   pgtype.UUID
+type FailPendingVMsForClientParams struct {
+	ClientID  pgtype.UUID
 	LastError string
 }
 
-// FailPendingVMsForAgent runs when an agent's socket drops and at startup: a
+// FailPendingVMsForClient runs when an client's socket drops and at startup: a
 // pending row is waiting on a result frame that can no longer arrive, so it
 // would otherwise sit there forever claiming to be in progress.
-func (q *Queries) FailPendingVMsForAgent(ctx context.Context, arg FailPendingVMsForAgentParams) error {
-	_, err := q.db.Exec(ctx, failPendingVMsForAgent, arg.AgentID, arg.LastError)
+func (q *Queries) FailPendingVMsForClient(ctx context.Context, arg FailPendingVMsForClientParams) error {
+	_, err := q.db.Exec(ctx, failPendingVMsForClient, arg.ClientID, arg.LastError)
 	return err
 }
 
 const getVM = `-- name: GetVM :one
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
 WHERE id = $1
 `
 
@@ -179,7 +179,7 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 	var i Vm
 	err := row.Scan(
 		&i.ID,
-		&i.AgentID,
+		&i.ClientID,
 		&i.VMID,
 		&i.Name,
 		&i.Status,
@@ -202,7 +202,7 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 }
 
 const getVMForOwner = `-- name: GetVMForOwner :one
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
 WHERE id = $1 AND created_by = $2
 `
 
@@ -219,7 +219,7 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 	var i Vm
 	err := row.Scan(
 		&i.ID,
-		&i.AgentID,
+		&i.ClientID,
 		&i.VMID,
 		&i.Name,
 		&i.Status,
@@ -244,7 +244,7 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 const getVMForOwnerByHostname = `-- name: GetVMForOwnerByHostname :one
 SELECT v.id
 FROM vms v
-JOIN agents a ON a.id = v.agent_id
+JOIN clients a ON a.id = v.client_id
 JOIN domains d ON d.id = a.domain_id
 WHERE v.name = $1
   AND d.tld = $2
@@ -260,7 +260,7 @@ type GetVMForOwnerByHostnameParams struct {
 }
 
 // GetVMForOwnerByHostname resolves the name proxy routes on -- a VM's name under
-// the domain of the agent running it -- back to the VM, and checks in the same
+// the domain of the client running it -- back to the VM, and checks in the same
 // statement that the caller may reach it. Used by the /login hand-off, which is
 // handed a hostname and nothing else.
 //
@@ -288,19 +288,19 @@ func (q *Queries) GetVMForOwnerByHostname(ctx context.Context, arg GetVMForOwner
 	return id, err
 }
 
-const listProxyHTTPRoutesByAgent = `-- name: ListProxyHTTPRoutesByAgent :many
+const listProxyHTTPRoutesByClient = `-- name: ListProxyHTTPRoutesByClient :many
 SELECT v.name AS vm_name, v.ip AS vm_ip, v.vm_id AS host_vm_id,
        v.default_port, v.public_ports, d.tld AS domain_tld
 FROM vms v
-JOIN agents a ON a.id = v.agent_id
+JOIN clients a ON a.id = v.client_id
 JOIN domains d ON d.id = a.domain_id
-WHERE v.agent_id = $1
+WHERE v.client_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
 ORDER BY v.created_at, v.vm_id
 `
 
-type ListProxyHTTPRoutesByAgentRow struct {
+type ListProxyHTTPRoutesByClientRow struct {
 	VMName      string
 	VMIP        string
 	HostVMID    string
@@ -309,11 +309,11 @@ type ListProxyHTTPRoutesByAgentRow struct {
 	DomainTLD   string
 }
 
-// ListProxyHTTPRoutesByAgent is the other half of the proxy.yaml input: every VM
+// ListProxyHTTPRoutesByClient is the other half of the proxy.yaml input: every VM
 // on the host that can be reached over http, with the ports it publishes and the
 // domain its hostname sits under.
 //
-// The join on domains is inner, so a host whose agent has no domain contributes
+// The join on domains is inner, so a host whose client has no domain contributes
 // nothing. That is the honest outcome rather than a gap: the hostname is the VM
 // name under that domain, so without one there is no name to route on, and
 // inventing a suffix would publish a hostname the operator never configured and
@@ -325,15 +325,15 @@ type ListProxyHTTPRoutesByAgentRow struct {
 // for the same reason -- an address that has gone back to the pool will be handed
 // to another guest, and a stale route would then publish that one under this
 // name.
-func (q *Queries) ListProxyHTTPRoutesByAgent(ctx context.Context, agentID pgtype.UUID) ([]ListProxyHTTPRoutesByAgentRow, error) {
-	rows, err := q.db.Query(ctx, listProxyHTTPRoutesByAgent, agentID)
+func (q *Queries) ListProxyHTTPRoutesByClient(ctx context.Context, clientID pgtype.UUID) ([]ListProxyHTTPRoutesByClientRow, error) {
+	rows, err := q.db.Query(ctx, listProxyHTTPRoutesByClient, clientID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListProxyHTTPRoutesByAgentRow
+	var items []ListProxyHTTPRoutesByClientRow
 	for rows.Next() {
-		var i ListProxyHTTPRoutesByAgentRow
+		var i ListProxyHTTPRoutesByClientRow
 		if err := rows.Scan(
 			&i.VMName,
 			&i.VMIP,
@@ -352,25 +352,25 @@ func (q *Queries) ListProxyHTTPRoutesByAgent(ctx context.Context, agentID pgtype
 	return items, nil
 }
 
-const listProxySSHUsersByAgent = `-- name: ListProxySSHUsersByAgent :many
+const listProxySSHUsersByClient = `-- name: ListProxySSHUsersByClient :many
 SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
 FROM vms v
 JOIN users u ON u.id = v.created_by
-WHERE v.agent_id = $1
+WHERE v.client_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
   AND u.public_key <> ''
 ORDER BY v.created_at, v.vm_id
 `
 
-type ListProxySSHUsersByAgentRow struct {
+type ListProxySSHUsersByClientRow struct {
 	VMIP      string
 	HostVMID  string
 	VMName    string
 	PublicKey string
 }
 
-// ListProxySSHUsersByAgent is the input to the proxy.yaml generator: every VM on
+// ListProxySSHUsersByClient is the input to the proxy.yaml generator: every VM on
 // the host that can be reached over ssh, carrying the key of whoever owns it.
 //
 // One query for the whole host, like the Suricata one, because the file is
@@ -385,15 +385,15 @@ type ListProxySSHUsersByAgentRow struct {
 // -- and 'gone' VMs are excluded because their address goes back to the pool and
 // will be handed to some other guest, which a stale route would then expose to
 // the wrong user's key.
-func (q *Queries) ListProxySSHUsersByAgent(ctx context.Context, agentID pgtype.UUID) ([]ListProxySSHUsersByAgentRow, error) {
-	rows, err := q.db.Query(ctx, listProxySSHUsersByAgent, agentID)
+func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype.UUID) ([]ListProxySSHUsersByClientRow, error) {
+	rows, err := q.db.Query(ctx, listProxySSHUsersByClient, clientID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListProxySSHUsersByAgentRow
+	var items []ListProxySSHUsersByClientRow
 	for rows.Next() {
-		var i ListProxySSHUsersByAgentRow
+		var i ListProxySSHUsersByClientRow
 		if err := rows.Scan(
 			&i.VMIP,
 			&i.HostVMID,
@@ -411,7 +411,7 @@ func (q *Queries) ListProxySSHUsersByAgent(ctx context.Context, agentID pgtype.U
 }
 
 const listVMs = `-- name: ListVMs :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -432,7 +432,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 		var i Vm
 		if err := rows.Scan(
 			&i.ID,
-			&i.AgentID,
+			&i.ClientID,
 			&i.VMID,
 			&i.Name,
 			&i.Status,
@@ -461,21 +461,21 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 	return items, nil
 }
 
-const listVMsByAgent = `-- name: ListVMsByAgent :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
-WHERE agent_id = $1
+const listVMsByClient = `-- name: ListVMsByClient :many
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+WHERE client_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
 `
 
-type ListVMsByAgentParams struct {
-	AgentID pgtype.UUID
-	Limit   int32
-	Offset  int32
+type ListVMsByClientParams struct {
+	ClientID pgtype.UUID
+	Limit    int32
+	Offset   int32
 }
 
-func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) ([]Vm, error) {
-	rows, err := q.db.Query(ctx, listVMsByAgent, arg.AgentID, arg.Limit, arg.Offset)
+func (q *Queries) ListVMsByClient(ctx context.Context, arg ListVMsByClientParams) ([]Vm, error) {
+	rows, err := q.db.Query(ctx, listVMsByClient, arg.ClientID, arg.Limit, arg.Offset)
 	if err != nil {
 		return nil, err
 	}
@@ -485,7 +485,7 @@ func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) 
 		var i Vm
 		if err := rows.Scan(
 			&i.ID,
-			&i.AgentID,
+			&i.ClientID,
 			&i.VMID,
 			&i.Name,
 			&i.Status,
@@ -515,7 +515,7 @@ func (q *Queries) ListVMsByAgent(ctx context.Context, arg ListVMsByAgentParams) 
 }
 
 const listVMsByOwner = `-- name: ListVMsByOwner :many
-SELECT id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
 WHERE created_by = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -538,7 +538,7 @@ func (q *Queries) ListVMsByOwner(ctx context.Context, arg ListVMsByOwnerParams) 
 		var i Vm
 		if err := rows.Scan(
 			&i.ID,
-			&i.AgentID,
+			&i.ClientID,
 			&i.VMID,
 			&i.Name,
 			&i.Status,
@@ -570,25 +570,25 @@ func (q *Queries) ListVMsByOwner(ctx context.Context, arg ListVMsByOwnerParams) 
 const markMissingVMsGone = `-- name: MarkMissingVMsGone :exec
 UPDATE vms
 SET status = 'gone', updated_at = now()
-WHERE agent_id = $1
+WHERE client_id = $1
   AND vm_id <> ''
   AND status IN ('running', 'stopped')
   AND NOT (vm_id = ANY($2::text[]))
 `
 
 type MarkMissingVMsGoneParams struct {
-	AgentID pgtype.UUID
-	VmIds   []string
+	ClientID pgtype.UUID
+	VmIds    []string
 }
 
 // MarkMissingVMsGone settles the other half of an inventory report: a row the
-// agent no longer lists has been removed on the host.
+// client no longer lists has been removed on the host.
 //
 // Only rows the host had already assigned an id to are considered. A 'pending'
 // row has no id yet and is waiting on its result frame, and a 'failed' one never
 // got that far -- neither is missing, and neither should be touched here.
 func (q *Queries) MarkMissingVMsGone(ctx context.Context, arg MarkMissingVMsGoneParams) error {
-	_, err := q.db.Exec(ctx, markMissingVMsGone, arg.AgentID, arg.VmIds)
+	_, err := q.db.Exec(ctx, markMissingVMsGone, arg.ClientID, arg.VmIds)
 	return err
 }
 
@@ -631,7 +631,7 @@ type MarkVMRunningParams struct {
 	IP        string
 }
 
-// MarkVMRunning applies what the agent actually built: the id and the address
+// MarkVMRunning applies what the client actually built: the id and the address
 // are allocated on the host, so they are only known once it answers.
 //
 // The name is NOT taken from the host. It was chosen here, it is unique across
@@ -680,7 +680,7 @@ type SetVMStatusParams struct {
 	Status string
 }
 
-// SetVMStatus settles a start, stop or destroy as soon as the agent confirms it,
+// SetVMStatus settles a start, stop or destroy as soon as the client confirms it,
 // rather than waiting up to a full inventory tick for the row to catch up.
 //
 // reported_at moves too. A result frame *is* the host vouching for this VM, at
@@ -728,7 +728,7 @@ SET default_port = $3,
     public_ports = $4,
     updated_at   = now()
 WHERE id = $1 AND created_by = $2
-RETURNING id, agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports
 `
 
 type UpdateVMPortsForOwnerParams struct {
@@ -754,7 +754,7 @@ func (q *Queries) UpdateVMPortsForOwner(ctx context.Context, arg UpdateVMPortsFo
 	var i Vm
 	err := row.Scan(
 		&i.ID,
-		&i.AgentID,
+		&i.ClientID,
 		&i.VMID,
 		&i.Name,
 		&i.Status,
@@ -777,9 +777,9 @@ func (q *Queries) UpdateVMPortsForOwner(ctx context.Context, arg UpdateVMPortsFo
 }
 
 const upsertVMFromInventory = `-- name: UpsertVMFromInventory :exec
-INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
+INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
-ON CONFLICT (agent_id, vm_id) WHERE vm_id <> '' DO UPDATE
+ON CONFLICT (client_id, vm_id) WHERE vm_id <> '' DO UPDATE
 SET status      = EXCLUDED.status,
     boot        = EXCLUDED.boot,
     cpus        = EXCLUDED.cpus,
@@ -791,7 +791,7 @@ SET status      = EXCLUDED.status,
 `
 
 type UpsertVMFromInventoryParams struct {
-	AgentID   pgtype.UUID
+	ClientID  pgtype.UUID
 	VMID      string
 	Name      string
 	Status    string
@@ -803,8 +803,8 @@ type UpsertVMFromInventoryParams struct {
 	StartedAt pgtype.Timestamptz
 }
 
-// UpsertVMFromInventory records what an agent reports it is actually running.
-// This is how a VM created locally with `dagent vm create` gets adopted: the
+// UpsertVMFromInventory records what an client reports it is actually running.
+// This is how a VM created locally with `dclient vm create` gets adopted: the
 // control plane learns about it the same way it learns about one it asked for.
 //
 // created_at comes from the host, not from now(): the VM's age is a fact about
@@ -817,7 +817,7 @@ type UpsertVMFromInventoryParams struct {
 // could collide with a name another VM already holds.
 func (q *Queries) UpsertVMFromInventory(ctx context.Context, arg UpsertVMFromInventoryParams) error {
 	_, err := q.db.Exec(ctx, upsertVMFromInventory,
-		arg.AgentID,
+		arg.ClientID,
 		arg.VMID,
 		arg.Name,
 		arg.Status,

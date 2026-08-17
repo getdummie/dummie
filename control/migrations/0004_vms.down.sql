@@ -1,6 +1,6 @@
 DROP TABLE IF EXISTS vms;
 
-ALTER TABLE agents
+ALTER TABLE clients
     DROP COLUMN IF EXISTS cpu_count,
     DROP COLUMN IF EXISTS cpu_percent,
     DROP COLUMN IF EXISTS load1,

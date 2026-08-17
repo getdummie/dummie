@@ -1,0 +1,421 @@
+package main
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// With suricata mode on, the ruleset queues allowed VM egress to NFQUEUE and
+// nothing accepts it until Suricata verdicts it. That makes the container part
+// of the data path rather than an optional extra: if it is not running, every
+// packet hashed to a queue is dropped. So dclient starts it, and the reconciler
+// restarts it whenever it is found missing -- the same reasoning as
+// ensureDockerCompat, where drift is repaired every pass rather than once.
+const (
+	suricataContainer = "suricata"
+
+	// Pinned: a Suricata major version can change rule syntax and the queue
+	// handling underneath us, and the container is in the path of all VM egress.
+	defaultSuricataImage = "jasonish/suricata:8.0.6-amd64"
+
+	// Suricata reads its config and rules from the host and writes logs back, so
+	// an operator manages both with the container stopped or running.
+	suricataConfigDir = "/etc/suricata"
+	suricataLogDir    = "/var/log/suricata"
+	suricataLibDir    = "/var/lib/suricata"
+)
+
+// ensureSuricata starts the container if suricata mode is on and it is not
+// already up. Idempotent and safe to call on every reconcile pass; it shells out
+// to docker rather than using the API so that what runs is exactly what an
+// operator can reproduce by hand.
+//
+// Failures are logged, not returned: a host that cannot start the container is
+// in a bad state, but taking the daemon down with it would also stop the DHCP
+// and metadata services every running VM depends on.
+func ensureSuricata(cfg netConfig) {
+	if !cfg.Suricata {
+		return
+	}
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		log.Print("suricata mode is on but docker is not installed; all vm egress is being dropped")
+		return
+	}
+
+	switch state := containerState(docker, suricataContainer); state {
+	case "running":
+		// Running is not the same as running with the right arguments. An operator
+		// who edits network.queues and restarts dclient gets a new ruleset queueing
+		// to a count the container was never told about, and packets hashed to an
+		// unbound queue are dropped -- so the container is replaced rather than left
+		// alone. Nothing to do in the overwhelmingly common case where they agree.
+		drift := suricataDrift(docker, cfg)
+		if drift == "" {
+			return
+		}
+		log.Printf("the suricata container %s; recreating it", drift)
+		if !removeSuricata(docker) {
+			return
+		}
+	case "":
+		// Not there at all: the usual case on a fresh boot.
+	default:
+		// Exited, created or dead. --rm normally reaps it, but a container that
+		// failed to start can linger and hold the name.
+		log.Printf("suricata container is %s; recreating it", state)
+		if !removeSuricata(docker) {
+			return
+		}
+	}
+
+	// Created rather than left to docker, which would make them root-owned
+	// directories with no note of who wanted them -- and the config dir has to
+	// exist before seedSuricataConfig can write into it.
+	for _, dir := range []string{suricataConfigDir, suricataLogDir, suricataLibDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			log.Printf("could not create %s: %v", dir, err)
+			return
+		}
+	}
+	if err := seedSuricataConfig(cfg); err != nil {
+		log.Printf("could not write the suricata config: %v", err)
+		return
+	}
+
+	args := suricataRunArgs(cfg, defaultSuricataImage)
+	if out, err := exec.Command(docker, args...).CombinedOutput(); err != nil {
+		log.Printf("could not start suricata (docker %s): %v: %s",
+			strings.Join(args, " "), err, strings.TrimSpace(string(out)))
+		return
+	}
+	log.Printf("started the suricata container on %d queues", cfg.Queues)
+}
+
+// suricataConfigTemplate is the bootstrap config only, and it is deliberately
+// the smallest thing that starts.
+//
+// The real config is compiled by the control server -- it decides the eve-log
+// types, and those decide which fields exist in the clickhouse rows it queries.
+// This one exists for the window before the first push: a fresh host, or one
+// whose control link is down. Without it the container cannot start at all, and
+// on a suricata-mode host that means every queued packet is dropped.
+//
+// HOME_NET is the VM pool, so a rule written against $HOME_NET means "our
+// guests" regardless of what pool this host was given -- hardcoding the default
+// would silently make every VM external on a host that changed it.
+const suricataConfigTemplate = `%%YAML 1.1
+---
+# Written by dclient so suricata can start before the control server has sent a
+# config. It is replaced wholesale by the one the control server compiles.
+vars:
+  address-groups:
+    HOME_NET: "[%s]"
+
+default-rule-path: /var/lib/suricata/rules
+rule-files:
+  - local.rules
+
+unix-command:
+  enabled: yes
+`
+
+// localRules is the bootstrap policy, and only that: total deny.
+//
+// The real ruleset is generated by the control server from the destinations a
+// user recorded against each VM, and pushed here as a whole file. This one
+// exists for the window before the first push -- a fresh host, or one whose
+// control link is down -- and for a host that is not managed at all. In every
+// one of those cases the host cannot know what any VM is allowed to reach, so
+// the only defensible answer is nothing.
+//
+// It is deliberately simpler than what the control server generates. The
+// generated file splits its denies -- ports at the SYN, hostnames at the
+// handshake -- because a blanket `drop ip` would kill a TCP connection at the
+// SYN, before the ClientHello that proves where it was going ever arrives. That
+// only matters when there are pass rules whose match depends on seeing the
+// handshake. Here there are none, so the blanket drop is both correct and the
+// harder thing to get wrong.
+const localRules = `# Written by dclient when this file is missing. It is never rewritten in place:
+# once it exists it belongs to whoever owns it, which is normally the control
+# server -- it replaces this file wholesale whenever a vm's allowed
+# destinations change.
+#
+# Total deny. dclient does not know what any guest is allowed to reach; only the
+# control server does. Until it says otherwise, nothing leaves a vm.
+#
+# $HOME_NET is the vm pool, so this judges guest traffic only -- the host's own
+# is never queued. Only the vm-to-outside direction reaches suricata, so this
+# drop ends the flow.
+drop ip $HOME_NET any -> any any (msg:"dclient: deny all egress (no ruleset from the control server)"; sid:1000000; rev:1;)
+`
+
+// seedSuricataConfig writes the config and rule files that are missing. Each is
+// independent and only ever created, never rewritten: once these files exist
+// they are the operator's, which is the whole reason they live on the host
+// instead of in the image.
+func seedSuricataConfig(cfg netConfig) error {
+	rules := filepath.Join(suricataLibDir, "rules")
+	if err := os.MkdirAll(rules, 0o755); err != nil {
+		return err
+	}
+
+	// Both are bootstrap only: the control server replaces each of them, and
+	// neither is rewritten from here once it exists.
+	for _, f := range []struct{ path, body, note string }{
+		{suricataConfigPath(),
+			fmt.Sprintf(suricataConfigTemplate, cfg.Pool), "bootstrap config, HOME_NET " + cfg.Pool},
+		{localRulesPath, localRules, "deny all egress until the control server sends a ruleset"},
+	} {
+		if _, err := os.Stat(f.path); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return err
+		}
+		if err := os.WriteFile(f.path, []byte(f.body), 0o644); err != nil {
+			return err
+		}
+		log.Printf("wrote %s (%s)", f.path, f.note)
+	}
+	return nil
+}
+
+// localRulesPath is the whole ruleset. There is no second rule file: what
+// suricata enforces on this host is what the control server compiled, and a
+// host-local signature set would be policy nobody could audit from the control
+// plane.
+var localRulesPath = filepath.Join(suricataLibDir, "rules", "local.rules")
+
+func suricataConfigPath() string { return filepath.Join(suricataConfigDir, "suricata.yaml") }
+
+// applySuricataRules replaces local.rules with what the control server compiled
+// and makes the running container pick it up.
+//
+// The file is written to a temporary name in the same directory and renamed over
+// the old one, so Suricata never reads a half-written ruleset: a reload racing a
+// partial file would either fail and leave the old policy in place, or -- worse
+// -- load a truncated one, which is a policy nobody wrote.
+//
+// Nothing here merges: the pushed file is the whole policy for every VM on this
+// host, and a host that edited it would be holding an opinion about access that
+// the control plane cannot see.
+func applySuricataRules(rules string) error {
+	// Read here rather than passed in: `dclient connect` does not otherwise hold a
+	// netConfig, and the answer only matters at the moment a ruleset arrives.
+	//
+	// With the feature off there is no Suricata and nothing queues to it, so
+	// writing the file would leave a policy on disk that nothing enforces and
+	// that would take effect the day someone turned the feature on. Saying so is
+	// more useful than silently half-doing it.
+	cfg, err := loadConfig("")
+	if err != nil {
+		return fmt.Errorf("could not read the dclient config: %w", err)
+	}
+	if !cfg.Features.Suricata {
+		return errors.New("suricata mode is off on this host, so the ruleset was not installed")
+	}
+
+	if !strings.HasSuffix(rules, "\n") {
+		rules += "\n"
+	}
+
+	// An identical ruleset is not written and not reloaded. The generator is
+	// deterministic, so an unchanged policy arrives here byte for byte the same --
+	// and the control server sends the file on every connect and every inventory
+	// tick, not only when something changed, because it cannot know what this host
+	// is holding. Without this that would be a reload of every rule on a timer.
+	if old, err := os.ReadFile(localRulesPath); err == nil && string(old) == rules {
+		return nil
+	}
+
+	dir := filepath.Dir(localRulesPath)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("could not create %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, ".local.rules.*")
+	if err != nil {
+		return fmt.Errorf("could not stage the ruleset: %w", err)
+	}
+	staged := tmp.Name()
+	defer os.Remove(staged) // No-op once the rename below succeeds.
+
+	if _, err := tmp.WriteString(rules); err != nil {
+		tmp.Close()
+		return fmt.Errorf("could not write the ruleset: %w", err)
+	}
+	// CreateTemp makes the file 0600; the container reads it as a different user.
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(staged, localRulesPath); err != nil {
+		return fmt.Errorf("could not install the ruleset: %w", err)
+	}
+
+	return reloadSuricataRules()
+}
+
+// reloadSuricataRules asks the running container to re-read its rule files.
+//
+// A reload rather than a restart: restarting drops every queue binding for as
+// long as the process takes to come back, and packets hashed to an unbound queue
+// are dropped -- so a policy change would cost every VM on the host its
+// connections. suricatasc's reload-rules swaps the ruleset in place instead.
+//
+// A failure here is a real failure and is reported as one. The new file is
+// already on disk, so the host's policy and the control plane's agree about what
+// *should* be enforced while the running process still enforces the old one, and
+// only the error says so.
+func reloadSuricataRules() error {
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		return errors.New("docker is not installed, so the ruleset was saved but not loaded")
+	}
+	if state := containerState(docker, suricataContainer); state != "running" {
+		// Not an error worth failing the job for: the ruleset is on disk, and the
+		// container reads it at startup. The reconcile pass is what starts it.
+		return fmt.Errorf("the %s container is not running, so the ruleset was saved but not loaded", suricataContainer)
+	}
+	out, err := exec.Command(docker, "exec", suricataContainer,
+		"suricatasc", "-c", "reload-rules").CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("could not reload the ruleset: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// suricataDrift compares the running container against what this config would
+// start, and describes the difference or returns "" if there is none. Only the
+// image and the arguments are checked: those are what a config change moves, and
+// the mounts and capabilities are constants in this file.
+func suricataDrift(docker string, cfg netConfig) string {
+	var got struct {
+		Config struct {
+			Image string
+			Cmd   []string
+		}
+	}
+	out, err := exec.Command(docker, "inspect", suricataContainer).Output()
+	if err != nil {
+		return "" // Cannot tell, so leave a working container alone.
+	}
+	var containers []json.RawMessage
+	if err := json.Unmarshal(out, &containers); err != nil || len(containers) == 0 {
+		return ""
+	}
+	if err := json.Unmarshal(containers[0], &got); err != nil {
+		return ""
+	}
+
+	if want := suricataCmd(cfg); !slices.Equal(got.Config.Cmd, want) {
+		return fmt.Sprintf("was started with %q but this config wants %q",
+			strings.Join(got.Config.Cmd, " "), strings.Join(want, " "))
+	}
+	if got.Config.Image != defaultSuricataImage {
+		return fmt.Sprintf("is running %s but dclient expects %s", got.Config.Image, defaultSuricataImage)
+	}
+	return ""
+}
+
+func removeSuricata(docker string) bool {
+	if out, err := exec.Command(docker, "rm", "-f", suricataContainer).CombinedOutput(); err != nil {
+		log.Printf("could not remove the suricata container: %v: %s", err, strings.TrimSpace(string(out)))
+		return false
+	}
+	return true
+}
+
+// suricataCmd is everything after the image name: one -q per queue dclient hands
+// packets to. The count is not a preference but a contract with the ruleset --
+// traffic hashed to a queue nobody is bound to is dropped, so a mismatch takes
+// VM egress down for a fraction of flows.
+func suricataCmd(cfg netConfig) []string {
+	var cmd []string
+	for q := 0; q < int(cfg.Queues); q++ {
+		cmd = append(cmd, "-q", strconv.Itoa(q))
+	}
+	return append(cmd, "-v")
+}
+
+// suricataRunArgs builds the docker invocation.
+func suricataRunArgs(cfg netConfig, image string) []string {
+	args := []string{
+		"run", "-d", "--rm",
+		"--name", suricataContainer,
+		// Host networking because the queues are the host's, and these three
+		// capabilities are what binding them and setting thread priorities need.
+		"--network", "host",
+		"--cap-add", "NET_ADMIN",
+		"--cap-add", "NET_RAW",
+		"--cap-add", "SYS_NICE",
+		"-v", suricataConfigDir + ":" + suricataConfigDir,
+		"-v", suricataLogDir + ":" + suricataLogDir,
+		"-v", suricataLibDir + ":" + suricataLibDir,
+		image,
+	}
+	// Shared with the drift check, so what is compared is by construction the
+	// same thing that would be started.
+	return append(args, suricataCmd(cfg)...)
+}
+
+// stopSuricata removes the container, returning what to tell the operator. It
+// says nothing at all when there was nothing to stop -- teardown on a host that
+// never ran suricata should not mention it.
+func stopSuricata() string {
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		return ""
+	}
+	if containerState(docker, suricataContainer) == "" {
+		return ""
+	}
+	if out, err := exec.Command(docker, "rm", "-f", suricataContainer).CombinedOutput(); err != nil {
+		return fmt.Sprintf("could not remove the %s container: %v: %s",
+			suricataContainer, err, strings.TrimSpace(string(out)))
+	}
+	return "removed the " + suricataContainer + " container"
+}
+
+// suricataStatus reports what the doctor should say about the container. Split
+// out from ensureSuricata so the check can run as a non-root read without
+// starting anything.
+func suricataStatus(cfg netConfig) (result, string) {
+	if !cfg.Suricata {
+		return pass, "suricata mode is off; no container to run"
+	}
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		return fail, "suricata mode is on but docker is not installed"
+	}
+	switch state := containerState(docker, suricataContainer); state {
+	case "running":
+		return pass, "the suricata container is running"
+	case "":
+		return fail, "suricata mode is on but no " + suricataContainer +
+			" container exists; dclient starts one on its next reconcile pass"
+	default:
+		return fail, fmt.Sprintf("the %s container is %s; vm egress is being dropped", suricataContainer, state)
+	}
+}
+
+// containerState returns docker's status word for the container, or "" if there
+// is no such container -- which is also what a docker that cannot be reached
+// looks like, deliberately: the caller's response to both is to try to start it.
+func containerState(docker, name string) string {
+	out, err := exec.Command(docker, "inspect", "-f", "{{.State.Status}}", name).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}

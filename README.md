@@ -70,14 +70,14 @@ just vm-ssh
 Starting a VM inside the host VM
 
 ```sh
-sudo tee /etc/dagent/config.yaml > /dev/null <<'EOF'
+sudo tee /etc/dclient/config.yaml > /dev/null <<'EOF'
 control_url: http://10.68.0.1:1323
 # enrollment_key: paste-once-then-it-is-ignored
 insecure: true
 
-data_dir: /var/lib/dagent
-socket: /run/dagent/dagent.sock
-group: dagent
+data_dir: /var/lib/dclient
+socket: /run/dclient/dclient.sock
+group: dclient
 
 features:
   ip_forward: true
@@ -107,13 +107,13 @@ vector:
   enable: true
 EOF
 
-sudo systemctl restart dagent
+sudo systemctl restart dclient
 ```
 
 Getting into the VM
 
 ```sh
-dagent vm console alpha
+dclient vm console alpha
 ```
 
 Running a python server inside the VM

@@ -186,7 +186,7 @@ scripts/config --enable  CONFIG_NETFILTER_ADVANCED
 scripts/config --enable  CONFIG_NETFILTER_NETLINK
 scripts/config --enable  CONFIG_NETFILTER_NETLINK_QUEUE
 scripts/config --enable  CONFIG_NETFILTER_NETLINK_QUEUE_CT      # optional, gives Suricata conntrack info
-# nftables expressions dagent emits — separate symbols from the core table support
+# nftables expressions dclient emits — separate symbols from the core table support
 scripts/config --enable  CONFIG_NFT_QUEUE      # the `queue` verdict itself
 scripts/config --enable  CONFIG_NFT_COUNTER    # counters on the drop rules
 # per-VM bandwidth: HTB on the tap, ingress redirected to an ifb

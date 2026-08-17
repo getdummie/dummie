@@ -104,7 +104,7 @@ func (q *Queries) ListVMNetworkTargets(ctx context.Context, vmID pgtype.UUID) ([
 	return items, nil
 }
 
-const listVMNetworkTargetsByAgent = `-- name: ListVMNetworkTargetsByAgent :many
+const listVMNetworkTargetsByClient = `-- name: ListVMNetworkTargetsByClient :many
 SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name,
        COALESCE(t.kind, '') AS kind,
        COALESCE(t.destination, '') AS destination,
@@ -113,13 +113,13 @@ SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name,
        COALESCE(t.note, '') AS note
 FROM vms v
 LEFT JOIN vm_network_targets t ON t.vm_id = v.id
-WHERE v.agent_id = $1
+WHERE v.client_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
 ORDER BY v.ip, kind, destination, transport, ports
 `
 
-type ListVMNetworkTargetsByAgentRow struct {
+type ListVMNetworkTargetsByClientRow struct {
 	VMIP        string
 	HostVMID    string
 	VMName      string
@@ -130,7 +130,7 @@ type ListVMNetworkTargetsByAgentRow struct {
 	Note        string
 }
 
-// ListVMNetworkTargetsByAgent is the input to the rule generator and the
+// ListVMNetworkTargetsByClient is the input to the rule generator and the
 // Corefile generator: every allowance on the host, carrying the address of the
 // VM that owns it.
 //
@@ -156,15 +156,15 @@ type ListVMNetworkTargetsByAgentRow struct {
 // every consumer reads a string without checking a flag; letting the join
 // introduce NULLs here would be a second way to spell "no value" that only this
 // one query has.
-func (q *Queries) ListVMNetworkTargetsByAgent(ctx context.Context, agentID pgtype.UUID) ([]ListVMNetworkTargetsByAgentRow, error) {
-	rows, err := q.db.Query(ctx, listVMNetworkTargetsByAgent, agentID)
+func (q *Queries) ListVMNetworkTargetsByClient(ctx context.Context, clientID pgtype.UUID) ([]ListVMNetworkTargetsByClientRow, error) {
+	rows, err := q.db.Query(ctx, listVMNetworkTargetsByClient, clientID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListVMNetworkTargetsByAgentRow
+	var items []ListVMNetworkTargetsByClientRow
 	for rows.Next() {
-		var i ListVMNetworkTargetsByAgentRow
+		var i ListVMNetworkTargetsByClientRow
 		if err := rows.Scan(
 			&i.VMIP,
 			&i.HostVMID,

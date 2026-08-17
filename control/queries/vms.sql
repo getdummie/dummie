@@ -1,13 +1,13 @@
 -- name: CreateVM :one
--- CreateVM records the intent before the job is pushed to the agent. The row id
+-- CreateVM records the intent before the job is pushed to the client. The row id
 -- doubles as the job's correlation id, which is what lets the result frame find
 -- its way back to exactly this row.
-INSERT INTO vms (agent_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
+INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING *;
 
 -- name: MarkVMRunning :exec
--- MarkVMRunning applies what the agent actually built: the id and the address
+-- MarkVMRunning applies what the client actually built: the id and the address
 -- are allocated on the host, so they are only known once it answers.
 --
 -- The name is NOT taken from the host. It was chosen here, it is unique across
@@ -32,8 +32,8 @@ SET status = 'failed', last_error = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: UpsertVMFromInventory :exec
--- UpsertVMFromInventory records what an agent reports it is actually running.
--- This is how a VM created locally with `dagent vm create` gets adopted: the
+-- UpsertVMFromInventory records what an client reports it is actually running.
+-- This is how a VM created locally with `dclient vm create` gets adopted: the
 -- control plane learns about it the same way it learns about one it asked for.
 --
 -- created_at comes from the host, not from now(): the VM's age is a fact about
@@ -44,9 +44,9 @@ WHERE id = $1;
 -- what the VM's http route is keyed on, so re-taking it from the host on every
 -- inventory tick would move that route underneath whoever is using it -- and
 -- could collide with a name another VM already holds.
-INSERT INTO vms (agent_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
+INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
-ON CONFLICT (agent_id, vm_id) WHERE vm_id <> '' DO UPDATE
+ON CONFLICT (client_id, vm_id) WHERE vm_id <> '' DO UPDATE
 SET status      = EXCLUDED.status,
     boot        = EXCLUDED.boot,
     cpus        = EXCLUDED.cpus,
@@ -58,29 +58,29 @@ SET status      = EXCLUDED.status,
 
 -- name: MarkMissingVMsGone :exec
 -- MarkMissingVMsGone settles the other half of an inventory report: a row the
--- agent no longer lists has been removed on the host.
+-- client no longer lists has been removed on the host.
 --
 -- Only rows the host had already assigned an id to are considered. A 'pending'
 -- row has no id yet and is waiting on its result frame, and a 'failed' one never
 -- got that far -- neither is missing, and neither should be touched here.
 UPDATE vms
 SET status = 'gone', updated_at = now()
-WHERE agent_id = $1
+WHERE client_id = $1
   AND vm_id <> ''
   AND status IN ('running', 'stopped')
   AND NOT (vm_id = ANY(sqlc.arg(vm_ids)::text[]));
 
 -- name: DeleteAdoptedVM :exec
 -- DeleteAdoptedVM resolves the one race between the two ways a row is born: an
--- inventory report can land after the agent has written vm.json but before its
+-- inventory report can land after the client has written vm.json but before its
 -- result frame arrives, adopting a VM that already has a pending row waiting for
 -- it. The adopted duplicate is dropped so the pending row -- which holds the
 -- spec that was asked for -- is the one that survives.
 DELETE FROM vms
-WHERE agent_id = $1 AND vm_id = $2 AND id <> $3;
+WHERE client_id = $1 AND vm_id = $2 AND id <> $3;
 
 -- name: SetVMStatus :exec
--- SetVMStatus settles a start, stop or destroy as soon as the agent confirms it,
+-- SetVMStatus settles a start, stop or destroy as soon as the client confirms it,
 -- rather than waiting up to a full inventory tick for the row to catch up.
 --
 -- reported_at moves too. A result frame *is* the host vouching for this VM, at
@@ -112,13 +112,13 @@ SELECT * FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
--- name: CountVMsByAgent :one
+-- name: CountVMsByClient :one
 SELECT count(*) FROM vms
-WHERE agent_id = $1;
+WHERE client_id = $1;
 
--- name: ListVMsByAgent :many
+-- name: ListVMsByClient :many
 SELECT * FROM vms
-WHERE agent_id = $1
+WHERE client_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
@@ -141,7 +141,7 @@ WHERE id = $1 AND created_by = $2;
 
 -- name: GetVMForOwnerByHostname :one
 -- GetVMForOwnerByHostname resolves the name proxy routes on -- a VM's name under
--- the domain of the agent running it -- back to the VM, and checks in the same
+-- the domain of the client running it -- back to the VM, and checks in the same
 -- statement that the caller may reach it. Used by the /login hand-off, which is
 -- handed a hostname and nothing else.
 --
@@ -159,7 +159,7 @@ WHERE id = $1 AND created_by = $2;
 -- for a hostname that no longer routes anywhere is not worth minting.
 SELECT v.id
 FROM vms v
-JOIN agents a ON a.id = v.agent_id
+JOIN clients a ON a.id = v.client_id
 JOIN domains d ON d.id = a.domain_id
 WHERE v.name = sqlc.arg(name)
   AND d.tld = sqlc.arg(domain_tld)
@@ -181,8 +181,8 @@ FROM vms
 WHERE created_by = $1
   AND status IN ('pending', 'running', 'stopped');
 
--- name: ListProxySSHUsersByAgent :many
--- ListProxySSHUsersByAgent is the input to the proxy.yaml generator: every VM on
+-- name: ListProxySSHUsersByClient :many
+-- ListProxySSHUsersByClient is the input to the proxy.yaml generator: every VM on
 -- the host that can be reached over ssh, carrying the key of whoever owns it.
 --
 -- One query for the whole host, like the Suricata one, because the file is
@@ -200,18 +200,18 @@ WHERE created_by = $1
 SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
 FROM vms v
 JOIN users u ON u.id = v.created_by
-WHERE v.agent_id = $1
+WHERE v.client_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
   AND u.public_key <> ''
 ORDER BY v.created_at, v.vm_id;
 
--- name: ListProxyHTTPRoutesByAgent :many
--- ListProxyHTTPRoutesByAgent is the other half of the proxy.yaml input: every VM
+-- name: ListProxyHTTPRoutesByClient :many
+-- ListProxyHTTPRoutesByClient is the other half of the proxy.yaml input: every VM
 -- on the host that can be reached over http, with the ports it publishes and the
 -- domain its hostname sits under.
 --
--- The join on domains is inner, so a host whose agent has no domain contributes
+-- The join on domains is inner, so a host whose client has no domain contributes
 -- nothing. That is the honest outcome rather than a gap: the hostname is the VM
 -- name under that domain, so without one there is no name to route on, and
 -- inventing a suffix would publish a hostname the operator never configured and
@@ -226,9 +226,9 @@ ORDER BY v.created_at, v.vm_id;
 SELECT v.name AS vm_name, v.ip AS vm_ip, v.vm_id AS host_vm_id,
        v.default_port, v.public_ports, d.tld AS domain_tld
 FROM vms v
-JOIN agents a ON a.id = v.agent_id
+JOIN clients a ON a.id = v.client_id
 JOIN domains d ON d.id = a.domain_id
-WHERE v.agent_id = $1
+WHERE v.client_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
 ORDER BY v.created_at, v.vm_id;
@@ -251,13 +251,13 @@ RETURNING *;
 DELETE FROM vms
 WHERE id = $1;
 
--- name: FailPendingVMsForAgent :exec
--- FailPendingVMsForAgent runs when an agent's socket drops and at startup: a
+-- name: FailPendingVMsForClient :exec
+-- FailPendingVMsForClient runs when an client's socket drops and at startup: a
 -- pending row is waiting on a result frame that can no longer arrive, so it
 -- would otherwise sit there forever claiming to be in progress.
 UPDATE vms
 SET status = 'failed', last_error = $2, updated_at = now()
-WHERE agent_id = $1 AND status = 'pending';
+WHERE client_id = $1 AND status = 'pending';
 
 -- name: FailAllPendingVMs :exec
 -- FailAllPendingVMs is the startup counterpart: in-flight jobs belonged to the

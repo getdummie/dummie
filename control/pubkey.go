@@ -1,11 +1,11 @@
 package main
 
 import (
-  "errors"
-  "fmt"
-  "strings"
+	"errors"
+	"fmt"
+	"strings"
 
-  "golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh"
 )
 
 // maxPublicKeyLen bounds what will be parsed at all. An RSA-4096 key in
@@ -28,41 +28,41 @@ const maxPublicKeyLen = 4096
 // means belongs to the caller: /settings allows clearing one, VM creation does
 // not accept the result.
 func normalizePublicKey(s string) (string, error) {
-  s = strings.TrimSpace(s)
-  if s == "" {
-    return "", nil
-  }
-  if len(s) > maxPublicKeyLen {
-    return "", fmt.Errorf("that key is longer than %d characters; paste one public key, not a file", maxPublicKeyLen)
-  }
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "", nil
+	}
+	if len(s) > maxPublicKeyLen {
+		return "", fmt.Errorf("that key is longer than %d characters; paste one public key, not a file", maxPublicKeyLen)
+	}
 
-  key, comment, _, rest, err := ssh.ParseAuthorizedKey([]byte(s))
-  if err != nil {
-    return "", errors.New("that does not look like an SSH public key; paste the contents of a .pub file, e.g. ssh-ed25519 AAAA… you@host")
-  }
-  // ParseAuthorizedKey stops at the first key and hands back the remainder, so
-  // a paste of a whole authorized_keys file would otherwise be accepted as its
-  // first line and silently drop the rest.
-  if len(strings.TrimSpace(string(rest))) > 0 {
-    return "", errors.New("that is more than one key; a user has one")
-  }
-  // A private key pasted by mistake fails to parse, but the type check is what
-  // catches the weak-but-valid case.
-  // "ssh-dss" spelled out rather than ssh.KeyAlgoDSA: the constant is deprecated
-  // upstream and the wire name is what is actually being matched.
-  if key.Type() == "ssh-dss" {
-    return "", errors.New("DSA keys are too weak to accept; use an ed25519 or RSA key")
-  }
+	key, comment, _, rest, err := ssh.ParseAuthorizedKey([]byte(s))
+	if err != nil {
+		return "", errors.New("that does not look like an SSH public key; paste the contents of a .pub file, e.g. ssh-ed25519 AAAA… you@host")
+	}
+	// ParseAuthorizedKey stops at the first key and hands back the remainder, so
+	// a paste of a whole authorized_keys file would otherwise be accepted as its
+	// first line and silently drop the rest.
+	if len(strings.TrimSpace(string(rest))) > 0 {
+		return "", errors.New("that is more than one key; a user has one")
+	}
+	// A private key pasted by mistake fails to parse, but the type check is what
+	// catches the weak-but-valid case.
+	// "ssh-dss" spelled out rather than ssh.KeyAlgoDSA: the constant is deprecated
+	// upstream and the wire name is what is actually being matched.
+	if key.Type() == "ssh-dss" {
+		return "", errors.New("DSA keys are too weak to accept; use an ed25519 or RSA key")
+	}
 
-  // MarshalAuthorizedKey returns "<type> <base64>\n" and drops the comment, so
-  // the comment is re-attached rather than kept from the input verbatim.
-  out := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
-  // The comment is free text from the client and this line is destined for an
-  // authorized_keys file, where a newline starts a new key. Parsing is
-  // line-oriented so one should never reach here -- dropping it rather than
-  // trusting that is a one-line guarantee instead of an assumption.
-  if comment = strings.TrimSpace(comment); comment != "" && !strings.ContainsAny(comment, "\r\n") {
-    out += " " + comment
-  }
-  return out, nil
+	// MarshalAuthorizedKey returns "<type> <base64>\n" and drops the comment, so
+	// the comment is re-attached rather than kept from the input verbatim.
+	out := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+	// The comment is free text from the client and this line is destined for an
+	// authorized_keys file, where a newline starts a new key. Parsing is
+	// line-oriented so one should never reach here -- dropping it rather than
+	// trusting that is a one-line guarantee instead of an assumption.
+	if comment = strings.TrimSpace(comment); comment != "" && !strings.ContainsAny(comment, "\r\n") {
+		out += " " + comment
+	}
+	return out, nil
 }

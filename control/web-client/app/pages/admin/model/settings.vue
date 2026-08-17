@@ -124,7 +124,7 @@ async function save(row: SettingRow, value: boolean | string) {
 }
 
 // An unchanged text field should not be savable: it would push the same value
-// to every agent in the fleet for nothing.
+// to every client in the fleet for nothing.
 function isDirty(row: SettingRow) {
   const draft = drafts.value[row.key] ?? ''
   if (row.kind === 'secret') return draft !== ''

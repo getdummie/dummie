@@ -39,7 +39,7 @@
   #   };
   #
   #   # Command run at every boot, as guestUser, from bootWorkingDir.
-  #   bootCommand = "sudo ./dagent install";
+  #   bootCommand = "sudo ./dclient install";
   #   bootWorkingDir = "/home/ubuntu/app/tmp";
   #
   #   bootEnv.PATH = "/home/ubuntu/.bun/bin:/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
@@ -92,7 +92,7 @@
     };
 
     # Command run at every boot, as guestUser, from bootWorkingDir.
-    bootCommand = "sudo ./dagent install";
+    bootCommand = "sudo ./dclient install";
     bootWorkingDir = "/home/ubuntu/app/tmp";
 
     # Extra env for the boot service. systemd's PATH is bare, so tools installed

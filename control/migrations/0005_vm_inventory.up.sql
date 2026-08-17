@@ -1,6 +1,6 @@
 -- 0005_vm_inventory: statuses for VMs the control plane did not create.
 --
--- Agents now report the VMs they are actually running, so a row no longer only
+-- Clients now report the VMs they are actually running, so a row no longer only
 -- ever describes a create this server asked for. Two states follow from that:
 -- 'stopped' for a VM that exists on its host but is not running, and 'gone' for
 -- one that has disappeared from the host's inventory entirely.
