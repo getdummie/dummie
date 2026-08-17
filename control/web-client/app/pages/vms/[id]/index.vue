@@ -409,8 +409,11 @@ const editors = computed(() => {
     `${scheme}://vscode-remote/ssh-remote+${host}${remoteHome}`
   return [
     { key: 'vscode', label: 'VS Code', href: vscodeRemote('vscode') },
+    { key: 'vscode-insiders', label: 'VS Code Insiders', href: vscodeRemote('vscode-insiders') },
     { key: 'vscodium', label: 'VSCodium', href: vscodeRemote('vscodium') },
     { key: 'cursor', label: 'Cursor', href: vscodeRemote('cursor') },
+    { key: 'windsurf', label: 'Windsurf', href: vscodeRemote('windsurf') },
+    { key: 'antigravity', label: 'Antigravity', href: vscodeRemote('antigravity') },
     { key: 'zed', label: 'Zed', href: `zed://ssh/${host}${remoteHome}` },
   ]
 })
