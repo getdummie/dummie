@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Columns2, ExternalLink, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Columns2, Copy, ExternalLink, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1038,26 +1038,32 @@ async function confirmRemove() {
         </dl>
 
         <!-- Ways in, under the routing they use. SSH is kept apart from the
-             others: it only copies a command to the clipboard, while the rest
-             navigate somewhere. The left group is rendered even when there is
-             no hostname so the others stay right-aligned without it. -->
+             others: it is a command to run elsewhere, shown in full so it can be
+             read as well as copied, while the rest navigate somewhere. The left
+             group is rendered even when there is no hostname so the others stay
+             right-aligned without it. -->
         <div class="mt-6 flex flex-wrap items-center justify-between gap-2">
-          <div class="flex items-center gap-2">
+          <div class="flex min-w-0 items-center gap-2">
             <!-- Only when there is a hostname: without a domain there is
-                 nothing to ssh to, and a bare name would copy a command that
+                 nothing to ssh to, and a bare name would show a command that
                  fails. -->
-            <Button
+            <div
               v-if="sshHost"
-              variant="outline"
-              size="sm"
-              class="font-mono text-xs"
-              :title="sshCommand"
-              :aria-label="`Copy ${sshCommand} to the clipboard`"
-              @click="copySsh"
+              class="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/40 py-1 pl-3 pr-1"
             >
-              <component :is="sshCopied ? Check : Terminal" class="size-4" aria-hidden="true" />
-              {{ sshCopied ? 'Copied' : 'SSH' }}
-            </Button>
+              <Terminal class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <code class="truncate font-mono text-xs">{{ sshCommand }}</code>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                class="shrink-0"
+                :title="`Copy ${sshCommand} to the clipboard`"
+                :aria-label="`Copy ${sshCommand} to the clipboard`"
+                @click="copySsh"
+              >
+                <component :is="sshCopied ? Check : Copy" aria-hidden="true" />
+              </Button>
+            </div>
             <span role="status" aria-live="polite" class="sr-only">
               {{ sshCopied ? 'SSH command copied to clipboard' : '' }}
             </span>
