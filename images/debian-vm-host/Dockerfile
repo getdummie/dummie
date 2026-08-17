@@ -7,7 +7,6 @@ RUN set -ex \
   && apt install -y \
     systemd \
     systemd-sysv \
-    systemd-resolved \
     sudo \
     curl \
     dnsutils \
@@ -32,7 +31,6 @@ RUN set -ex \
   && systemctl enable ssh \
   && systemctl unmask systemd-udevd \
   && systemctl enable systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udevd.service \
-  && systemctl enable systemd-resolved \
   && mkdir -p /root/.ssh \
   && curl -sL https://github.com/codingcoffee.keys > /root/.ssh/authorized_keys \
   && adduser --disabled-password --gecos "" ubuntu \
