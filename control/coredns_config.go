@@ -36,27 +36,24 @@ import (
 // which is a lie the guest's resolver will cache and which sends a confused user
 // looking for a typo. REFUSED says the server would not answer, which is what
 // happened, and stub resolvers do not cache it.
+// The blocks are left on the wildcard. The gateway address the taps answer on is
+// only added to a tap when a VM is created, so a resolver pinned to it cannot
+// start on a host with no VMs -- which is every host at boot, and the moment a
+// guest most needs its first lookup. Reach is not what the bind was buying: the
+// input chain admits 53 only from a tap and only to the gateway, and an unknown
+// source that does arrive matches no view and falls through to this block.
+//
+// The cost is that a host running systemd-resolved already has a stub listener on
+// 127.0.0.53:53, and on Linux a wildcard listener cannot share a port with a
+// specific-address one, so coredns will not start there. Hosts in this fleet do
+// not run it.
 const corednsRefuseAll = `.:53 {
-    bind ` + corednsBind + `
     template ANY ANY {
         rcode REFUSED
     }
 ` + corednsLogDirective + `    errors
 }
 `
-
-// corednsBind is left for coredns to expand when it reads the file, because the
-// address is a host fact this server does not have: the hello frame carries the
-// VM pool and not the gateway, and adding it would be storing a second copy of
-// something the host restates on every connect. dclient supplies the value on the
-// container's command line.
-//
-// Binding at all is not about reach -- the input chain already admits 53 only
-// from a tap and only to the gateway. It is that a host running systemd-resolved
-// has a stub listener on 127.0.0.53:53, and on Linux a wildcard listener cannot
-// share a port with a specific-address one, so a wildcarded coredns exits at
-// startup on every ubuntu or debian host in the fleet.
-const corednsBind = "{$DCLIENT_GATEWAY}"
 
 // corednsLogMarker prefixes every query line so the vector transform can tell
 // them from coredns's own startup and plugin chatter, which goes to the same
@@ -116,7 +113,6 @@ func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream s
 		// it" the dotprefix content match in local.rules means, which is the whole
 		// reason the two files agree.
 		fmt.Fprintf(&b, "%s:53 {\n", strings.Join(zones, ":53 "))
-		fmt.Fprintf(&b, "    bind %s\n", corednsBind)
 		fmt.Fprintf(&b, "    view %s {\n        expr client_ip() == '%s'\n    }\n", viewName(vm.ip, "allow"), vm.ip)
 		fmt.Fprintf(&b, "    forward . %s\n", upstream)
 		// Short, and only to collapse a retry storm from one guest into one upstream
@@ -129,8 +125,8 @@ func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream s
 		// for anything else fall through to the fleet-wide block below -- which
 		// refuses them, so the verdict is the same, but a view-scoped block is what
 		// keeps that verdict attributable to this VM in the query log.
-		fmt.Fprintf(&b, ".:53 {\n    bind %s\n    view %s {\n        expr client_ip() == '%s'\n    }\n",
-			corednsBind, viewName(vm.ip, "deny"), vm.ip)
+		fmt.Fprintf(&b, ".:53 {\n    view %s {\n        expr client_ip() == '%s'\n    }\n",
+			viewName(vm.ip, "deny"), vm.ip)
 		b.WriteString("    template ANY ANY {\n        rcode REFUSED\n    }\n")
 		b.WriteString(corednsLogDirective)
 		b.WriteString("    errors\n}\n")

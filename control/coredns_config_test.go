@@ -35,18 +35,17 @@ func TestGenerateCoreDNSConfigAlwaysRefuses(t *testing.T) {
 	}
 }
 
-// Every block has to bind the gateway. A block left on the wildcard cannot share
-// port 53 with systemd-resolved's stub listener, so coredns exits at startup and
-// the whole host resolves nothing -- and it fails that way on the two
-// distributions the doctor checks for.
-func TestGenerateCoreDNSConfigBindsEveryBlock(t *testing.T) {
+// No block binds an address. The gateway only exists on a tap, so a bind pins the
+// resolver to an address that is absent on a host with no VMs -- coredns exits at
+// startup and the reconciler restarts it forever. Isolation does not depend on the
+// bind: it is the per-VM views, which match on source address.
+func TestGenerateCoreDNSConfigBindsNothing(t *testing.T) {
 	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
 	}, "1.1.1.1")
 
-	blocks := strings.Count(out, ":53 {")
-	if binds := strings.Count(out, "bind "+corednsBind); binds != blocks {
-		t.Errorf("%d server blocks but %d binds; every block needs one:\n%s", blocks, binds, out)
+	if strings.Contains(out, "bind ") {
+		t.Errorf("a server block binds an address; the gateway does not exist until a vm does:\n%s", out)
 	}
 }
 

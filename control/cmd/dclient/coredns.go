@@ -66,7 +66,7 @@ func ensureCoreDNS(cfg netConfig) {
 
 	switch state := containerState(docker, corednsContainer); state {
 	case "running":
-		drift := corednsDrift(docker, cfg)
+		drift := corednsDrift(docker)
 		if drift == "" {
 			return
 		}
@@ -94,7 +94,7 @@ func ensureCoreDNS(cfg netConfig) {
 		return
 	}
 
-	args := corednsRunArgs(cfg, defaultCoreDNSImage)
+	args := corednsRunArgs(defaultCoreDNSImage)
 	if out, err := exec.Command(docker, args...).CombinedOutput(); err != nil {
 		log.Printf("could not start coredns (docker %s): %v: %s",
 			strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -114,7 +114,7 @@ func ensureCoreDNS(cfg netConfig) {
 	time.Sleep(500 * time.Millisecond)
 	if state := containerState(docker, corednsContainer); state != "running" {
 		log.Printf("coredns was started but is already %q; run it in the foreground to see why: docker run --rm %s",
-			state, strings.Join(corednsForegroundArgs(cfg, defaultCoreDNSImage), " "))
+			state, strings.Join(corednsForegroundArgs(defaultCoreDNSImage), " "))
 		return
 	}
 	log.Print("started the coredns container")
@@ -130,7 +130,8 @@ func ensureCoreDNS(cfg netConfig) {
 // whole internet for its guests.
 //
 // It still has to start and still has to answer, because a refusal is a
-// diagnosable failure and a dead port is not.
+// diagnosable failure and a dead port is not -- which is also why it is left on
+// the wildcard rather than pinned to the gateway. See corednsRunArgs.
 const bootstrapCorefile = `# Written by dclient when this file is missing. It is never rewritten in place:
 # once it exists it belongs to whoever owns it, which is normally the control
 # server -- it replaces this file wholesale whenever a vm's allowed destinations
@@ -138,11 +139,7 @@ const bootstrapCorefile = `# Written by dclient when this file is missing. It is
 #
 # Refuse everything. dclient does not know what any guest may resolve; only the
 # control server does. Until it says otherwise, no name resolves.
-#
-# The bind is not optional: on a host running systemd-resolved something already
-# holds 127.0.0.53:53, and a wildcard listener cannot share the port with it.
 .:53 {
-    bind {$DCLIENT_GATEWAY}
     template ANY ANY {
         rcode REFUSED
     }
@@ -197,19 +194,13 @@ func reloadCoreDNS(ctx context.Context) error {
 }
 
 // corednsDrift compares the running container against what this config would
-// start. The image, the arguments and the gateway are checked; the mounts and the
-// network mode are constants in this file.
-//
-// The gateway is in there because it is baked into the running process: coredns
-// expanded it when it read the Corefile, so an operator who changes it leaves a
-// resolver bound to an address the taps no longer use, and every guest lookup
-// times out with nothing in any log to say why.
-func corednsDrift(docker string, cfg netConfig) string {
+// start. The image and the arguments are checked; the mounts and the network mode
+// are constants in this file.
+func corednsDrift(docker string) string {
 	var got struct {
 		Config struct {
 			Image string
 			Cmd   []string
-			Env   []string
 		}
 	}
 	out, err := exec.Command(docker, "inspect", corednsContainer).Output()
@@ -231,9 +222,6 @@ func corednsDrift(docker string, cfg netConfig) string {
 	if got.Config.Image != defaultCoreDNSImage {
 		return fmt.Sprintf("is running %s but dclient expects %s", got.Config.Image, defaultCoreDNSImage)
 	}
-	if want := corednsGatewayEnv + "=" + cfg.Gateway; !slices.Contains(got.Config.Env, want) {
-		return fmt.Sprintf("was not started with %s", want)
-	}
 	return ""
 }
 
@@ -253,18 +241,6 @@ func corednsCmd() []string {
 	return []string{"-conf", corefilePath}
 }
 
-// corednsGatewayEnv is the variable the Corefile's bind directive is written
-// against. The control server generates that file and does not know this host's
-// gateway -- it is told the VM pool in the hello frame and nothing else -- so the
-// file says `bind {$DCLIENT_GATEWAY}` and the value is supplied here, where the
-// gateway is a plain fact from net.json.
-//
-// coredns expands {$VAR} when it reads the Corefile. Unset, the directive is left
-// with no argument and coredns refuses to start, which is the right way round: a
-// resolver that fell back to every address is one that fights whatever else the
-// host runs on 53.
-const corednsGatewayEnv = "DCLIENT_GATEWAY"
-
 // corednsRunArgs builds the docker invocation.
 //
 // Host networking, because the address this has to listen on is the gateway the
@@ -272,29 +248,35 @@ const corednsGatewayEnv = "DCLIENT_GATEWAY"
 // to -- and would put docker's NAT between the guest and this process, which
 // would rewrite the source address the per-VM views are matched on.
 //
-// The listener is pinned to the gateway rather than left on 0.0.0.0, and that is
-// not about reach: on a host running systemd-resolved there is already a stub
-// listener on 127.0.0.53:53, and a wildcard listener cannot share a port with a
-// specific-address one on Linux. Left wildcarded, coredns exits at startup on
-// every ubuntu or debian host in the fleet. The same collision is why the metadata
-// service is not on port 80 -- see metadataPort in nft.go.
-func corednsRunArgs(cfg netConfig, image string) []string {
+// The listener is left on the wildcard rather than pinned to the gateway. The
+// gateway address is added to a tap when a VM is created and lives nowhere else,
+// so a pinned resolver cannot bind on a host with no VMs -- it exits at startup
+// and the reconciler restarts it forever, which is the state every host is in at
+// boot. The metadata service solves the same problem for itself with IP_FREEBIND
+// (see metadata.go); a container gets no such option.
+//
+// Wildcarding costs the collision the pin avoided: a host running systemd-resolved
+// holds 127.0.0.53:53, and on Linux a wildcard listener cannot share a port with a
+// specific-address one, so coredns will not start there. Hosts in this fleet do
+// not run it. Reach is not what changes -- the input chain admits 53 only from a
+// tap and only to the gateway, and a source with no view of its own is refused by
+// the fallback block.
+func corednsRunArgs(image string) []string {
 	args := []string{
 		"run", "-d", "--rm",
 		"--name", corednsContainer,
 	}
-	return append(args, corednsForegroundArgs(cfg, image)...)
+	return append(args, corednsForegroundArgs(image)...)
 }
 
 // corednsForegroundArgs is everything the two invocations share: the run flags
 // that are not about detaching, and the command. Split out so the line
 // ensureCoreDNS prints when the container dies is one an operator can paste and
 // get the error on their terminal, rather than an approximation of it.
-func corednsForegroundArgs(cfg netConfig, image string) []string {
+func corednsForegroundArgs(image string) []string {
 	args := []string{
 		"--network", "host",
 		"--cap-add", "NET_BIND_SERVICE",
-		"-e", corednsGatewayEnv + "=" + cfg.Gateway,
 		"-v", corednsConfigDir + ":" + corednsConfigDir,
 		"-v", corednsLogDir + ":" + corednsLogDir,
 		image,
