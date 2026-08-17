@@ -3,6 +3,7 @@ package main
 import (
   "context"
   "errors"
+  "net"
   "net/url"
   "regexp"
   "strings"
@@ -20,6 +21,8 @@ const (
   settingClickHouseURL      = "clickhouse_url"
   settingClickHouseUser     = "clickhouse_user"
   settingClickHousePassword = "clickhouse_password"
+
+  settingResolverUpstream = "resolver_upstream"
 )
 
 // settingKind says how a value is stored and rendered. The column is TEXT
@@ -103,6 +106,34 @@ var settingDefs = []settingDef{
     Description: "Written to /etc/vector/vector.yaml on every host, so it is only as " +
       "private as the least private machine in the fleet. Never shown again once saved.",
   },
+  {
+    Key:   settingResolverUpstream,
+    Kind:  settingString,
+    Label: "Resolver upstream",
+    Description: "Where the resolver on each qemu host forwards the lookups it is willing " +
+      "to answer. Guests never reach it themselves -- they only ever talk to their own " +
+      "gateway -- so this is the one place a fleet decides who sees its dns.",
+    Placeholder: "1.1.1.1",
+    Default:     "1.1.1.1",
+    validate:    validateResolverUpstream,
+  },
+}
+
+// validateResolverUpstream takes an address, optionally with a port, and nothing
+// else. It is written into a Corefile `forward` line on every host, where a
+// hostname would need resolving by the resolver being configured.
+func validateResolverUpstream(v string) error {
+  if v == "" {
+    return errors.New("a resolver upstream is required; guests cannot resolve anything without one")
+  }
+  host := v
+  if h, _, err := net.SplitHostPort(v); err == nil {
+    host = h
+  }
+  if net.ParseIP(host) == nil {
+    return errors.New("must be an IP address, optionally with a port like 10.0.0.1:5353")
+  }
+  return nil
 }
 
 // vectorVersionRe is deliberately strict. The value is interpolated into a

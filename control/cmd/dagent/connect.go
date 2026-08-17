@@ -440,13 +440,13 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
     // Off the read loop for a stronger reason than the rest: this one may
     // download a release tarball, which takes as long as the link is slow.
     go l.applyVector(ctx, env.ID, *job.Vector)
-  case proto.KindSuricataConfig, proto.KindDpipeConfig:
+  case proto.KindSuricataConfig, proto.KindDpipeConfig, proto.KindCoreDNSConfig:
     if job.File == nil {
       l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
       return
     }
-    // Off the read loop like the rest: both restart something, and a slow
-    // docker or systemctl must not stop the socket answering pings.
+    // Off the read loop like the rest: each restarts or signals something, and a
+    // slow docker or systemctl must not stop the socket answering pings.
     go l.applyHostConfig(ctx, env.ID, job.Kind, job.File.Config)
   default:
     l.reply(ctx, env.ID, proto.JobResult{
@@ -517,7 +517,7 @@ func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConf
   l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, OK: true})
 }
 
-// applyHostConfig installs one of the two whole-file configs the control server
+// applyHostConfig installs one of the whole-file configs the control server
 // owns. Detached like the rest: a write that has begun should finish, since
 // abandoning it leaves the host running a config the control plane believes it
 // replaced.
@@ -526,8 +526,11 @@ func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.Job
 
   apply := applySuricataConfig
   name := "suricata"
-  if kind == proto.KindDpipeConfig {
+  switch kind {
+  case proto.KindDpipeConfig:
     apply, name = applyDpipeConfig, dpipeService
+  case proto.KindCoreDNSConfig:
+    apply, name = applyCoreDNSConfig, corednsContainer
   }
 
   changed, err := apply(ctx, config)
@@ -537,7 +540,9 @@ func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.Job
     return
   }
   if changed {
-    log.Printf("job %s: installed a new %s config and restarted it", jobID, name)
+    // Deliberately vague about how it took effect: suricata and dpipe are
+    // restarted, coredns is signalled to re-read its file in place.
+    log.Printf("job %s: installed a new %s config and put it into effect", jobID, name)
   }
   l.reply(ctx, jobID, proto.JobResult{Kind: kind, OK: true})
 }

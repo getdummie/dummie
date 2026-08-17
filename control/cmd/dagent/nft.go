@@ -41,8 +41,9 @@ type netConfig struct {
   Gateway string
   Uplink  string
 
-  // DNS is handed to guests over DHCP. It points outside the fleet because
-  // dagent runs no resolver: the gateway would answer nothing.
+  // DNS is the upstream resolver handed to guests over DHCP when there is no
+  // filtering resolver to point them at instead. Read through resolver(), never
+  // directly.
   DNS string
 
   Suricata bool   // when set, VM egress is queued to Suricata before acceptance
@@ -52,6 +53,23 @@ type netConfig struct {
   // that the zero value -- and therefore an older net.json -- keeps the
   // workaround on, which is what almost every host wants.
   NoDockerCompat bool
+}
+
+// resolver is the address guests are handed over DHCP.
+//
+// With suricata mode on it is always the gateway, whatever DNS says. That is not
+// a preference: the forward chain queues guest egress to a ruleset whose floor
+// drops everything that is not tcp, so a query aimed at any other server is
+// dropped. The resolver on the gateway is reached through the input chain instead,
+// and it is the only one a guest can talk to.
+//
+// With the mode off nothing filters and nothing is running on 53 here, so the
+// upstream in DNS is the only answer that works.
+func (c netConfig) resolver() string {
+  if c.Suricata {
+    return c.Gateway
+  }
+  return c.DNS
 }
 
 // applyBaseRuleset installs the whole table in one atomic transaction, deleting
@@ -115,8 +133,24 @@ func applyBaseRuleset(cfg netConfig) error {
     Policy:   &drop, // default deny, per VM, by construction
   })
 
-  // Return traffic for flows we already allowed.
+  // Return traffic for flows we already allowed -- and only return traffic.
+  //
+  // The interface guard is what makes suricata an IPS rather than a very
+  // expensive SYN filter. Without it this rule matches every packet a VM sends
+  // after the handshake completes, because conntrack marks the flow ESTABLISHED
+  // the moment the SYN-ACK comes back. The SYN reaches the queue and nothing
+  // else ever does, so suricata sees the first packet of each flow and never
+  // the request: no app-layer parsing, no http or tls detection, and every rule
+  // written against a hostname silently matching nothing.
+  //
+  // Excluding the taps means guest egress is judged packet by packet, which is
+  // the whole point. Replies arrive on the uplink, still match here, and are
+  // still accepted without inspection -- the verdicts in this policy are all
+  // made on to-server packets, so there is nothing to gain by queueing the
+  // other half.
   c.AddRule(&nftables.Rule{Table: t, Chain: fwd, Exprs: []expr.Any{
+    &expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
+    &expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID, Invert: true},
     &expr.Ct{Register: 1, Key: expr.CtKeySTATE},
     &expr.Bitwise{
       SourceRegister: 1, DestRegister: 1, Len: 4,
@@ -243,7 +277,12 @@ func applyBaseRuleset(cfg netConfig) error {
     &expr.Verdict{Kind: expr.VerdictAccept},
   }})
 
-  // Metadata service and, later, the filtering resolver.
+  // Metadata service and the filtering resolver.
+  //
+  // 53 is admitted only here -- from a tap, to the gateway -- and nowhere in the
+  // forward chain, where the ruleset's floor drops everything that is not tcp.
+  // That pairing is what makes the resolver the only one a guest can reach: it is
+  // not a default a guest can override by pointing itself at 8.8.8.8.
   for _, svc := range []struct {
     proto uint8
     port  uint16

@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Columns2, ExternalLink, Pencil, Plus, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Columns2, ExternalLink, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { useLocalStorage } from '@vueuse/core'
 import {
   Command,
@@ -68,25 +69,69 @@ interface Target {
   destination: string
   kind: 'domain' | 'ip'
   transport: '' | 'tcp' | 'udp' | 'any'
+  // Suricata's port syntax for an address. For a domain it is which of the two
+  // web ports the name is allowed on -- '' for both, or 'none', which lets the
+  // name resolve and grants nothing.
   ports: string
   note: string
   created_at: string
 }
 
-// A domain this VM tried to reach on a flow suricata blocked. Attempts is per
-// domain over the window the server queries, not per flow.
-interface DeniedDomain {
+// What a domain row's ports field can say. Only 80 and 443 because those are the
+// ports suricata is told to look for http and tls on, and a rule on any other
+// would load and never match.
+//
+// "both" is sent as '80,443' rather than as the empty string the server also
+// accepts for it. Not a preference: reka-ui reserves '' to mean "nothing is
+// selected", so an item carrying it throws on mount and takes the whole dropdown --
+// and the dialog around it -- with it. The server normalises '80,443' to '' anyway,
+// so nothing downstream can tell the difference.
+const domainPortChoices = [
+  { value: '80,443', label: 'https and http (443, 80)' },
+  { value: '443', label: 'https only (443)' },
+  { value: '80', label: 'http only (80)' },
+  { value: 'none', label: 'lookup only — resolves, no access' },
+]
+
+// Presets for an address allowance. Presentation only: each expands to the
+// transport and ports the row actually stores.
+const portPresets = [
+  { key: 'ssh', label: 'SSH / SFTP (tcp 22)', transport: 'tcp', ports: '22' },
+  { key: 'https', label: 'HTTPS (tcp 443)', transport: 'tcp', ports: '443' },
+  { key: 'http', label: 'HTTP (tcp 80)', transport: 'tcp', ports: '80' },
+  { key: 'postgres', label: 'PostgreSQL (tcp 5432)', transport: 'tcp', ports: '5432' },
+  { key: 'mysql', label: 'MySQL (tcp 3306)', transport: 'tcp', ports: '3306' },
+  { key: 'redis', label: 'Redis (tcp 6379)', transport: 'tcp', ports: '6379' },
+  { key: 'smtp', label: 'SMTP submission (tcp 587)', transport: 'tcp', ports: '587' },
+  { key: 'smtps', label: 'SMTPS (tcp 465)', transport: 'tcp', ports: '465' },
+  { key: 'ntp', label: 'NTP (udp 123)', transport: 'udp', ports: '123' },
+  { key: 'ftp', label: 'FTP control (tcp 21)', transport: 'tcp', ports: '21' },
+  { key: 'custom', label: 'Custom…', transport: '', ports: '' },
+]
+
+// Something this VM tried to do that policy stopped. Two shapes: a 'lookup' the
+// resolver refused, which never became a packet at all, and a 'packet' the ruleset
+// dropped, which carries where it was going. Attempts is per destination over the
+// window the server queries, not per packet.
+interface DeniedAttempt {
+  kind: 'lookup' | 'packet'
   domain: string
+  address: string
+  proto: string
+  port: number
+  app_proto: string
   attempts: number
   last_seen: string
   signature: string
 }
 
 const deniedColumns: DataTableColumn[] = [
-  { key: 'domain', label: 'Domain' },
+  { key: 'destination', label: 'Destination' },
+  { key: 'what', label: 'What it tried' },
   { key: 'signature', label: 'Denied by' },
   { key: 'attempts', label: 'Attempts', align: 'right' },
   { key: 'last_seen', label: 'Last attempt', align: 'right' },
+  { key: 'actions', label: '', align: 'right' },
 ]
 
 const targetColumns: DataTableColumn[] = [
@@ -104,11 +149,15 @@ const id = computed(() => String(route.params.id))
 
 const vm = ref<VM | null>(null)
 const targets = ref<Target[]>([])
-const denied = ref<DeniedDomain[]>([])
+const denied = ref<DeniedAttempt[]>([])
 // Whether the answer above is trustworthy. An empty list means two different
 // things -- nothing was denied, or nothing is collecting events -- and the
 // panel has to be able to say which.
 const deniedAvailable = ref(true)
+// Which of the two records answered. They fail independently — dropped packets come
+// from suricata, refused lookups from the resolver's log and its own migration — so
+// "nothing is recorded" and "half of it is recorded" are different things to say.
+const deniedRecording = ref({ packets: false, lookups: false })
 const loading = ref(true)
 const error = ref<string | null>(null)
 const actionError = ref<string | null>(null)
@@ -184,6 +233,10 @@ async function loadTargets() {
 }
 
 const deniedLoading = ref(true)
+// Skeletons stand in for a table that is not there yet, not for one being re-read.
+// Without this, refreshing throws the rows away and puts them back, which reads as
+// the list having changed when it has not.
+const deniedFirstLoad = ref(true)
 
 // Never throws: a failure here reports itself in the panel rather than
 // replacing the whole page with an error, since nothing else on it depends on
@@ -191,18 +244,45 @@ const deniedLoading = ref(true)
 async function loadDenied() {
   deniedLoading.value = true
   try {
-    const res = await authFetch(`/vms/${id.value}/denied-domains`)
+    const res = await authFetch(`/vms/${id.value}/denied`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     denied.value = data.items ?? []
     deniedAvailable.value = data.available ?? false
+    deniedRecording.value = data.recording ?? { packets: false, lookups: false }
   }
   catch {
     denied.value = []
     deniedAvailable.value = false
+    deniedRecording.value = { packets: false, lookups: false }
   }
   finally {
     deniedLoading.value = false
+    deniedFirstLoad.value = false
+  }
+}
+
+// refreshDenied is loadDenied with a floor on how briefly the spinner may appear.
+//
+// The read is usually faster than a frame, so without this the icon's state changes
+// and changes back inside one paint and the button looks dead -- the user cannot
+// tell a refresh that returned the same rows from a click that did nothing. The
+// delay is feedback, not work.
+const deniedRefreshing = ref(false)
+
+async function refreshDenied() {
+  if (deniedRefreshing.value) return
+  deniedRefreshing.value = true
+  const started = Date.now()
+  try {
+    await loadDenied()
+  }
+  finally {
+    const shown = Date.now() - started
+    if (shown < 450) {
+      await new Promise(resolve => setTimeout(resolve, 450 - shown))
+    }
+    deniedRefreshing.value = false
   }
 }
 onMounted(() => load())
@@ -422,7 +502,18 @@ const addError = ref<string | null>(null)
 // The kind is chosen, not inferred from what has been typed. Inferring it meant
 // transport and ports simply did not exist on an empty form, so there was no way
 // to discover that an address entry takes them at all.
-const blankTarget = { kind: 'domain', destination: '', transport: 'tcp', ports: '', note: '' }
+// domainPorts is separate from ports because the same empty string means opposite
+// things to the two kinds -- every port for an address, both web ports for a name --
+// so one field would carry a value that is wrong the moment the type changes.
+const blankTarget = {
+  kind: 'domain',
+  destination: '',
+  transport: 'tcp',
+  ports: '',
+  domainPorts: '80,443',
+  note: '',
+  preset: 'custom',
+}
 const form = reactive({ ...blankTarget })
 
 function resetTargetForm() {
@@ -430,16 +521,48 @@ function resetTargetForm() {
   addError.value = null
 }
 
+// Switching type has to clear the ports. The two kinds accept disjoint values --
+// 'none' is meaningless on an address and '5432' is rejected on a domain -- so a
+// value left over from the other kind is a validation error the user did not type.
+//
+// A change handler rather than a watcher on form.kind, and that is not a style
+// choice: a watcher flushes after the current call stack, so prefilling the form
+// from a denial -- which sets the kind and then the fields that go with it -- would
+// have the reset land afterwards and wipe them. This only runs when someone
+// actually operates the control.
+function onKindChange() {
+  form.ports = ''
+  form.domainPorts = '80,443'
+  form.transport = 'tcp'
+  form.preset = 'custom'
+}
+
+// Choosing a preset writes through to the fields that are actually stored, so the
+// raw values stay visible and editable rather than hidden behind the label.
+function onPresetChange(key: string) {
+  const preset = portPresets.find(p => p.key === key)
+  if (!preset || preset.key === 'custom') return
+  form.transport = preset.transport
+  form.ports = preset.ports
+}
+
 const destinationPlaceholder = computed(() =>
   form.kind === 'domain' ? 'ifconfig.io' : '1.1.1.1 or 10.0.0.0/8')
 
 // Says what the row will actually compile to. The two kinds differ in a way the
-// field labels alone do not explain: a domain is matched by name inside the
-// TLS/DNS/HTTP buffers and never by address, so it has no transport or port.
+// field labels alone do not explain: a domain is matched by the name in the
+// traffic, and an address is matched by the rule header.
 const matchSummary = computed(() =>
   form.kind === 'domain'
-    ? 'Matched by name in the DNS query, the TLS SNI and the HTTP host — no transport or port applies.'
-    : 'Matched by address in the rule header, with the transport and ports below.')
+    ? 'Matched by name — the TLS SNI or the HTTP host — and answered by the resolver. Only 443 and 80 can be checked this way.'
+    : 'Matched by address in the rule header, with the transport and ports below. This is how anything that is not https or http is allowed.')
+
+// Plain FTP is the one preset that does not describe a whole allowance: the data
+// channel lands on a port neither of us knows in advance.
+const presetWarning = computed(() =>
+  form.preset === 'ftp'
+    ? 'FTP moves data on a second, unpredictable port. Add the passive port range your server is configured for as another entry, or use SFTP, which needs only port 22.'
+    : '')
 
 async function addTarget() {
   adding.value = true
@@ -452,7 +575,7 @@ async function addTarget() {
         kind: form.kind,
         destination: form.destination,
         transport: form.transport,
-        ports: form.ports,
+        ports: form.kind === 'domain' ? form.domainPorts : form.ports,
         note: form.note,
       }),
     })
@@ -466,6 +589,219 @@ async function addTarget() {
   }
   finally {
     adding.value = false
+  }
+}
+
+// --- reading a denial -------------------------------------------------------
+
+// What the guest was trying to reach, preferring the name when one was seen. A
+// blocked https request has both; an ssh to a bare address has only the address.
+function deniedDestination(d: DeniedAttempt) {
+  return d.domain || d.address || '—'
+}
+
+// The name of the thing on that port, so a row reads "ssh" rather than "tcp 22".
+// Falls back to what suricata identified the traffic as, then to the numbers.
+//
+// Two sources because they know different things: suricata names the protocol only
+// once it has seen payload, and most of these are dropped at the handshake with no
+// payload at all -- but the port is in the packet either way.
+function deniedWhat(d: DeniedAttempt) {
+  if (d.kind === 'lookup') return 'dns lookup'
+  if (d.proto === 'icmp') return 'ping (icmp)'
+
+  const preset = portPresets.find(p => p.transport === d.proto && p.ports === String(d.port))
+  const named = preset ? preset.label.replace(/ \(.*\)$/, '') : ''
+  // 'failed' is suricata saying detection ran and found nothing, which is not a
+  // protocol name and would read as an error in the machinery rather than a fact
+  // about the traffic.
+  const identified = d.app_proto && d.app_proto !== 'failed' ? d.app_proto : ''
+
+  const label = named || identified
+  const where = `${d.proto} ${d.port}`
+  return label ? `${label} — ${where}` : where
+}
+
+// Opens the add form already filled in from a denial, which is the whole point of
+// showing these: the row a user reads and then has to retype somewhere else is the
+// row they will get wrong.
+//
+// A refused lookup can only become a name allowance -- there is no address to offer,
+// because nothing was ever sent. A dropped packet becomes an address allowance on
+// the transport and port it was actually using, except on 443 or 80 where a name
+// was seen: there the name is the better allowance, since it does not grant the
+// whole address.
+function allowDenied(d: DeniedAttempt) {
+  resetTargetForm()
+  const byName = d.kind === 'lookup' || (!!d.domain && (d.port === 443 || d.port === 80))
+
+  if (byName) {
+    form.kind = 'domain'
+    form.destination = d.domain
+    // A refused lookup says nothing about which port the guest wanted, so it gets
+    // both web ports; a blocked request names the one it was actually using.
+    form.domainPorts = d.kind === 'lookup' ? '80,443' : String(d.port)
+  }
+  else {
+    form.kind = 'ip'
+    form.destination = d.address
+    form.transport = d.proto === 'icmp' ? 'icmp' : (d.proto || 'tcp')
+    form.ports = d.proto === 'icmp' ? '' : String(d.port)
+    form.preset = portPresets.find(p => p.transport === form.transport && p.ports === form.ports)?.key ?? 'custom'
+  }
+  form.note = `seen denied — ${deniedWhat(d)}`
+  addOpen.value = true
+}
+
+// What the row is actually checked against. A lookup-only domain is the one worth
+// spelling out: it is in the list, and it grants no access at all.
+function matchedOn(t: Target) {
+  if (t.kind !== 'domain') return 'address'
+  return t.ports === 'none' ? 'name — resolves only' : 'tls sni · http host'
+}
+
+function portsLabel(t: Target) {
+  if (t.kind !== 'domain') return t.ports || 'any'
+  return t.ports === 'none' ? 'none' : (t.ports || '443, 80')
+}
+
+// --- allow a hostname on a port that is not 443 or 80 ----------------------
+//
+// ssh, postgres and everything else carry no destination name in the traffic, so
+// there is nothing for a rule to check a hostname against and the access has to be
+// granted by address. This turns the name a user is thinking of into the two rows
+// that express it: the name itself as a lookup-only domain so the guest can
+// resolve it, and one address row per answer.
+//
+// Deliberately a one-time helper rather than something that re-resolves. Addresses
+// move, and a list that quietly followed them would be an allowlist nobody had
+// read.
+const resolveOpen = ref(false)
+const resolveHost = ref('')
+const resolvePreset = ref('ssh')
+// Used when the preset is 'custom'. The presets are a shortcut for the ports people
+// reach for most, not the limit of what an allowance can say -- so the raw transport
+// and ports are reachable here too, exactly as they are in the main form.
+const resolveTransport = ref('tcp')
+const resolvePorts = ref('')
+const resolving = ref(false)
+const resolveError = ref<string | null>(null)
+const resolveAddresses = ref<string[]>([])
+const resolveChosen = ref<string[]>([])
+const resolveTruncated = ref(false)
+const addingResolved = ref(false)
+
+function resetResolveForm() {
+  resolveHost.value = ''
+  resolvePreset.value = 'ssh'
+  resolveTransport.value = 'tcp'
+  resolvePorts.value = ''
+  resolveError.value = null
+  resolveAddresses.value = []
+  resolveChosen.value = []
+  resolveTruncated.value = false
+}
+
+// What the address rows will actually say, whichever way the user got there. One
+// place so the rows written and the note describing them cannot disagree.
+const resolveSpec = computed(() => {
+  const preset = portPresets.find(p => p.key === resolvePreset.value)
+  if (preset && preset.key !== 'custom') {
+    return {
+      transport: preset.transport,
+      ports: preset.ports,
+      label: preset.label.replace(/ \(.*\)$/, ''),
+    }
+  }
+  const transport = resolveTransport.value
+  const ports = transport === 'icmp' ? '' : resolvePorts.value
+  return {
+    transport,
+    ports,
+    label: transport === 'icmp' ? 'ping' : `${transport} ${ports || 'any port'}`,
+  }
+})
+
+async function lookupHost() {
+  resolving.value = true
+  resolveError.value = null
+  resolveAddresses.value = []
+  resolveChosen.value = []
+  try {
+    const res = await authFetch(`/vms/${id.value}/targets/resolve`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host: resolveHost.value }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const data = await res.json()
+    resolveAddresses.value = data.addresses ?? []
+    // Pre-checked: the user asked for this name, and unchecking is the rarer
+    // intention than checking all of them one by one.
+    resolveChosen.value = [...resolveAddresses.value]
+    resolveTruncated.value = data.truncated ?? false
+    if (data.error) resolveError.value = data.error
+    else if (!resolveAddresses.value.length) resolveError.value = 'That name has no IPv4 addresses.'
+  }
+  catch (e) {
+    resolveError.value = e instanceof Error ? e.message : 'Could not resolve that name'
+  }
+  finally {
+    resolving.value = false
+  }
+}
+
+function toggleResolved(addr: string, on: boolean) {
+  resolveChosen.value = on
+    ? [...resolveChosen.value, addr]
+    : resolveChosen.value.filter(a => a !== addr)
+}
+
+async function postTarget(body: Record<string, string>) {
+  const res = await authFetch(`/vms/${id.value}/targets`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  // A duplicate is not a failure here: this flow writes several rows and one of
+  // them already being on the list is the normal result of running it twice.
+  if (!res.ok && res.status !== 409) {
+    throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+  }
+}
+
+async function addResolved() {
+  if (!resolveChosen.value.length) return
+  const spec = resolveSpec.value
+  addingResolved.value = true
+  resolveError.value = null
+  try {
+    // The lookup-only row first. Without it the guest cannot resolve the name, and
+    // the address rows below would only be reachable by typing an IP.
+    await postTarget({
+      kind: 'domain',
+      destination: resolveHost.value,
+      ports: 'none',
+      note: `lookup for ${spec.label}`,
+    })
+    for (const addr of resolveChosen.value) {
+      await postTarget({
+        kind: 'ip',
+        destination: addr,
+        transport: spec.transport,
+        ports: spec.ports,
+        note: `${resolveHost.value} — ${spec.label}`,
+      })
+    }
+    resolveOpen.value = false
+    resetResolveForm()
+    await loadTargets()
+  }
+  catch (e) {
+    resolveError.value = e instanceof Error ? e.message : 'Could not record the destinations'
+  }
+  finally {
+    addingResolved.value = false
   }
 }
 
@@ -861,10 +1197,116 @@ async function confirmRemove() {
           <div>
             <h2 id="targets-heading" class="text-sm font-semibold">Allowed destinations</h2>
             <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Domains and addresses this VM is expected to reach. Recorded only for now —
-              nothing enforces this list yet.
+              This list is the whole of what this VM can reach. Nothing else leaves it, and a
+              domain that is not here will not even resolve.
             </p>
           </div>
+          <div class="flex flex-wrap items-center gap-2">
+          <!-- ssh, postgres and the rest carry no hostname for a rule to check, so
+               they are allowed by address. This turns a name into those rows. -->
+          <Dialog v-model:open="resolveOpen" @update:open="(v: boolean) => !v && resetResolveForm()">
+            <Button size="sm" variant="outline" class="font-mono text-xs" @click="resolveOpen = true">
+              From a hostname
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Allow a hostname on another port</DialogTitle>
+                <DialogDescription>
+                  For anything that is not https or http. The name is resolved now and its addresses
+                  are recorded, because ssh and the rest carry no hostname for the policy to check.
+                </DialogDescription>
+              </DialogHeader>
+
+              <form class="space-y-4" :aria-busy="resolving || addingResolved" @submit.prevent="lookupHost">
+                <div class="space-y-2">
+                  <Label for="r-host">Hostname</Label>
+                  <div class="flex gap-2">
+                    <Input id="r-host" v-model="resolveHost" required placeholder="github.com" />
+                    <Button type="submit" variant="outline" class="font-mono text-xs shrink-0" :disabled="resolving || !resolveHost">
+                      {{ resolving ? 'Resolving…' : 'Resolve' }}
+                    </Button>
+                  </div>
+                </div>
+
+                <div class="space-y-2">
+                  <Label for="r-preset">Protocol</Label>
+                  <Select v-model="resolvePreset">
+                    <SelectTrigger id="r-preset" class="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="p in portPresets" :key="p.key" :value="p.key">
+                        {{ p.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <!-- The presets are a shortcut for the common ports, not the limit
+                     of what can be allowed. -->
+                <div v-if="resolvePreset === 'custom'" class="grid gap-4 sm:grid-cols-2">
+                  <div class="space-y-2">
+                    <Label for="r-transport">Transport</Label>
+                    <Select v-model="resolveTransport">
+                      <SelectTrigger id="r-transport" class="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="tcp">tcp</SelectItem>
+                        <SelectItem value="udp">udp</SelectItem>
+                        <SelectItem value="icmp">icmp (ping)</SelectItem>
+                        <SelectItem value="any">any</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <!-- icmp has no ports: its type and code sit where a port would
+                       be, and a rule header cannot address them. -->
+                  <div v-if="resolveTransport !== 'icmp'" class="space-y-2">
+                    <Label for="r-ports">Ports</Label>
+                    <Input id="r-ports" v-model="resolvePorts" placeholder="8080, 5000:5010" aria-describedby="r-ports-hint" />
+                    <p id="r-ports-hint" class="text-xs text-muted-foreground">Empty means any port.</p>
+                  </div>
+                </div>
+
+                <div v-if="resolveAddresses.length" class="space-y-2">
+                  <p class="text-sm font-medium">Addresses</p>
+                  <div v-for="addr in resolveAddresses" :key="addr" class="flex items-center gap-2">
+                    <Checkbox
+                      :id="`r-addr-${addr}`"
+                      :model-value="resolveChosen.includes(addr)"
+                      @update:model-value="(v: boolean) => toggleResolved(addr, v)"
+                    />
+                    <Label :for="`r-addr-${addr}`" class="font-mono text-xs font-normal">{{ addr }}</Label>
+                  </div>
+                  <p class="text-xs text-muted-foreground">
+                    These addresses are what the name answers with right now. If they change, this
+                    list does not follow — the allowance will need editing.
+                  </p>
+                  <p v-if="resolveTruncated" class="text-xs text-muted-foreground">
+                    The name returned more addresses than are shown. A name behind a large pool is
+                    better allowed by its CIDR range, if its operator publishes one.
+                  </p>
+                </div>
+
+                <FormError id="resolve-error" :message="resolveError" />
+              </form>
+
+              <DialogFooter>
+                <DialogClose as-child>
+                  <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                </DialogClose>
+                <Button
+                  type="button"
+                  class="font-mono text-xs"
+                  :disabled="addingResolved || !resolveChosen.length"
+                  @click="addResolved"
+                >
+                  {{ addingResolved ? 'Adding…' : `Add ${resolveChosen.length || ''} entr${resolveChosen.length === 1 ? 'y' : 'ies'}` }}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <Dialog v-model:open="addOpen" @update:open="(v: boolean) => !v && resetTargetForm()">
             <Button size="sm" class="font-mono text-xs" @click="addOpen = true">
               <Plus class="size-4" aria-hidden="true" />
@@ -881,7 +1323,7 @@ async function confirmRemove() {
               <form class="space-y-4" :aria-busy="adding" @submit.prevent="addTarget">
                 <div class="space-y-2">
                   <Label for="t-kind">Type</Label>
-                  <Select v-model="form.kind">
+                  <Select v-model="form.kind" @update:model-value="onKindChange">
                     <SelectTrigger id="t-kind" class="w-full">
                       <SelectValue />
                     </SelectTrigger>
@@ -907,29 +1349,73 @@ async function confirmRemove() {
                   />
                 </div>
 
+                <!-- A domain chooses between the two ports its name can be
+                     checked on, or neither. Not a free port field: the ports
+                     suricata looks for http and tls on come from a per-host
+                     config, so a rule on 8443 would load and never match. -->
+                <div v-if="form.kind === 'domain'" class="space-y-2">
+                  <Label for="t-domain-ports">Allow on</Label>
+                  <Select v-model="form.domainPorts">
+                    <SelectTrigger id="t-domain-ports" class="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem v-for="c in domainPortChoices" :key="c.value" :value="c.value">
+                        {{ c.label }}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p v-if="form.domainPorts === 'none'" class="text-xs text-muted-foreground">
+                    The guest will be able to resolve this name and reach nothing at it. Pair it with
+                    an address entry to allow ssh or another protocol.
+                  </p>
+                </div>
+
                 <!-- Transport and ports exist only for an address. A domain is
-                     matched in the TLS/DNS/HTTP buffers, where the rule header
-                     is `any any` and there is nowhere to put either. -->
-                <div v-if="form.kind === 'ip'" class="grid gap-4 sm:grid-cols-2">
+                     matched by the name in the traffic, and the header of the
+                     rule that does it names no address. -->
+                <template v-if="form.kind === 'ip'">
                   <div class="space-y-2">
-                    <Label for="t-transport">Transport</Label>
-                    <Select v-model="form.transport">
-                      <SelectTrigger id="t-transport" class="w-full">
+                    <Label for="t-preset">Protocol</Label>
+                    <Select v-model="form.preset" @update:model-value="onPresetChange">
+                      <SelectTrigger id="t-preset" class="w-full">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="tcp">tcp</SelectItem>
-                        <SelectItem value="udp">udp</SelectItem>
-                        <SelectItem value="any">any</SelectItem>
+                        <SelectItem v-for="p in portPresets" :key="p.key" :value="p.key">
+                          {{ p.label }}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
+                    <p v-if="presetWarning" class="text-xs text-muted-foreground">{{ presetWarning }}</p>
                   </div>
-                  <div class="space-y-2">
-                    <Label for="t-ports">Ports</Label>
-                    <Input id="t-ports" v-model="form.ports" placeholder="443, 80,443, 1000:2000" aria-describedby="t-ports-hint" />
-                    <p id="t-ports-hint" class="text-xs text-muted-foreground">Empty means any port.</p>
+                  <div class="grid gap-4 sm:grid-cols-2">
+                    <div class="space-y-2">
+                      <Label for="t-transport">Transport</Label>
+                      <Select v-model="form.transport">
+                        <SelectTrigger id="t-transport" class="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="tcp">tcp</SelectItem>
+                          <SelectItem value="udp">udp</SelectItem>
+                          <SelectItem value="icmp">icmp (ping)</SelectItem>
+                          <SelectItem value="any">any</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p v-if="form.transport === 'any'" class="text-xs text-muted-foreground">
+                        Allows tcp and udp. To allow only ping, choose icmp.
+                      </p>
+                    </div>
+                    <!-- icmp has no ports: its type and code sit where a port
+                         would be, and a rule header cannot address them. -->
+                    <div v-if="form.transport !== 'icmp'" class="space-y-2">
+                      <Label for="t-ports">Ports</Label>
+                      <Input id="t-ports" v-model="form.ports" placeholder="443, 80,443, 1000:2000" aria-describedby="t-ports-hint" />
+                      <p id="t-ports-hint" class="text-xs text-muted-foreground">Empty means any port.</p>
+                    </div>
                   </div>
-                </div>
+                </template>
                 <div class="space-y-2">
                   <Label for="t-note">Note</Label>
                   <Input id="t-note" v-model="form.note" placeholder="why this is needed" />
@@ -948,6 +1434,7 @@ async function confirmRemove() {
               </form>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         <DataTable label="Allowed destinations" :columns="targetColumns" :empty="!targets.length" :frame="false">
@@ -957,14 +1444,12 @@ async function confirmRemove() {
           <TableRow v-for="t in targets" :key="t.id">
             <TableCell class="font-mono break-all">{{ t.destination }}</TableCell>
             <TableCell class="font-mono text-xs text-muted-foreground">
-              {{ t.kind === 'domain' ? 'dns · tls sni · http host' : 'address' }}
+              {{ matchedOn(t) }}
             </TableCell>
-            <!-- An em dash, not 'any': these do not apply to a domain row at
+            <!-- An em dash, not 'any': transport does not apply to a domain row at
                  all, and 'any' would read as "every transport is allowed". -->
             <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
-            <TableCell class="font-mono text-muted-foreground">
-              {{ t.kind === 'domain' ? '—' : (t.ports || 'any') }}
-            </TableCell>
+            <TableCell class="font-mono text-muted-foreground">{{ portsLabel(t) }}</TableCell>
             <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
             <TableCell class="text-right">
               <Button
@@ -981,41 +1466,89 @@ async function confirmRemove() {
         </DataTable>
       </section>
 
-      <!-- denied domains -->
+      <!-- denied egress -->
       <section aria-labelledby="denied-heading" class="mt-6 rounded-lg border border-border">
-        <div class="p-4 sm:p-6">
-          <h2 id="denied-heading" class="text-sm font-semibold">Denied domains</h2>
-          <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Names this VM tried to reach on connections the ruleset blocked, since it was created
-            and at most 7 days back. A domain here is one of two things: a destination worth adding
-            above, or something the guest should not have been reaching at all.
-          </p>
+        <div class="flex flex-wrap items-start justify-between gap-4 p-4 sm:p-6">
+          <div>
+            <h2 id="denied-heading" class="text-sm font-semibold">Denied</h2>
+            <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Everything this VM tried to do that policy stopped, since it was created and at most
+              7 days back — lookups the resolver refused and connections the ruleset dropped, whatever
+              protocol or port they used. Each one is either a destination worth allowing above, or
+              something the guest should not have been reaching at all.
+            </p>
+          </div>
+          <!-- This list changes on its own as the guest keeps trying, so it is the
+               one panel on the page worth re-reading without reloading everything. -->
+          <Button
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs"
+            :disabled="deniedRefreshing"
+            aria-label="Refresh denied attempts"
+            @click="refreshDenied"
+          >
+            <RefreshCw :class="['size-4', deniedRefreshing && 'animate-spin']" aria-hidden="true" />
+            <span class="sr-only sm:not-sr-only">Refresh</span>
+          </Button>
         </div>
 
-        <!-- Said plainly rather than shown as an empty table: with no event
-             store, "nothing was denied" and "nothing is being recorded" look
+        <!-- Said plainly rather than shown as an empty table: with nothing
+             recording, "nothing was denied" and "nothing is being recorded" look
              identical, and only one of them is reassuring. -->
-        <p v-if="!deniedLoading && !deniedAvailable" class="px-4 pb-6 text-sm text-muted-foreground sm:px-6">
-          No event store is reachable, so denials are not being recorded. This says nothing about
+        <p v-if="!deniedFirstLoad && !deniedAvailable" class="px-4 pb-6 text-sm text-muted-foreground sm:px-6">
+          Neither record could be read, so nothing is being reported here. This says nothing about
           whether this VM has been blocked.
         </p>
 
-        <div v-else-if="deniedLoading" class="space-y-2 px-4 pb-6 sm:px-6" aria-busy="true">
-          <p class="sr-only">Loading denied domains…</p>
+        <div v-else-if="deniedLoading && deniedFirstLoad" class="space-y-2 px-4 pb-6 sm:px-6" aria-busy="true">
+          <p class="sr-only">Loading denied attempts…</p>
           <Skeleton v-for="n in 3" :key="n" class="h-8 w-full" aria-hidden="true" />
         </div>
 
-        <DataTable v-else label="Denied domains" :columns="deniedColumns" :empty="!denied.length" :frame="false">
-          <template #empty>
-            Nothing this VM reached by name has been blocked.
-          </template>
-          <TableRow v-for="d in denied" :key="d.domain">
-            <TableCell class="font-mono break-all">{{ d.domain }}</TableCell>
-            <TableCell class="text-xs text-muted-foreground">{{ d.signature || '—' }}</TableCell>
-            <TableCell class="text-right font-mono tabular-nums">{{ d.attempts }}</TableCell>
-            <TableCell class="text-right text-sm text-muted-foreground">{{ fmtDate(d.last_seen) }}</TableCell>
-          </TableRow>
-        </DataTable>
+        <template v-else>
+          <!-- One record readable and the other not is a partial list, and saying
+               which half is missing is the difference between a list that can be
+               trusted and one that merely looks complete. -->
+          <p v-if="!deniedRecording.lookups" class="px-4 pb-4 text-sm text-muted-foreground sm:px-6">
+            Refused lookups are not being recorded, so names this VM could not resolve are missing
+            from this list. Everything the ruleset dropped is still shown.
+          </p>
+          <p v-if="!deniedRecording.packets" class="px-4 pb-4 text-sm text-muted-foreground sm:px-6">
+            Dropped connections are not being recorded, so only names the resolver refused are shown.
+          </p>
+
+          <DataTable label="Denied" :columns="deniedColumns" :empty="!denied.length" :frame="false">
+            <template #empty>
+              Nothing has been denied.
+            </template>
+            <TableRow v-for="d in denied" :key="`${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`">
+              <TableCell class="font-mono break-all">
+                {{ deniedDestination(d) }}
+                <!-- Both, when both are known: the name is what the user recognises
+                     and the address is what the packet was actually going to. -->
+                <span v-if="d.domain && d.address" class="block text-xs text-muted-foreground">
+                  {{ d.address }}
+                </span>
+              </TableCell>
+              <TableCell class="font-mono text-xs text-muted-foreground">{{ deniedWhat(d) }}</TableCell>
+              <TableCell class="text-xs text-muted-foreground">{{ d.signature || '—' }}</TableCell>
+              <TableCell class="text-right font-mono tabular-nums">{{ d.attempts }}</TableCell>
+              <TableCell class="text-right text-sm text-muted-foreground">{{ fmtDate(d.last_seen) }}</TableCell>
+              <TableCell class="text-right">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="font-mono text-xs"
+                  :aria-label="`Allow ${deniedDestination(d)}`"
+                  @click="allowDenied(d)"
+                >
+                  Allow
+                </Button>
+              </TableCell>
+            </TableRow>
+          </DataTable>
+        </template>
       </section>
     </template>
 

@@ -9,6 +9,7 @@ import (
   "net"
   "net/http"
   "regexp"
+  "sort"
   "strconv"
   "strings"
   "time"
@@ -819,12 +820,15 @@ type createTargetReq struct {
   // has a mistake in it, and quietly storing the other kind hides it.
   Kind        string `json:"kind"`
   Destination string `json:"destination"`
-  // Both ignored when the destination is a domain: a domain compiles to
-  // dns.query / tls.sni / http.host rules whose headers are `any any`, so there
-  // is nowhere to put either one.
+  // Transport is ignored when the destination is a domain: both rules a domain
+  // compiles to are tcp by construction, so there is nothing to choose.
   Transport string `json:"transport"`
-  Ports     string `json:"ports"`
-  Note      string `json:"note"`
+  // Ports means different things to the two kinds. For an address it is
+  // Suricata's port syntax and goes straight into a rule header. For a domain it
+  // is which of the two web ports the name is allowed on -- see domainPorts in
+  // suricata_rules.go, and domainTargetPorts below for what is accepted.
+  Ports string `json:"ports"`
+  Note  string `json:"note"`
 }
 
 // portsPattern is Suricata's port syntax, restricted to the forms worth
@@ -852,6 +856,29 @@ func classifyDestination(s string) (string, error) {
     return "domain", nil
   }
   return "", errors.New("destination must be a domain, an IP address, or a CIDR")
+}
+
+// domainTargetPorts normalises the ports field of a domain allowance to one of
+// the four values the schema's shape constraint accepts, or explains why it
+// cannot.
+//
+// The choice is narrow on purpose, and the reason is not the rule generator: the
+// ports Suricata looks for http and tls on come from suricata.yaml, which is
+// compiled per host from its VM pool and pushed when the agent connects. A domain
+// allowed on 8443 would compile to a rule that parses, loads, and never matches
+// anything -- so it is rejected here rather than granted in name only.
+func domainTargetPorts(ports string) (string, error) {
+  switch ports {
+  case "", "80,443", "443,80":
+    // Both web ports, which is also what every row written before this field
+    // existed means.
+    return "", nil
+  case "80", "443", domainPortsNone:
+    return ports, nil
+  }
+  return "", errors.New(
+    "a domain may be allowed on 443, on 80, on both, or on neither ('none', which lets the name resolve without granting access); " +
+      "for any other port allow the address instead")
 }
 
 func (h *UserHandler) CreateTarget(c *echo.Context) error {
@@ -887,11 +914,19 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
     }
   }
 
-  // The kind decides which of the remaining fields mean anything. Cleared
-  // rather than rejected for a domain: the form hides them, so a stale value
-  // arriving is this server's problem to normalise, not the caller's to fix.
+  // The kind decides which of the remaining fields mean anything. Transport is
+  // cleared rather than rejected for a domain: the form hides it, so a stale
+  // value arriving is this server's problem to normalise, not the caller's to
+  // fix. Ports is not cleared -- for a domain it now carries which web ports the
+  // name is allowed on, so a wrong value there is a real disagreement about what
+  // is being granted and is reported instead.
   if kind == "domain" {
-    req.Transport, req.Ports = "", ""
+    req.Transport = ""
+    ports, err := domainTargetPorts(req.Ports)
+    if err != nil {
+      return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+    }
+    req.Ports = ports
     // A hostname is matched case-insensitively against buffers Suricata
     // normalises to lowercase, so storing it lowercased keeps the unique index
     // from treating Example.com and example.com as two allowances.
@@ -902,8 +937,13 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
     }
     switch req.Transport {
     case "tcp", "udp", "any":
+    case "icmp":
+      // Cleared rather than rejected: icmp has no ports, the form hides the field
+      // when it is chosen, and a value arriving anyway is a stale form rather than
+      // something the user is asking for.
+      req.Ports = ""
     default:
-      return echo.NewHTTPError(http.StatusBadRequest, "transport must be tcp, udp or any")
+      return echo.NewHTTPError(http.StatusBadRequest, "transport must be tcp, udp, icmp or any")
     }
     if req.Ports != "" {
       if !portsPattern.MatchString(req.Ports) {
@@ -934,10 +974,119 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
     }
     return echo.NewHTTPError(http.StatusInternalServerError, "could not add the destination")
   }
-  // Whole-host, not whole-VM: the ruleset is one file covering every guest, so
-  // it is regenerated from the database rather than patched with this row.
+  // Whole-host, not whole-VM: both files cover every guest on the host, so they
+  // are regenerated from the database rather than patched with this row. The
+  // Corefile is what lets the guest resolve the name at all, so a ruleset sent
+  // without it is an allowance that cannot be used.
   pushSuricataRules(c.Request().Context(), h.q, h.hub, vm.AgentID)
+  pushCoreDNSConfig(c.Request().Context(), h.q, h.hub, vm.AgentID)
   return c.JSON(http.StatusCreated, toVMTargetDTO(t))
+}
+
+// Resolving a name for the user is a convenience with a sharp edge, so both are
+// bounded here.
+const (
+  // resolveTimeout is short: this is a form waiting on it, and a name that takes
+  // longer than this to answer is one the guest would have trouble with too.
+  resolveTimeout = 3 * time.Second
+
+  // resolveMaxAddresses caps what one name can turn into. A CDN answers with a
+  // handful of addresses out of a pool of thousands, and recording twenty of them
+  // is neither an allowlist nor an explanation -- it is a suggestion that the user
+  // has allowed something they have not.
+  resolveMaxAddresses = 8
+)
+
+type resolveHostReq struct {
+  Host string `json:"host"`
+}
+
+// ResolveTargetHost answers what a hostname currently resolves to, so the UI can
+// offer to record those addresses as allowances.
+//
+// This exists because of a limit that cannot be designed away: only tls and http
+// carry the destination name in the traffic suricata sees, so an allowance for ssh
+// or postgres to a hostname is not expressible -- there is nothing in the packets
+// to check a name against. Such access has to be granted by address, and a user
+// who thinks in names needs help turning one into the other.
+//
+// Deliberately not a background job that keeps the two in step. Addresses move,
+// and something re-resolving on a timer would silently widen an allowlist nobody
+// re-read. This returns what it found, the caller records it, and what the page
+// lists afterwards is exactly what is enforced.
+func (h *UserHandler) ResolveTargetHost(c *echo.Context) error {
+  // Scoped to a VM the caller owns even though the answer is not VM-specific: it
+  // is a lookup this server makes on request, and an unauthenticated one would be
+  // a name-resolution service for anything that can reach the API.
+  if _, err := h.ownedVM(c); err != nil {
+    return err
+  }
+
+  var req resolveHostReq
+  if err := c.Bind(&req); err != nil {
+    return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+  }
+  host := strings.ToLower(strings.TrimSpace(req.Host))
+  if host == "" {
+    return echo.NewHTTPError(http.StatusBadRequest, "a hostname is required")
+  }
+  // The same pattern CreateTarget classifies with, so a name that resolves here is
+  // one that can be recorded there -- and it is what keeps this from being handed
+  // anything but a hostname.
+  if !hostPattern.MatchString(host) {
+    return echo.NewHTTPError(http.StatusBadRequest, "that is not a hostname")
+  }
+
+  ctx, cancel := context.WithTimeout(c.Request().Context(), resolveTimeout)
+  defer cancel()
+
+  addrs, err := h.resolver(ctx).LookupIP(ctx, "ip4", host)
+  if err != nil {
+    // Not a 500: a name that does not resolve is an answer about the name, not a
+    // failure of this server, and the form needs to say so rather than break.
+    return c.JSON(http.StatusOK, map[string]any{
+      "host": host, "addresses": []string{}, "error": "that name did not resolve",
+    })
+  }
+
+  // IPv4 only, and not an oversight: every rule header and every nftables element
+  // in this system is IPv4, so an AAAA record would be an address recorded here
+  // that nothing downstream can express.
+  out := make([]string, 0, len(addrs))
+  for _, a := range addrs {
+    if v4 := a.To4(); v4 != nil {
+      out = append(out, v4.String())
+    }
+  }
+  sort.Strings(out)
+  truncated := false
+  if len(out) > resolveMaxAddresses {
+    out, truncated = out[:resolveMaxAddresses], true
+  }
+  return c.JSON(http.StatusOK, map[string]any{
+    "host": host, "addresses": out, "truncated": truncated,
+  })
+}
+
+// resolver dials the same upstream the hosts' resolvers forward to, so what this
+// tells a user matches what their guest will be told. Falling back to the system
+// resolver when the setting is unreadable would answer from somewhere else
+// entirely, which for a split-horizon name is a different set of addresses.
+func (h *UserHandler) resolver(ctx context.Context) *net.Resolver {
+  upstream := setting(ctx, h.q, settingResolverUpstream)
+  if upstream == "" {
+    return net.DefaultResolver
+  }
+  if _, _, err := net.SplitHostPort(upstream); err != nil {
+    upstream = net.JoinHostPort(upstream, "53")
+  }
+  return &net.Resolver{
+    PreferGo: true,
+    Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+      var d net.Dialer
+      return d.DialContext(ctx, network, upstream)
+    },
+  }
 }
 
 func (h *UserHandler) DeleteTarget(c *echo.Context) error {
@@ -955,8 +1104,11 @@ func (h *UserHandler) DeleteTarget(c *echo.Context) error {
     return echo.NewHTTPError(http.StatusInternalServerError, "could not remove the destination")
   }
   // A removal has to reach the host even more urgently than an addition: until
-  // it does, the guest still has the access the user just revoked.
+  // it does, the guest still has the access the user just revoked. The Corefile
+  // withdraws the name and the ruleset withdraws the access; whichever arrives
+  // second is the one that finishes the revocation.
   pushSuricataRules(c.Request().Context(), h.q, h.hub, vm.AgentID)
+  pushCoreDNSConfig(c.Request().Context(), h.q, h.hub, vm.AgentID)
   return c.NoContent(http.StatusNoContent)
 }
 

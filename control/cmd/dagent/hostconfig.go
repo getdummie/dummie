@@ -10,12 +10,12 @@ import (
   "strings"
 )
 
-// suricata.yaml and dpipe.yaml arrive from the control server whole, like
-// proxy.yaml and vector.yaml before them. Neither is merged: the file the
-// server sent is the file the host runs.
+// suricata.yaml, dpipe.yaml and the Corefile arrive from the control server
+// whole, like proxy.yaml and vector.yaml before them. None is merged: the file
+// the server sent is the file the host runs.
 //
-// Both are more disruptive to restart than proxy is, so both are written only
-// when the content actually differs. The server sends one of each on every
+// All three are more disruptive to apply than proxy is, so all three are written
+// only when the content actually differs. The server sends one of each on every
 // connect, and it is normal for that to be a no-op.
 
 // localPool is the VM subnet this host was configured with. Reported in the
@@ -82,6 +82,53 @@ func applySuricataConfig(ctx context.Context, config string) (bool, error) {
     // the control plane believes it replaced.
     return true, fmt.Errorf("wrote %s but could not restart suricata: %v: %s",
       path, rerr, strings.TrimSpace(string(out)))
+  }
+  return true, nil
+}
+
+// applyCoreDNSConfig installs a pushed Corefile and makes the resolver re-read
+// it if it changed.
+//
+// A signal rather than a restart, which is the one way this differs from the two
+// around it: coredns re-reads the file in place, so no lookup fails while it
+// happens, and it keeps serving the old policy if the new file does not parse.
+// The comparison is still worth making -- the server sends this on every connect
+// and every inventory tick -- but it is buying much less here than it does above.
+func applyCoreDNSConfig(ctx context.Context, config string) (bool, error) {
+  cfg, err := loadConfig("")
+  if err != nil {
+    return false, fmt.Errorf("could not read the dagent config: %w", err)
+  }
+  // The same switch as suricata, because the two are one policy: a resolver that
+  // answers only allowed names is pointless without a ruleset dropping everything
+  // else, and the ruleset is unusable for a guest that cannot resolve what it was
+  // granted. With the feature off, writing this would leave a policy on disk that
+  // nothing enforces and that takes effect the day someone turns the mode on.
+  if !cfg.Features.Suricata {
+    return false, errors.New("suricata mode is off on this host, so the corefile was not installed")
+  }
+
+  if !strings.HasSuffix(config, "\n") {
+    config += "\n"
+  }
+  existing, err := os.ReadFile(corefilePath)
+  if err != nil && !os.IsNotExist(err) {
+    return false, fmt.Errorf("could not read %s: %w", corefilePath, err)
+  }
+  if err == nil && string(existing) == config {
+    return false, nil
+  }
+  if err := os.MkdirAll(corednsConfigDir, 0o755); err != nil {
+    return false, fmt.Errorf("could not create %s: %w", corednsConfigDir, err)
+  }
+  if err := writeFileAtomic(corefilePath, []byte(config), 0o644); err != nil {
+    return false, err
+  }
+  if err := reloadCoreDNS(ctx); err != nil {
+    // The file is already down and is what the next start will read, so it stays:
+    // rolling it back would leave the host resolving by a policy the control
+    // plane believes it replaced.
+    return true, err
   }
   return true, nil
 }

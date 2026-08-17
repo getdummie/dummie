@@ -227,6 +227,15 @@ func applySuricataRules(rules string) error {
     rules += "\n"
   }
 
+  // An identical ruleset is not written and not reloaded. The generator is
+  // deterministic, so an unchanged policy arrives here byte for byte the same --
+  // and the control server sends the file on every connect and every inventory
+  // tick, not only when something changed, because it cannot know what this host
+  // is holding. Without this that would be a reload of every rule on a timer.
+  if old, err := os.ReadFile(localRulesPath); err == nil && string(old) == rules {
+    return nil
+  }
+
   dir := filepath.Dir(localRulesPath)
   if err := os.MkdirAll(dir, 0o755); err != nil {
     return fmt.Errorf("could not create %s: %w", dir, err)

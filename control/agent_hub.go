@@ -188,6 +188,26 @@ func (h *Hub) Broadcast(env proto.Envelope) int {
   return sent
 }
 
+// ConnectedIDs lists the agents currently holding a connection.
+//
+// For frames that Broadcast cannot send, which is any file compiled from a
+// particular host's VMs -- one envelope would carry one host's policy to all of
+// them. The caller renders per id instead.
+//
+// A snapshot, not a live view: an agent can drop before the caller reaches it, and
+// Send fails for that one rather than for the batch. That is the same tolerance
+// Broadcast has, and for the same reason -- everything sent this way is resent on
+// connect.
+func (h *Hub) ConnectedIDs() []string {
+  h.mu.RLock()
+  defer h.mu.RUnlock()
+  ids := make([]string, 0, len(h.conns))
+  for id := range h.conns {
+    ids = append(ids, id)
+  }
+  return ids
+}
+
 // Kick closes an agent's connection, if any. Used when an agent is revoked or
 // deleted so the socket does not outlive its authorization.
 func (h *Hub) Kick(agentID, reason string) {

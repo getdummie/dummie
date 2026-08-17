@@ -262,6 +262,11 @@ func (h *AgentHandler) serveAgent(agent db.Agent, agentID, remoteIP string, ws *
   // every connect rather than only when something changed: dagent's copy is not
   // knowable from here, and rewriting an identical file costs a reload.
   pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+  // The Corefile is compiled from the same rows and has to move with them, so it
+  // goes wherever the ruleset goes. A host holding one of the two at a newer
+  // version than the other is a resolver and a ruleset that disagree about what a
+  // guest may reach.
+  pushCoreDNSConfig(ctx, h.q, h.hub, agent.ID)
   // Same reasoning for proxy.yaml: VMs may have come or gone while the host was
   // away. Cheap to send unconditionally -- the agent compares the file it is
   // given against the one on disk and only restarts proxy when they differ.
@@ -389,8 +394,9 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     }
     return
   }
-  // The two whole-file config pushes, same again.
-  if res.Kind == proto.KindSuricataConfig || res.Kind == proto.KindDpipeConfig {
+  // The whole-file config pushes, same again.
+  if res.Kind == proto.KindSuricataConfig || res.Kind == proto.KindDpipeConfig ||
+    res.Kind == proto.KindCoreDNSConfig {
     if !res.OK {
       log.Printf("agent %s: could not apply the %s config: %s", agentID, res.Kind, res.Error)
     }
@@ -428,6 +434,7 @@ func (h *AgentHandler) handleResult(ctx context.Context, agent db.Agent, agentID
     // address that is about to belong to somebody else's guest.
     if res.OK {
       pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+      pushCoreDNSConfig(ctx, h.q, h.hub, agent.ID)
       pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
     }
   default:
@@ -517,6 +524,13 @@ func (h *AgentHandler) settleCreate(ctx context.Context, agent db.Agent, agentID
   // point at is not an entry. After the commit, so the generator reads the row
   // this result just wrote.
   pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
+  // The ruleset for the same reason, and it is not optional. A VM with no
+  // allowances is denied by a rule naming its address, and its address is what
+  // this frame just delivered -- so until the ruleset is regenerated the new
+  // guest is covered only by the pool-wide floor, which has to let a syn through
+  // on the web ports. The Corefile follows it, as everywhere else.
+  pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+  pushCoreDNSConfig(ctx, h.q, h.hub, agent.ID)
 }
 
 // handleInventory reconciles the agent's report against the registry. This is
@@ -591,6 +605,14 @@ func (h *AgentHandler) handleInventory(ctx context.Context, agent db.Agent, agen
   // proxy only when the file it receives differs from the one on disk, so an
   // unchanged fleet costs a frame and a comparison.
   pushProxyConfig(ctx, h.q, h.hub, h.proxy, agent.ID)
+  // The egress policy for the same reason and on the same terms. An inventory
+  // tick is also how a VM created on the host with `dagent vm create` first gets
+  // a row here, and that VM has no allowances -- so it needs the deny that names
+  // its address, which cannot be written until this report says the address
+  // exists. Both appliers ignore a file identical to the one on disk, so an
+  // unchanged fleet costs a frame and a comparison here too.
+  pushSuricataRules(ctx, h.q, h.hub, agent.ID)
+  pushCoreDNSConfig(ctx, h.q, h.hub, agent.ID)
 }
 
 func (h *AgentHandler) handleMetrics(ctx context.Context, agent db.Agent, agentID string, env proto.Envelope) {

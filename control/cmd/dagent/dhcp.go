@@ -150,10 +150,14 @@ func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP) []byte {
   // Sent anyway for the ones that do not, where it is better than nothing.
   add(optRouter, gw)
 
-  // The resolver is upstream, not on the gateway -- dagent runs none. A guest
-  // still has to be allowed to reach it, so this address needs to be in the
-  // VM's egress allowlist or the queue has to be accepting everything.
-  if dns := net.ParseIP(s.cfg.DNS).To4(); dns != nil {
+  // With suricata mode on this is the gateway, where the filtering resolver
+  // answers only the names the guest is allowed to reach and refuses the rest --
+  // and that refusal is the earliest point this policy can act, because it stops
+  // the connection from being attempted at all rather than dropping it in flight.
+  //
+  // With the mode off it is an upstream address, which a guest can only reach if
+  // its egress allowlist says so or the queue is accepting everything.
+  if dns := net.ParseIP(s.cfg.resolver()).To4(); dns != nil {
     add(optDNS, dns)
   }
 

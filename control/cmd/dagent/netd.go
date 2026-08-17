@@ -27,9 +27,9 @@ const reconcileInterval = 30 * time.Second
 const (
   netConfigFile = "net.json"
 
-  // defaultDNS is what guests are told to use. It is deliberately an upstream
-  // resolver: dagent does not run one, so pointing guests at the gateway would
-  // give them an address that answers nothing.
+  // defaultDNS is what guests are told to use when there is no resolver on the
+  // gateway to point them at -- which is to say when suricata mode is off. See
+  // netConfig.resolver: with the mode on, this value is not used at all.
   defaultDNS = "1.1.1.1"
 
   // defaultQueues has to match the number of -q flags Suricata is started with.
@@ -125,6 +125,10 @@ func reconcile(data string, cfg netConfig) error {
   // died since the last pass is an outage; started here for the same reason the
   // docker accepts are repaired here.
   ensureSuricata(cfg)
+  // And the resolver, which is the same policy seen from the other end: with it
+  // down, a guest resolves nothing and every allowance written against a name is
+  // unusable.
+  ensureCoreDNS(cfg)
 
   vms, err := listVMs(data)
   if err != nil {
@@ -217,7 +221,7 @@ func netdCommand() *cli.Command {
       &cli.StringFlag{Name: "pool", Usage: "address pool for VMs (default " + defaultPool + ")"},
       &cli.StringFlag{Name: "gateway", Usage: "host address on every tap (default " + defaultGateway + ")"},
       &cli.StringFlag{Name: "uplink", Usage: "interface to masquerade egress out of (default: the default route's)"},
-      &cli.StringFlag{Name: "dns", Usage: "resolver `ADDRESS` handed to guests over dhcp (default " + defaultDNS + ")"},
+      &cli.StringFlag{Name: "dns", Usage: "resolver `ADDRESS` handed to guests over dhcp when --suricata is off (default " + defaultDNS + "); ignored when it is on, since guests are then pointed at the filtering resolver on the gateway"},
       &cli.BoolFlag{Name: "suricata", Usage: "queue allowed egress to suricata instead of accepting it outright"},
       &cli.IntFlag{Name: "queues", Usage: "nfqueue count; must equal suricata's -q flag count (default 4)"},
       &cli.BoolFlag{Name: "no-docker-compat", Usage: "do not add accept rules for vm traffic to docker's " + dockerUserChain + " chain"},
@@ -308,6 +312,11 @@ func runTeardown(data string) error {
   // inspecting nothing. Stopped rather than left behind, because dagent is what
   // started it.
   if msg := stopSuricata(); msg != "" {
+    fmt.Println(msg)
+  }
+  // The resolver has nothing to serve either, and the port it holds should go
+  // back with the rest of the network state.
+  if msg := stopCoreDNS(); msg != "" {
     fmt.Println(msg)
   }
 

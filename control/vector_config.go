@@ -39,7 +39,13 @@ const eveLogPath = "/var/log/suricata/eve.json"
 const (
   vectorClickHouseDatabase = "dummie"
   vectorClickHouseTable    = "suricata_events"
+  vectorDNSTable           = "dns_queries"
 )
+
+// corednsLogContainer is the container vector reads the resolver's query log from.
+// Named here because this file is the source of the config, but it is dagent's
+// decision -- see corednsContainer in cmd/dagent/coredns.go.
+const corednsLogContainer = "coredns"
 
 // vectorConfigTemplate is filled by renderVectorConfig. Placeholders rather
 // than fmt verbs because the VRL is dense with %-formatted timestamps, and
@@ -51,7 +57,47 @@ sources:
     type: file
     include: ["__EVE_LOG__"]
 
+  # The resolver's query log. Read from docker rather than a file because the
+  # coredns log plugin only ever writes to standard output -- there is no file for
+  # a file source to follow. vector runs as root, so the socket is readable.
+  coredns:
+    type: docker_logs
+    include_containers: ["__COREDNS_CONTAINER__"]
+
 transforms:
+  # coredns writes its startup and plugin chatter to the same stream as its
+  # queries, and an INFO line about an upstream timing out is not a query. The
+  # marker is what tells them apart; shape alone would not.
+  dns_queries_only:
+    type: filter
+    inputs: ["coredns"]
+    condition: 'contains(string!(.message), "__DNS_MARKER__ ")'
+
+  shape_dns:
+    type: remap
+    inputs: ["dns_queries_only"]
+    source: |
+      raw = string!(.message)
+      # Everything after the marker: the four fields the log directive in
+      # coredns_config.go emits, in that order. Indexing cannot fail in vrl, it
+      # yields null -- so the coalescing goes on the string() coercion, which can,
+      # exactly as the eve transform below does it.
+      parts = split(raw, "__DNS_MARKER__ ")
+      f = split(strip_whitespace(string(parts[1]) ?? ""), " ")
+
+      # docker hands the line over with a timestamp already parsed, unlike eve.json
+      # where it is a field in the payload.
+      ts = timestamp(.timestamp) ?? now()
+      . = {}
+      .timestamp = format_timestamp!(ts, "%Y-%m-%d %H:%M:%S%.6f")
+      .src_ip = string(f[0]) ?? "::"
+      .rcode = string(f[1]) ?? ""
+      .qtype = string(f[2]) ?? ""
+      # dns names arrive fully qualified and in whatever case the guest asked in.
+      # Stored lowercased and without the root dot so a row compares directly
+      # against a recorded destination and against suricata_events.domain.
+      .qname = replace(downcase(string(f[3]) ?? ""), r'\.$', "")
+
   shape:
     type: remap
     inputs: ["eve"]
@@ -151,6 +197,25 @@ sinks:
     buffer:
       type: disk
       max_size: 268435488
+
+  # A second sink rather than a second table in the first: the two carry different
+  # columns, and the clickhouse sink writes one table.
+  clickhouse_dns:
+    type: clickhouse
+    inputs: ["shape_dns"]
+    endpoint: __CLICKHOUSE_URL__
+    database: __DATABASE__
+    table: __DNS_TABLE__
+    auth:
+      strategy: basic
+      user: __CLICKHOUSE_USER__
+      password: __CLICKHOUSE_PASSWORD__
+    skip_unknown_fields: true
+    batch:
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
 `
 
 // renderVectorConfig produces the file for one set of settings. Every
@@ -159,12 +224,19 @@ sinks:
 // would otherwise turn the sink block into something else entirely.
 func renderVectorConfig(url, user, password string) string {
   return strings.NewReplacer(
+    // Both of these are constants in this repo rather than operator input, so
+    // they are substituted raw into quotes the template already has -- the same
+    // way eveLogPath's include: line does it. yamlString is for the settings
+    // below, whose contents are whatever somebody typed.
     "__EVE_LOG__", eveLogPath,
+    "__COREDNS_CONTAINER__", corednsLogContainer,
+    "__DNS_MARKER__", corednsLogMarker,
     "__CLICKHOUSE_URL__", yamlString(url),
     "__CLICKHOUSE_USER__", yamlString(user),
     "__CLICKHOUSE_PASSWORD__", yamlString(password),
     "__DATABASE__", yamlString(vectorClickHouseDatabase),
     "__TABLE__", yamlString(vectorClickHouseTable),
+    "__DNS_TABLE__", yamlString(vectorDNSTable),
   ).Replace(vectorConfigTemplate)
 }
 

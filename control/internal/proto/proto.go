@@ -130,6 +130,18 @@ const (
   // one deployable. Rendered on the host, a schema change would mean rolling a
   // new agent to every machine in the fleet before the columns could be used.
   KindVectorConfig JobKind = "vector.config"
+
+  // KindCoreDNSConfig replaces the host's whole Corefile. It is the other half
+  // of the egress policy: the resolver on the gateway answers only the names a
+  // guest is allowed to reach, and refuses everything else, so a destination
+  // nobody granted cannot even be looked up.
+  //
+  // Compiled by the control server from the same rows as local.rules, and for a
+  // stronger reason than the other files here -- the two have to agree. A name
+  // the resolver answers but the ruleset drops is a lookup that works and a
+  // connection that hangs; a name the ruleset would pass but the resolver
+  // refuses is an allowance the user was told they had.
+  KindCoreDNSConfig JobKind = "coredns.config"
 )
 
 // Job is the payload of a TypeJob envelope. Which fields are set is chosen by
@@ -146,9 +158,10 @@ type Job struct {
   Proxy *ProxyConfig `json:"proxy,omitempty"`
   // Vector is set when Kind is KindVectorConfig.
   Vector *VectorConfig `json:"vector,omitempty"`
-  // File is set when Kind is KindSuricataConfig or KindDpipeConfig. Both carry
-  // nothing but a whole file, so they share one payload rather than each having
-  // a struct with a single Config field in it.
+  // File is set when Kind is KindSuricataConfig, KindDpipeConfig or
+  // KindCoreDNSConfig. All three carry nothing but a whole file, so they share
+  // one payload rather than each having a struct with a single Config field in
+  // it.
   File *FileConfig `json:"file,omitempty"`
 }
 

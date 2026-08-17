@@ -16,10 +16,11 @@ DELETE FROM vm_network_targets
 WHERE id = $1 AND vm_id = $2;
 
 -- name: ListVMNetworkTargetsByAgent :many
--- ListVMNetworkTargetsByAgent is the input to the rule generator: every
--- allowance on the host, carrying the address of the VM that owns it.
+-- ListVMNetworkTargetsByAgent is the input to the rule generator and the
+-- Corefile generator: every allowance on the host, carrying the address of the
+-- VM that owns it.
 --
--- One query rather than a VM list plus a lookup per VM, because the file is
+-- One query rather than a VM list plus a lookup per VM, because both files are
 -- generated as a whole and a half-read fleet would compile to a ruleset that
 -- silently revokes whatever was missed.
 --
@@ -29,11 +30,27 @@ WHERE id = $1 AND vm_id = $2;
 -- fall back to. 'gone' VMs are excluded for the same reason in reverse: their
 -- address will be handed to some other guest, and a stale pass rule would let
 -- that guest out.
+--
+-- The join is a LEFT JOIN, so a VM with no allowances at all still comes back --
+-- as one row with an empty destination. That VM is the one the generator most
+-- needs to know about: with nothing to allow it has no rule that depends on
+-- seeing a handshake, so it gets a blanket deny instead of the split floor, and
+-- a VM the query omitted would silently keep the syn on 80/443.
+--
+-- COALESCE rather than nullable columns. The schema already writes '' for a
+-- field that does not apply to a row's kind (see 0010_vm_network_targets), so
+-- every consumer reads a string without checking a flag; letting the join
+-- introduce NULLs here would be a second way to spell "no value" that only this
+-- one query has.
 SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name,
-       t.kind, t.destination, t.transport, t.ports, t.note
-FROM vm_network_targets t
-JOIN vms v ON v.id = t.vm_id
+       COALESCE(t.kind, '') AS kind,
+       COALESCE(t.destination, '') AS destination,
+       COALESCE(t.transport, '') AS transport,
+       COALESCE(t.ports, '') AS ports,
+       COALESCE(t.note, '') AS note
+FROM vms v
+LEFT JOIN vm_network_targets t ON t.vm_id = v.id
 WHERE v.agent_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
-ORDER BY v.ip, t.kind, t.destination, t.transport, t.ports;
+ORDER BY v.ip, kind, destination, transport, ports;

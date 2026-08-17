@@ -49,6 +49,9 @@ interface Target {
   destination: string
   kind: 'domain' | 'ip'
   transport: '' | 'tcp' | 'udp' | 'any'
+  // Suricata's port syntax for an address. For a domain it is which of the two web
+  // ports the name is allowed on -- '' for both, or 'none', which lets the name
+  // resolve and grants nothing.
   ports: string
   note: string
   created_at: string
@@ -61,6 +64,18 @@ const targetColumns: DataTableColumn[] = [
   { key: 'ports', label: 'Ports' },
   { key: 'note', label: 'Note' },
 ]
+
+// What the row is checked against. A lookup-only domain is the one worth spelling
+// out: it is on the list, and it grants no access at all.
+function matchedOn(t: Target) {
+  if (t.kind !== 'domain') return 'address'
+  return t.ports === 'none' ? 'name — resolves only' : 'tls sni · http host'
+}
+
+function portsLabel(t: Target) {
+  if (t.kind !== 'domain') return t.ports || 'any'
+  return t.ports === 'none' ? 'none' : (t.ports || '443, 80')
+}
 
 const route = useRoute()
 const { authFetch } = useAuth()
@@ -574,14 +589,12 @@ async function confirmForget() {
           <TableRow v-for="t in targets" :key="t.id">
             <TableCell class="font-mono break-all">{{ t.destination }}</TableCell>
             <TableCell class="font-mono text-xs text-muted-foreground">
-              {{ t.kind === 'domain' ? 'dns · tls sni · http host' : 'address' }}
+              {{ matchedOn(t) }}
             </TableCell>
-            <!-- An em dash, not 'any': these do not apply to a domain row at
+            <!-- An em dash, not 'any': transport does not apply to a domain row at
                  all, and 'any' would read as "every transport is allowed". -->
             <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
-            <TableCell class="font-mono text-muted-foreground">
-              {{ t.kind === 'domain' ? '—' : (t.ports || 'any') }}
-            </TableCell>
+            <TableCell class="font-mono text-muted-foreground">{{ portsLabel(t) }}</TableCell>
             <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
           </TableRow>
         </DataTable>

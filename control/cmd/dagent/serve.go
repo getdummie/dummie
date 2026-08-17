@@ -173,9 +173,9 @@ func runServe(ctx context.Context, cfg Config) error {
     }()
   }
 
-  // Docker compat and Suricata are repaired inside reconcile, so they follow
-  // nftables: checkFeatures has already rejected a config that asks for either
-  // without it.
+  // Docker compat, Suricata and the resolver are repaired inside reconcile, so
+  // they follow nftables: checkFeatures has already rejected a config that asks
+  // for any of them without it.
   if !f.Nftables {
     log.Print("features.nftables is off: no packet policy is being installed or repaired")
   }

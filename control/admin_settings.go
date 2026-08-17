@@ -124,6 +124,13 @@ func (h *AdminHandler) UpdateSetting(c *echo.Context) error {
   if isVectorSetting(def.Key) {
     pushVectorConfigToAll(c.Request().Context(), h.q, h.hub)
   }
+  // The resolver upstream is baked into every host's Corefile, so a change here is
+  // not a change until those are rewritten. More urgent than the vector settings:
+  // an admin moving the fleet off a resolver that is going away has to be able to
+  // rely on it having happened.
+  if def.Key == settingResolverUpstream {
+    pushCoreDNSConfigToAll(c.Request().Context(), h.q, h.hub)
+  }
 
   updatedAt := ""
   if row.UpdatedAt.Valid {

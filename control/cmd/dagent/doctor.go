@@ -58,6 +58,7 @@ var checks = []check{
   {"an uplink for egress exists", checkUplink},
   {"nfqueue matches the suricata configuration", checkQueues},
   {"the suricata container is running", checkSuricata},
+  {"the coredns container is running", checkCoreDNS},
   {"vector is shipping suricata events", checkVector},
   {"docker is not dropping vm traffic", checkDockerCompat},
   {"data directory is writable", checkDataDir},
@@ -287,6 +288,18 @@ func checkSuricata() (result, string) {
     return warn, "could not read the network config: " + err.Error()
   }
   return suricataStatus(cfg)
+}
+
+// checkCoreDNS is separate from checkSuricata even though one switch turns both
+// on: the two fail in different ways and an operator reading one line needs to
+// know which. Suricata down is no egress at all; the resolver down is egress that
+// works only for an address somebody typed.
+func checkCoreDNS() (result, string) {
+  cfg, err := loadNetConfig(defaultDataDir())
+  if err != nil {
+    return warn, "could not read the network config: " + err.Error()
+  }
+  return corednsStatus(cfg)
 }
 
 // checkQueues compares the queues something is actually bound to against the

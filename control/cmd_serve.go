@@ -227,8 +227,9 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
   vms.POST("/:id/console-token", userH.ConsoleToken)
   vms.POST("/:id/web-session", userH.WebSession)
   vms.GET("/:id/targets", userH.ListTargets)
-  vms.GET("/:id/denied-domains", userH.ListDeniedDomains)
+  vms.GET("/:id/denied", userH.ListDeniedEgress)
   vms.POST("/:id/targets", userH.CreateTarget)
+  vms.POST("/:id/targets/resolve", userH.ResolveTargetHost)
   vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 
   // Agents: enrollment + the persistent socket the server pushes jobs down.
