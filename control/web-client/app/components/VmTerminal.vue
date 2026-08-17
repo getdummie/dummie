@@ -36,6 +36,44 @@ const emit = defineEmits<{
 }>()
 
 const { authFetch } = useAuth()
+const colorMode = useColorMode()
+
+// The guest owns the palette; these are only what it draws on. The dark set is
+// xterm's own defaults; the light set darkens the ANSI colours that are
+// unreadable on white.
+const themes = {
+  dark: {
+    background: '#09090b',
+    foreground: '#e4e4e7',
+    cursor: '#e4e4e7',
+    selectionBackground: '#3f3f46',
+  },
+  light: {
+    background: '#ffffff',
+    foreground: '#18181b',
+    cursor: '#18181b',
+    cursorAccent: '#ffffff',
+    selectionBackground: '#bfdbfe',
+    black: '#18181b',
+    red: '#b91c1c',
+    green: '#15803d',
+    yellow: '#a16207',
+    blue: '#1d4ed8',
+    magenta: '#a21caf',
+    cyan: '#0e7490',
+    white: '#71717a',
+    brightBlack: '#52525b',
+    brightRed: '#dc2626',
+    brightGreen: '#16a34a',
+    brightYellow: '#ca8a04',
+    brightBlue: '#2563eb',
+    brightMagenta: '#c026d3',
+    brightCyan: '#0891b2',
+    brightWhite: '#27272a',
+  },
+} as const
+
+const theme = computed(() => colorMode.value === 'dark' ? themes.dark : themes.light)
 
 const phase = ref<Phase>('loading')
 const message = ref<string | null>(null)
@@ -48,6 +86,10 @@ let term: Terminal | null = null
 let fit: FitAddon | null = null
 let ws: WebSocket | null = null
 let resizeObserver: ResizeObserver | null = null
+
+watch(theme, (t) => {
+  if (term) term.options.theme = { ...t }
+})
 
 const encoder = new TextEncoder()
 
@@ -167,8 +209,7 @@ onMounted(async () => {
     cursorBlink: true,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     fontSize: props.fontSize ?? 13,
-    // The guest owns the palette; these are only what it draws on.
-    theme: { background: '#09090b', foreground: '#e4e4e7', cursor: '#e4e4e7' },
+    theme: { ...theme.value },
   })
   fit = new FitAddon()
   term.loadAddon(fit)
@@ -205,7 +246,7 @@ defineExpose({ phase, message, connect, disconnect })
        region and xterm manages the screen-reader text inside it. -->
   <div
     ref="termEl"
-    class="min-h-0 flex-1 overflow-hidden bg-[#09090b] p-2"
+    class="min-h-0 flex-1 overflow-hidden bg-white p-2 dark:bg-[#09090b]"
     role="application"
     aria-label="Terminal"
   />
