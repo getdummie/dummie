@@ -154,6 +154,22 @@ type deniedAttemptDTO struct {
 // Available reports whether the answer is trustworthy. An empty list means two very
 // different things -- nothing was denied, or nothing is collecting -- and a screen
 // that cannot tell them apart would quietly imply the first.
+//
+// @Summary     List denied egress attempts
+// @Description What this guest tried to reach and was refused. kind is "lookup" (a name the resolver would not answer) or "packet" (a flow the ruleset dropped); a refused lookup has no address to offer.
+// @Description
+// @Description Read available before reading items: an empty list means either nothing was denied or nothing is collecting, and those are very different facts. recording names which of the two sources answered.
+// @Description
+// @Description Only events since this VM was created are shown -- a destroyed VM's address goes back to the pool, so without that bound a new VM would inherit the history of whatever held its address before it.
+// @Tags        egress
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     200 {object} deniedEgressList
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Router      /vms/{id}/denied [get]
 func (h *UserHandler) ListDeniedEgress(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {

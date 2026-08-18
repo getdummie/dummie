@@ -190,6 +190,14 @@ async function confirmDelete() {
         <p class="mt-1 max-w-prose text-sm text-muted-foreground">
           For reaching the API from a script or a CI job. A token acts as you and can do everything
           you can do with your own VMs — it can never reach the admin API, even if you are an admin.
+          See the
+          <NuxtLink
+            to="/docs"
+            class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            API reference
+          </NuxtLink>
+          for what a token can call.
         </p>
       </div>
       <Dialog v-model:open="createOpen" @update:open="(v: boolean) => !v && resetForm()">

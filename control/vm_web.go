@@ -54,6 +54,20 @@ type webSessionDTO struct {
 // POST rather than GET for the same reason as the console token: it is a
 // credential, and a GET would put it in history, in referrers and in any log that
 // records request lines.
+//
+// @Summary     Open a session on a VM's site
+// @Description Returns a url that redeems a short-lived token for a session on whatever this VM publishes over http. POST for the same reason as the console token: it is a credential. expires_in is the token's life, not the session's -- it is the window in which the url has to be loaded.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     200 {object} webSessionDTO
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the host this vm runs on has no domain, so it publishes nothing"
+// @Failure     503 {object} apiError "guest sessions are not configured on this installation"
+// @Router      /vms/{id}/web-session [post]
 func (h *UserHandler) WebSession(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {

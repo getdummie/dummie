@@ -129,6 +129,11 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	// The document /docs renders. Public and outside every auth group: it names
+	// routes that each enforce their own auth, and docs you need an account to
+	// read are useless at the moment you are trying to get one.
+	api.GET("/openapi.json", openAPISpec(loadOpenAPISpec()))
+
 	// Auth: password signup/signin, refresh-token rotation, and session teardown.
 	q := db.New(pool)
 	ah := &AuthHandler{q: q, cfg: cfg}

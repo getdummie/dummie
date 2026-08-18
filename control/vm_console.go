@@ -79,6 +79,20 @@ type consoleTokenDTO struct {
 //
 // POST rather than GET: it is a credential, and a GET would put it in browser
 // history, in referrers and in any log that records request lines.
+//
+// @Summary     Mint a console token
+// @Description Returns the websocket url for this VM's terminal and a short-lived token that opens it. POST rather than GET because it is a credential, and a GET would put it in browser history, in referrers and in any log that records request lines. The url in vmDTO.console_url is not itself a credential -- it needs one of these.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     200 {object} consoleTokenDTO
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the host this vm runs on has no domain, so it has no console"
+// @Failure     503 {object} apiError "the console is not configured on this installation"
+// @Router      /vms/{id}/console-token [post]
 func (h *UserHandler) ConsoleToken(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {

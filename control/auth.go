@@ -160,6 +160,18 @@ type signupReq struct {
 	LastName  string `json:"last_name"`
 }
 
+// Signup creates an account and starts a session.
+//
+// @Summary     Create an account
+// @Description The first account to sign up becomes the admin; every one after is a regular user. The client does not get to choose. Sets the httpOnly access and refresh cookies as well as returning the access token.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body body signupReq true "username and email are required"
+// @Success     200 {object} sessionResp
+// @Failure     400 {object} apiError
+// @Failure     409 {object} apiError "username or email already taken"
+// @Router      /signup [post]
 func (h *AuthHandler) Signup(c *echo.Context) error {
 	var req signupReq
 	if err := c.Bind(&req); err != nil {
@@ -207,6 +219,18 @@ type signinReq struct {
 	Password   string `json:"password"`
 }
 
+// Signin exchanges credentials for a session.
+//
+// @Summary     Sign in
+// @Description The identifier is a username (case-sensitive) or an email. Sets the httpOnly access and refresh cookies as well as returning the access token.
+// @Tags        auth
+// @Accept      json
+// @Produce     json
+// @Param       body body signinReq true "identifier and password"
+// @Success     200 {object} sessionResp
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError "invalid credentials"
+// @Router      /signin [post]
 func (h *AuthHandler) Signin(c *echo.Context) error {
 	var req signinReq
 	if err := c.Bind(&req); err != nil {
@@ -233,6 +257,14 @@ func (h *AuthHandler) Signin(c *echo.Context) error {
 // cookie) is left intact, so a page reload just mints a new access token instead
 // of churning sessions. A new refresh token is only ever created at sign-in;
 // once the refresh token expires or is revoked, the user must sign in again.
+//
+// @Summary     Refresh the access token
+// @Description Reads the httpOnly refresh cookie and mints a new access token. The refresh token is not rotated, so a page reload does not churn sessions. Not needed when calling the API with a personal access token, which does not expire on this schedule.
+// @Tags        auth
+// @Produce     json
+// @Success     200 {object} sessionResp
+// @Failure     401 {object} apiError "missing, expired or revoked refresh token"
+// @Router      /token_refresh [post]
 func (h *AuthHandler) TokenRefresh(c *echo.Context) error {
 	cookie, err := c.Request().Cookie("refresh_token")
 	if err != nil || cookie.Value == "" {
@@ -258,6 +290,13 @@ func (h *AuthHandler) TokenRefresh(c *echo.Context) error {
 	})
 }
 
+// Signout revokes the session behind the refresh cookie and clears both cookies.
+//
+// @Summary     Sign out
+// @Description Ends this browser session. Personal access tokens are untouched: signing out of a laptop must not break a pipeline.
+// @Tags        auth
+// @Success     204 "signed out"
+// @Router      /signout [post]
 func (h *AuthHandler) Signout(c *echo.Context) error {
 	if cookie, err := c.Request().Cookie("refresh_token"); err == nil && cookie.Value != "" {
 		_ = h.q.RevokeRefreshTokenByHash(c.Request().Context(), hashRefresh(cookie.Value))

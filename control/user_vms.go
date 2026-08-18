@@ -108,6 +108,18 @@ func callerID(c *echo.Context) (pgtype.UUID, error) {
 	return parseUUID(uid)
 }
 
+// ListVMs returns the caller's own VMs.
+//
+// @Summary     List your VMs
+// @Description Scoped to you by the query itself. url and console_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       limit  query int false "1-100" default(20)
+// @Param       offset query int false "rows to skip" default(0)
+// @Success     200 {object} pagedVMs
+// @Failure     401 {object} apiError
+// @Router      /vms [get]
 func (h *UserHandler) ListVMs(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -133,6 +145,19 @@ func (h *UserHandler) ListVMs(c *echo.Context) error {
 	return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }
 
+// GetVM returns one of the caller's VMs.
+//
+// @Summary     Read one of your VMs
+// @Description Someone else's VM and a VM that does not exist are the same 404, so this cannot be used to discover which ids are real. status is the host's claim as of reported_at, not a live observation.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     200 {object} vmDTO
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Router      /vms/{id} [get]
 func (h *UserHandler) GetVM(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -172,6 +197,16 @@ type quotaDTO struct {
 	DiskUsedMiB    int32 `json:"disk_used_mib"`
 }
 
+// GetQuota reports the caller's allowance and how much of it is spent.
+//
+// @Summary     Read your quota
+// @Description What you may hold across every VM at once, and what your active VMs already use. Check this before a create rather than discovering the refusal.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} quotaDTO
+// @Failure     401 {object} apiError
+// @Router      /vms/quota [get]
 func (h *UserHandler) GetQuota(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -207,6 +242,16 @@ type hostDTO struct {
 // ListHosts offers only clients with a live socket. An client whose row still
 // says 'online' but whose connection dropped would fail the create, so listing
 // it is offering a choice that cannot work.
+// ListHosts offers the hosts a create may target.
+//
+// @Summary     List available hosts
+// @Description Only hosts with a live socket to this server. One whose row still says 'online' but whose connection dropped would fail the create, so it is left out. The id is what you pass as client_id.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} hostList
+// @Failure     401 {object} apiError
+// @Router      /vms/hosts [get]
 func (h *UserHandler) ListHosts(c *echo.Context) error {
 	rows, err := h.q.ListAvailableHosts(c.Request().Context())
 	if err != nil {
@@ -242,6 +287,15 @@ const maxArtifactChoices = 100
 // ListKernels offers the catalogue, newest first, to any signed-in caller.
 // Withdrawn kernels are not in it: the query leaves them out, which is what
 // stops a user choosing one the create would then refuse.
+//
+// @Summary     List available kernels
+// @Description The catalogue an admin uploaded, newest first, withdrawn entries left out. No object key and no download link: you pick an entry, and the link the host fetches it from is minted server-side when the job is built. The id is what you pass as kernel_id.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} artifactList
+// @Failure     401 {object} apiError
+// @Router      /vms/kernels [get]
 func (h *UserHandler) ListKernels(c *echo.Context) error {
 	rows, err := h.q.ListKernels(c.Request().Context(), db.ListKernelsParams{Limit: maxArtifactChoices})
 	if err != nil {
@@ -262,6 +316,15 @@ func (h *UserHandler) ListKernels(c *echo.Context) error {
 
 // ListOSImages offers the OS image catalogue on the same terms as the kernel
 // one: newest first, withdrawn entries left out, no keys or links.
+//
+// @Summary     List available OS images
+// @Description The root-filesystem catalogue, on the same terms as the kernel one. The id is what you pass as osimage_id.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} artifactList
+// @Failure     401 {object} apiError
+// @Router      /vms/osimages [get]
 func (h *UserHandler) ListOSImages(c *echo.Context) error {
 	rows, err := h.q.ListOSImages(c.Request().Context(), db.ListOSImagesParams{Limit: maxArtifactChoices})
 	if err != nil {
@@ -409,6 +472,28 @@ func parseSizeMiB(s string) (int32, error) {
 	return int32((bytes + mib - 1) / mib), nil
 }
 
+// CreateVM builds one VM for the caller on a host of their choosing.
+//
+// @Summary     Create a VM
+// @Description Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. Your SSH public key has to be on your account first -- it is built into the image at boot, so it cannot be added afterwards. The size is charged against your quota; disk_size takes the client's syntax ("2G", "512M", or plain bytes).
+// @Description
+// @Description Set ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.
+// @Description
+// @Description The response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'.
+// @Tags        vms
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body createVMReq true "client_id, kernel_id and osimage_id are required"
+// @Success     202 {object} vmDTO "accepted and pending; the host has not reported yet"
+// @Failure     400 {object} apiError "bad size, bad port count, cpus under 1 or memory under 64 MiB"
+// @Failure     401 {object} apiError
+// @Failure     403 {object} apiError "no public key on your account, or over quota"
+// @Failure     404 {object} apiError "no such host, kernel or os image"
+// @Failure     409 {object} apiError "host revoked or disconnected, artifact withdrawn, name taken, or the job could not be delivered"
+// @Failure     502 {object} apiError "could not prepare an artifact download"
+// @Failure     503 {object} apiError "no blob store is configured on this installation"
+// @Router      /vms [post]
 func (h *UserHandler) CreateVM(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -669,6 +754,19 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 }
 
 // StartVM boots a VM that exists but is not running.
+//
+// @Summary     Start a VM
+// @Description Pushes the job to the host and returns immediately: 202 means the frame was delivered, not that the guest is up. Poll GET /vms/{id} for the outcome.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     202 {object} vmDTO "the job was delivered to the host"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the host has no live socket, or has not assigned this VM an id yet"
+// @Router      /vms/{id}/start [post]
 func (h *UserHandler) StartVM(c *echo.Context) error {
 	return h.actOnVM(c, proto.KindVMStart)
 }
@@ -677,12 +775,38 @@ func (h *UserHandler) StartVM(c *echo.Context) error {
 // boot it again from the same state. The allowance it holds is NOT freed: a
 // stopped VM still owns its disk and its slot, and letting a stop free the quota
 // would make the limit trivially evadable by stopping and creating in a loop.
+//
+// @Summary     Stop a VM
+// @Description Shuts the guest down but leaves its disk on the host, so a start boots it again from the same state. This does NOT free the quota the VM holds -- only a destroy does. A TTL keeps running while a VM is stopped.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     202 {object} vmDTO "the job was delivered to the host"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the host has no live socket, or has not assigned this VM an id yet"
+// @Router      /vms/{id}/stop [post]
 func (h *UserHandler) StopVM(c *echo.Context) error {
 	return h.actOnVM(c, proto.KindVMStop)
 }
 
 // DestroyVM stops the guest and deletes its disk on the host. This is the one
 // action that frees the allowance the VM is holding.
+//
+// @Summary     Destroy a VM
+// @Description Stops the guest and deletes its disk on the host. This is the one action that frees the quota the VM was holding, and it cannot be undone.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     202 {object} vmDTO "the job was delivered to the host"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the host has no live socket, or has not assigned this VM an id yet"
+// @Router      /vms/{id}/destroy [post]
 func (h *UserHandler) DestroyVM(c *echo.Context) error {
 	return h.actOnVM(c, proto.KindVMDestroy)
 }
@@ -837,6 +961,21 @@ type updateVMPortsReq struct {
 //
 // Takes effect on the host as soon as it is written -- the proxy config is
 // regenerated and pushed, the same as a create does.
+// UpdatePorts rewrites the routing the host's proxy config is generated from.
+//
+// @Summary     Set a VM's published ports
+// @Description default_port is where a request goes when nothing picks a port; omit it or send 0 for 8000. public_ports is every port the VM publishes -- send an empty list to publish nothing. The list is de-duplicated but not reordered, since its order is the order the generated config lists them in. At most 32 ports.
+// @Tags        vms
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id   path string true "vm id" format(uuid)
+// @Param       body body updateVMPortsReq true "ports"
+// @Success     200 {object} vmDTO
+// @Failure     400 {object} apiError "a port outside 1-65535, or more than 32 of them"
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Router      /vms/{id}/ports [put]
 func (h *UserHandler) UpdatePorts(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {
@@ -882,6 +1021,19 @@ func (h *UserHandler) UpdatePorts(c *echo.Context) error {
 	return c.JSON(http.StatusOK, d)
 }
 
+// ListTargets returns one VM's egress allowlist.
+//
+// @Summary     List a VM's allowed destinations
+// @Description Everything this guest is permitted to reach. expires_at is set on temporary allowances and empty on permanent ones.
+// @Tags        egress
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     200 {object} targetList
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Router      /vms/{id}/targets [get]
 func (h *UserHandler) ListTargets(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {
@@ -973,6 +1125,28 @@ func domainTargetPorts(ports string) (string, error) {
 			"for any other port allow the address instead")
 }
 
+// CreateTarget adds one destination to a VM's egress allowlist.
+//
+// @Summary     Allow a destination
+// @Description destination is a domain, an IP address, or a CIDR. Omit kind to have it classified for you; supply it and it must agree, since a form that asked for an address and got a hostname has a mistake in it.
+// @Description
+// @Description For an address, ports is Suricata's syntax (`22`, `80,443`, `8000:8100`) and transport is tcp, udp or any. For a domain, ports may only be `443`, `80`, both, or `none` -- the ports Suricata looks for http and tls on are fixed per host, so a domain allowed on 8443 would compile to a rule that never matches. Allow the address instead.
+// @Description
+// @Description Only tls and http carry the destination name in the traffic, so ssh or postgres to a hostname is not expressible: use /vms/{id}/targets/resolve and record the addresses.
+// @Description
+// @Description Set ttl_seconds for a temporary allowance the control plane withdraws on its own.
+// @Tags        egress
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id   path string true "vm id" format(uuid)
+// @Param       body body createTargetReq true "destination is required"
+// @Success     201 {object} vmTargetDTO
+// @Failure     400 {object} apiError "a destination that is neither a name nor an address, or a port the rules cannot express"
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "that destination is already on the list"
+// @Router      /vms/{id}/targets [post]
 func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {
@@ -1156,6 +1330,24 @@ type resolveHostReq struct {
 // and something re-resolving on a timer would silently widen an allowlist nobody
 // re-read. This returns what it found, the caller records it, and what the page
 // lists afterwards is exactly what is enforced.
+//
+// @Summary     Resolve a hostname
+// @Description What a name currently resolves to, so you can record those addresses as allowances. IPv4 only -- every rule and nftables element downstream is IPv4, so an AAAA record would be an address nothing can express. At most 8 addresses; truncated says when there were more.
+// @Description
+// @Description A name that does not resolve is a 200 with error set, not a failure: that is an answer about the name rather than about this server. Deliberately a one-shot lookup and not a subscription -- addresses move, and something re-resolving on a timer would silently widen an allowlist nobody re-read.
+// @Description
+// @Description Scoped to a VM you own even though the answer is not VM-specific, so this is not a public name-resolution service.
+// @Tags        egress
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id   path string true "vm id" format(uuid)
+// @Param       body body resolveHostReq true "host"
+// @Success     200 {object} resolvedHost
+// @Failure     400 {object} apiError "that is not a hostname"
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Router      /vms/{id}/targets/resolve [post]
 func (h *UserHandler) ResolveTargetHost(c *echo.Context) error {
 	// Scoped to a VM the caller owns even though the answer is not VM-specific: it
 	// is a lookup this server makes on request, and an unauthenticated one would be
@@ -1231,6 +1423,20 @@ func (h *UserHandler) resolver(ctx context.Context) *net.Resolver {
 	}
 }
 
+// DeleteTarget withdraws one destination from a VM's egress allowlist.
+//
+// @Summary     Remove an allowed destination
+// @Description Cancels any pending expiry on it and pushes the new policy to the host. Until that push lands the guest still has the access, so treat the 204 as "recorded", not "already enforced".
+// @Tags        egress
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id        path string true "vm id" format(uuid)
+// @Param       target_id path string true "destination id" format(uuid)
+// @Success     204 "removed"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Router      /vms/{id}/targets/{target_id} [delete]
 func (h *UserHandler) DeleteTarget(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {

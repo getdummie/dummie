@@ -41,7 +41,10 @@ type vmDTO struct {
 	DefaultPort int32   `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
 
-	Spec      json.RawMessage `json:"spec"`
+	// swaggertype is for the spec generator only: the stored spec is returned
+	// verbatim and has no fixed shape, and swag cannot follow a RawMessage into
+	// the standard library on its own.
+	Spec      json.RawMessage `json:"spec" swaggertype:"object"`
 	LastError string          `json:"last_error"`
 	CreatedAt string          `json:"created_at"`
 	StartedAt string          `json:"started_at"`

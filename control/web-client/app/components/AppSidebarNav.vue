@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { Boxes, LayoutDashboard, LogOut, Settings, Shield } from '@lucide/vue'
+import { BookOpen, Boxes, LayoutDashboard, LogOut, Settings, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -80,9 +80,9 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
         </Tooltip>
       </nav>
 
-      <!-- Admin entry, pinned to the bottom -->
-      <div v-if="isAdmin" class="flex flex-col gap-0.5 pb-2">
-        <Tooltip :disabled="expanded">
+      <!-- Admin entry and the API reference, pinned to the bottom -->
+      <div class="flex flex-col gap-0.5 pb-2">
+        <Tooltip v-if="isAdmin" :disabled="expanded">
           <TooltipTrigger as-child>
             <NuxtLink
               :to="adminEntry.to"
@@ -96,6 +96,24 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
           </TooltipTrigger>
           <TooltipContent side="right" class="font-mono text-xs">
             {{ adminEntry.label }}
+          </TooltipContent>
+        </Tooltip>
+
+        <!-- A plain anchor, not a NuxtLink: this leaves the app for a new tab,
+             so routing it through the client router buys nothing. Never carries
+             aria-current -- it is not somewhere you can already be. -->
+        <Tooltip :disabled="expanded">
+          <TooltipTrigger as-child>
+            <a href="/docs" target="_blank" rel="noopener" :class="[itemBase, itemSize]">
+              <BookOpen class="size-[18px] shrink-0" aria-hidden="true" />
+              <span v-if="expanded" class="truncate font-mono text-[0.8rem]">API docs</span>
+              <!-- Opening a new tab unannounced is a change of context with no
+                   warning, so the destination says so either way. (WCAG 3.2.5) -->
+              <span class="sr-only">{{ expanded ? '(opens in a new tab)' : 'API docs (opens in a new tab)' }}</span>
+            </a>
+          </TooltipTrigger>
+          <TooltipContent side="right" class="font-mono text-xs">
+            API docs
           </TooltipContent>
         </Tooltip>
       </div>

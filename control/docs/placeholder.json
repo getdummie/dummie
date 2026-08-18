@@ -1,0 +1,9 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "dummie control API",
+    "version": "0.0.0",
+    "description": "This spec has not been generated yet. Run `swag init --v3.1 -g server.go -o docs --outputTypes json` in the control directory, then rebuild — the spec is embedded, so a rebuild is what picks it up."
+  },
+  "paths": {}
+}

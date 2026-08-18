@@ -23,6 +23,16 @@ type ProfileHandler struct {
 // not a name, and the column is unbounded TEXT.
 const maxNameLen = 100
 
+// GetMe returns the caller's own account.
+//
+// @Summary     Read your account
+// @Description The same shape the admin section shows for a user. Nothing secret is in it: no password hash, and a public key is public.
+// @Tags        me
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} adminUserDTO
+// @Failure     401 {object} apiError
+// @Router      /me [get]
 func (h *ProfileHandler) GetMe(c *echo.Context) error {
 	id, err := callerID(c)
 	if err != nil {
@@ -49,6 +59,19 @@ type updateProfileReq struct {
 	PublicKey string `json:"public_key"`
 }
 
+// UpdateMe edits the caller's own account.
+//
+// @Summary     Update your account
+// @Description Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it, which blocks creating new VMs.
+// @Tags        me
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       body body updateProfileReq true "the whole editable surface"
+// @Success     200 {object} adminUserDTO
+// @Failure     400 {object} apiError "a name over 100 characters, or a key that is not a valid public key"
+// @Failure     401 {object} apiError
+// @Router      /me [put]
 func (h *ProfileHandler) UpdateMe(c *echo.Context) error {
 	id, err := callerID(c)
 	if err != nil {

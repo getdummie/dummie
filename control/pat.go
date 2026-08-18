@@ -98,6 +98,16 @@ func toPATDTO(t db.PersonalAccessToken) patDTO {
 	return d
 }
 
+// ListTokens returns the caller's own tokens, never their raw values.
+//
+// @Summary     List your personal access tokens
+// @Description Only the prefix of each token is returned -- enough to recognise one you still hold, useless to anyone who only has this. Requires a signed-in session: a token cannot enumerate its siblings.
+// @Tags        tokens
+// @Produce     json
+// @Success     200 {object} tokenList
+// @Failure     401 {object} apiError
+// @Failure     403 {object} apiError "authenticated with a personal access token"
+// @Router      /me/tokens [get]
 func (h *ProfileHandler) ListTokens(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -120,6 +130,19 @@ type createPATReq struct {
 	ExpiresInDays *int32 `json:"expires_in_days"`
 }
 
+// CreateToken mints a token and returns its raw value once.
+//
+// @Summary     Create a personal access token
+// @Description The response is the only place the raw token appears; it is stored hashed and cannot be shown again. Omit expires_in_days for a token that never expires. Requires a signed-in session, so a leaked token cannot mint its successor and outlive the revocation meant to end it.
+// @Tags        tokens
+// @Accept      json
+// @Produce     json
+// @Param       body body createPATReq true "a label is required"
+// @Success     201 {object} createdTokenResp "the raw token, shown once"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     403 {object} apiError "authenticated with a personal access token"
+// @Router      /me/tokens [post]
 func (h *ProfileHandler) CreateToken(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -167,6 +190,19 @@ func (h *ProfileHandler) CreateToken(c *echo.Context) error {
 	})
 }
 
+// RevokeToken kills a token but keeps the row.
+//
+// @Summary     Revoke a personal access token
+// @Description Anything using it stops working immediately. The row stays in the list, marked revoked, so the credential's history is still readable.
+// @Tags        tokens
+// @Produce     json
+// @Param       id path string true "token id" format(uuid)
+// @Success     204 "revoked"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     403 {object} apiError "authenticated with a personal access token"
+// @Failure     404 {object} apiError "no such token, or it belongs to somebody else"
+// @Router      /me/tokens/{id}/revoke [post]
 func (h *ProfileHandler) RevokeToken(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -190,6 +226,19 @@ func (h *ProfileHandler) RevokeToken(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// DeleteToken removes a token and its record.
+//
+// @Summary     Delete a personal access token
+// @Description Anything using it stops working and no record of it is kept. Revoke instead when you want the row to stay.
+// @Tags        tokens
+// @Produce     json
+// @Param       id path string true "token id" format(uuid)
+// @Success     204 "deleted"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     403 {object} apiError "authenticated with a personal access token"
+// @Failure     404 {object} apiError "no such token, or it belongs to somebody else"
+// @Router      /me/tokens/{id} [delete]
 func (h *ProfileHandler) DeleteToken(c *echo.Context) error {
 	owner, err := callerID(c)
 	if err != nil {

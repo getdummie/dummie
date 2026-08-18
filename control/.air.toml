@@ -13,7 +13,13 @@ env_files = [".env"]
 
 [build]
 # Array of commands to run before each build
-pre_cmd = ["rm -f ./tmp/main ./tmp/dclient"]
+# The spec is go:embed'd, so it has to be regenerated BEFORE the build or the
+# binary ships the previous one. Non-fatal: swag lives in the dev image, and
+# someone running air without it should get a stale spec rather than no server.
+pre_cmd = [
+  "rm -f ./tmp/main ./tmp/dclient",
+  "swag init --v3.1 -g server.go -o docs --outputTypes json || echo 'swag not run; /docs will show the last generated spec'",
+]
 # Just plain old shell command. You could use `make` as well.
 # The client is built too, so a change that breaks it is caught here rather than
 # on the next manual build. Only ./tmp/main is run; ./tmp/dclient is a compile
