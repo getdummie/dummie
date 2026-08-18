@@ -156,6 +156,14 @@
                         "type": "array",
                         "uniqueItems": false
                     },
+                    "targets": {
+                        "description": "Targets is the egress allowlist to give the VM at birth, in exactly the\nshape POST /vms/{id}/targets takes one at a time. Empty is a VM that may\nreach nothing until somebody allows something.\n\nHere rather than left to follow-up calls because the guest boots and starts\ntrying to reach things immediately: an allowlist applied a moment later is a\nwindow in which the sandbox is already running and already denied, which\nreads as a broken VM rather than as policy arriving.",
+                        "items": {
+                            "$ref": "#/components/schemas/main.createTargetReq"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
                     "ttl_seconds": {
                         "description": "TTLSeconds makes this a temporary sandbox: the control plane destroys the VM\nthis many seconds after the row is written. 0 is the ordinary case -- a VM\nthat lives until somebody destroys it.\n\nMeasured from the create, and it keeps running while the VM is stopped. A\nclock that paused on stop would make the TTL evadable by exactly the trick\nthe quota already refuses to reward, and what a temporary sandbox is\nbounding is wall-clock exposure rather than uptime.",
                         "type": "integer"
@@ -1241,7 +1249,7 @@
                 ]
             },
             "post": {
-                "description": "Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. Your SSH public key has to be on your account first -- it is built into the image at boot, so it cannot be added afterwards. The size is charged against your quota; disk_size takes the client's syntax (\"2G\", \"512M\", or plain bytes).\n\nSet ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.\n\nThe response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'.",
+                "description": "Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. Your SSH public key has to be on your account first -- it is built into the image at boot, so it cannot be added afterwards. The size is charged against your quota; disk_size takes the client's syntax (\"2G\", \"512M\", or plain bytes).\n\nSet ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.\n\ntargets is the egress allowlist to give the VM at birth — each entry takes exactly the shape `POST /vms/{id}/targets` accepts, including its own ttl_seconds. At most 32; add the rest afterwards. The whole list is validated before anything is written and inserted in the same transaction as the VM, so a bad entry is a 400 with no VM created rather than a VM with a partial allowlist. Omit it for a VM that may reach nothing until you allow something.\n\nThe response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'. The allowlist reaches the host with the guest's address, so it is in force by the time the VM is up.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -1281,7 +1289,7 @@
                                 }
                             }
                         },
-                        "description": "bad size, bad port count, cpus under 1 or memory under 64 MiB"
+                        "description": "bad size, bad port count, cpus under 1, memory under 64 MiB, or a destination that is not allowable"
                     },
                     "401": {
                         "content": {

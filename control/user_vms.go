@@ -380,7 +380,23 @@ type createVMReq struct {
 	// the quota already refuses to reward, and what a temporary sandbox is
 	// bounding is wall-clock exposure rather than uptime.
 	TTLSeconds int64 `json:"ttl_seconds"`
+
+	// Targets is the egress allowlist to give the VM at birth, in exactly the
+	// shape POST /vms/{id}/targets takes one at a time. Empty is a VM that may
+	// reach nothing until somebody allows something.
+	//
+	// Here rather than left to follow-up calls because the guest boots and starts
+	// trying to reach things immediately: an allowlist applied a moment later is a
+	// window in which the sandbox is already running and already denied, which
+	// reads as a broken VM rather than as policy arriving.
+	Targets []createTargetReq `json:"targets"`
 }
+
+// maxCreateTargets bounds the allowlist one create may carry. Well above any
+// real starting policy; it is here because these rows are written in a single
+// transaction, and an unbounded list would make one request hold it open for as
+// long as it liked.
+const maxCreateTargets = 32
 
 // defaultVMPort is what a VM gets when the request does not name one. It is the
 // column default too; repeated here so that a request that omits the field and
@@ -479,14 +495,16 @@ func parseSizeMiB(s string) (int32, error) {
 // @Description
 // @Description Set ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.
 // @Description
-// @Description The response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'.
+// @Description targets is the egress allowlist to give the VM at birth — each entry takes exactly the shape `POST /vms/{id}/targets` accepts, including its own ttl_seconds. At most 32; add the rest afterwards. The whole list is validated before anything is written and inserted in the same transaction as the VM, so a bad entry is a 400 with no VM created rather than a VM with a partial allowlist. Omit it for a VM that may reach nothing until you allow something.
+// @Description
+// @Description The response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'. The allowlist reaches the host with the guest's address, so it is in force by the time the VM is up.
 // @Tags        vms
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
 // @Param       body body createVMReq true "client_id, kernel_id and osimage_id are required"
 // @Success     202 {object} vmDTO "accepted and pending; the host has not reported yet"
-// @Failure     400 {object} apiError "bad size, bad port count, cpus under 1 or memory under 64 MiB"
+// @Failure     400 {object} apiError "bad size, bad port count, cpus under 1, memory under 64 MiB, or a destination that is not allowable"
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "no public key on your account, or over quota"
 // @Failure     404 {object} apiError "no such host, kernel or os image"
@@ -548,6 +566,33 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	diskMiB, err := parseSizeMiB(req.DiskSize)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
+	}
+
+	// The allowlist is settled before anything is written, so a typo in the tenth
+	// destination is a 400 rather than a VM that exists with nine of the ten
+	// allowances its owner asked for.
+	if len(req.Targets) > maxCreateTargets {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf(
+			"a vm can be created with at most %d destinations; add the rest afterwards", maxCreateTargets))
+	}
+	targets := make([]normalizedTarget, 0, len(req.Targets))
+	// The unique index would catch a repeat, but only by aborting the transaction
+	// that is also writing the VM -- so the same request asking for a destination
+	// twice would lose the VM too. Caught here, where it is still just a typo.
+	seenTargets := make(map[string]bool, len(req.Targets))
+	for i, t := range req.Targets {
+		nt, err := normalizeTarget(t)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf(
+				"destination %d (%q): %s", i+1, strings.TrimSpace(t.Destination), err.Error()))
+		}
+		key := nt.params.Destination + "\x00" + nt.params.Transport + "\x00" + nt.params.Ports
+		if seenTargets[key] {
+			return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf(
+				"%s is listed twice", nt.params.Destination))
+		}
+		seenTargets[key] = true
+		targets = append(targets, nt)
 	}
 
 	ctx := c.Request().Context()
@@ -698,8 +743,20 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			DefaultPort: defaultPort,
 			PublicPorts: publicPorts,
 		})
-		if err != nil || ttl == 0 {
+		if err != nil {
 			return err
+		}
+		// The allowlist rides the same transaction as the row it hangs off. A VM
+		// that came up with a partial allowlist would be worse than one that failed
+		// outright: it would look created, and be denied things its owner watched
+		// themselves ask for.
+		for _, nt := range targets {
+			if _, _, err := insertTarget(ctx, q, row, nt); err != nil {
+				return err
+			}
+		}
+		if ttl == 0 {
+			return nil
 		}
 		// The deadline is written here and nowhere else -- there is no expires_at on
 		// vms -- so this insert failing has to take the VM row with it. A sandbox
@@ -723,7 +780,9 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	// violation aborts the transaction it happens in, so a redrawn name needs a
 	// fresh one to insert under.
 	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
-		if ttl == 0 {
+		// A transaction whenever the create writes more than the one row: the TTL
+		// task and the allowlist both have to land with the VM or not at all.
+		if ttl == 0 && len(targets) == 0 {
 			return insert(ctx, h.q, name)
 		}
 		return inTx(ctx, h.pool, h.q, func(q *db.Queries) error {
@@ -1125,6 +1184,146 @@ func domainTargetPorts(ports string) (string, error) {
 			"for any other port allow the address instead")
 }
 
+// normalizedTarget is one requested destination after validation: the columns it
+// becomes, and how long it lives.
+type normalizedTarget struct {
+	params db.CreateVMNetworkTargetParams
+	ttl    time.Duration
+	// ttlSeconds is what was asked for, carried through to the expiry task's
+	// payload -- that records the request, not the deadline computed from it.
+	ttlSeconds int64
+}
+
+// normalizeTarget settles one requested destination into the row it becomes, or
+// explains why it cannot be one.
+//
+// Split out of CreateTarget so that naming destinations while creating a VM
+// applies exactly these rules. Two copies of this would drift, and the half that
+// drifted would be the one handing out access nobody checked.
+//
+// VMID is left unset: the create path does not know it until the row the
+// allowance hangs off has been written.
+func normalizeTarget(req createTargetReq) (normalizedTarget, error) {
+	req.Destination = strings.TrimSpace(req.Destination)
+	req.Ports = strings.ReplaceAll(strings.TrimSpace(req.Ports), " ", "")
+	req.Note = strings.TrimSpace(req.Note)
+	req.Transport = strings.ToLower(strings.TrimSpace(req.Transport))
+
+	ttl, err := parseTTLSeconds(req.TTLSeconds)
+	if err != nil {
+		return normalizedTarget{}, err
+	}
+
+	if req.Destination == "" {
+		return normalizedTarget{}, errors.New("a destination is required")
+	}
+	kind, err := classifyDestination(req.Destination)
+	if err != nil {
+		return normalizedTarget{}, err
+	}
+	if declared := strings.ToLower(strings.TrimSpace(req.Kind)); declared != "" && declared != kind {
+		switch declared {
+		case "domain":
+			return normalizedTarget{}, errors.New("that is an address, not a domain")
+		case "ip":
+			return normalizedTarget{}, errors.New("that is a domain, not an IP address or CIDR")
+		default:
+			return normalizedTarget{}, errors.New("type must be domain or ip")
+		}
+	}
+
+	// The kind decides which of the remaining fields mean anything. Transport is
+	// cleared rather than rejected for a domain: the form hides it, so a stale
+	// value arriving is this server's problem to normalise, not the caller's to
+	// fix. Ports is not cleared -- for a domain it carries which web ports the
+	// name is allowed on, so a wrong value there is a real disagreement about what
+	// is being granted and is reported instead.
+	if kind == "domain" {
+		req.Transport = ""
+		ports, err := domainTargetPorts(req.Ports)
+		if err != nil {
+			return normalizedTarget{}, err
+		}
+		req.Ports = ports
+		// A hostname is matched case-insensitively against buffers Suricata
+		// normalises to lowercase, so storing it lowercased keeps the unique index
+		// from treating Example.com and example.com as two allowances.
+		req.Destination = strings.ToLower(req.Destination)
+	} else {
+		if req.Transport == "" {
+			req.Transport = "tcp"
+		}
+		switch req.Transport {
+		case "tcp", "udp", "any":
+		case "icmp":
+			// Cleared rather than rejected: icmp has no ports, the form hides the field
+			// when it is chosen, and a value arriving anyway is a stale form rather than
+			// something the user is asking for.
+			req.Ports = ""
+		default:
+			return normalizedTarget{}, errors.New("transport must be tcp, udp, icmp or any")
+		}
+		if req.Ports != "" {
+			if !portsPattern.MatchString(req.Ports) {
+				return normalizedTarget{}, errors.New(
+					"ports must be a port, a list like 80,443, or a range like 1000:2000")
+			}
+			for _, part := range strings.Split(strings.ReplaceAll(req.Ports, ":", ","), ",") {
+				n, err := strconv.Atoi(part)
+				if err != nil || n < 1 || n > 65535 {
+					return normalizedTarget{}, errors.New("ports must be between 1 and 65535")
+				}
+			}
+		}
+	}
+
+	return normalizedTarget{
+		params: db.CreateVMNetworkTargetParams{
+			Destination: req.Destination,
+			Kind:        kind,
+			Transport:   req.Transport,
+			Ports:       req.Ports,
+			Note:        req.Note,
+		},
+		ttl:        ttl,
+		ttlSeconds: req.TTLSeconds,
+	}, nil
+}
+
+// insertTarget writes one allowance and, when it is temporary, the task that
+// withdraws it -- inside whatever transaction the caller is running.
+//
+// Shared by the add-a-destination route and the create-a-VM path so that a
+// temporary allowance is recorded identically by both. The destination comes off
+// the normalized params rather than the request: for a domain those differ, and
+// the audit record has to name the row that was actually written.
+func insertTarget(ctx context.Context, q *db.Queries, vm db.Vm, nt normalizedTarget) (db.VmNetworkTarget, db.ScheduledTask, error) {
+	params := nt.params
+	params.VMID = vm.ID
+	t, err := q.CreateVMNetworkTarget(ctx, params)
+	if err != nil || nt.ttl == 0 {
+		return t, db.ScheduledTask{}, err
+	}
+	expiry, err := scheduleTask(ctx, q, scheduleTaskParams{
+		Kind:        taskVMTargetExpire,
+		SubjectKind: subjectVMTarget,
+		SubjectID:   t.ID,
+		Payload: vmTargetExpirePayload{
+			VMID:        uuid.UUID(vm.ID.Bytes).String(),
+			VMName:      vm.Name,
+			Destination: params.Destination,
+			TTLSeconds:  nt.ttlSeconds,
+		},
+		Reason:    fmt.Sprintf("temporary access to %s for %s", params.Destination, formatTTL(nt.ttl)),
+		CreatedBy: vm.CreatedBy,
+		After:     nt.ttl,
+		// Removing an allowance only needs the database; the push that follows is
+		// best-effort and self-heals when the host reconnects. So the default budget
+		// is plenty -- unlike a VM expiry, this does not wait on a machine.
+	})
+	return t, expiry, err
+}
+
 // CreateTarget adds one destination to a VM's egress allowlist.
 //
 // @Summary     Allow a destination
@@ -1157,88 +1356,13 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	req.Destination = strings.TrimSpace(req.Destination)
-	req.Ports = strings.ReplaceAll(strings.TrimSpace(req.Ports), " ", "")
-	req.Note = strings.TrimSpace(req.Note)
-	req.Transport = strings.ToLower(strings.TrimSpace(req.Transport))
-
-	ttl, err := parseTTLSeconds(req.TTLSeconds)
+	nt, err := normalizeTarget(req)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-
-	if req.Destination == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "a destination is required")
-	}
-	kind, err := classifyDestination(req.Destination)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
-	if declared := strings.ToLower(strings.TrimSpace(req.Kind)); declared != "" && declared != kind {
-		switch declared {
-		case "domain":
-			return echo.NewHTTPError(http.StatusBadRequest, "that is an address, not a domain")
-		case "ip":
-			return echo.NewHTTPError(http.StatusBadRequest, "that is a domain, not an IP address or CIDR")
-		default:
-			return echo.NewHTTPError(http.StatusBadRequest, "type must be domain or ip")
-		}
-	}
-
-	// The kind decides which of the remaining fields mean anything. Transport is
-	// cleared rather than rejected for a domain: the form hides it, so a stale
-	// value arriving is this server's problem to normalise, not the caller's to
-	// fix. Ports is not cleared -- for a domain it now carries which web ports the
-	// name is allowed on, so a wrong value there is a real disagreement about what
-	// is being granted and is reported instead.
-	if kind == "domain" {
-		req.Transport = ""
-		ports, err := domainTargetPorts(req.Ports)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-		}
-		req.Ports = ports
-		// A hostname is matched case-insensitively against buffers Suricata
-		// normalises to lowercase, so storing it lowercased keeps the unique index
-		// from treating Example.com and example.com as two allowances.
-		req.Destination = strings.ToLower(req.Destination)
-	} else {
-		if req.Transport == "" {
-			req.Transport = "tcp"
-		}
-		switch req.Transport {
-		case "tcp", "udp", "any":
-		case "icmp":
-			// Cleared rather than rejected: icmp has no ports, the form hides the field
-			// when it is chosen, and a value arriving anyway is a stale form rather than
-			// something the user is asking for.
-			req.Ports = ""
-		default:
-			return echo.NewHTTPError(http.StatusBadRequest, "transport must be tcp, udp, icmp or any")
-		}
-		if req.Ports != "" {
-			if !portsPattern.MatchString(req.Ports) {
-				return echo.NewHTTPError(http.StatusBadRequest,
-					"ports must be a port, a list like 80,443, or a range like 1000:2000")
-			}
-			for _, part := range strings.Split(strings.ReplaceAll(req.Ports, ":", ","), ",") {
-				n, err := strconv.Atoi(part)
-				if err != nil || n < 1 || n > 65535 {
-					return echo.NewHTTPError(http.StatusBadRequest, "ports must be between 1 and 65535")
-				}
-			}
-		}
-	}
+	ttl := nt.ttl
 
 	ctx := c.Request().Context()
-	params := db.CreateVMNetworkTargetParams{
-		VMID:        vm.ID,
-		Destination: req.Destination,
-		Kind:        kind,
-		Transport:   req.Transport,
-		Ports:       req.Ports,
-		Note:        req.Note,
-	}
 	// With a TTL the row and its expiry are written together, for the same reason
 	// as a VM's: the deadline exists only as a task, so an allowance recorded
 	// without one is a temporary grant that turns out to be permanent -- the exact
@@ -1247,27 +1371,7 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	var expiry db.ScheduledTask
 	create := func(q *db.Queries) error {
 		var err error
-		t, err = q.CreateVMNetworkTarget(ctx, params)
-		if err != nil || ttl == 0 {
-			return err
-		}
-		expiry, err = scheduleTask(ctx, q, scheduleTaskParams{
-			Kind:        taskVMTargetExpire,
-			SubjectKind: subjectVMTarget,
-			SubjectID:   t.ID,
-			Payload: vmTargetExpirePayload{
-				VMID:        uuid.UUID(vm.ID.Bytes).String(),
-				VMName:      vm.Name,
-				Destination: req.Destination,
-				TTLSeconds:  req.TTLSeconds,
-			},
-			Reason:    fmt.Sprintf("temporary access to %s for %s", req.Destination, formatTTL(ttl)),
-			CreatedBy: vm.CreatedBy,
-			After:     ttl,
-			// Removing an allowance only needs the database; the push that follows is
-			// best-effort and self-heals when the host reconnects. So the default budget
-			// is plenty -- unlike a VM expiry, this does not wait on a machine.
-		})
+		t, expiry, err = insertTarget(ctx, q, vm, nt)
 		return err
 	}
 	if ttl > 0 {

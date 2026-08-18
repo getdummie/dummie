@@ -28,6 +28,21 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
 import type { DataTableColumn } from '@/lib/table'
+import type { TargetForm } from '@/lib/targets'
+import {
+  applyPreset,
+  blankTarget,
+  describeTarget,
+  destinationPlaceholder,
+  domainPortChoices,
+  portPresets,
+  resetForKind,
+  toTargetPayload,
+} from '@/lib/targets'
+
+// Mirrors maxCreateTargets on the server. Said here only so the dialog can stop
+// before the round trip; the server is the one that decides.
+const maxTargets = 32
 
 const columns: DataTableColumn[] = [
   { key: 'name', label: 'Name' },
@@ -348,6 +363,30 @@ const blankForm = {
 }
 const form = reactive({ ...blankForm })
 
+// The allowlist the VM is born with. Separate from `form` because it is a list,
+// and because it is the one part of the dialog that is optional in a way the
+// rest is not: a VM with none of these is created just fine and reaches nothing
+// until somebody allows something.
+const targets = ref<TargetForm[]>([])
+
+function addTargetRow() {
+  targets.value = [...targets.value, blankTarget()]
+}
+
+function removeTargetRow(i: number) {
+  targets.value = targets.value.filter((_, n) => n !== i)
+}
+
+// Same reasoning as the VM page's form: called from the control, never from a
+// watcher, so a value set programmatically is not wiped a tick later.
+function onTargetKindChange(t: TargetForm) {
+  resetForKind(t)
+}
+
+function onTargetPresetChange(t: TargetForm, key: string) {
+  applyPreset(t, key)
+}
+
 const selectedKernel = computed(() => kernels.value.find(k => k.id === form.kernel_id) ?? null)
 const selectedOSImage = computed(() => osImages.value.find(o => o.id === form.osimage_id) ?? null)
 
@@ -363,6 +402,7 @@ function pickOSImage(id: string) {
 
 function resetForm() {
   Object.assign(form, blankForm)
+  targets.value = []
   createError.value = null
   copiedFrom.value = null
 }
@@ -495,6 +535,21 @@ function validate(): string | null {
   if (!Number.isInteger(ttl) || ttl < 0) return 'TTL must be a whole number of seconds, or 0 for no limit.'
   if (ttl > 0 && ttl < 10) return 'A TTL must be at least 10 seconds. Use 0 for no limit.'
   if (ttl > 30 * 24 * 3600) return 'A TTL must be at most 30 days (2592000 seconds).'
+
+  // Only the checks that are cheap and unambiguous here. Whether a destination
+  // is a name or an address, and whether a port can actually be enforced, is the
+  // server's call — it has the one implementation of that, and saying it twice
+  // is how the two answers start disagreeing.
+  if (targets.value.length > maxTargets) {
+    return `A VM can start with at most ${maxTargets} destinations. Add the rest after it is created.`
+  }
+  for (const [i, t] of targets.value.entries()) {
+    if (!t.destination.trim()) return `Destination ${i + 1} is empty. Fill it in or remove the row.`
+    const tttl = Number(t.ttl_seconds)
+    if (!Number.isInteger(tttl) || tttl < 0) return `Destination ${i + 1}: TTL must be a whole number of seconds, or 0.`
+    if (tttl > 0 && tttl < 10) return `Destination ${i + 1}: a TTL must be at least 10 seconds. Use 0 for permanent.`
+    if (tttl > 30 * 24 * 3600) return `Destination ${i + 1}: a TTL must be at most 30 days (2592000 seconds).`
+  }
   return null
 }
 
@@ -521,6 +576,7 @@ async function create() {
         kernel_id: form.kernel_id,
         osimage_id: form.osimage_id,
         ttl_seconds: Number(form.ttl_seconds),
+        targets: targets.value.map(toTargetPayload),
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -862,6 +918,159 @@ async function confirmDestroy() {
                 <p v-else-if="!osImages.length" class="text-xs text-muted-foreground">
                   {{ osImagesError ?? 'No OS images have been uploaded yet. Ask an admin to add one.' }}
                 </p>
+              </div>
+
+              <!-- The allowlist the VM is born with. Here rather than left to the
+                   VM page because the guest starts reaching for things the moment
+                   it boots: an allowance added a minute later is a minute of a
+                   sandbox that looks broken rather than governed. -->
+              <div class="space-y-3 border-t border-border pt-4">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p class="text-sm font-medium">Allowed destinations</p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      Everything this VM may reach. Leave empty and it reaches nothing until you
+                      allow something — you can add these later too.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    class="font-mono text-xs"
+                    :disabled="targets.length >= maxTargets"
+                    @click="addTargetRow"
+                  >
+                    <Plus class="size-4" aria-hidden="true" />
+                    Add
+                  </Button>
+                </div>
+
+                <div
+                  v-for="(t, i) in targets"
+                  :key="i"
+                  class="space-y-3 rounded-lg border border-border p-3"
+                >
+                  <div class="flex items-center justify-between gap-2">
+                    <p class="eyebrow text-muted-foreground">Destination {{ i + 1 }}</p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      class="size-7 text-destructive hover:text-destructive"
+                      :aria-label="`Remove destination ${i + 1}`"
+                      @click="removeTargetRow(i)"
+                    >
+                      <Trash2 class="size-4" aria-hidden="true" />
+                    </Button>
+                  </div>
+
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="space-y-2">
+                      <Label :for="`t-kind-${i}`">Type</Label>
+                      <Select v-model="t.kind" @update:model-value="onTargetKindChange(t)">
+                        <SelectTrigger :id="`t-kind-${i}`" class="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="domain">Domain</SelectItem>
+                          <SelectItem value="ip">IP address or CIDR</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div class="space-y-2">
+                      <Label :for="`t-dest-${i}`">Destination</Label>
+                      <Input
+                        :id="`t-dest-${i}`"
+                        v-model="t.destination"
+                        :placeholder="destinationPlaceholder(t.kind)"
+                      />
+                    </div>
+                  </div>
+
+                  <!-- A domain chooses between the two ports its name can be
+                       checked on, or neither. Not a free port field: the ports
+                       suricata looks for http and tls on come from a per-host
+                       config, so a rule on 8443 would load and never match. -->
+                  <div v-if="t.kind === 'domain'" class="space-y-2">
+                    <Label :for="`t-dports-${i}`">Allow on</Label>
+                    <Select v-model="t.domainPorts">
+                      <SelectTrigger :id="`t-dports-${i}`" class="w-full">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem v-for="c in domainPortChoices" :key="c.value" :value="c.value">
+                          {{ c.label }}
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <!-- Transport and ports exist only for an address. A domain is
+                       matched by the name in the traffic, and the header of the
+                       rule that does it names no address. -->
+                  <template v-else>
+                    <div class="space-y-2">
+                      <Label :for="`t-preset-${i}`">Protocol</Label>
+                      <Select v-model="t.preset" @update:model-value="(v: unknown) => onTargetPresetChange(t, String(v))">
+                        <SelectTrigger :id="`t-preset-${i}`" class="w-full">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem v-for="p in portPresets" :key="p.key" :value="p.key">
+                            {{ p.label }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-2">
+                      <div class="space-y-2">
+                        <Label :for="`t-transport-${i}`">Transport</Label>
+                        <Select v-model="t.transport">
+                          <SelectTrigger :id="`t-transport-${i}`" class="w-full">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="tcp">tcp</SelectItem>
+                            <SelectItem value="udp">udp</SelectItem>
+                            <SelectItem value="icmp">icmp (ping)</SelectItem>
+                            <SelectItem value="any">any</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div v-if="t.transport !== 'icmp'" class="space-y-2">
+                        <Label :for="`t-ports-${i}`">Ports</Label>
+                        <Input
+                          :id="`t-ports-${i}`"
+                          v-model="t.ports"
+                          placeholder="443, 80,443, 1000:2000"
+                        />
+                      </div>
+                    </div>
+                  </template>
+
+                  <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="space-y-2">
+                      <Label :for="`t-note-${i}`">Note</Label>
+                      <Input :id="`t-note-${i}`" v-model="t.note" placeholder="why this is needed" />
+                    </div>
+                    <div class="space-y-2">
+                      <Label :for="`t-ttl-${i}`">TTL (seconds)</Label>
+                      <Input
+                        :id="`t-ttl-${i}`"
+                        v-model="t.ttl_seconds"
+                        type="number"
+                        min="0"
+                        step="1"
+                        inputmode="numeric"
+                      />
+                    </div>
+                  </div>
+
+                  <p class="font-mono text-xs text-muted-foreground">
+                    {{ describeTarget(t) }}{{ Number(t.ttl_seconds) > 0 ? ` · expires in ${t.ttl_seconds}s` : '' }}
+                  </p>
+                </div>
               </div>
 
               <p v-if="wouldExceed" class="text-sm text-destructive">

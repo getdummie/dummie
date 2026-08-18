@@ -28,6 +28,17 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import {
+  applyPreset,
+  blankTarget,
+  destinationPlaceholder as destinationPlaceholderFor,
+  domainPortChoices,
+  matchSummary as matchSummaryFor,
+  portPresets,
+  presetWarning as presetWarningFor,
+  resetForKind,
+  toTargetPayload,
+} from '@/lib/targets'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -93,28 +104,8 @@ interface Target {
 // selected", so an item carrying it throws on mount and takes the whole dropdown --
 // and the dialog around it -- with it. The server normalises '80,443' to '' anyway,
 // so nothing downstream can tell the difference.
-const domainPortChoices = [
-  { value: '80,443', label: 'https and http (443, 80)' },
-  { value: '443', label: 'https only (443)' },
-  { value: '80', label: 'http only (80)' },
-  { value: 'none', label: 'lookup only — resolves, no access' },
-]
-
-// Presets for an address allowance. Presentation only: each expands to the
-// transport and ports the row actually stores.
-const portPresets = [
-  { key: 'ssh', label: 'SSH / SFTP (tcp 22)', transport: 'tcp', ports: '22' },
-  { key: 'https', label: 'HTTPS (tcp 443)', transport: 'tcp', ports: '443' },
-  { key: 'http', label: 'HTTP (tcp 80)', transport: 'tcp', ports: '80' },
-  { key: 'postgres', label: 'PostgreSQL (tcp 5432)', transport: 'tcp', ports: '5432' },
-  { key: 'mysql', label: 'MySQL (tcp 3306)', transport: 'tcp', ports: '3306' },
-  { key: 'redis', label: 'Redis (tcp 6379)', transport: 'tcp', ports: '6379' },
-  { key: 'smtp', label: 'SMTP submission (tcp 587)', transport: 'tcp', ports: '587' },
-  { key: 'smtps', label: 'SMTPS (tcp 465)', transport: 'tcp', ports: '465' },
-  { key: 'ntp', label: 'NTP (udp 123)', transport: 'udp', ports: '123' },
-  { key: 'ftp', label: 'FTP control (tcp 21)', transport: 'tcp', ports: '21' },
-  { key: 'custom', label: 'Custom…', transport: '', ports: '' },
-]
+// domainPortChoices and portPresets now live in lib/targets, shared with the
+// new-VM dialog's starting allowlist.
 
 // Something this VM tried to do that policy stopped. Two shapes: a 'lookup' the
 // resolver refused, which never became a packet at all, and a 'packet' the ruleset
@@ -513,70 +504,29 @@ const addError = ref<string | null>(null)
 // The kind is chosen, not inferred from what has been typed. Inferring it meant
 // transport and ports simply did not exist on an empty form, so there was no way
 // to discover that an address entry takes them at all.
-// domainPorts is separate from ports because the same empty string means opposite
-// things to the two kinds -- every port for an address, both web ports for a name --
-// so one field would carry a value that is wrong the moment the type changes.
-const blankTarget = {
-  kind: 'domain',
-  destination: '',
-  transport: 'tcp',
-  ports: '',
-  domainPorts: '80,443',
-  note: '',
-  preset: 'custom',
-  // Seconds. '0' is a permanent allowance; anything else has the control plane
-  // withdraw it that many seconds from now.
-  ttl_seconds: '0',
-}
-const form = reactive({ ...blankTarget })
+const form = reactive(blankTarget())
 
 function resetTargetForm() {
-  Object.assign(form, blankTarget)
+  Object.assign(form, blankTarget())
   addError.value = null
 }
 
-// Switching type has to clear the ports. The two kinds accept disjoint values --
-// 'none' is meaningless on an address and '5432' is rejected on a domain -- so a
-// value left over from the other kind is a validation error the user did not type.
-//
-// A change handler rather than a watcher on form.kind, and that is not a style
+// Change handlers rather than watchers on form.kind, and that is not a style
 // choice: a watcher flushes after the current call stack, so prefilling the form
 // from a denial -- which sets the kind and then the fields that go with it -- would
-// have the reset land afterwards and wipe them. This only runs when someone
+// have the reset land afterwards and wipe them. These only run when someone
 // actually operates the control.
 function onKindChange() {
-  form.ports = ''
-  form.domainPorts = '80,443'
-  form.transport = 'tcp'
-  form.preset = 'custom'
+  resetForKind(form)
 }
 
-// Choosing a preset writes through to the fields that are actually stored, so the
-// raw values stay visible and editable rather than hidden behind the label.
 function onPresetChange(key: string) {
-  const preset = portPresets.find(p => p.key === key)
-  if (!preset || preset.key === 'custom') return
-  form.transport = preset.transport
-  form.ports = preset.ports
+  applyPreset(form, key)
 }
 
-const destinationPlaceholder = computed(() =>
-  form.kind === 'domain' ? 'ifconfig.io' : '1.1.1.1 or 10.0.0.0/8')
-
-// Says what the row will actually compile to. The two kinds differ in a way the
-// field labels alone do not explain: a domain is matched by the name in the
-// traffic, and an address is matched by the rule header.
-const matchSummary = computed(() =>
-  form.kind === 'domain'
-    ? 'Matched by name — the TLS SNI or the HTTP host — and answered by the resolver. Only 443 and 80 can be checked this way.'
-    : 'Matched by address in the rule header, with the transport and ports below. This is how anything that is not https or http is allowed.')
-
-// Plain FTP is the one preset that does not describe a whole allowance: the data
-// channel lands on a port neither of us knows in advance.
-const presetWarning = computed(() =>
-  form.preset === 'ftp'
-    ? 'FTP moves data on a second, unpredictable port. Add the passive port range your server is configured for as another entry, or use SFTP, which needs only port 22.'
-    : '')
+const destinationPlaceholder = computed(() => destinationPlaceholderFor(form.kind))
+const matchSummary = computed(() => matchSummaryFor(form.kind))
+const presetWarning = computed(() => presetWarningFor(form.preset))
 
 async function addTarget() {
   const problem = ttlProblem(form.ttl_seconds)
@@ -590,14 +540,7 @@ async function addTarget() {
     const res = await authFetch(`/vms/${id.value}/targets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        kind: form.kind,
-        destination: form.destination,
-        transport: form.transport,
-        ports: form.kind === 'domain' ? form.domainPorts : form.ports,
-        note: form.note,
-        ttl_seconds: Number(form.ttl_seconds),
-      }),
+      body: JSON.stringify(toTargetPayload(form)),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     addOpen.value = false
