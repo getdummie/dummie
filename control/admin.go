@@ -22,18 +22,26 @@ import (
 // adminJWT gates a route group: it verifies the access-token JWT (from the
 // httpOnly cookie, or an Authorization: Bearer header for API clients) and
 // requires the "admin" role. 401 for missing/invalid tokens, 403 for non-admins.
+//
+// It passes a nil *db.Queries deliberately: that is what makes a personal
+// access token unable to reach an admin route, including one belonging to an
+// admin. There is no branch here that reads the token table, so there is no
+// flag to set wrong and no escalation to audit for.
 func adminJWT(cfg authConfig) echo.MiddlewareFunc {
-	return jwtAuth(cfg, true)
+	return jwtAuth(cfg, nil, true)
 }
 
-// userJWT is the same gate without the role check: any signed-in account. Every
-// route behind it must scope its own reads and writes to the caller's "uid" --
-// the middleware proves who is asking, not what they may touch.
-func userJWT(cfg authConfig) echo.MiddlewareFunc {
-	return jwtAuth(cfg, false)
+// userJWT is the same gate without the role check: any signed-in account,
+// proven either by a session JWT or by a personal access token. Every route
+// behind it must scope its own reads and writes to the caller's "uid" -- the
+// middleware proves who is asking, not what they may touch.
+func userJWT(cfg authConfig, q *db.Queries) echo.MiddlewareFunc {
+	return jwtAuth(cfg, q, false)
 }
 
-func jwtAuth(cfg authConfig, requireAdmin bool) echo.MiddlewareFunc {
+// jwtAuth verifies the caller. pats is non-nil only on the non-admin gate; when
+// it is nil a dpat_ Bearer is simply not a JWT and fails as one.
+func jwtAuth(cfg authConfig, pats *db.Queries, requireAdmin bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			raw := ""
@@ -47,6 +55,13 @@ func jwtAuth(cfg authConfig, requireAdmin bool) echo.MiddlewareFunc {
 			}
 			if raw == "" {
 				return echo.NewHTTPError(http.StatusUnauthorized, "missing access token")
+			}
+
+			if pats != nil && strings.HasPrefix(raw, patPrefix) {
+				if err := authenticatePAT(c, pats, raw); err != nil {
+					return err
+				}
+				return next(c)
 			}
 
 			claims := jwt.MapClaims{}

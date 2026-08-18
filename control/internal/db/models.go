@@ -83,6 +83,18 @@ type Osimage struct {
 	SoftDeletedAt pgtype.Timestamptz
 }
 
+type PersonalAccessToken struct {
+	ID          pgtype.UUID
+	UserID      pgtype.UUID
+	TokenHash   string
+	TokenPrefix string
+	Label       string
+	ExpiresAt   pgtype.Timestamptz
+	Revoked     bool
+	LastUsedAt  pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
 type RefreshToken struct {
 	ID        pgtype.UUID
 	UserID    pgtype.UUID

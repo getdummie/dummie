@@ -229,13 +229,21 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 	// Own profile: no id in the path, so the only account either route can reach
 	// is the one the JWT names.
 	profileH := &ProfileHandler{q: q}
-	me := api.Group("/me", userJWT(cfg))
+	me := api.Group("/me", userJWT(cfg, q))
 	me.GET("", profileH.GetMe)
 	me.PUT("", profileH.UpdateMe)
 
+	// Personal access tokens: the credential a script carries to reach the
+	// self-service API. Behind denyPAT so a token cannot mint its successor.
+	pats := me.Group("/tokens", denyPAT)
+	pats.GET("", profileH.ListTokens)
+	pats.POST("", profileH.CreateToken)
+	pats.POST("/:id/revoke", profileH.RevokeToken)
+	pats.DELETE("/:id", profileH.DeleteToken)
+
 	// Self-service VMs: any signed-in account. Every route scopes to the caller.
 	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
-	vms := api.Group("/vms", userJWT(cfg))
+	vms := api.Group("/vms", userJWT(cfg, q))
 	vms.GET("", userH.ListVMs)
 	vms.POST("", userH.CreateVM)
 	vms.GET("/quota", userH.GetQuota)

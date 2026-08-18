@@ -296,6 +296,10 @@ async function save() {
           </p>
         </div>
       </form>
+
+      <!-- Outside the profile form: these save themselves, and nesting them
+           would put their buttons inside a form that submits the profile. -->
+      <PersonalAccessTokens class="mt-6" />
     </template>
   </div>
 </template>
