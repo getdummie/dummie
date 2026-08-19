@@ -45,7 +45,7 @@ type check struct {
 
 var checks = []check{
 	{"os is linux", checkLinux},
-	{"distribution is ubuntu or debian", checkDistro},
+	{"distribution is supported", checkDistro},
 	{"qemu is installed", checkQEMU},
 	{"qemu-img is installed", checkQEMUImg},
 	{"hardware virtualisation is usable", checkKVM},
@@ -65,7 +65,14 @@ var checks = []check{
 }
 
 // supportedDistros are the os-release IDs the client is tested against.
-var supportedDistros = []string{"ubuntu", "debian"}
+//
+// What a distribution has to provide is systemd, cgroup v2, nftables and an
+// FHS layout -- nothing here installs packages or shells out to a package
+// manager, so the list is about what has been run rather than what could be. The
+// two places that carry a Debian assumption both check the host instead of
+// trusting it: /dev/kvm's group is read off the device (see kvmAccess), and the
+// checks below look for binaries on PATH rather than for packages.
+var supportedDistros = []string{"ubuntu", "debian", "arch"}
 
 func doctorCommand() *cli.Command {
 	return &cli.Command{
@@ -116,21 +123,21 @@ func checkDistro() (result, string) {
 	if slices.Contains(supportedDistros, rel["ID"]) {
 		return pass, describeOSRelease(rel)
 	}
-	// Derivatives (Mint, Pop!_OS, Raspberry Pi OS...) will mostly behave, but
-	// they are not what we test against.
+	// Derivatives (Mint, Pop!_OS, Raspberry Pi OS, Manjaro, EndeavourOS...) will
+	// mostly behave, but they are not what we test against.
 	for _, id := range supportedDistros {
 		if slices.Contains(strings.Fields(rel["ID_LIKE"]), id) {
 			return warn, describeOSRelease(rel) + " (" + id + "-derived, not " + id + ")"
 		}
 	}
-	return fail, describeOSRelease(rel) + " is not ubuntu or debian"
+	return fail, describeOSRelease(rel) + " is not " + strings.Join(supportedDistros, ", ")
 }
 
 func checkQEMU() (result, string) {
 	bin := qemuBinary()
 	path, err := exec.LookPath(bin)
 	if err != nil {
-		return fail, bin + " is not on PATH; install qemu-system-x86 (or the arch equivalent)"
+		return fail, bin + " is not on PATH; install qemu-system-x86 on debian, qemu-base on arch"
 	}
 	out, err := exec.Command(bin, "--version").Output()
 	if err != nil {
@@ -143,7 +150,7 @@ func checkQEMU() (result, string) {
 func checkQEMUImg() (result, string) {
 	path, err := exec.LookPath("qemu-img")
 	if err != nil {
-		return fail, "qemu-img is not on PATH; install qemu-utils (per-vm disk overlays need it)"
+		return fail, "qemu-img is not on PATH; install qemu-utils on debian, qemu-img on arch (per-vm disk overlays need it)"
 	}
 	return pass, path
 }
