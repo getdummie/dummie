@@ -936,6 +936,79 @@ func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 	return c.JSON(http.StatusAccepted, toVMDTO(row))
 }
 
+// DeleteVM destroys the guest and takes the record with it. This is the
+// difference from /destroy, which leaves the row behind as 'gone': somebody
+// deleting their own VM is not asking for a tombstone in their list.
+//
+// A create still in flight is refused rather than raced. Its row is what the
+// result frame settles and the guest may already exist on the host, so deleting
+// the record now would leave a VM nobody owns until the host's next inventory
+// report adopts it.
+//
+// @Summary     Delete a VM
+// @Description Destroys the guest on its host and deletes the record. Unlike /destroy, nothing is left behind to look up afterwards. 202 means the destroy was delivered and the record will go when the host confirms; 204 means there was nothing on any host and the record is already gone. Frees the quota the VM was holding.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     202 {object} vmDTO "the destroy was delivered to the host; the record goes when the host confirms"
+// @Success     204 "there was nothing on a host; the record is deleted"
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the create is still in flight, or the host has no live socket"
+// @Router      /vms/{id} [delete]
+func (h *UserHandler) DeleteVM(c *echo.Context) error {
+	row, err := h.ownedVM(c)
+	if err != nil {
+		return err
+	}
+	ctx := c.Request().Context()
+
+	if row.Status == "pending" {
+		return echo.NewHTTPError(http.StatusConflict, "this vm is still being created; try again once it has settled")
+	}
+
+	// Nothing on any host to destroy: a create that failed before the host got
+	// that far, or a VM already gone. The record is all there is left to delete,
+	// and the generated policies already exclude it, so nothing has to be pushed.
+	if row.VMID == "" || row.Status == "failed" || row.Status == "gone" {
+		if err := h.q.DeleteVM(ctx, row.ID); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not delete vm")
+		}
+		cancelTasksForSubject(ctx, h.q, subjectVM, row.ID, "the vm was deleted")
+		return c.NoContent(http.StatusNoContent)
+	}
+
+	clientID := uuid.UUID(row.ClientID.Bytes).String()
+	if !h.hub.Connected(clientID) {
+		return echo.NewHTTPError(http.StatusConflict, "the host running this vm is not connected")
+	}
+	rowID := uuid.UUID(row.ID.Bytes).String()
+	env, err := proto.NewEnvelope(proto.TypeJob, rowID, proto.Job{
+		Kind: proto.KindVMDestroy,
+		VMID: row.VMID,
+	})
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not build the job")
+	}
+	// Marked before the frame goes out, not after: the result can come back on the
+	// client's socket while this handler is still running, and a mark written after
+	// that would arrive too late to stop the row settling as 'gone'.
+	h.hub.MarkPurge(rowID)
+	if err := h.hub.Send(clientID, env); err != nil {
+		h.hub.TakePurge(rowID)
+		return echo.NewHTTPError(http.StatusConflict, "could not deliver the job to the host")
+	}
+	cancelTasksForSubject(ctx, h.q, subjectVM, row.ID, "the vm was deleted before its ttl ran out")
+
+	// 202: the record goes when the host confirms the guest is destroyed, so a
+	// destroy that fails leaves the VM -- and its record -- where they were. The row
+	// as it stands is the body, like every other action, so a caller polling for it
+	// to disappear has something to compare against.
+	return c.JSON(http.StatusAccepted, toVMDTO(row))
+}
+
 // --- network targets --------------------------------------------------------
 
 type vmTargetDTO struct {

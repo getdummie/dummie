@@ -219,10 +219,17 @@ const settleTimeoutMs = 60_000
 const settling = ref<Record<string, { want: VM['status'], until: number }>>({})
 
 const anySettling = computed(() => Object.keys(settling.value).length > 0)
+// Rows whose delete is waiting on the host to confirm the destroy. Kept apart
+// from `settling`, which tracks a row heading for a status: these are heading
+// for not existing.
+const deleting = ref<string[]>([])
+const anyDeleting = computed(() => deleting.value.length > 0)
 let timer: ReturnType<typeof setInterval> | null = null
 
 // Drop a row from `settling` once the server agrees, or once waiting stops
 // being reasonable — otherwise a job that never lands leaves the switch stuck.
+// A pending delete is dropped once the row is gone from the list, or once it
+// comes back carrying the error a failed destroy left on it.
 watch(items, (rows) => {
   const now = Date.now()
   const next: typeof settling.value = {}
@@ -231,13 +238,17 @@ watch(items, (rows) => {
     if (row && row.status !== s.want && now < s.until) next[id] = s
   }
   settling.value = next
+  deleting.value = deleting.value.filter((id) => {
+    const row = rows.find(r => r.id === id)
+    return !!row && !row.last_error
+  })
 })
 
-watch([anyPending, anySettling], ([pending, waiting]) => {
-  if ((pending || waiting) && !timer) {
+watch([anyPending, anySettling, anyDeleting], ([pending, waiting, purging]) => {
+  if ((pending || waiting || purging) && !timer) {
     timer = setInterval(() => load(true), 5000)
   }
-  else if (!pending && !waiting && timer) {
+  else if (!pending && !waiting && !purging && timer) {
     clearInterval(timer)
     timer = null
   }
@@ -632,27 +643,34 @@ async function toggleRunning(v: VM, run: boolean) {
   }
 }
 
-// --- destroy ---
-const toDestroy = ref<VM | null>(null)
+// --- delete ---
+const toDelete = ref<VM | null>(null)
 const working = ref(false)
 const actionError = ref<string | null>(null)
 
-function destroyable(v: VM) {
-  return !!v.vm_id && v.status !== 'gone'
+// Anything but a create in flight can go: a row with nothing on a host is
+// deleted outright, and one with a guest is destroyed first. 'pending' is the
+// exception the server refuses, since its row is what the host's result settles.
+function deletable(v: VM) {
+  return v.status !== 'pending'
 }
 
-async function confirmDestroy() {
-  if (!toDestroy.value) return
+async function confirmDelete() {
+  if (!toDelete.value) return
+  const id = toDelete.value.id
   working.value = true
   actionError.value = null
   try {
-    const res = await authFetch(`/vms/${toDestroy.value.id}/destroy`, { method: 'POST' })
+    const res = await authFetch(`/vms/${id}`, { method: 'DELETE' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    toDestroy.value = null
+    // 202 means the destroy is on its way to the host and the row goes when it
+    // confirms, so the id is held until a poll stops returning it.
+    if (res.status === 202) deleting.value = [...deleting.value, id]
+    toDelete.value = null
     await load(true)
   }
   catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not destroy the VM'
+    actionError.value = e instanceof Error ? e.message : 'Could not delete the VM'
   }
   finally {
     working.value = false
@@ -1135,7 +1153,7 @@ async function confirmDestroy() {
     <Alert v-if="atCapacity && !loading" class="mt-4">
       <AlertTitle>Allowance fully used</AlertTitle>
       <AlertDescription>
-        Destroy a VM to free capacity, or ask an admin to raise your limit.
+        Delete a VM to free capacity, or ask an admin to raise your limit.
       </AlertDescription>
     </Alert>
 
@@ -1227,11 +1245,13 @@ async function confirmDestroy() {
               variant="ghost"
               size="icon"
               class="text-destructive hover:text-destructive"
-              :disabled="!destroyable(v)"
-              :aria-label="destroyable(v)
-                ? `Destroy VM ${v.name || v.vm_id}`
-                : `Cannot destroy ${v.name || v.vm_id}: it does not exist on a host`"
-              @click="toDestroy = v"
+              :disabled="!deletable(v) || deleting.includes(v.id)"
+              :aria-label="!deletable(v)
+                ? `Cannot delete ${v.name || v.vm_id}: it is still being created`
+                : deleting.includes(v.id)
+                  ? `Deleting ${v.name || v.vm_id}`
+                  : `Delete VM ${v.name || v.vm_id}`"
+              @click="toDelete = v"
             >
               <Trash2 class="size-4" aria-hidden="true" />
             </Button>
@@ -1240,24 +1260,25 @@ async function confirmDestroy() {
       </TableRow>
     </DataTable>
 
-    <!-- destroy confirm -->
-    <Dialog :open="!!toDestroy" @update:open="(v: boolean) => { if (!v) toDestroy = null }">
+    <!-- delete confirm -->
+    <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Destroy VM</DialogTitle>
+          <DialogTitle>Delete VM</DialogTitle>
           <DialogDescription>
-            <span class="font-mono text-foreground">{{ toDestroy?.name || toDestroy?.vm_id }}</span>
-            is shut down and its disk is deleted on the host. This cannot be undone.
-            The capacity it holds is returned to your allowance.
+            <span class="font-mono text-foreground">{{ toDelete?.name || toDelete?.vm_id }}</span>
+            is shut down, its disk is deleted on the host, and its record here goes
+            with it. This cannot be undone. The capacity it holds is returned to your
+            allowance.
           </DialogDescription>
         </DialogHeader>
-        <FormError id="destroy-vm-error" :message="actionError" />
+        <FormError id="delete-vm-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
           </DialogClose>
-          <Button variant="destructive" class="font-mono text-xs" :disabled="working" @click="confirmDestroy">
-            {{ working ? 'Destroying…' : 'Destroy' }}
+          <Button variant="destructive" class="font-mono text-xs" :disabled="working" @click="confirmDelete">
+            {{ working ? 'Deleting…' : 'Delete' }}
           </Button>
         </DialogFooter>
       </DialogContent>

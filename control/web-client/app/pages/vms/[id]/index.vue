@@ -209,7 +209,17 @@ async function load(quiet = false) {
   error.value = null
   try {
     const res = await authFetch(`/vms/${id.value}`)
-    if (res.status === 404) throw new Error('This VM does not exist, or is not yours.')
+    if (res.status === 404) {
+      // The record going missing while a delete is in flight is the delete landing,
+      // so this ends on the list rather than on an error about a VM the user just
+      // removed on purpose.
+      if (purging.value) {
+        purging.value = null
+        await navigateTo('/vms')
+        return
+      }
+      throw new Error('This VM does not exist, or is not yours.')
+    }
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     vm.value = await res.json()
     await loadTargets()
@@ -300,14 +310,23 @@ const switchable = computed(() => {
   return !!v?.vm_id && (v.status === 'running' || v.status === 'stopped')
 })
 
+// Set from a delete's 202 until the record goes. Separate from settling, which
+// tracks a row heading for a status: this one is heading for not existing, and
+// the page follows it to the list when it does.
+const purging = ref<{ until: number } | null>(null)
+
 watch(vm, (v) => {
   const s = settling.value
   if (s && v && (v.status === s.want || Date.now() >= s.until)) settling.value = null
+  // A destroy that failed leaves the message on the row and the VM where it was,
+  // so the wait ends and the error is what the page shows.
+  const p = purging.value
+  if (p && v && (v.last_error || Date.now() >= p.until)) purging.value = null
 })
 
 // Poll only while something is in flight; a settled VM does not need a timer.
-watch([() => vm.value?.status, settling], () => {
-  const busy = vm.value?.status === 'pending' || !!settling.value
+watch([() => vm.value?.status, settling, purging], () => {
+  const busy = vm.value?.status === 'pending' || !!settling.value || !!purging.value
   if (busy && !timer) timer = setInterval(() => load(true), 5000)
   else if (!busy && timer) {
     clearInterval(timer)
@@ -333,32 +352,39 @@ async function togglePower(run: boolean) {
   }
 }
 
-// --- destroy ---
-const destroyOpen = ref(false)
-const destroying = ref(false)
+// --- delete ---
+const deleteOpen = ref(false)
+const deleting = ref(false)
 
-const destroyable = computed(() => {
-  const v = vm.value
-  return !!v?.vm_id && v.status !== 'gone'
-})
+// Anything but a create in flight can go: a VM with a guest is destroyed first,
+// a record with nothing on a host is deleted outright. 'pending' is the one the
+// server refuses, since its row is what the host's result frame settles.
+const deletable = computed(() => vm.value?.status !== 'pending')
 
-async function confirmDestroy() {
-  destroying.value = true
+async function confirmDelete() {
+  deleting.value = true
   actionError.value = null
   try {
-    const res = await authFetch(`/vms/${id.value}/destroy`, { method: 'POST' })
+    const res = await authFetch(`/vms/${id.value}`, { method: 'DELETE' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    destroyOpen.value = false
-    // Stay put and let the poll show it reach 'gone': navigating away would
-    // claim the destroy finished when the host has only just been asked.
-    settling.value = { want: 'gone', until: Date.now() + settleTimeoutMs }
+    deleteOpen.value = false
+    // 204: there was nothing on a host and the record is already gone, so there is
+    // nothing left on this page to look at.
+    if (res.status !== 202) {
+      await navigateTo('/vms')
+      return
+    }
+    // 202: stay put until the record disappears. Leaving now would claim the guest
+    // was destroyed when the host has only just been asked.
+    purging.value = { until: Date.now() + settleTimeoutMs }
     await load(true)
   }
   catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not destroy the VM'
+    purging.value = null
+    actionError.value = e instanceof Error ? e.message : 'Could not delete the VM'
   }
   finally {
-    destroying.value = false
+    deleting.value = false
   }
 }
 
@@ -894,14 +920,14 @@ async function confirmRemove() {
             variant="outline"
             size="sm"
             class="font-mono text-xs text-destructive hover:text-destructive"
-            :disabled="!destroyable"
-            :aria-label="destroyable
-              ? 'Destroy this VM'
-              : `Cannot destroy this VM: it is ${vm.status}`"
-            @click="destroyOpen = true"
+            :disabled="!deletable || !!purging"
+            :aria-label="deletable
+              ? 'Delete this VM'
+              : `Cannot delete this VM: it is ${vm.status}`"
+            @click="deleteOpen = true"
           >
             <Trash2 class="size-4" aria-hidden="true" />
-            Destroy
+            {{ purging ? 'Deleting…' : 'Delete' }}
           </Button>
         </div>
       </div>
@@ -1627,24 +1653,25 @@ async function confirmRemove() {
       </section>
     </template>
 
-    <!-- destroy confirm -->
-    <Dialog v-model:open="destroyOpen">
+    <!-- delete confirm -->
+    <Dialog v-model:open="deleteOpen">
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Destroy VM</DialogTitle>
+          <DialogTitle>Delete VM</DialogTitle>
           <DialogDescription>
             <span class="font-mono text-foreground">{{ vm?.name || vm?.vm_id }}</span>
-            is shut down and its disk is deleted on the host. This cannot be undone.
-            The vCPU, memory and disk it holds are returned to your allowance.
+            is shut down, its disk is deleted on the host, and its record here goes
+            with it. This cannot be undone. The vCPU, memory and disk it holds are
+            returned to your allowance.
           </DialogDescription>
         </DialogHeader>
-        <FormError id="destroy-vm-error" :message="actionError" />
+        <FormError id="delete-vm-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
           </DialogClose>
-          <Button variant="destructive" class="font-mono text-xs" :disabled="destroying" @click="confirmDestroy">
-            {{ destroying ? 'Destroying…' : 'Destroy' }}
+          <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
+            {{ deleting ? 'Deleting…' : 'Delete' }}
           </Button>
         </DialogFooter>
       </DialogContent>

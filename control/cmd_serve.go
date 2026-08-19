@@ -256,6 +256,7 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 	vms.GET("/kernels", userH.ListKernels)
 	vms.GET("/osimages", userH.ListOSImages)
 	vms.GET("/:id", userH.GetVM)
+	vms.DELETE("/:id", userH.DeleteVM)
 	vms.POST("/:id/start", userH.StartVM)
 	vms.POST("/:id/stop", userH.StopVM)
 	vms.POST("/:id/destroy", userH.DestroyVM)

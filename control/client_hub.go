@@ -96,10 +96,23 @@ func (a *clientConn) writePump(ctx context.Context) {
 type Hub struct {
 	mu    sync.RWMutex
 	conns map[string]*clientConn
+	// purge holds the row ids of VMs whose owner asked for the record to go with
+	// the guest. A destroy job carries no such flag -- an operator's destroy and a
+	// user's delete are the same frame -- so the intent waits here for the result
+	// to come back.
+	//
+	// In memory for the same reason the connections are: it is only meaningful to
+	// the process holding the socket the result will arrive on. Losing it to a
+	// restart settles the row as 'gone' instead, which a second delete clears
+	// outright since there is nothing left on the host by then.
+	purge map[string]struct{}
 }
 
 func NewHub() *Hub {
-	return &Hub{conns: make(map[string]*clientConn)}
+	return &Hub{
+		conns: make(map[string]*clientConn),
+		purge: make(map[string]struct{}),
+	}
 }
 
 // add registers a connection, displacing any previous one for the same client.
@@ -206,6 +219,26 @@ func (h *Hub) ConnectedIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// MarkPurge records that this VM's row is to be deleted once its destroy comes
+// back, not moved to 'gone'. Called before the job is sent, so the result cannot
+// arrive before the mark is readable.
+func (h *Hub) MarkPurge(rowID string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.purge[rowID] = struct{}{}
+}
+
+// TakePurge reports whether a delete was asked for and forgets the mark. Taken
+// rather than read so a later destroy of the same row -- an adopted VM reusing
+// the id is not possible, but a retried job is -- does not inherit the decision.
+func (h *Hub) TakePurge(rowID string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.purge[rowID]
+	delete(h.purge, rowID)
+	return ok
 }
 
 // Kick closes an client's connection, if any. Used when an client is revoked or

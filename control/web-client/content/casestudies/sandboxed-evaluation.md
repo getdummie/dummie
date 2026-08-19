@@ -1,7 +1,7 @@
 ---
 number: "001"
 title: Sandboxed evaluation
-description: Run model-written Python inside a throwaway microVM across several turns, read each result back, then destroy the VM.
+description: Run model-written Python inside a throwaway microVM across several turns, read each result back, then delete the VM.
 date: 2026-08-19
 readingTime: 8 min
 topics:
@@ -12,13 +12,17 @@ topics:
 ---
 
 Run model-written Python inside a throwaway microVM over several turns, read each
-result back, then destroy the VM. This is the shape an eval harness or a coding
+result back, then delete the VM. This is the shape an eval harness or a coding
 agent wants: state carries across turns because it is the same guest, and nothing
 the guest does reaches the machine driving it.
 
-The VM is created with a 10 minute TTL. The script destroys it in a `finally`, so
+The VM is created with a 10 minute TTL. The script deletes it in a `finally`, so
 the TTL is only the backstop for the run that dies before it gets there — a killed
 process, a lost network, a traceback in the harness itself.
+
+Teardown is `DELETE /vms/{id}` rather than `POST /vms/{id}/destroy`. Both destroy
+the guest and free the quota; the destroy leaves the record behind as `gone`, which
+is what an operator wants and what a harness creating a VM per run does not.
 
 ## What it needs
 
@@ -45,12 +49,13 @@ Two addresses are involved and only one of them comes from the API:
 
 ```python [evaluate.py]
 #!/usr/bin/env python3
-"""Run python in a throwaway VM across several turns, then destroy it."""
+"""Run python in a throwaway VM across several turns, then delete it."""
 
 import os
 import sys
 import textwrap
 import time
+from http import HTTPStatus
 from typing import NamedTuple
 from uuid import UUID
 
@@ -58,12 +63,12 @@ import paramiko
 
 from dummie import AuthenticatedClient
 from dummie.api.vms import (
+    delete_vms_id,
     get_vms_hosts,
     get_vms_id,
     get_vms_kernels,
     get_vms_osimages,
     post_vms,
-    post_vms_id_destroy,
 )
 from dummie.models import ArtifactList, CreateVMReq, HostList, VmDTO
 
@@ -77,6 +82,7 @@ TTL_SECONDS = 600
 BOOT_TIMEOUT = 180
 SSH_TIMEOUT = 120
 TURN_TIMEOUT = 60
+DELETE_TIMEOUT = 60
 WORKDIR = "/home/ubuntu/eval"
 
 TURNS = [
@@ -146,6 +152,29 @@ def wait_running(client: AuthenticatedClient, vm_id: str) -> VmDTO:
             raise RuntimeError(f"vm failed to boot: {vm.last_error}")
         time.sleep(2)
     raise TimeoutError(f"vm was still {status!r} after {BOOT_TIMEOUT}s")
+
+
+def delete_vm(client: AuthenticatedClient, vm_id: str) -> None:
+    """Destroy the guest, drop the record, and wait for it to actually be gone.
+
+    The 202 means the destroy reached the host, not that it finished. What the
+    next run needs -- the quota, and the host's one proxy entry per key -- is only
+    released once the host confirms, so the wait is the useful part. A 204 is a VM
+    that had nothing on a host, and is already gone by the time it returns.
+    """
+    res = delete_vms_id.sync_detailed(UUID(vm_id), client=client)
+    if res.status_code not in (HTTPStatus.ACCEPTED, HTTPStatus.NO_CONTENT):
+        raise RuntimeError(f"could not delete the vm: {res.parsed!r}")
+    if res.status_code == HTTPStatus.NO_CONTENT:
+        return
+
+    deadline = time.monotonic() + DELETE_TIMEOUT
+    while time.monotonic() < deadline:
+        got = get_vms_id.sync_detailed(UUID(vm_id), client=client)
+        if got.status_code == HTTPStatus.NOT_FOUND:
+            return
+        time.sleep(2)
+    raise TimeoutError(f"the vm record was still there after {DELETE_TIMEOUT}s")
 
 
 def connect_ssh() -> paramiko.SSHClient:
@@ -235,8 +264,8 @@ def main() -> int:
         finally:
             ssh.close()
     finally:
-        expect(post_vms_id_destroy.sync(UUID(vm.id), client=client), VmDTO)
-        print(f"destroyed {vm.name}")
+        delete_vm(client, vm.id)
+        print(f"deleted {vm.name}")
     return 0
 
 
@@ -263,8 +292,9 @@ control plane writes one entry per VM keyed by its owner's key
 (`control/proxy_config.go:246-251`). Two live VMs owned by you on the same host
 produce two entries with the same key, and `proxy` rejects the whole config as a
 duplicate rather than picking one (`backstage/proxy/internal/proxy/resolver.go:48-50`).
-So this script destroys its VM before another run creates one. Parallel evaluation
-needs either a host each or a routing key that is not just the owner.
+So this script deletes its VM, and waits for the record to go, before another run
+creates one. Parallel evaluation needs either a host each or a routing key that is
+not just the owner.
 
 **The guest has no egress.** A VM is created with an empty allowlist, so `pip
 install` and any other fetch is refused. Add what a turn genuinely needs with
@@ -281,5 +311,10 @@ config has landed. Both of those accept a connection before they can serve one, 
 that succeeds. Retrying the handshake alone is not enough — a session opened too
 early authenticates fine and then dies with `EOFError` at the first channel.
 
-**A destroy is the only thing that frees quota.** Stopping a VM keeps its disk and
-its allowance, and the TTL keeps running while it is stopped.
+**Only a destroy or a delete frees quota.** Stopping a VM keeps its disk and its
+allowance, and the TTL keeps running while it is stopped.
+
+**A delete is `202` too.** `DELETE /vms/{id}` sends the same destroy job to the
+host, so the record survives until the host confirms — and if the destroy fails, so
+does the VM, carrying the reason in `last_error`. That is why `delete_vm` polls for
+the `404` rather than treating the `202` as the end of the run.

@@ -1528,6 +1528,85 @@
             }
         },
         "/vms/{id}": {
+            "delete": {
+                "description": "Destroys the guest on its host and deletes the record. Unlike /destroy, nothing is left behind to look up afterwards. 202 means the destroy was delivered and the record will go when the host confirms; 204 means there was nothing on any host and the record is already gone. Frees the quota the VM was holding.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.vmDTO"
+                                }
+                            }
+                        },
+                        "description": "the destroy was delivered to the host; the record goes when the host confirms"
+                    },
+                    "204": {
+                        "description": "there was nothing on a host; the record is deleted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the create is still in flight, or the host has no live socket"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Delete a VM",
+                "tags": [
+                    "vms"
+                ]
+            },
             "get": {
                 "description": "Someone else's VM and a VM that does not exist are the same 404, so this cannot be used to discover which ids are real. status is the host's claim as of reported_at, not a live observation.",
                 "parameters": [

@@ -110,16 +110,9 @@ EOF
 sudo systemctl restart dclient
 ```
 
-Getting into the VM
+For generating python sdk
 
 ```sh
-dclient vm console alpha
-```
-
-Running a python server inside the VM
-
-```sh
-python3 -m http.server 8000
-
-curl -sS -H 'Host: app.example.com' http://10.68.0.2:8080/
+just sdk-python
+just sdk-install
 ```

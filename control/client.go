@@ -425,7 +425,7 @@ func (h *ClientHandler) handleResult(ctx context.Context, client db.Client, clie
 	case proto.KindVMStart:
 		h.settleEnd(ctx, clientID, env.ID, rowID, res, "running")
 	case proto.KindVMDestroy:
-		h.settleEnd(ctx, clientID, env.ID, rowID, res, "gone")
+		h.settleDestroy(ctx, clientID, env.ID, rowID, res)
 		// The address this VM held goes back to the pool and will be handed to some
 		// other guest. Its pass rules have to be gone before that happens, or the
 		// new guest inherits an allowlist it was never granted.
@@ -440,6 +440,32 @@ func (h *ClientHandler) handleResult(ctx context.Context, client db.Client, clie
 	default:
 		log.Printf("client %s: result for job %s of unknown kind %q", clientID, env.ID, res.Kind)
 	}
+}
+
+// settleDestroy settles a destroy, which ends one of two ways. An operator's
+// destroy leaves the row behind as 'gone', because a VM that was destroyed is
+// exactly what somebody will look up afterwards. An owner deleting their own VM
+// asked for the record to go too, and marked the row for it before the job was
+// sent -- so here the row is dropped outright rather than left in their list as a
+// VM they already deleted.
+//
+// A failed destroy takes neither path: settleEnd records the message and leaves
+// the status alone, and the mark is spent, so the guest is still there and still
+// theirs to delete again.
+func (h *ClientHandler) settleDestroy(ctx context.Context, clientID, jobID string, rowID pgtype.UUID, res proto.JobResult) {
+	if !h.hub.TakePurge(jobID) || !res.OK {
+		h.settleEnd(ctx, clientID, jobID, rowID, res, "gone")
+		return
+	}
+	if err := h.q.DeleteVM(ctx, rowID); err != nil {
+		log.Printf("client %s: could not delete the record of vm %s: %v", clientID, jobID, err)
+		// The guest really is gone, so saying so beats leaving the row claiming to be
+		// running because a delete failed.
+		h.settleEnd(ctx, clientID, jobID, rowID, res, "gone")
+		return
+	}
+	cancelTasksForSubject(ctx, h.q, subjectVM, rowID, "the vm was deleted")
+	log.Printf("client %s: vm %s destroyed and its record deleted", clientID, jobID)
 }
 
 // settleEnd records the outcome of a start, stop or destroy. On success the status is
