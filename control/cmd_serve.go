@@ -321,10 +321,14 @@ func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cf
 	return nil
 }
 
-// proxyToNuxt proxies every request whose path does NOT start with /api/ to the
-// Nuxt dev server. API requests fall through to the next handler, as does
+// proxyToNuxt proxies every request whose path does NOT start with /api/v1 to
+// the Nuxt dev server. API requests fall through to the next handler, as does
 // /login: the SPA has no page there, and the proxy hand-off has to be answered
 // by this server because only it holds the signing key.
+//
+// The prefix is the API's own base rather than /api/, because Nuxt owns server
+// routes under /api/ too -- @nuxt/content serves its client-side database from
+// /api/content/*, and those have to reach the dev server.
 func proxyToNuxt(target string) echo.MiddlewareFunc {
 	u, err := url.Parse(target)
 	if err != nil {
@@ -337,7 +341,7 @@ func proxyToNuxt(target string) echo.MiddlewareFunc {
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
-			if path := c.Request().URL.Path; strings.HasPrefix(path, "/api/") || path == proxyLoginPath {
+			if path := c.Request().URL.Path; strings.HasPrefix(path, "/api/v1") || path == proxyLoginPath {
 				return next(c)
 			}
 			proxy.ServeHTTP(c.Response(), c.Request())

@@ -71,7 +71,16 @@ const initials = computed(() => {
           </span>
         </NuxtLink>
 
-        <nav aria-label="Account and preferences" class="ml-auto flex items-center gap-1.5">
+        <nav aria-label="Site" class="ml-auto flex items-center gap-4 font-mono text-xs">
+          <NuxtLink to="/casestudies" class="text-muted-foreground transition-colors hover:text-primary-text">
+            Case studies
+          </NuxtLink>
+          <NuxtLink to="/docs" class="text-muted-foreground transition-colors hover:text-primary-text">
+            Docs
+          </NuxtLink>
+        </nav>
+
+        <nav aria-label="Account and preferences" class="ml-4 flex items-center gap-1.5">
           <ClientOnly>
             <DropdownMenu v-if="isAuthenticated">
               <DropdownMenuTrigger as-child>

@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@lucide/vue": "^1.31.0",
+    "@nuxt/content": "^3.9.0",
     "@nuxtjs/color-mode": "^4.0.1",
     "@scalar/api-reference": "^1.65.1",
     "@tanstack/vue-table": "^8.21.3",

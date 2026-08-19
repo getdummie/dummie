@@ -51,7 +51,25 @@ export default defineNuxtConfig({
     },
   },
 
-  modules: ['shadcn-nuxt', '@nuxtjs/color-mode'],
+  modules: ['shadcn-nuxt', '@nuxtjs/color-mode', '@nuxt/content'],
+
+  content: {
+    // Nuxt runs under bun here, so `bun:sqlite` is the connector that exists;
+    // the default one is a native node module this image cannot build.
+    experimental: { sqliteConnector: 'bun' },
+    build: {
+      markdown: {
+        // Both themes are emitted at once (the dark one as `--shiki-dark` CSS
+        // vars) so code blocks follow the app's toggle without a re-highlight.
+        highlight: {
+          theme: { default: 'github-light', dark: 'github-dark' },
+          // Only the languages named here get bundled; python is not in the
+          // default set, so its blocks would render unhighlighted.
+          langs: ['python', 'sh', 'json', 'yaml', 'ts', 'vue', 'md'],
+        },
+      },
+    },
+  },
 
   colorMode: {
     // Toggle the `.dark` class the CSS expects (no `-mode` suffix), default to

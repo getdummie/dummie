@@ -203,6 +203,150 @@
     text-transform: uppercase;
   }
 
+  /* Long-form article body: styles the elements @nuxt/content renders, since
+     the markdown is the source of truth and carries no classes of its own. */
+  .article-prose {
+    max-width: 46rem;
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+  /* Descendant selectors, not a child combinator: ContentRenderer wraps the
+     body in its own element, so `> * + *` matches nothing. */
+  .article-prose :is(p, ul, ol, pre, blockquote, table, hr, .code-block) {
+    margin-top: 1.5rem;
+  }
+  .article-prose > :first-child,
+  .article-prose > * > :first-child {
+    margin-top: 0;
+  }
+  .article-prose h2,
+  .article-prose h3 {
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    scroll-margin-top: 5rem;
+  }
+  .article-prose h2 {
+    margin-top: 4.5rem;
+    padding-top: 2.25rem;
+    border-top: 1px solid var(--border);
+    font-size: 1.5rem;
+    line-height: 1.25;
+  }
+  .article-prose h3 {
+    margin-top: 3rem;
+    font-size: 1.125rem;
+  }
+  .article-prose h2 + *,
+  .article-prose h3 + * {
+    margin-top: 1rem;
+  }
+  .article-prose a {
+    color: var(--primary-text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  /* Heading anchors keep the accent but drop the prose link's underline. */
+  .article-prose :is(h2, h3) a {
+    text-decoration: none;
+  }
+  .article-prose strong {
+    font-weight: 600;
+    color: var(--foreground);
+  }
+  .article-prose ul,
+  .article-prose ol {
+    padding-left: 1.125rem;
+  }
+  .article-prose ul {
+    list-style: none;
+  }
+  .article-prose ol {
+    list-style: decimal;
+  }
+  .article-prose li + li {
+    margin-top: 0.625rem;
+  }
+  .article-prose li p {
+    margin-top: 0.5rem;
+  }
+  .article-prose li p:first-child {
+    margin-top: 0;
+  }
+  .article-prose ul > li::before {
+    content: "";
+    display: inline-block;
+    width: 0.3rem;
+    height: 1px;
+    margin-right: 0.6rem;
+    margin-left: -1.125rem;
+    vertical-align: middle;
+    background-color: var(--primary);
+  }
+  .article-prose blockquote {
+    padding-left: 1rem;
+    border-left: 2px solid var(--primary);
+    color: var(--muted-foreground);
+  }
+  /* Inline code only: the highlighter puts its own spans inside `pre > code`. */
+  .article-prose :not(pre) > code {
+    padding: 0.1rem 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    word-break: break-word;
+  }
+  /* The border and ground live on ProsePre's wrapper, which also carries the
+     sticky language/copy bar. */
+  .article-prose .code-block pre {
+    margin-top: 0;
+  }
+  .article-prose pre {
+    /* Shiki inlines the light theme's background; ours has to win in both
+       themes or the block fights the page. */
+    padding: 1rem 1.125rem;
+    background-color: var(--card) !important;
+    /* A 200-line script should not push the rest of the article off the page. */
+    max-height: min(32rem, 70vh);
+    overflow: auto;
+    overscroll-behavior: contain;
+    font-size: 0.8125rem;
+    line-height: 1.65;
+    tab-size: 2;
+  }
+  .article-prose pre code {
+    font-family: var(--font-mono);
+  }
+  /* Both themes ship at once: the dark one rides along as `--shiki-dark`. */
+  .dark .article-prose pre span {
+    color: var(--shiki-dark) !important;
+  }
+  .article-prose table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .article-prose th,
+  .article-prose td {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .article-prose th {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-foreground);
+  }
+  .article-prose hr {
+    margin-block: 2rem;
+    border-color: var(--border);
+  }
+
   /* Skip link: off-screen until focused, then pinned top-left. Kept in flow
      (never `display: none`) so it stays in the tab order. (WCAG 2.4.1) */
   .skip-link {
