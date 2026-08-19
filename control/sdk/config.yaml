@@ -1,0 +1,7 @@
+project_name_override: dummie
+package_name_override: dummie
+package_version_override: "0.1.0"
+
+# The generator's default hooks shell out to ruff, which is not a dependency of
+# this repo. Format the output yourself if you want it formatted.
+post_hooks: []

@@ -69,3 +69,11 @@ kernel-build version:
     make olddefconfig
     make -j"$(nproc)" bzImage
   '
+
+# regenerate the python sdk from the control api spec. The recipe lives in
+# control/justfile so it also runs inside the sdk container, where /app is control/.
+sdk-python:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cd control/
+  just sdk-python

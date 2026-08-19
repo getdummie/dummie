@@ -1,0 +1,2417 @@
+{
+  "components": {
+    "schemas": {
+      "adminUserDTO": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "disk_limit_mib": {
+            "type": "integer"
+          },
+          "email": {
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "memory_limit_mib": {
+            "type": "integer"
+          },
+          "public_key": {
+            "description": "'' when the account has no key on file, which is what blocks it from\ncreating a VM.",
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "user_type": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "vcpu_limit": {
+            "description": "Recorded allowances. Nothing enforces these yet; see 0008_user_quotas.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "apiError": {
+        "properties": {
+          "message": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "artifactList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/userArtifactDTO"
+            },
+            "type": "array",
+            "uniqueItems": false
+          }
+        },
+        "type": "object"
+      },
+      "consoleTokenDTO": {
+        "properties": {
+          "expires_in": {
+            "description": "ExpiresIn lets the page mint a fresh token before reconnecting rather than\ndiscovering the old one died in the middle of a handshake.",
+            "type": "integer"
+          },
+          "token": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "createPATReq": {
+        "properties": {
+          "expires_in_days": {
+            "description": "null/omitted = never expires.",
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "createTargetReq": {
+        "properties": {
+          "destination": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "Kind is what the caller says this is. Optional: omitted, the destination is\nclassified for them. Supplied and disagreeing with the destination, the\nrequest is rejected -- a form that asked for an address and got a hostname\nhas a mistake in it, and quietly storing the other kind hides it.",
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "ports": {
+            "description": "Ports means different things to the two kinds. For an address it is\nSuricata's port syntax and goes straight into a rule header. For a domain it\nis which of the two web ports the name is allowed on -- see domainPorts in\nsuricata_rules.go, and domainTargetPorts below for what is accepted.",
+            "type": "string"
+          },
+          "transport": {
+            "description": "Transport is ignored when the destination is a domain: both rules a domain\ncompiles to are tcp by construction, so there is nothing to choose.",
+            "type": "string"
+          },
+          "ttl_seconds": {
+            "description": "TTLSeconds makes this a temporary allowance: the control plane removes it\nthis many seconds from now and regenerates the host's policy. 0 is a\npermanent one, which is what an omitted field means.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "createVMReq": {
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "cpus": {
+            "type": "integer"
+          },
+          "default_port": {
+            "description": "DefaultPort is where a request goes when nothing picks a port. 0 means\nunset, and becomes defaultVMPort.",
+            "type": "integer"
+          },
+          "disk_size": {
+            "description": "DiskSize sizes the per-VM overlay. Deliberately not rootfs_size: that sizes\nthe base image, which is cached by the tar's digest alone and shared by\nevery VM built from that tar -- so a per-user value there would be silently\nignored for everyone after the first.",
+            "type": "string"
+          },
+          "kernel_id": {
+            "description": "KernelID names a row in the kernels catalogue. A caller picks from what an\nadmin uploaded rather than supplying a url: the artifact a guest boots is\nthe installation's decision, and an arbitrary url would make every VM's\nkernel a fetch from wherever its creator pointed.",
+            "type": "string"
+          },
+          "memory_mib": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "osimage_id": {
+            "description": "OSImageID names a row in the OS images catalogue, and is the root\nfilesystem half of the same arrangement as KernelID.",
+            "type": "string"
+          },
+          "public_ports": {
+            "description": "PublicPorts is every port the VM publishes. Empty publishes nothing.",
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "uniqueItems": false
+          },
+          "targets": {
+            "description": "Targets is the egress allowlist to give the VM at birth, in exactly the\nshape POST /vms/{id}/targets takes one at a time. Empty is a VM that may\nreach nothing until somebody allows something.\n\nHere rather than left to follow-up calls because the guest boots and starts\ntrying to reach things immediately: an allowlist applied a moment later is a\nwindow in which the sandbox is already running and already denied, which\nreads as a broken VM rather than as policy arriving.",
+            "items": {
+              "$ref": "#/components/schemas/createTargetReq"
+            },
+            "type": "array",
+            "uniqueItems": false
+          },
+          "ttl_seconds": {
+            "description": "TTLSeconds makes this a temporary sandbox: the control plane destroys the VM\nthis many seconds after the row is written. 0 is the ordinary case -- a VM\nthat lives until somebody destroys it.\n\nMeasured from the create, and it keeps running while the VM is stopped. A\nclock that paused on stop would make the TTL evadable by exactly the trick\nthe quota already refuses to reward, and what a temporary sandbox is\nbounding is wall-clock exposure rather than uptime.",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "createdTokenResp": {
+        "properties": {
+          "personal_access_token": {
+            "$ref": "#/components/schemas/patDTO"
+          },
+          "token": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "deniedAttemptDTO": {
+        "properties": {
+          "address": {
+            "type": "string"
+          },
+          "app_proto": {
+            "description": "AppProto is what suricata identified the traffic as, when it got far enough to\nsay -- \"ssh\", \"ftp\", \"failed\" when detection ran and found nothing. Empty for a\nflow dropped at the syn, which is most of them.",
+            "type": "string"
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "Kind is \"lookup\" or \"packet\" -- which of the two things above happened. The UI\nswitches on it, because a refused lookup has no address to offer.",
+            "type": "string"
+          },
+          "last_seen": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer"
+          },
+          "proto": {
+            "description": "Proto is lowercased for display: suricata writes TCP, and every other place a\ntransport appears in this system is lowercase.",
+            "type": "string"
+          },
+          "signature": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "deniedEgressList": {
+        "properties": {
+          "available": {
+            "description": "Available is false when nothing is collecting, which is a different fact\nfrom an empty list and has to be readable as one.",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/deniedAttemptDTO"
+            },
+            "type": "array",
+            "uniqueItems": false
+          },
+          "recording": {
+            "$ref": "#/components/schemas/deniedSources"
+          }
+        },
+        "type": "object"
+      },
+      "deniedSources": {
+        "properties": {
+          "lookups": {
+            "type": "boolean"
+          },
+          "packets": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "hostDTO": {
+        "properties": {
+          "hostname": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "hostList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/hostDTO"
+            },
+            "type": "array",
+            "uniqueItems": false
+          }
+        },
+        "type": "object"
+      },
+      "pagedVMs": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/vmDTO"
+            },
+            "type": "array",
+            "uniqueItems": false
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "offset": {
+            "type": "integer"
+          },
+          "total": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "patDTO": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "\"\" for the two that have not happened: a token that never expires, and one\nthat has never been used.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "type": "string"
+          },
+          "status": {
+            "description": "active | revoked | expired",
+            "type": "string"
+          },
+          "token_prefix": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "quotaDTO": {
+        "properties": {
+          "disk_limit_mib": {
+            "type": "integer"
+          },
+          "disk_used_mib": {
+            "type": "integer"
+          },
+          "memory_limit_mib": {
+            "type": "integer"
+          },
+          "memory_used_mib": {
+            "type": "integer"
+          },
+          "vcpu_limit": {
+            "type": "integer"
+          },
+          "vcpu_used": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "resolveHostReq": {
+        "properties": {
+          "host": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "resolvedHost": {
+        "properties": {
+          "addresses": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": false
+          },
+          "error": {
+            "description": "Error is set, with a 200, when the name did not resolve. That is an answer\nabout the name rather than a failure of this server.",
+            "type": "string"
+          },
+          "host": {
+            "type": "string"
+          },
+          "truncated": {
+            "description": "Truncated is true when the name answered with more addresses than are\nworth recording; see resolveMaxAddresses.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "sessionResp": {
+        "properties": {
+          "access_token": {
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/userDTO"
+          }
+        },
+        "type": "object"
+      },
+      "signinReq": {
+        "properties": {
+          "identifier": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "signupReq": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "targetList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/vmTargetDTO"
+            },
+            "type": "array",
+            "uniqueItems": false
+          }
+        },
+        "type": "object"
+      },
+      "tokenList": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/patDTO"
+            },
+            "type": "array",
+            "uniqueItems": false
+          }
+        },
+        "type": "object"
+      },
+      "updateProfileReq": {
+        "properties": {
+          "first_name": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "public_key": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "updateVMPortsReq": {
+        "properties": {
+          "default_port": {
+            "type": "integer"
+          },
+          "public_ports": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "uniqueItems": false
+          }
+        },
+        "type": "object"
+      },
+      "userArtifactDTO": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "userDTO": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "first_name": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_name": {
+            "type": "string"
+          },
+          "user_type": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "vmDTO": {
+        "properties": {
+          "boot": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "console_url": {
+            "description": "ConsoleURL is the websocket endpoint the browser terminal talks to, filled\nin on the same views that fill in URL and empty under the same conditions.\nIt is not a credential: opening it needs a token from POST\n/vms/:id/console-token, which is minted per user and expires.",
+            "type": "string"
+          },
+          "cpus": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "created_by": {
+            "description": "CreatedBy is \"\" for a VM nobody here asked for -- one adopted from an\nclient's inventory report, or created before ownership was recorded.",
+            "type": "string"
+          },
+          "default_port": {
+            "description": "The routing the proxy config is generated from: where a request goes when\nnothing picks a port, and every port the VM publishes.",
+            "type": "integer"
+          },
+          "disk_mib": {
+            "type": "integer"
+          },
+          "expires_at": {
+            "description": "ExpiresAt is when a TTL'd VM is due to be destroyed, and \"\" for one with no\nTTL. It comes from the pending scheduled task, which is the only place the\ndeadline is written -- there is no expires_at column, so that the answer to\n\"when does this die\" cannot be two different things.\n\nA deadline in the past means the runner has not got to it yet. That is worth\nshowing as-is rather than hiding: the VM really is still there.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "ip": {
+            "type": "string"
+          },
+          "last_error": {
+            "type": "string"
+          },
+          "memory_mib": {
+            "type": "integer"
+          },
+          "name": {
+            "type": "string"
+          },
+          "public_ports": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "uniqueItems": false
+          },
+          "reported_at": {
+            "description": "ReportedAt is when the host last confirmed this VM; \"\" means it never has.\n'running' is the host's claim as of that moment, not a live observation, so\na reader has to weigh the status against this timestamp -- a status of\n'running' with a stale ReportedAt means \"was running when last seen\".",
+            "type": "string"
+          },
+          "spec": {
+            "description": "swaggertype is for the spec generator only: the stored spec is returned\nverbatim and has no fixed shape, and swag cannot follow a RawMessage into\nthe standard library on its own.",
+            "type": "object"
+          },
+          "started_at": {
+            "type": "string"
+          },
+          "status": {
+            "description": "pending | running | failed",
+            "type": "string"
+          },
+          "url": {
+            "description": "URL is where the VM answers http, when a caller asked for a view that\nresolves it. \"\" when the host has no domain, or when the endpoint does not\nwork it out -- the list endpoints do not, since resolving it per row would\nbe a query per VM.",
+            "type": "string"
+          },
+          "vm_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "vmTargetDTO": {
+        "properties": {
+          "created_at": {
+            "type": "string"
+          },
+          "destination": {
+            "type": "string"
+          },
+          "expires_at": {
+            "description": "ExpiresAt is when a temporary allowance is due to be withdrawn, and \"\" for a\npermanent one. Read from the pending scheduled task rather than from a column\non the row: the deadline is written in one place, and this is a view of it.",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "description": "domain | ip",
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "ports": {
+            "description": "ip rows only; \"\" = any",
+            "type": "string"
+          },
+          "transport": {
+            "description": "ip rows only: tcp | udp | any",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "webSessionDTO": {
+        "properties": {
+          "expires_in": {
+            "description": "ExpiresIn is the token's life, not the session's. The page mints a fresh one\nper load rather than reusing this, so it only matters as the window in which\na load has to happen.",
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "The self-service API: sign in, manage your profile and your personal access tokens, and create and run VMs.\n\nTwo credentials reach these routes. A browser sends the httpOnly `access_token` cookie. A script sends a personal access token as `Authorization: Bearer dpat_...` \u2014 mint one under Settings, or with `POST /me/tokens` from a signed-in session.\n\nA personal access token does everything you can do with your own VMs. It can never reach `/api/v1/admin/*`, even when it belongs to an admin, and it cannot manage tokens: those routes take a password-backed session, so a leaked token cannot mint its successor.\n\nAdmin and client-enrollment routes are deliberately absent here. The first is browser-only by design; the second is a protocol between the control plane and its hosts rather than an API.",
+    "title": "dummie control API",
+    "version": "1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/me": {
+      "get": {
+        "description": "The same shape the admin section shows for a user. Nothing secret is in it: no password hash, and a public key is public.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/adminUserDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Read your account",
+        "tags": [
+          "me"
+        ]
+      },
+      "put": {
+        "description": "Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it, which blocks creating new VMs.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/updateProfileReq"
+              }
+            }
+          },
+          "description": "the whole editable surface",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/adminUserDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "a name over 100 characters, or a key that is not a valid public key"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Update your account",
+        "tags": [
+          "me"
+        ]
+      }
+    },
+    "/me/tokens": {
+      "get": {
+        "description": "Only the prefix of each token is returned -- enough to recognise one you still hold, useless to anyone who only has this. Requires a signed-in session: a token cannot enumerate its siblings.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/tokenList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "authenticated with a personal access token"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List your personal access tokens",
+        "tags": [
+          "tokens"
+        ]
+      },
+      "post": {
+        "description": "The response is the only place the raw token appears; it is stored hashed and cannot be shown again. Omit expires_in_days for a token that never expires. Requires a signed-in session, so a leaked token cannot mint its successor and outlive the revocation meant to end it.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/createPATReq"
+              }
+            }
+          },
+          "description": "a label is required",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/createdTokenResp"
+                }
+              }
+            },
+            "description": "the raw token, shown once"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "authenticated with a personal access token"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create a personal access token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/me/tokens/{id}": {
+      "delete": {
+        "description": "Anything using it stops working and no record of it is kept. Revoke instead when you want the row to stay.",
+        "parameters": [
+          {
+            "description": "token id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "deleted"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "authenticated with a personal access token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "no such token, or it belongs to somebody else"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Delete a personal access token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/me/tokens/{id}/revoke": {
+      "post": {
+        "description": "Anything using it stops working immediately. The row stays in the list, marked revoked, so the credential's history is still readable.",
+        "parameters": [
+          {
+            "description": "token id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "revoked"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "authenticated with a personal access token"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "no such token, or it belongs to somebody else"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Revoke a personal access token",
+        "tags": [
+          "tokens"
+        ]
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "the OpenAPI document this page is rendered from"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "no spec was built into this binary"
+          }
+        },
+        "tags": [
+          "docs"
+        ]
+      }
+    },
+    "/signin": {
+      "post": {
+        "description": "The identifier is a username (case-sensitive) or an email. Sets the httpOnly access and refresh cookies as well as returning the access token.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/signinReq"
+              }
+            }
+          },
+          "description": "identifier and password",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/sessionResp"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "invalid credentials"
+          }
+        },
+        "summary": "Sign in",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/signout": {
+      "post": {
+        "description": "Ends this browser session. Personal access tokens are untouched: signing out of a laptop must not break a pipeline.",
+        "responses": {
+          "204": {
+            "description": "signed out"
+          }
+        },
+        "summary": "Sign out",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/signup": {
+      "post": {
+        "description": "The first account to sign up becomes the admin; every one after is a regular user. The client does not get to choose. Sets the httpOnly access and refresh cookies as well as returning the access token.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/signupReq"
+              }
+            }
+          },
+          "description": "username and email are required",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/sessionResp"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "username or email already taken"
+          }
+        },
+        "summary": "Create an account",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/token_refresh": {
+      "post": {
+        "description": "Reads the httpOnly refresh cookie and mints a new access token. The refresh token is not rotated, so a page reload does not churn sessions. Not needed when calling the API with a personal access token, which does not expire on this schedule.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/sessionResp"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "missing, expired or revoked refresh token"
+          }
+        },
+        "summary": "Refresh the access token",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/vms": {
+      "get": {
+        "description": "Scoped to you by the query itself. url and console_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.",
+        "parameters": [
+          {
+            "description": "1-100",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 20,
+              "type": "integer"
+            }
+          },
+          {
+            "description": "rows to skip",
+            "in": "query",
+            "name": "offset",
+            "schema": {
+              "default": 0,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/pagedVMs"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List your VMs",
+        "tags": [
+          "vms"
+        ]
+      },
+      "post": {
+        "description": "Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. Your SSH public key has to be on your account first -- it is built into the image at boot, so it cannot be added afterwards. The size is charged against your quota; disk_size takes the client's syntax (\"2G\", \"512M\", or plain bytes).\n\nSet ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.\n\ntargets is the egress allowlist to give the VM at birth \u2014 each entry takes exactly the shape `POST /vms/{id}/targets` accepts, including its own ttl_seconds. At most 32; add the rest afterwards. The whole list is validated before anything is written and inserted in the same transaction as the VM, so a bad entry is a 400 with no VM created rather than a VM with a partial allowlist. Omit it for a VM that may reach nothing until you allow something.\n\nThe response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'. The allowlist reaches the host with the guest's address, so it is in force by the time the VM is up.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/createVMReq"
+              }
+            }
+          },
+          "description": "client_id, kernel_id and osimage_id are required",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/vmDTO"
+                }
+              }
+            },
+            "description": "accepted and pending; the host has not reported yet"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "bad size, bad port count, cpus under 1, memory under 64 MiB, or a destination that is not allowable"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "no public key on your account, or over quota"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "no such host, kernel or os image"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "host revoked or disconnected, artifact withdrawn, name taken, or the job could not be delivered"
+          },
+          "502": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "could not prepare an artifact download"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "no blob store is configured on this installation"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Create a VM",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/hosts": {
+      "get": {
+        "description": "Only hosts with a live socket to this server. One whose row still says 'online' but whose connection dropped would fail the create, so it is left out. The id is what you pass as client_id.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/hostList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List available hosts",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/kernels": {
+      "get": {
+        "description": "The catalogue an admin uploaded, newest first, withdrawn entries left out. No object key and no download link: you pick an entry, and the link the host fetches it from is minted server-side when the job is built. The id is what you pass as kernel_id.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/artifactList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List available kernels",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/osimages": {
+      "get": {
+        "description": "The root-filesystem catalogue, on the same terms as the kernel one. The id is what you pass as osimage_id.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/artifactList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List available OS images",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/quota": {
+      "get": {
+        "description": "What you may hold across every VM at once, and what your active VMs already use. Check this before a create rather than discovering the refusal.",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/quotaDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Read your quota",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/{id}": {
+      "get": {
+        "description": "Someone else's VM and a VM that does not exist are the same 404, so this cannot be used to discover which ids are real. status is the host's claim as of reported_at, not a live observation.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/vmDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Read one of your VMs",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/{id}/console-token": {
+      "post": {
+        "description": "Returns the websocket url for this VM's terminal and a short-lived token that opens it. POST rather than GET because it is a credential, and a GET would put it in browser history, in referrers and in any log that records request lines. The url in vmDTO.console_url is not itself a credential -- it needs one of these.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/consoleTokenDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "the host this vm runs on has no domain, so it has no console"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "the console is not configured on this installation"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Mint a console token",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/{id}/denied": {
+      "get": {
+        "description": "What this guest tried to reach and was refused. kind is \"lookup\" (a name the resolver would not answer) or \"packet\" (a flow the ruleset dropped); a refused lookup has no address to offer.\n\nRead available before reading items: an empty list means either nothing was denied or nothing is collecting, and those are very different facts. recording names which of the two sources answered.\n\nOnly events since this VM was created are shown -- a destroyed VM's address goes back to the pool, so without that bound a new VM would inherit the history of whatever held its address before it.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/deniedEgressList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List denied egress attempts",
+        "tags": [
+          "egress"
+        ]
+      }
+    },
+    "/vms/{id}/destroy": {
+      "post": {
+        "description": "Stops the guest and deletes its disk on the host. This is the one action that frees the quota the VM was holding, and it cannot be undone.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/vmDTO"
+                }
+              }
+            },
+            "description": "the job was delivered to the host"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "the host has no live socket, or has not assigned this VM an id yet"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Destroy a VM",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/{id}/ports": {
+      "put": {
+        "description": "default_port is where a request goes when nothing picks a port; omit it or send 0 for 8000. public_ports is every port the VM publishes -- send an empty list to publish nothing. The list is de-duplicated but not reordered, since its order is the order the generated config lists them in. At most 32 ports.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/updateVMPortsReq"
+              }
+            }
+          },
+          "description": "ports",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/vmDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "a port outside 1-65535, or more than 32 of them"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Set a VM's published ports",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/{id}/start": {
+      "post": {
+        "description": "Pushes the job to the host and returns immediately: 202 means the frame was delivered, not that the guest is up. Poll GET /vms/{id} for the outcome.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/vmDTO"
+                }
+              }
+            },
+            "description": "the job was delivered to the host"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "the host has no live socket, or has not assigned this VM an id yet"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Start a VM",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/{id}/stop": {
+      "post": {
+        "description": "Shuts the guest down but leaves its disk on the host, so a start boots it again from the same state. This does NOT free the quota the VM holds -- only a destroy does. A TTL keeps running while a VM is stopped.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/vmDTO"
+                }
+              }
+            },
+            "description": "the job was delivered to the host"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "the host has no live socket, or has not assigned this VM an id yet"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Stop a VM",
+        "tags": [
+          "vms"
+        ]
+      }
+    },
+    "/vms/{id}/targets": {
+      "get": {
+        "description": "Everything this guest is permitted to reach. expires_at is set on temporary allowances and empty on permanent ones.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/targetList"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "List a VM's allowed destinations",
+        "tags": [
+          "egress"
+        ]
+      },
+      "post": {
+        "description": "destination is a domain, an IP address, or a CIDR. Omit kind to have it classified for you; supply it and it must agree, since a form that asked for an address and got a hostname has a mistake in it.\n\nFor an address, ports is Suricata's syntax (`22`, `80,443`, `8000:8100`) and transport is tcp, udp or any. For a domain, ports may only be `443`, `80`, both, or `none` -- the ports Suricata looks for http and tls on are fixed per host, so a domain allowed on 8443 would compile to a rule that never matches. Allow the address instead.\n\nOnly tls and http carry the destination name in the traffic, so ssh or postgres to a hostname is not expressible: use /vms/{id}/targets/resolve and record the addresses.\n\nSet ttl_seconds for a temporary allowance the control plane withdraws on its own.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/createTargetReq"
+              }
+            }
+          },
+          "description": "destination is required",
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/vmTargetDTO"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "a destination that is neither a name nor an address, or a port the rules cannot express"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "that destination is already on the list"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Allow a destination",
+        "tags": [
+          "egress"
+        ]
+      }
+    },
+    "/vms/{id}/targets/resolve": {
+      "post": {
+        "description": "What a name currently resolves to, so you can record those addresses as allowances. IPv4 only -- every rule and nftables element downstream is IPv4, so an AAAA record would be an address nothing can express. At most 8 addresses; truncated says when there were more.\n\nA name that does not resolve is a 200 with error set, not a failure: that is an answer about the name rather than about this server. Deliberately a one-shot lookup and not a subscription -- addresses move, and something re-resolving on a timer would silently widen an allowlist nobody re-read.\n\nScoped to a VM you own even though the answer is not VM-specific, so this is not a public name-resolution service.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/resolveHostReq"
+              }
+            }
+          },
+          "description": "host",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/resolvedHost"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "that is not a hostname"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Resolve a hostname",
+        "tags": [
+          "egress"
+        ]
+      }
+    },
+    "/vms/{id}/targets/{target_id}": {
+      "delete": {
+        "description": "Cancels any pending expiry on it and pushes the new policy to the host. Until that push lands the guest still has the access, so treat the 204 as \"recorded\", not \"already enforced\".",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "destination id",
+            "in": "path",
+            "name": "target_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "removed"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Remove an allowed destination",
+        "tags": [
+          "egress"
+        ]
+      }
+    },
+    "/vms/{id}/web-session": {
+      "post": {
+        "description": "Returns a url that redeems a short-lived token for a session on whatever this VM publishes over http. POST for the same reason as the console token: it is a credential. expires_in is the token's life, not the session's -- it is the window in which the url has to be loaded.",
+        "parameters": [
+          {
+            "description": "vm id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/webSessionDTO"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "the host this vm runs on has no domain, so it publishes nothing"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/apiError"
+                }
+              }
+            },
+            "description": "guest sessions are not configured on this installation"
+          }
+        },
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "summary": "Open a session on a VM's site",
+        "tags": [
+          "vms"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ]
+}

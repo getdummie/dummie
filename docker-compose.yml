@@ -1,4 +1,16 @@
 services:
+  control-sdk:
+    restart: unless-stopped
+    build:
+      context: ./control
+      dockerfile: Dockerfile.sdk.dev
+    volumes:
+      - ./control:/app
+      - $HOME/.ssh/id_ed25519:/root/.ssh/id_ed25519:ro
+    working_dir: /app
+    env_file:
+      - control/.sdk.env
+
   control:
     restart: unless-stopped
     build:

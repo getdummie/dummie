@@ -790,6 +790,11 @@
                         "description": "authenticated with a personal access token"
                     }
                 },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "summary": "List your personal access tokens",
                 "tags": [
                     "tokens"
@@ -859,6 +864,11 @@
                         "description": "authenticated with a personal access token"
                     }
                 },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "summary": "Create a personal access token",
                 "tags": [
                     "tokens"
@@ -925,6 +935,11 @@
                         "description": "no such token, or it belongs to somebody else"
                     }
                 },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "summary": "Delete a personal access token",
                 "tags": [
                     "tokens"
@@ -991,6 +1006,11 @@
                         "description": "no such token, or it belongs to somebody else"
                     }
                 },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
                 "summary": "Revoke a personal access token",
                 "tags": [
                     "tokens"

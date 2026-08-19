@@ -1,0 +1,21 @@
+FROM python:3.14.7-alpine3.24
+
+RUN set -ex \
+  && apk add --no-cache \
+    bash \
+    curl \
+    git \
+    just \
+    openssh-client \
+  && pip install --no-cache-dir "uv==0.12.5" "paramiko==5.0.0"
+
+# uvx caches tools here; a named path so the layer is reusable and the cache
+# does not land in the bind-mounted source tree.
+ENV UV_CACHE_DIR=/opt/uv-cache \
+    UV_LINK_MODE=copy \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+CMD ["sleep", "infinity"]

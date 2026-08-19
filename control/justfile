@@ -1,0 +1,17 @@
+# regenerate the python sdk from the control api spec
+sdk-python:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cd sdk/
+  python3 normalize_spec.py
+  uvx openapi-python-client generate \
+    --path openapi.json \
+    --output-path python \
+    --config config.yaml \
+    --overwrite
+
+# install the generated sdk into this environment, editable
+sdk-install:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  pip install -e sdk/python

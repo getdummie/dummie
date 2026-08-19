@@ -3,7 +3,14 @@ tmp/
 # Local env (keep .env.example tracked)
 .env
 .env.*
+.sdk.env
 !.env.example
+
+# The generated sdk itself is committed; what a `pip install -e` leaves is not.
+__pycache__/
+*.py[cod]
+*.egg-info/
+sdk/python/.venv/
 
 # Created by https://www.toptal.com/developers/gitignore/api/go
 # Edit at https://www.toptal.com/developers/gitignore?templates=go

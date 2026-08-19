@@ -107,6 +107,7 @@ func toPATDTO(t db.PersonalAccessToken) patDTO {
 // @Success     200 {object} tokenList
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "authenticated with a personal access token"
+// @Security    BearerAuth
 // @Router      /me/tokens [get]
 func (h *ProfileHandler) ListTokens(c *echo.Context) error {
 	owner, err := callerID(c)
@@ -142,6 +143,7 @@ type createPATReq struct {
 // @Failure     400 {object} apiError
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "authenticated with a personal access token"
+// @Security    BearerAuth
 // @Router      /me/tokens [post]
 func (h *ProfileHandler) CreateToken(c *echo.Context) error {
 	owner, err := callerID(c)
@@ -202,6 +204,7 @@ func (h *ProfileHandler) CreateToken(c *echo.Context) error {
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "authenticated with a personal access token"
 // @Failure     404 {object} apiError "no such token, or it belongs to somebody else"
+// @Security    BearerAuth
 // @Router      /me/tokens/{id}/revoke [post]
 func (h *ProfileHandler) RevokeToken(c *echo.Context) error {
 	owner, err := callerID(c)
@@ -238,6 +241,7 @@ func (h *ProfileHandler) RevokeToken(c *echo.Context) error {
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "authenticated with a personal access token"
 // @Failure     404 {object} apiError "no such token, or it belongs to somebody else"
+// @Security    BearerAuth
 // @Router      /me/tokens/{id} [delete]
 func (h *ProfileHandler) DeleteToken(c *echo.Context) error {
 	owner, err := callerID(c)
