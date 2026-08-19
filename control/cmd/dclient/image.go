@@ -47,7 +47,7 @@ func (a artifact) resolve(ctx context.Context, cache string) (string, error) {
 
 // download is content-addressed when a digest is known, so the same image
 // requested by two different URLs is stored once. Without a digest the URL is
-// the identity, which is the best that can be done.
+// the identity, minus its query -- which is the best that can be done.
 //
 // A cache hit is not re-hashed: verification happens once, at download time.
 func download(ctx context.Context, cache string, u *url.URL, want string) (string, error) {
@@ -61,7 +61,7 @@ func download(ctx context.Context, cache string, u *url.URL, want string) (strin
 	}
 	key := want
 	if key == "" {
-		sum := sha256.Sum256([]byte(u.String()))
+		sum := sha256.Sum256([]byte(cacheURL(u)))
 		key = "url-" + hex.EncodeToString(sum[:])[:16]
 	}
 	dst := filepath.Join(cache, key[:min(len(key), 32)]+"-"+base)
@@ -115,6 +115,27 @@ func download(ctx context.Context, cache string, u *url.URL, want string) (strin
 		return "", err
 	}
 	return dst, nil
+}
+
+// cacheURL is the part of a URL that says which bytes it serves: everything
+// except the query and the fragment.
+//
+// The links the control plane hands out are presigned, so the credential and the
+// expiry ride along as query params and are different on every create. Keyed on
+// the whole URL, one kernel and one rootfs are downloaded again for every single
+// VM -- the same object, under a name nothing will ever hit again.
+//
+// The trade is that two different objects served from one path, told apart only
+// by a query param, would share an entry. That is not how object storage
+// addresses anything, and a create that knows its digest is content-addressed
+// above and never reaches this.
+func cacheURL(u *url.URL) string {
+	trimmed := *u
+	trimmed.RawQuery = ""
+	trimmed.ForceQuery = false
+	trimmed.Fragment = ""
+	trimmed.RawFragment = ""
+	return trimmed.String()
 }
 
 // --- tar root filesystems ---------------------------------------------------
