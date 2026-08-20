@@ -1,4 +1,4 @@
-GORELEASER := "goreleaser/goreleaser:v2"
+GORELEASER := "goreleaser/goreleaser:v2.17.1"
 CONTROL_IMAGE := "codingcoffee/dummie-control"
 # arm64 can be added here; the Nuxt stage then builds a second time under emulation.
 IMAGE_PLATFORMS := "linux/amd64"
