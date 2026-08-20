@@ -19,7 +19,14 @@ release bump:
   : "${GITHUB_TOKEN:?GITHUB_TOKEN is not set}"
 
   case "{{bump}}" in patch|minor|major) ;; *) echo "bump must be patch, minor or major" >&2; exit 1 ;; esac
-  [ -z "$(git status --porcelain)" ] || { echo "working tree is dirty" >&2; exit 1; }
+  # --untracked-files=all explicitly: goreleaser runs in a container that has none
+  # of your git config, so it counts untracked files as dirty whatever
+  # status.showUntrackedFiles says here. Better to fail before the tag is pushed.
+  [ -z "$(git status --porcelain --untracked-files=all)" ] || {
+    echo "working tree is dirty (goreleaser counts untracked files too):" >&2
+    git status --porcelain --untracked-files=all >&2
+    exit 1
+  }
   branch=$(git rev-parse --abbrev-ref HEAD)
   [ "$branch" = "main" ] || { echo "not on main (on $branch)" >&2; exit 1; }
 

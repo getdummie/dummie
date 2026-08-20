@@ -1,5 +1,6 @@
 
 .envrc
+.claude/
 kernel/linux*
 sample/
 
