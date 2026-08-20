@@ -14,9 +14,22 @@ import (
 	"proxy/internal/proxy"
 )
 
+// Set at build time with -X main.version; "dev" in a plain `go build`.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	cfgPath := flag.String("config", "proxy.yaml", "path to the configuration file")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("proxy %s (%s, %s)\n", version, commit, date)
+		return
+	}
 
 	if err := run(*cfgPath); err != nil {
 		fmt.Fprintln(os.Stderr, "proxy:", err)

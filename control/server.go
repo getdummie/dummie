@@ -9,6 +9,13 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
+// Set at build time with -X main.version; "dev" in a plain `go build`.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 // The general API info swag reads. It lives on main() because that is the
 // declaration `swag init -g server.go` looks at, and because the description is
 // about the whole surface rather than about any one route.
@@ -32,8 +39,9 @@ func main() {
 	_ = godotenv.Load()
 
 	app := &cli.Command{
-		Name:  "control",
-		Usage: "control plane dev orchestrator + API server",
+		Name:    "control",
+		Usage:   "control plane dev orchestrator + API server",
+		Version: version + " (" + commit + ", " + date + ")",
 		Commands: []*cli.Command{
 			serveCommand(),
 			migrateCommand(postgresMigrations),

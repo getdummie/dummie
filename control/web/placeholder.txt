@@ -1,0 +1,4 @@
+The production build drops the generated SPA (control/web-client/.output/public)
+into this directory before `go build`, and web.go embeds it. This file is
+committed so the embed still compiles in a tree where that has never happened;
+a binary built without an SPA falls back to proxying the Nuxt dev server.

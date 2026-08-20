@@ -1,0 +1,20 @@
+tmp/
+.env
+.env.*
+!.env.example
+.sdk.env
+
+# The web stage generates this; a stale local copy must not shadow it.
+web/
+web-client/node_modules/
+web-client/.nuxt/
+web-client/.output/
+web-client/.data/
+
+sdk/python/.venv/
+__pycache__/
+*.egg-info/
+
+dist/
+Dockerfile*
+.air.toml

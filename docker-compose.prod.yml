@@ -1,0 +1,69 @@
+services:
+  control:
+    image: codingcoffee/dummie-control
+    restart: unless-stopped
+    ports:
+      - 1323:1323
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_healthy
+    env_file:
+      - control/.env
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.7.3.19
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_NICE
+    ports:
+      - 8123:8123
+      - 9010:9000
+    volumes:
+      - ./clickhouse-data:/var/lib/clickhouse/
+    env_file:
+      - .clickhouse.env
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.10
+    security_opt:
+      - "no-new-privileges:true"
+    env_file:
+      - .rustfs.env
+    ports:
+      - 9000:9000
+      - 9001:9001
+    volumes:
+      - ./rustfs-data:/data
+      - ./rustfs-logs:/logs
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "sh", "-c",
+          "curl -f http://127.0.0.1:9000/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  postgres:
+    image: postgres:18.4-alpine3.24
+    restart: unless-stopped
+    ports:
+      - 5432:5432
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/18/docker
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
+    env_file:
+      - .postgres.env
+    healthcheck:
+      test: "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""
+      interval: 10s
+      timeout: 5s
+      retries: 5

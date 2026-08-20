@@ -11,8 +11,13 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// version is reported to the server at enroll and in every hello frame.
-const version = "0.1.0"
+// version is reported to the server at enroll and in every hello frame. Set at
+// build time with -X main.version; "dev" in a plain `go build`.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lmsgprefix)
@@ -21,7 +26,7 @@ func main() {
 	app := &cli.Command{
 		Name:    "dclient",
 		Usage:   "control plane client",
-		Version: version,
+		Version: version + " (" + commit + ", " + date + ")",
 		Commands: []*cli.Command{
 			installCommand(),
 			uninstallCommand(),

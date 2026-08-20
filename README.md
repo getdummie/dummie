@@ -116,3 +116,11 @@ For generating python sdk
 just sdk-python
 just sdk-install
 ```
+
+Archlinux Setup
+
+```sh
+pacman -Syyu ncdu neovim sudo btop htop
+pacman -S docker
+sudo systemctl enable --now docker
+```

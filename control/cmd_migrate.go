@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -14,11 +17,17 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/clickhouse" // registers scheme "clickhouse"
 	_ "github.com/golang-migrate/migrate/v4/database/pgx/v5"     // registers scheme "pgx5"
-	_ "github.com/golang-migrate/migrate/v4/source/file"         // registers scheme "file"
+	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/urfave/cli/v3"
 )
 
-// migrationSet is one database's migrations: its own directory, its own DSN, and
+// The migrations travel inside the binary, so `control migrate up` is the same
+// command wherever it runs and from whatever directory.
+//
+//go:embed migrations migrations-clickhouse
+var migrationsFS embed.FS
+
+// migrationSet is one database's migrations: its own embedded directory, its own DSN, and
 // its own schema_migrations table. The two are versioned independently because
 // they hold unrelated things -- postgres the control plane's own state,
 // clickhouse the event stream shipped off the qemu hosts -- and a single version
@@ -83,6 +92,27 @@ func migrateCommand(set migrationSet) *cli.Command {
 	}
 }
 
+// migrateAllUp applies every migration in both sets. serve calls this in prod
+// only: the image carries its migrations, so a deploy that came up is a deploy
+// that has migrated. In dev they stay manual -- running `up` on whatever a
+// branch has half-written is not a favour.
+//
+// A set whose DSN is unset is skipped, matching the rest of startup: the
+// healthcheck already reports a missing database rather than refusing to boot.
+func migrateAllUp() error {
+	for _, set := range []migrationSet{postgresMigrations, clickhouseMigrations} {
+		if os.Getenv(set.env) == "" {
+			log.Printf("%s is not set; skipping %s migrations", set.env, set.name)
+			continue
+		}
+		log.Printf("applying %s migrations", set.name)
+		if err := runMigrate(set, true, ""); err != nil {
+			return fmt.Errorf("%s migrations: %w", set.name, err)
+		}
+	}
+	return nil
+}
+
 func newMigrator(set migrationSet) (*migrate.Migrate, error) {
 	dsn := os.Getenv(set.env)
 	if dsn == "" {
@@ -93,12 +123,16 @@ func newMigrator(set migrationSet) (*migrate.Migrate, error) {
 		return nil, fmt.Errorf("invalid %s: %w", set.env, err)
 	}
 	set.dsn(u)
-	return migrate.New("file://"+set.dir, u.String())
+	src, err := iofs.New(migrationsFS, set.dir)
+	if err != nil {
+		return nil, err
+	}
+	return migrate.NewWithSourceInstance("iofs", src, u.String())
 }
 
-// versionsInDir returns the sorted, de-duplicated migration versions on disk.
-func versionsInDir(dir string) ([]uint, error) {
-	entries, err := os.ReadDir(dir)
+// versionsIn returns the sorted, de-duplicated migration versions in the set.
+func versionsIn(dir string) ([]uint, error) {
+	entries, err := fs.ReadDir(migrationsFS, dir)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +171,7 @@ func runMigrate(set migrationSet, up bool, targetArg string) error {
 	}
 	defer func() { _, _ = m.Close() }()
 
-	versions, err := versionsInDir(set.dir)
+	versions, err := versionsIn(set.dir)
 	if err != nil {
 		return err
 	}

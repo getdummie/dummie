@@ -10,9 +10,8 @@ import (
 )
 
 // docsFS carries whatever swag last generated. The directory is embedded rather
-// than read from disk so the binary is the whole deployment, the way it already
-// is for everything except the migrations -- and those are read at runtime
-// because an operator runs them, not the server.
+// than read from disk so the binary is the whole deployment, the way it is for
+// the SPA and the migrations too.
 //
 //go:embed docs
 var docsFS embed.FS

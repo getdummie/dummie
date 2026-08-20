@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"net/http/httputil"
@@ -30,7 +31,7 @@ const nuxtTarget = "http://localhost:3000"
 func serveCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
-		Usage: "start the Nuxt dev server and the Echo API server",
+		Usage: "start the API server (and, in a dev build, the Nuxt dev server)",
 		Flags: []cli.Flag{
 			&cli.IntFlag{
 				Name:    "api-port",
@@ -51,13 +52,24 @@ func serveCommand() *cli.Command {
 	}
 }
 
-// runServe starts `bun run dev` (in ./web-client) as a child process and then runs
-// the Echo server. air sits above this process: on a Go rebuild it sends an
-// interrupt, our handler kills the whole Nuxt process group, and we exit so the
-// port is free before air re-runs the rebuilt binary.
+// runServe runs the Echo server, and in a dev build also starts `bun run dev`
+// (in ./web-client) as a child process to serve the UI. air sits above this
+// process: on a Go rebuild it sends an interrupt, our handler kills the whole
+// Nuxt process group, and we exit so the port is free before air re-runs the
+// rebuilt binary. A release build has the SPA embedded and starts nothing, but
+// does apply its migrations first when APP_ENV=prod.
 func runServe(host string, port int) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	cfg := loadAuthConfig()
+
+	// Before anything opens a connection, and only in prod. See migrateAllUp.
+	if cfg.prod {
+		if err := migrateAllUp(); err != nil {
+			return err
+		}
+	}
 
 	// Build a lazy pgx pool from DATABASE_URL. pgxpool.New does not dial, so a
 	// missing/unreachable DB never blocks startup; the healthcheck pings on demand.
@@ -84,6 +96,20 @@ func runServe(host string, port int) error {
 		defer ch.Close()
 	}
 
+	web, embedded := webRoot()
+	if !embedded {
+		if err := startNuxtDevServer(ctx); err != nil {
+			return err
+		}
+	}
+
+	return runEchoServer(host, port, web, pool, ch, cfg, loadProxyAuthConfig(cfg.prod))
+}
+
+// startNuxtDevServer launches `bun run dev` and, on interrupt/SIGTERM (Ctrl-C or
+// air's rebuild signal), tears down the whole Nuxt process group before exiting.
+// SIGKILL as a backstop if it lingers.
+func startNuxtDevServer(ctx context.Context) error {
 	nuxt := exec.Command("bun", "run", "dev")
 	nuxt.Dir = "web-client"
 	nuxt.Stdout, nuxt.Stderr = os.Stdout, os.Stderr
@@ -95,8 +121,6 @@ func runServe(host string, port int) error {
 	}
 	log.Printf("nuxt dev server started (pid %d)", nuxt.Process.Pid)
 
-	// On interrupt/SIGTERM (Ctrl-C or air's rebuild signal): tear down the whole
-	// Nuxt process group, then exit. SIGKILL as a backstop if it lingers.
 	go func() {
 		<-ctx.Done()
 		pgid := nuxt.Process.Pid
@@ -110,19 +134,22 @@ func runServe(host string, port int) error {
 		}
 		os.Exit(0)
 	}()
-
-	cfg := loadAuthConfig()
-	return runEchoServer(host, port, pool, ch, cfg, loadProxyAuthConfig(cfg.prod))
+	return nil
 }
 
 // runEchoServer starts the Echo API server: /api/v1/* is handled here, every
-// other path is reverse-proxied to the Nuxt dev server.
-func runEchoServer(host string, port int, pool *pgxpool.Pool, ch driver.Conn, cfg authConfig, proxyCfg proxyAuthConfig) error {
+// other path is served from the embedded SPA, or reverse-proxied to the Nuxt dev
+// server when web is nil.
+func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driver.Conn, cfg authConfig, proxyCfg proxyAuthConfig) error {
 	e := echo.New()
 
 	e.Use(middleware.RequestLogger())
 	e.Use(middleware.Recover())
-	e.Use(proxyToNuxt(nuxtTarget))
+	if web != nil {
+		e.Use(serveSPA(web))
+	} else {
+		e.Use(proxyToNuxt(nuxtTarget))
+	}
 
 	api := e.Group("/api/v1")
 	api.GET("/health", func(c *echo.Context) error {

@@ -3,6 +3,9 @@
 kernel/linux*
 sample/
 
+# goreleaser output
+dist/
+
 rustfs-logs/
 rustfs-data/
 .rustfs.env

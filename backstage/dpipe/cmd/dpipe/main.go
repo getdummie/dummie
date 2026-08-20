@@ -13,10 +13,23 @@ import (
 	"dpipe/internal/dpipe"
 )
 
+// Set at build time with -X main.version; "dev" in a plain `go build`.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
 	cfgPath := flag.String("config", "dpipe.yaml", "path to the configuration file")
 	upgrade := flag.Bool("upgrade", false, "take over the listeners of the running instance")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("dpipe %s (%s, %s)\n", version, commit, date)
+		return
+	}
 
 	if err := run(*cfgPath, *upgrade); err != nil {
 		fmt.Fprintln(os.Stderr, "dpipe:", err)

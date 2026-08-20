@@ -1,0 +1,89 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+#
+# Three separate Go modules live in this repo (backstage/dpipe, backstage/proxy,
+# control) with no go.work, so every build names its own `dir`. One repo-wide
+# version covers all of them: the committed /VERSION file is the source of
+# truth, `just release` derives the git tag from it, and {{ .Version }} below is
+# that tag.
+#
+# The control *server* is not here: it ships as a docker image built from
+# control/Dockerfile, because it needs a bun stage for the SPA. See `just release`.
+version: 2
+
+project_name: dummie
+
+builds:
+  - id: dpipe
+    dir: backstage/dpipe
+    main: ./cmd/dpipe
+    binary: dpipe
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .CommitDate }}
+
+  - id: proxy
+    dir: backstage/proxy
+    main: ./cmd/proxy
+    binary: proxy
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .CommitDate }}
+
+  - id: dclient
+    dir: control
+    main: ./cmd/dclient
+    binary: dclient
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .CommitDate }}
+
+archives:
+  - id: binaries
+    ids: [dpipe, proxy, dclient]
+    formats: [tar.gz]
+    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: getdummie
+    name: dummie
+  footer: |
+    ## control server
+
+    ```
+    docker pull codingcoffee/dummie-control:{{ .Version }}
+    ```

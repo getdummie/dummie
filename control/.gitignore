@@ -1,5 +1,10 @@
 tmp/
 
+# The SPA the release build drops here before `go build`; web.go embeds it and
+# placeholder.txt is what keeps that embed compiling in a dev tree.
+web/*
+!web/placeholder.txt
+
 # Local env (keep .env.example tracked)
 .env
 .env.*
