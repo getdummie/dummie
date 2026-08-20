@@ -58,7 +58,7 @@ release bump:
   git push origin main "$tag"
 
   just _goreleaser release --clean
-  just release-image "$tag"
+  just release-image "$next"
 
 # build the binaries and the image without tagging, pushing or publishing anything.
 release-snapshot:
@@ -74,7 +74,9 @@ release-snapshot:
     -t "{{CONTROL_IMAGE}}:snapshot" \
     control/
 
-# build and push the control image for a tag that already exists.
+# build and push the control image for a version that is already tagged. Takes
+# the bare number (0.0.3), the way VERSION and the release notes write it; the
+# git tag it reads the commit and date from is v-prefixed.
 release-image version:
   #!/usr/bin/env bash
   set -euo pipefail
@@ -82,8 +84,8 @@ release-image version:
     --platform "{{IMAGE_PLATFORMS}}" \
     -f control/Dockerfile \
     --build-arg VERSION="{{version}}" \
-    --build-arg COMMIT="$(git rev-list -n1 --abbrev-commit "{{version}}")" \
-    --build-arg DATE="$(git log -1 --format=%cI "{{version}}")" \
+    --build-arg COMMIT="$(git rev-list -n1 --abbrev-commit "v{{version}}")" \
+    --build-arg DATE="$(git log -1 --format=%cI "v{{version}}")" \
     -t "{{CONTROL_IMAGE}}:{{version}}" \
     -t "{{CONTROL_IMAGE}}:latest" \
     --push \

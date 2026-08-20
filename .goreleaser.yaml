@@ -58,11 +58,23 @@ builds:
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .CommitDate }}
 
+# One entry per binary. A single entry listing every build id would group them
+# by target platform instead -- one tarball per OS/arch holding all three.
 archives:
-  - id: binaries
-    ids: [dpipe, proxy, dclient]
+  - id: dpipe
+    ids: [dpipe]
     formats: [tar.gz]
-    name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "dpipe_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: proxy
+    ids: [proxy]
+    formats: [tar.gz]
+    name_template: "proxy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: dclient
+    ids: [dclient]
+    formats: [tar.gz]
+    name_template: "dclient_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
