@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -261,10 +264,15 @@ func ensureBinary(ctx context.Context, data, name, src string) error {
 	return os.WriteFile(marker, []byte(src), 0o600)
 }
 
-// downloadBinary fetches src to dst through a temporary file in the same
-// directory, then renames. Two reasons for the dance: overwriting a running
-// binary in place fails with ETXTBSY, and a half-written file that systemd then
-// tries to execute is worse than no file at all.
+// downloadBinary fetches src and installs it at dst, through a temporary file in
+// the same directory that is then renamed. Two reasons for the dance:
+// overwriting a running binary in place fails with ETXTBSY, and a half-written
+// file that systemd then tries to execute is worse than no file at all.
+//
+// src is either the binary itself or a .tar.gz holding it -- which is what a
+// github release asset is, and so what an upgrade from a published release
+// names. The suffix decides; nothing sniffs the bytes, so a tarball served
+// without one is a configuration mistake rather than something to guess at.
 //
 // Separate from image.go's download, which is a content-addressed cache keyed by
 // digest; this one installs to a path the unit file names.
@@ -288,24 +296,54 @@ func downloadBinary(ctx context.Context, src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dclient-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
 
-	if _, err := io.Copy(tmp, resp.Body); err != nil {
-		_ = tmp.Close()
-		return err
+	if isTarball(src) {
+		return installFromTarball(src, resp.Body, dst)
 	}
-	if err := tmp.Close(); err != nil {
-		return err
+	return installFromReader(resp.Body, dst)
+}
+
+// isTarball reports whether the URL names a gzipped tar. The path only: a query
+// string or fragment says nothing about the format.
+func isTarball(src string) bool {
+	p := src
+	if u, err := url.Parse(src); err == nil {
+		p = u.Path
 	}
-	if err := os.Chmod(tmpName, 0o755); err != nil {
-		return err
+	p = strings.ToLower(p)
+	return strings.HasSuffix(p, ".tar.gz") || strings.HasSuffix(p, ".tgz")
+}
+
+// installFromTarball pulls the one member named like dst out of the archive and
+// installs that. Streamed rather than staged whole, the way downloadVector does
+// it: nothing needs the rest of the archive on disk.
+//
+// A release archive holds the binary at its root, but the member is matched on
+// its base name so a tarball that nests it under a directory also works. Type
+// checked, so a symlink or directory of that name cannot match -- an archive
+// that points its "dpipe" at /etc/shadow does not get to have it copied.
+func installFromTarball(src string, body io.Reader, dst string) error {
+	gz, err := gzip.NewReader(body)
+	if err != nil {
+		return fmt.Errorf("%s is not a gzip archive: %w", src, err)
 	}
-	return os.Rename(tmpName, dst)
+	defer gz.Close()
+
+	want := filepath.Base(dst)
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("%s contains no %s", src, want)
+		}
+		if err != nil {
+			return err
+		}
+		if hdr.Typeflag != tar.TypeReg || path.Base(hdr.Name) != want {
+			continue
+		}
+		return installFromReader(tr, dst)
+	}
 }
 
 // writeIfAbsent creates a file only if it is not already there, so an operator's

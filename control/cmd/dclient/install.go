@@ -239,13 +239,16 @@ const exampleConfig = `# control_url: https://control.example.com
 #   dns: 1.1.1.1
 #   queues: 4               # the suricata service will spin up the same number of queues
 #
+# download_url is either the binary itself or a .tar.gz holding it, decided by
+# the suffix -- so a release asset can be named directly:
+#
 # dpipe:
 #   enable: false           # generates /etc/dpipe/keys/* on first start if absent
-#   download_url: http://10.68.0.1:8081/backstage/dpipe/dpipe
+#   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dpipe_0.0.4_linux_amd64.tar.gz
 #
 # proxy:
 #   enable: false
-#   download_url: http://10.68.0.1:8081/backstage/proxy/proxy
+#   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/proxy_0.0.4_linux_amd64.tar.gz
 #
 # vector:
 #   enable: false           # ships suricata's eve.json to clickhouse; needs suricata.

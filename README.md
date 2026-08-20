@@ -110,6 +110,20 @@ EOF
 sudo systemctl restart dclient
 ```
 
+Those two `download_url`s point at the local artifact server, which serves the
+binaries raw. A `.tar.gz` works just as well, so a host can run published
+releases instead:
+
+```yaml
+dpipe:
+  enable: true
+  download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dpipe_0.0.4_linux_amd64.tar.gz
+
+proxy:
+  enable: true
+  download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/proxy_0.0.4_linux_amd64.tar.gz
+```
+
 For generating python sdk
 
 ```sh

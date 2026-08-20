@@ -251,11 +251,11 @@ func downloadVector(ctx context.Context, src, dst string) error {
 }
 
 // installFromReader writes r to a temporary file beside dst and renames over
-// it. Same dance as downloadBinary, for the same two reasons: overwriting a
-// running binary in place fails with ETXTBSY, and a half-written file systemd
-// then execs is worse than no file at all.
+// it, for two reasons: overwriting a running binary in place fails with
+// ETXTBSY, and a half-written file systemd then execs is worse than no file at
+// all. Every binary dclient installs -- vector, proxy, dpipe -- lands here.
 func installFromReader(r io.Reader, dst string) error {
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dclient-vector-*")
+	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dclient-*")
 	if err != nil {
 		return err
 	}
