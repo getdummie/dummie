@@ -16,7 +16,7 @@ import (
 // The browser terminal. The page itself is served by this server -- it is the
 // origin the user is already signed in to, and the one place the terminal's
 // javascript can come from -- while the shell it talks to lives behind the
-// host's proxy at "<vm>.console.<domain>".
+// host's proxy at "<vm>.shell.<domain>".
 //
 // That split is why this endpoint exists. The websocket the page opens is
 // cross-origin, and a cross-site handshake carries no cookie, so the proxy's

@@ -54,7 +54,7 @@ func testFleetCert(t *testing.T, tld string) (string, string) {
 
 func TestCertificateNamesCoverConsoles(t *testing.T) {
 	got := certificateNames("example.com")
-	want := []string{"*.example.com", "*.console.example.com"}
+	want := []string{"*.example.com", "*.shell.example.com"}
 	if len(got) != len(want) {
 		t.Fatalf("certificateNames = %v, want %v", got, want)
 	}
@@ -115,7 +115,7 @@ func TestValidateCertificateRejectsMissingConsoleWildcard(t *testing.T) {
 	if err == nil {
 		t.Fatal("a certificate with no console wildcard was accepted")
 	}
-	if !strings.Contains(err.Error(), "*.console.example.com") {
+	if !strings.Contains(err.Error(), "*.shell.example.com") {
 		t.Errorf("the error does not name the missing name: %v", err)
 	}
 }

@@ -131,7 +131,7 @@ type AuthConfig struct {
 // endpoint cannot be reached on a host that was not meant to offer it.
 type ConsoleConfig struct {
 	// Label is the extra hostname label that marks a console host, so
-	// "<vm>.console.<domain>" is the terminal for "<vm>.<domain>". Configurable
+	// "<vm>.shell.<domain>" is the terminal for "<vm>.<domain>". Configurable
 	// only because it also has to match a DNS record and a certificate, which are
 	// cut outside this file.
 	Label string `yaml:"label"`
@@ -139,7 +139,7 @@ type ConsoleConfig struct {
 	RemoteUser string `yaml:"remote_user"`
 }
 
-const defaultConsoleLabel = "console"
+const defaultConsoleLabel = "shell"
 
 // hostLabelPattern is one DNS label. The label is spliced out of a hostname to
 // find the VM behind a console name, so a value containing a dot would make one

@@ -30,7 +30,7 @@ import (
 )
 
 // Issuance runs here rather than on the qemu hosts, and the reason is the
-// challenge type. A fleet needs "*.<domain>" and "*.console.<domain>" on one
+// challenge type. A fleet needs "*.<domain>" and "*.shell.<domain>" on one
 // certificate, two wildcards can only be proved over dns-01, and dns-01 involves
 // no inbound http at all -- so nothing about it wants to happen on the machine
 // that serves the traffic.

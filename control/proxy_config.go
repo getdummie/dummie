@@ -92,15 +92,15 @@ log_level: info
 `
 
 // proxyConsoleLabel is the extra hostname label the browser terminal answers
-// under: "<vm>.console.<domain>" is the console for "<vm>.<domain>". Fixed
+// under: "<vm>.shell.<domain>" is the console for "<vm>.<domain>". Fixed
 // rather than configurable because it is also what the DNS record and the
 // certificate for the fleet have to be cut for, and neither of those is
 // something this file can change.
 //
 // Note that a wildcard for "*.<domain>" does NOT cover it -- a wildcard matches
-// one label -- so "*.console.<domain>" needs its own record and its own name on
+// one label -- so "*.shell.<domain>" needs its own record and its own name on
 // the certificate.
-const proxyConsoleLabel = "console"
+const proxyConsoleLabel = "shell"
 
 // proxyCookieSecretPath is where the client writes the shared key and where proxy
 // reads it. A path rather than the value inline: proxy.yaml is world-readable on
@@ -177,7 +177,7 @@ func writeProxyAuth(b *strings.Builder, auth proxyAuthConfig) {
 }
 
 // writeProxyConsole emits the block that claims the console hostnames. proxy
-// derives each of them from the http table below -- "<vm>.console.<domain>" is
+// derives each of them from the http table below -- "<vm>.shell.<domain>" is
 // the terminal for "<vm>.<domain>" -- so there is nothing per VM to list here,
 // and a VM that stops being published stops having a console in the same edit.
 //

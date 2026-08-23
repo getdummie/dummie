@@ -244,7 +244,7 @@ func consoleResolver(t *testing.T) (*Resolver, *Authenticator) {
 		HTTP:          &HTTPConfig{Listen: ":8080", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "10.64.0.2", DefaultPort: 8000}}},
 		HTTPS:         &HTTPSConfig{Listen: ":8443"},
 		Auth:          &AuthConfig{ControlURL: "https://control.local/login", CookieSecretFile: writeSecret(t), CookieSecure: true},
-		Console:       &ConsoleConfig{Label: "console", RemoteUser: "ubuntu"},
+		Console:       &ConsoleConfig{Label: "shell", RemoteUser: "ubuntu"},
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -256,7 +256,7 @@ func consoleResolver(t *testing.T) (*Resolver, *Authenticator) {
 // wsResolve is a console websocket upgrade as dpipe would forward it.
 func wsResolve(token string) control.Msg {
 	return control.Msg{
-		Host:       "one.console.vm.local",
+		Host:       "one.shell.vm.local",
 		Path:       "/?token=" + url.QueryEscape(token),
 		Upgrade:    "websocket",
 		Connection: "Upgrade",
@@ -268,7 +268,7 @@ func wsResolve(token string) control.Msg {
 func TestResolveConsoleOverHTTPS(t *testing.T) {
 	r, a := consoleResolver(t)
 
-	m := wsResolve(a.Mint("alice", consoleAudPrefix+"one.console.vm.local"))
+	m := wsResolve(a.Mint("alice", consoleAudPrefix+"one.shell.vm.local"))
 	rep := resolveHTTPS(r, m)
 	if !rep.Authorized || rep.Protocol != control.ProtoConsole {
 		t.Fatalf("console resolve = %+v, want an authorized console", rep)
@@ -283,7 +283,7 @@ func TestResolveConsoleOverHTTPS(t *testing.T) {
 
 func TestResolveConsoleOverHTTPSRefusals(t *testing.T) {
 	r, a := consoleResolver(t)
-	good := a.Mint("alice", consoleAudPrefix+"one.console.vm.local")
+	good := a.Mint("alice", consoleAudPrefix+"one.shell.vm.local")
 
 	// A session token for the VM must never open a shell on its console.
 	session := a.Mint("alice", "one.vm.local")
@@ -296,8 +296,8 @@ func TestResolveConsoleOverHTTPSRefusals(t *testing.T) {
 		{"no token", wsResolve(""), http.StatusUnauthorized},
 		{"forged token", wsResolve(good + "x"), http.StatusUnauthorized},
 		{"session token", wsResolve(session), http.StatusUnauthorized},
-		{"console token for another host", wsResolve(a.Mint("alice", consoleAudPrefix+"two.console.vm.local")), http.StatusUnauthorized},
-		{"not a websocket upgrade", control.Msg{Host: "one.console.vm.local", Path: "/?token=" + good}, http.StatusNotFound},
+		{"console token for another host", wsResolve(a.Mint("alice", consoleAudPrefix+"two.shell.vm.local")), http.StatusUnauthorized},
+		{"not a websocket upgrade", control.Msg{Host: "one.shell.vm.local", Path: "/?token=" + good}, http.StatusNotFound},
 	}
 	for _, c := range cases {
 		rep := resolveHTTPS(r, c.msg)
@@ -313,8 +313,8 @@ func TestResolveConsoleOverHTTPSRefusals(t *testing.T) {
 func TestResolveConsoleNameForUnpublishedVMIsUnknown(t *testing.T) {
 	r, a := consoleResolver(t)
 
-	m := wsResolve(a.Mint("alice", consoleAudPrefix+"nope.console.vm.local"))
-	m.Host = "nope.console.vm.local"
+	m := wsResolve(a.Mint("alice", consoleAudPrefix+"nope.shell.vm.local"))
+	m.Host = "nope.shell.vm.local"
 	rep := resolveHTTPS(r, m)
 	if rep.Authorized || rep.Status != 0 {
 		t.Fatalf("a console name whose VM is not published must be an unknown host: %+v", rep)

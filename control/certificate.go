@@ -15,7 +15,7 @@ import (
 // A fleet's certificate has to carry two wildcards, not one.
 //
 // Guests are published at "<vm>.<domain>" and their browser terminals at
-// "<vm>.console.<domain>". A wildcard matches exactly one label, so "*.<domain>"
+// "<vm>.shell.<domain>". A wildcard matches exactly one label, so "*.<domain>"
 // covers the first and not the second -- an omission that shows up only when
 // someone opens a console, which is the worst moment to find it. Both names are
 // required here, of every certificate, however it was obtained.
@@ -100,7 +100,7 @@ func validateCertificate(certPEM, keyPEM, tld string) (certInfo, error) {
 //
 // Two names, and deliberately not the apex as well. Nothing this fleet serves
 // lives at the bare domain -- guests are "<vm>.<tld>" and their terminals are
-// "<vm>.console.<tld>" -- so asking for it buys nothing, and it costs something
+// "<vm>.shell.<tld>" -- so asking for it buys nothing, and it costs something
 // real: the dns-01 challenge for "<tld>" and the one for "*.<tld>" are published
 // at the same record name with different values, which reads as a contradiction
 // to anyone creating them by hand and is easy to satisfy by replacing one with
