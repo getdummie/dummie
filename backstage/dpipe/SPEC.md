@@ -141,14 +141,17 @@ warning (dev only). `min_version` maps to `tls.VersionTLS12/13`.
 | `resolve`        | dpipe → proxy    | `kind:"ssh"\|"http"` + kind fields (below)        | none                      |
 
 `resolve` kind fields — `ssh`: `ssh_user, ssh_pubkey, ssh_fp, client_ip`;
-`http`: `host, sni, client_ip`.
+`http`: `host, sni, client_ip`, plus the request details the proxy's auth policy
+reads — `cookie` (the `Cookie` header verbatim, ≤ `MaxResolveCookie`), `path`
+(request target, ≤ `MaxResolvePath`), `accept`, `upgrade`. dpipe interprets none of
+them and omits any that does not fit the message budget.
 
 ### Replies (correlated by `id`)
 | type       | fields                                                                        |
 |------------|-------------------------------------------------------------------------------|
 | `ok`       | `status`: `active_conns`, `listen_forwards`, `draining`                         |
 | `error`    | `error`                                                                        |
-| `resolved` | `authorized:bool`; if true `target:"host:port"`, and `remote_user` (ssh only)  |
+| `resolved` | `authorized:bool`; if true `target:"host:port"`, and `remote_user` (ssh only); if not authorized on an `http` resolve, the response dpipe writes before closing: `status:int`, and `location`/`set_cookie` for a 302; an `http` resolve on a console hostname replies `protocol:"console"` with `target`, `remote_user`, `sub`, `ws_key` and is served on the TLS conn, not forwarded |
 
 ### Self-upgrade (over `upgrade_socket`)
 `handover_request` (new→old); `handover` (old→new) with
@@ -170,6 +173,13 @@ type Msg struct {
     SSHFingerprint string `json:"ssh_fp,omitempty"`
     Host string `json:"host,omitempty"`            // resolve http
     SNI  string `json:"sni,omitempty"`             // resolve http
+    Cookie  string `json:"cookie,omitempty"`        // resolve http: auth details, uninterpreted
+    Path    string `json:"path,omitempty"`
+    Accept  string `json:"accept,omitempty"`
+    Upgrade string `json:"upgrade,omitempty"`
+    Status    int    `json:"status,omitempty"`      // resolved http: response to write
+    Location  string `json:"location,omitempty"`
+    SetCookie string `json:"set_cookie,omitempty"`
     ClientIP string `json:"client_ip,omitempty"`
     Authorized bool   `json:"authorized,omitempty"`
     RemoteUser string `json:"remote_user,omitempty"`
@@ -242,9 +252,15 @@ func serveTLS(client net.Conn):
     routeHost := firstNonEmpty(host, sni)
     if err != nil || routeHost == "" { writeQuickTLS(tc,400); tc.Close(); return }
 
+    req, _ := http.ReadRequest(buf)          // for the proxy's auth policy only
     rep, err := ctrl.Resolve(ctx(tls.resolve_timeout), Msg{
-        Type:"resolve", ID:uuid(), Kind:"http", Host:routeHost, SNI:sni, ClientIP:remoteIP})
-    if err != nil || !rep.Authorized { writeQuickTLS(tc,502); tc.Close(); return }
+        Type:"resolve", ID:uuid(), Kind:"http", Host:routeHost, SNI:sni, ClientIP:remoteIP,
+        Cookie:req.Cookie, Path:req.RequestURI, Accept:req.Accept, Upgrade:req.Upgrade})
+    if err != nil { writeQuickTLS(tc,502); tc.Close(); return }
+    // the proxy answered for itself: login redirect, 401, ...
+    if rep.Location != "" || rep.Status != 0 {
+        writeAuthTLS(tc, rep.Status, rep.Location, rep.SetCookie); tc.Close(); return }
+    if !rep.Authorized { writeQuickTLS(tc,502); tc.Close(); return }
 
     backend, err := net.DialTimeout("tcp", rep.Target, tls.dial_timeout)
     if err != nil { writeQuickTLS(tc,502); tc.Close(); return }

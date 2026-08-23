@@ -35,7 +35,8 @@ auth:
 https: # TLS ingress (proxy accepts raw, dpipe terminates)
   listen: ":8443"
   reuseport: true
-  # routing reuses http.hosts via resolve{kind:"http"}; certs live in dpipe.tls
+  # routing and the auth policy above reuse http.hosts via resolve{kind:"http"};
+  # certs live in dpipe.tls
   # NOTE: dpipe.tls.enabled must be true for this ingress to work.
 
 tcp:

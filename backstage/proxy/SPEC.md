@@ -153,14 +153,17 @@ and dispatch inbound requests.
 | `resolve`        | dpipe → proxy    | `kind:"ssh"\|"http"` + kind fields           | none                      |
 
 `resolve` kind fields — `ssh`: `ssh_user, ssh_pubkey, ssh_fp, client_ip`;
-`http`: `host, sni, client_ip`.
+`http`: `host, sni, client_ip`, plus the request details the auth policy reads —
+`cookie` (the `Cookie` header verbatim, ≤ `MaxResolveCookie`), `path` (request
+target, ≤ `MaxResolvePath`), `accept`, `upgrade`. A field that does not fit is
+omitted, which reads as "absent" and fails closed.
 
 ### Replies (by `id`)
 | type       | fields                                                                       |
 |------------|------------------------------------------------------------------------------|
 | `ok`       | `status`: `active_conns`, `listen_forwards`, `draining`                        |
 | `error`    | `error`                                                                       |
-| `resolved` | `authorized`; if true `target`, and `remote_user` (ssh only)                  |
+| `resolved` | `authorized`; if true `target`, and `remote_user` (ssh only); if not authorized on an `http` resolve, the response dpipe must write: `status`, and `location`/`set_cookie` for a 302; a console hostname replies `protocol:"console"` with `target`, `remote_user`, `sub`, `ws_key` |
 
 `Msg` struct: identical to dpipe-spec §5 (shared `internal/control`).
 
@@ -267,13 +270,24 @@ func Handle(m Msg) Msg:
             return resolved{ID:m.ID, Authorized:true, Target:u.target, RemoteUser:u.remoteUser}
         return resolved{ID:m.ID, Authorized:false}
     case "http":
-        if t, ok := router.HostBackend(m.Host); ok:     // same host map as plaintext http
-            return resolved{ID:m.ID, Authorized:true, Target:t}
-        return resolved{ID:m.ID, Authorized:false}
+        req := requestFrom(m)                           // the details dpipe forwarded
+        if consoleVMHost(m.Host) is a published vm:      // a console name is the proxy's own
+            v := authorizeConsole(...)                  // same policy as plaintext console
+            return resolved{ID:m.ID, Authorized:true, Protocol:"console",
+                            Target:v.target, RemoteUser:v.remoteUser, Sub:v.sub, WSKey:v.wsKey}
+        t, ok := router.HostBackend(m.Host)             // same host map as plaintext http
+        if !ok: return resolved{ID:m.ID, Authorized:false}
+        v := authorizeRequest(router, auth, m.Host, req)             // same policy as plaintext http
+        if !v.ok: return resolved{ID:m.ID, Status:v.status, Location:v.location, SetCookie:v.setCookie}
+        return resolved{ID:m.ID, Authorized:true, Target:t}
     default: return error{ID:m.ID, Error:"unknown resolve kind"}
 ```
 The host map is the single source of truth for HTTP routing: the plaintext path
-reads it directly; the HTTPS path reads it via `resolve`. SSH authorizes on pubkey
+reads it directly; the HTTPS path reads it via `resolve`. The auth policy
+(`unauthenticated_ports`, cookie verification, the login round trip) is likewise
+one implementation, `authorizeRequest` in `auth.go`: on plaintext the proxy writes
+the verdict to the client itself, on https it returns it to dpipe, which never
+holds the cookie secret or the per-host port policy. SSH authorizes on pubkey
 (exe.dev's "the public key tells us the user"); `ssh_user`/`client_ip`/`sni` are
 available for richer v2 policy.
 
@@ -314,13 +328,19 @@ available for richer v2 policy.
 
 ## 13. Testing (acceptance criteria)
 **Unit:** `httpsniff.ReadHeaderBlock`; `router`; `resolver.Handle` (ssh known/unknown
-+ key normalization; http host hit/miss).
++ key normalization; http host hit/miss; http auth on a protected host — no cookie,
+forged cookie, cookie for another host, callback token, valid session).
 **Integration (with the paired dpipe):**
 1. HTTP host routing incl. POST body passthrough.
 2. TCP echo.
 3. **HTTPS end-to-end (must pass):** `curl https://vm1.local --resolve` to the
    proxy with a trusted demo CA → correct backend, correct SNI cert, body intact,
    unknown host → 502, HTTP/1.1 enforced.
+3b. **Auth on both ingresses (must pass):** a protected host over https → 302 to
+   the login URL (401 for a non-browser request); a forged, expired or
+   wrong-audience cookie → same refusal; `/__auth/callback?token=…` → 302 with the
+   session cookie; that cookie → served; an unauthenticated port → served with no
+   cookie at all.
 4. **SSH end-to-end (must pass):** `ssh -p 2222` → shell; `exec` exit status;
    `scp`/`sftp`; `-L` forward; unauthorized key rejected; authorized key → correct
    target/remote_user.

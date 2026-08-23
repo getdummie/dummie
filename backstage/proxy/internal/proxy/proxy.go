@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -43,11 +42,11 @@ type Proxy struct {
 // New wires the router, resolver and control client.
 func New(cfg *Config, log *slog.Logger) (*Proxy, error) {
 	router := NewRouter(cfg)
-	resolver, err := NewResolver(log, router, cfg)
+	auth, err := NewAuthenticator(cfg.Auth)
 	if err != nil {
 		return nil, err
 	}
-	auth, err := NewAuthenticator(cfg.Auth)
+	resolver, err := NewResolver(log, router, auth, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -229,9 +228,6 @@ func (p *Proxy) authorizeHTTP(log *slog.Logger, client net.Conn, host string, pr
 	if !ok || !entry.NeedsAuth(entry.DefaultPort) {
 		return true
 	}
-	// Tokens are scoped to the bare hostname, so a dev listener on a non-default
-	// port does not change what the control server has to sign.
-	host = httpsniff.NormalizeHost(host)
 
 	req, err := parseRequest(prefix)
 	if err != nil {
@@ -240,48 +236,16 @@ func (p *Proxy) authorizeHTTP(log *slog.Logger, client net.Conn, host string, pr
 		return false
 	}
 
-	// The callback is how a user becomes authenticated, so it cannot itself
-	// require authentication.
-	if req.URL.Path == CallbackPath {
-		p.completeLogin(log, client, host, req)
-		return false
+	v := authorizeRequest(log, p.router, p.auth, host, req)
+	if v.ok {
+		return true
 	}
-
-	if c, err := req.Cookie(p.auth.CookieName()); err == nil {
-		if sub, ok := p.auth.Verify(c.Value, host); ok {
-			log.Info("http auth ok", "host", host, "sub", sub)
-			return true
-		}
-		log.Info("http auth: rejected cookie", "host", host)
-	}
-
-	if !wantsHTML(req) {
-		log.Info("http auth: unauthenticated non-browser request", "host", host, "path", req.URL.Path)
+	if v.status == http.StatusFound {
+		writeRedirect(client, v.location, v.setCookie)
+	} else {
 		writeUnauthorized(client)
-		return false
 	}
-	login := p.auth.LoginURL(host, req.URL.RequestURI())
-	log.Info("http auth: redirecting to control server", "host", host, "path", req.URL.Path)
-	writeRedirect(client, login, "")
 	return false
-}
-
-// completeLogin handles CallbackPath: verify the token the control server
-// signed, swap it for a host-scoped session cookie and send the user on.
-func (p *Proxy) completeLogin(log *slog.Logger, client net.Conn, host string, req *http.Request) {
-	token := req.URL.Query().Get("token")
-	sub, ok := p.auth.Verify(token, host)
-	if !ok {
-		log.Warn("http auth: invalid callback token", "host", host)
-		writeUnauthorized(client)
-		return
-	}
-	next := req.URL.Query().Get("next")
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") {
-		next = "/" // never bounce to an attacker-supplied absolute URL
-	}
-	log.Info("http auth: session established", "host", host, "sub", sub)
-	writeRedirect(client, next, p.auth.SetCookie(p.auth.Mint(sub, host)))
 }
 
 // handleHTTP: plaintext HTTP, routed per connection by the first request's Host.
@@ -304,7 +268,7 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 	// routes to that VM -- a domain whose own first label happens to be the
 	// console label can only cost someone a terminal, never open one by accident.
 	if _, published := p.router.HostEntry(host); !published {
-		if vmHost, ok := p.consoleVMHost(host); ok {
+		if vmHost, ok := consoleVMHost(p.router, p.cfg.Console, host); ok {
 			log.Info("console route", "host", host, "vm_host", vmHost)
 			p.handleConsole(log, client, host, vmHost, prefix)
 			return

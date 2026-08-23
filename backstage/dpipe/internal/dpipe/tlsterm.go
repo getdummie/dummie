@@ -1,11 +1,15 @@
 package dpipe
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
+	"net/http"
 	"strings"
 	"time"
 
@@ -56,16 +60,46 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 		return
 	}
 
-	rCtx, rCancel := context.WithTimeout(context.Background(), s.cfg.TLS.ResolveTimeout.Or(defaultResolveTimeout))
-	rep, err := p.Request(rCtx, control.Msg{
+	msg := control.Msg{
 		V: control.Version, Type: control.TypeResolve, ID: control.NewID(),
 		Kind: control.KindHTTP, Host: routeHost, SNI: sni, ClientIP: remoteIP,
-	}, nil)
+	}
+	// The proxy owns the auth policy and cannot see this request, so forward the
+	// details it needs to apply it. A request whose own headers do not fit is sent
+	// without them, which the proxy treats as unauthenticated.
+	if req, perr := parseRequest(prefix); perr == nil {
+		fillAuthDetails(&msg, req)
+	} else {
+		log.Debug("tls request parse failed, resolving without auth details", "err", perr)
+	}
+
+	rCtx, rCancel := context.WithTimeout(context.Background(), s.cfg.TLS.ResolveTimeout.Or(defaultResolveTimeout))
+	rep, err := p.Request(rCtx, msg, nil)
 	rCancel()
-	if err != nil || !rep.Authorized || rep.Target == "" {
-		log.Warn("tls resolve denied", "host", routeHost, "sni", sni, "err", err)
+	if err != nil {
+		log.Warn("tls resolve failed", "host", routeHost, "sni", sni, "err", err)
 		writeQuickTLS(tc, 502)
 		_ = tc.Close()
+		return
+	}
+	// The proxy answered with a response of its own: the login redirect, or a
+	// refusal. dpipe writes it verbatim and never learns why.
+	if rep.Location != "" || rep.Status != 0 {
+		log.Info("tls resolve answered by proxy", "host", routeHost, "status", rep.Status)
+		writeAuthTLS(tc, rep.Status, rep.Location, rep.SetCookie)
+		_ = tc.Close()
+		return
+	}
+	if !rep.Authorized || rep.Target == "" {
+		log.Warn("tls resolve denied", "host", routeHost, "sni", sni)
+		writeQuickTLS(tc, 502)
+		_ = tc.Close()
+		return
+	}
+	// A console hostname: the proxy validated the token and the handshake, so the
+	// terminal runs on this connection rather than being forwarded anywhere.
+	if rep.Protocol == control.ProtoConsole {
+		s.serveTLSConsole(log, id, rep, tc, routeHost, remoteIP, prefix)
 		return
 	}
 
@@ -108,6 +142,95 @@ func normalizeSNI(s string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s), "."))
 }
 
+// serveTLSConsole runs a browser terminal on a connection whose TLS this process
+// has already terminated, which is why it is served here instead of being handed
+// back as a console_accept: a live TLS session cannot be fd-passed. Everything
+// about who this is and which guest they may reach was decided by the proxy; what
+// is decided here is whether there is room to run it.
+func (s *Server) serveTLSConsole(log *slog.Logger, id string, rep control.Msg, tc net.Conn, host, clientIP string, prefix []byte) {
+	if !s.cfg.Console.Enabled {
+		log.Warn("console over tls but console is not enabled", "host", host)
+		writeQuickTLS(tc, 404)
+		_ = tc.Close()
+		return
+	}
+	if !s.acquireConsole(host) {
+		log.Info("console refused: too many sessions for this vm", "host", host, "sub", rep.Sub)
+		writeQuickTLS(tc, 503)
+		_ = tc.Close()
+		return
+	}
+	// Anything the client pipelined behind the upgrade request belongs to the
+	// websocket stream. It never leaves this process, so MaxConsolePrefix — which
+	// bounds what a console_accept can carry — does not apply.
+	s.serveConsole(id, control.Msg{
+		Host: host, Target: rep.Target, RemoteUser: rep.RemoteUser,
+		Sub: rep.Sub, WSKey: rep.WSKey, ClientIP: clientIP,
+	}, tc, pipelinedBytes(prefix))
+}
+
+// pipelinedBytes returns the bytes of a sniffed prefix that follow the header
+// block.
+func pipelinedBytes(prefix []byte) []byte {
+	if i := bytes.Index(prefix, []byte("\r\n\r\n")); i >= 0 {
+		return prefix[i+4:]
+	}
+	return nil
+}
+
+// parseRequest recovers the request line and headers from the decrypted prefix.
+// The body is irrelevant here and is left in the prefix for replay.
+func parseRequest(prefix []byte) (*http.Request, error) {
+	return http.ReadRequest(bufio.NewReader(bytes.NewReader(prefix)))
+}
+
+// fillAuthDetails copies the request details the proxy's policy reads into an
+// http resolve, within a budget that keeps the message under MaxMsgSize. The
+// small headers go first and the cookie takes what is left, because it is the
+// only one big enough to crowd the others out — and dpipe cannot tell a session
+// cookie from any other, so it must forward the header whole or not at all. A
+// field that does not fit is left out, which fails closed: at worst the client
+// makes another trip through the login flow.
+func fillAuthDetails(m *control.Msg, req *http.Request) {
+	budget := control.MaxResolveDetails
+
+	take := func(v string, max int) string {
+		if len(v) > max || len(v) > budget {
+			return ""
+		}
+		budget -= len(v)
+		return v
+	}
+
+	m.Upgrade = take(req.Header.Get("Upgrade"), control.MaxResolveHeader)
+	m.Connection = take(req.Header.Get("Connection"), control.MaxResolveHeader)
+	m.WSVersion = take(req.Header.Get("Sec-WebSocket-Version"), control.MaxResolveHeader)
+	m.WSKey = take(req.Header.Get("Sec-WebSocket-Key"), control.MaxResolveHeader)
+	m.Accept = take(req.Header.Get("Accept"), control.MaxResolveHeader)
+	m.Path = take(req.URL.RequestURI(), control.MaxResolvePath)
+	m.Cookie = take(strings.Join(req.Header.Values("Cookie"), "; "), budget)
+}
+
+// writeAuthTLS writes the response the proxy decided on. A location makes it the
+// 302 that starts (or finishes) the login round trip; otherwise the status is
+// written on its own.
+func writeAuthTLS(w io.Writer, status int, location, setCookie string) {
+	if location == "" {
+		if status == 0 {
+			status = 502
+		}
+		writeQuickTLS(w, status)
+		return
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "HTTP/1.1 302 Found\r\nLocation: %s\r\n", location)
+	if setCookie != "" {
+		fmt.Fprintf(&b, "Set-Cookie: %s\r\n", setCookie)
+	}
+	b.WriteString("Content-Length: 0\r\nConnection: close\r\n\r\n")
+	_, _ = io.WriteString(w, b.String())
+}
+
 // writeQuickTLS writes a minimal HTTP/1.1 response over an already-handshaked
 // TLS connection.
 func writeQuickTLS(w io.Writer, code int) {
@@ -119,6 +242,10 @@ func quickResponse(code int) string {
 	switch code {
 	case 400:
 		reason = "Bad Request"
+	case 401:
+		reason = "Unauthorized"
+	case 404:
+		reason = "Not Found"
 	case 502:
 		reason = "Bad Gateway"
 	case 503:

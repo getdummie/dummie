@@ -19,6 +19,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -270,6 +272,138 @@ func TestTLSTermination(t *testing.T) {
 			t.Fatalf("status = %d, want 502", resp.StatusCode)
 		}
 	})
+}
+
+// 4b. The proxy owns the auth policy: dpipe forwards the request details it asks
+// for and writes back whatever response it decides on.
+func TestTLSAuthPolicyIsTheProxys(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "served")
+	}))
+	t.Cleanup(backend.Close)
+
+	dir := t.TempDir()
+	certPath, keyPath, pool := writeSelfSignedCert(t, dir, "vm1.local")
+
+	cfg := baseConfig(t)
+	cfg.TLS = TLSConfig{
+		Enabled:    true,
+		Certs:      []CertConfig{{SNI: "vm1.local", Cert: certPath, Key: keyPath}},
+		MinVersion: "1.2",
+	}
+	startServer(t, cfg)
+
+	var mu sync.Mutex
+	var got control.Msg
+	p := dialControl(t, cfg.ControlSocket, func(m control.Msg) control.Msg {
+		mu.Lock()
+		got = m
+		mu.Unlock()
+		reply := control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
+		switch {
+		case strings.Contains(m.Cookie, "session=good"):
+			reply.Authorized, reply.Target = true, backend.Listener.Addr().String()
+		case strings.HasPrefix(m.Path, "/callback"):
+			reply.Status, reply.Location, reply.SetCookie = 302, "/dash", "session=good; Path=/"
+		case strings.Contains(m.Accept, "text/html"):
+			reply.Status, reply.Location = 302, "https://control.local/login?rd=x"
+		default:
+			reply.Status = 401
+		}
+		return reply
+	})
+
+	lastResolve := func() control.Msg {
+		mu.Lock()
+		defer mu.Unlock()
+		return got
+	}
+
+	t.Run("request details are forwarded", func(t *testing.T) {
+		resp := tlsRoundTrip(t, p, cfg, pool, "vm1.local",
+			"GET /dash?a=1 HTTP/1.1\r\nHost: vm1.local\r\nAccept: text/html\r\nCookie: session=stale\r\nConnection: close\r\n\r\n")
+		if resp.StatusCode != 302 || resp.Header.Get("Location") != "https://control.local/login?rd=x" {
+			t.Fatalf("status = %d, location = %q", resp.StatusCode, resp.Header.Get("Location"))
+		}
+		m := lastResolve()
+		if m.Path != "/dash?a=1" || m.Cookie != "session=stale" || m.Accept != "text/html" {
+			t.Fatalf("resolve = {path:%q cookie:%q accept:%q}", m.Path, m.Cookie, m.Accept)
+		}
+	})
+
+	t.Run("non-browser request is refused", func(t *testing.T) {
+		resp := tlsRoundTrip(t, p, cfg, pool, "vm1.local",
+			"GET /api HTTP/1.1\r\nHost: vm1.local\r\nAccept: application/json\r\nConnection: close\r\n\r\n")
+		if resp.StatusCode != 401 {
+			t.Fatalf("status = %d, want 401", resp.StatusCode)
+		}
+	})
+
+	t.Run("login callback sets the cookie", func(t *testing.T) {
+		resp := tlsRoundTrip(t, p, cfg, pool, "vm1.local",
+			"GET /callback?token=t HTTP/1.1\r\nHost: vm1.local\r\nAccept: text/html\r\nConnection: close\r\n\r\n")
+		if resp.StatusCode != 302 || resp.Header.Get("Location") != "/dash" {
+			t.Fatalf("status = %d, location = %q", resp.StatusCode, resp.Header.Get("Location"))
+		}
+		if resp.Header.Get("Set-Cookie") != "session=good; Path=/" {
+			t.Fatalf("set-cookie = %q", resp.Header.Get("Set-Cookie"))
+		}
+	})
+
+	t.Run("authenticated request reaches the backend", func(t *testing.T) {
+		resp := tlsRoundTrip(t, p, cfg, pool, "vm1.local",
+			"GET / HTTP/1.1\r\nHost: vm1.local\r\nCookie: session=good\r\nConnection: close\r\n\r\n")
+		if resp.StatusCode != 200 {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		if string(body) != "served" {
+			t.Fatalf("body = %q", body)
+		}
+	})
+
+	t.Run("oversize cookie is dropped, not truncated", func(t *testing.T) {
+		big := "session=good; junk=" + strings.Repeat("x", control.MaxResolveCookie)
+		resp := tlsRoundTrip(t, p, cfg, pool, "vm1.local",
+			"GET / HTTP/1.1\r\nHost: vm1.local\r\nCookie: "+big+"\r\nConnection: close\r\n\r\n")
+		if resp.StatusCode != 401 {
+			t.Fatalf("status = %d, want 401", resp.StatusCode)
+		}
+		if c := lastResolve().Cookie; c != "" {
+			t.Fatalf("cookie forwarded despite exceeding the budget: %q", c)
+		}
+	})
+}
+
+// 4c. A console resolve on the https ingress is served on the TLS connection
+// dpipe already holds, never forwarded to a guest.
+func TestTLSConsoleIsNotForwarded(t *testing.T) {
+	dir := t.TempDir()
+	certPath, keyPath, pool := writeSelfSignedCert(t, dir, "vm1.local")
+
+	cfg := baseConfig(t)
+	cfg.TLS = TLSConfig{
+		Enabled:    true,
+		Certs:      []CertConfig{{SNI: "vm1.local", Cert: certPath, Key: keyPath}},
+		MinVersion: "1.2",
+	}
+	startServer(t, cfg)
+
+	// The proxy authorized a console; this dpipe has consoles turned off, so the
+	// only correct answer is a refusal — and never a connection to rep.Target.
+	p := dialControl(t, cfg.ControlSocket, func(m control.Msg) control.Msg {
+		return control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID,
+			Authorized: true, Protocol: control.ProtoConsole,
+			Target: "10.64.0.2:22", RemoteUser: "ubuntu", Sub: "alice",
+			WSKey: "dGhlIHNhbXBsZSBub25jZQ=="}
+	})
+
+	resp := tlsRoundTrip(t, p, cfg, pool, "vm1.local",
+		"GET /?token=t HTTP/1.1\r\nHost: vm1.local\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"+
+			"Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n")
+	if resp.StatusCode != 404 {
+		t.Fatalf("status = %d, want 404 (console not enabled)", resp.StatusCode)
+	}
 }
 
 // tlsRoundTrip hands a raw socket to dpipe via tls_accept, then speaks TLS on

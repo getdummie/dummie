@@ -31,6 +31,16 @@ const (
 	// upgrade request. They travel base64-encoded inside a console_accept, which
 	// MaxMsgSize caps, so the limit has to leave room for every other field.
 	MaxConsolePrefix = 512
+
+	// MaxResolveDetails bounds the request details an http resolve carries in
+	// total, so the message cannot outgrow MaxMsgSize; MaxResolveHeader and
+	// MaxResolvePath bound one small header and the request target within it. The
+	// small headers are filled first and the cookie last, from what is left: a
+	// dropped field reads as absent and fails closed, and the cookie is the only
+	// one big enough to be worth crowding out.
+	MaxResolveDetails = 3072
+	MaxResolveHeader  = 256
+	MaxResolvePath    = 1024
 )
 
 // Message types.
@@ -82,7 +92,7 @@ type Msg struct {
 	Type string `json:"type"`
 	ID   string `json:"id,omitempty"`
 
-	Protocol string `json:"protocol,omitempty"` // copy / ssh_accept / tls_accept / console_accept
+	Protocol string `json:"protocol,omitempty"` // copy / ssh_accept / tls_accept / console_accept; "console" on a resolved
 	Listen   string `json:"listen,omitempty"`
 	Target   string `json:"target,omitempty"` // listen_forward / resolved / console_accept
 
@@ -95,11 +105,34 @@ type Msg struct {
 	Host string `json:"host,omitempty"` // resolve http / console_accept
 	SNI  string `json:"sni,omitempty"`  // resolve http
 
-	// console_accept only. Sub is who the proxy authenticated and is carried for
-	// the audit log; dpipe never re-decides it. WSKey is the client's
-	// Sec-WebSocket-Key, which dpipe needs to answer a handshake the proxy has
-	// already validated. Prefix is base64 of whatever the client pipelined behind
-	// the upgrade request, bounded by MaxConsolePrefix.
+	// resolve http only. dpipe has terminated TLS and read the decrypted header
+	// block, so it forwards the request details the proxy's policy reads -- the
+	// Cookie header verbatim, the request target, the headers that decide whether a
+	// redirect is a useful answer, and the websocket handshake headers a console
+	// request carries (with WSKey below). dpipe interprets none of them: it holds
+	// neither the cookie secret nor the per-host port policy.
+	Cookie     string `json:"cookie,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Accept     string `json:"accept,omitempty"`
+	Upgrade    string `json:"upgrade,omitempty"`
+	Connection string `json:"connection,omitempty"`
+	WSVersion  string `json:"ws_version,omitempty"`
+
+	// resolved for an http resolve that was not authorized: the response dpipe
+	// must write on the TLS connection before closing it. Location makes it a 302
+	// (with SetCookie when the login round trip just completed); otherwise Status
+	// alone is written as a plain error response.
+	Status    int    `json:"status,omitempty"`
+	Location  string `json:"location,omitempty"`
+	SetCookie string `json:"set_cookie,omitempty"`
+
+	// console_accept, and an http resolve that turns out to be a console: on the
+	// request WSKey is what dpipe read off the wire, on the reply it is what the
+	// proxy validated and is the one dpipe answers the handshake with. Sub is who
+	// the proxy authenticated and is carried for the audit log; dpipe never
+	// re-decides it. Prefix is base64 of whatever the client pipelined behind the
+	// upgrade request, bounded by MaxConsolePrefix — console_accept only, since a
+	// console reached over the https ingress never leaves the process that read it.
 	Sub    string `json:"sub,omitempty"`
 	WSKey  string `json:"ws_key,omitempty"`
 	Prefix string `json:"prefix,omitempty"`

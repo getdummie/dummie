@@ -4,11 +4,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 
 	"golang.org/x/crypto/ssh"
 
 	"proxy/internal/control"
+	"proxy/internal/httpsniff"
 )
 
 // sshPolicy is one entry of the pubkey → {target, remote_user} policy.
@@ -21,14 +24,18 @@ type sshPolicy struct {
 // Resolver answers resolve requests from dpipe. It is the only place where
 // authorization decisions are made; dpipe never sees the policy.
 type Resolver struct {
-	log    *slog.Logger
-	router *Router
-	users  map[string]sshPolicy // normalized "type base64" → policy
+	log     *slog.Logger
+	router  *Router
+	auth    *Authenticator
+	console *ConsoleConfig
+	users   map[string]sshPolicy // normalized "type base64" → policy
 }
 
-// NewResolver loads the SSH pubkey policy and captures the host map.
-func NewResolver(log *slog.Logger, router *Router, cfg *Config) (*Resolver, error) {
-	r := &Resolver{log: log, router: router, users: map[string]sshPolicy{}}
+// NewResolver loads the SSH pubkey policy and captures the host map. auth may be
+// nil, which Validate only allows when no host protects a port and no console is
+// configured.
+func NewResolver(log *slog.Logger, router *Router, auth *Authenticator, cfg *Config) (*Resolver, error) {
+	r := &Resolver{log: log, router: router, auth: auth, console: cfg.Console, users: map[string]sshPolicy{}}
 	if cfg.SSH == nil {
 		return r, nil
 	}
@@ -96,18 +103,88 @@ func (r *Resolver) Handle(m control.Msg) control.Msg {
 		return control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
 
 	case control.KindHTTP:
-		if t, ok := r.router.HostBackend(m.Host); ok {
-			r.log.Info("https route", "id", m.ID, "host", m.Host, "sni", m.SNI,
-				"client", m.ClientIP, "target", t)
+		log := r.log.With("id", m.ID, "client", m.ClientIP)
+		req, err := resolveRequest(m)
+		if err != nil {
+			log.Warn("https: unusable request details", "host", m.Host, "err", err)
 			return control.Msg{
 				V: control.Version, Type: control.TypeResolved, ID: m.ID,
-				Authorized: true, Target: t,
+				Status: http.StatusBadRequest,
 			}
 		}
-		r.log.Info("https deny: unknown host", "id", m.ID, "host", m.Host, "sni", m.SNI, "client", m.ClientIP)
-		return control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
+
+		// A console hostname is the proxy's own, exactly as on the plaintext
+		// ingress: the VM host table is consulted first, so a name that is
+		// genuinely a published VM always routes to that VM.
+		if _, published := r.router.HostEntry(m.Host); !published {
+			if vmHost, ok := consoleVMHost(r.router, r.console, m.Host); ok {
+				return r.resolveConsole(log, m, vmHost, req)
+			}
+		}
+
+		t, ok := r.router.HostBackend(m.Host)
+		if !ok {
+			log.Info("https deny: unknown host", "host", m.Host, "sni", m.SNI)
+			return control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
+		}
+		if v := authorizeRequest(log, r.router, r.auth, m.Host, req); !v.ok {
+			return control.Msg{
+				V: control.Version, Type: control.TypeResolved, ID: m.ID,
+				Status: v.status, Location: v.location, SetCookie: v.setCookie,
+			}
+		}
+		r.log.Info("https route", "id", m.ID, "host", m.Host, "sni", m.SNI,
+			"client", m.ClientIP, "target", t)
+		return control.Msg{
+			V: control.Version, Type: control.TypeResolved, ID: m.ID,
+			Authorized: true, Target: t,
+		}
 
 	default:
 		return control.Err(m.ID, "unknown resolve kind "+m.Kind)
 	}
+}
+
+// resolveConsole answers an http resolve that landed on a console hostname. The
+// reply carries the same decision console_accept carries on the plaintext
+// ingress; dpipe serves the terminal on the connection it already holds.
+func (r *Resolver) resolveConsole(log *slog.Logger, m control.Msg, vmHost string, req *http.Request) control.Msg {
+	host := httpsniff.NormalizeHost(m.Host)
+	log = log.With("host", host, "vm_host", vmHost)
+
+	v := authorizeConsole(log, r.router, r.console, r.auth, host, vmHost, req)
+	if v.status != 0 {
+		return control.Msg{
+			V: control.Version, Type: control.TypeResolved, ID: m.ID,
+			Status: v.status,
+		}
+	}
+	log.Info("console: authorized", "sub", v.sub, "target", v.target, "remote_user", v.remoteUser)
+	return control.Msg{
+		V: control.Version, Type: control.TypeResolved, ID: m.ID,
+		Authorized: true, Protocol: control.ProtoConsole,
+		Target: v.target, RemoteUser: v.remoteUser, Sub: v.sub, WSKey: v.wsKey,
+	}
+}
+
+// resolveRequest rebuilds the parts of a request the auth policy reads from the
+// fields dpipe forwarded. A missing path becomes "/", which is never the callback
+// and therefore never authenticates anyone.
+func resolveRequest(m control.Msg) (*http.Request, error) {
+	target := m.Path
+	if target == "" {
+		target = "/"
+	}
+	u, err := url.ParseRequestURI(target)
+	if err != nil {
+		return nil, err
+	}
+	req := &http.Request{Method: http.MethodGet, URL: u, Header: http.Header{}}
+	req.Header.Set("Cookie", m.Cookie)
+	req.Header.Set("Accept", m.Accept)
+	req.Header.Set("Upgrade", m.Upgrade)
+	req.Header.Set("Connection", m.Connection)
+	req.Header.Set("Sec-WebSocket-Version", m.WSVersion)
+	req.Header.Set("Sec-WebSocket-Key", m.WSKey)
+	return req, nil
 }

@@ -2,9 +2,9 @@
 # End-to-end demo of the proxy + dpipe pair.
 #
 # Shows: HTTP host routing, TCP echo, a listen_forward, HTTPS terminated in
-# dpipe, an SSH shell terminated in dpipe (when a local sshd can be started),
-# a proxy redeploy that preserves live sessions, and a dpipe self-upgrade
-# absorbed by the proxy's reconnect.
+# dpipe, session auth on both ingresses, an SSH shell terminated in dpipe (when a
+# local sshd can be started), a proxy redeploy that preserves live sessions, and a
+# dpipe self-upgrade absorbed by the proxy's reconnect.
 #
 # This script is identical in the proxy and dpipe repositories.
 set -euo pipefail
@@ -111,6 +111,25 @@ if [[ "$SSH_READY" != 1 ]]; then
   echo "!!! no usable sshd on this host: the SSH part of the demo is skipped"
 fi
 
+COOKIE_NAME=dpipe_session
+COOKIE_SECRET="$RUN/cookie_secret"
+[[ -s "$COOKIE_SECRET" ]] || python3 -c 'import secrets; print(secrets.token_hex(32))' >"$COOKIE_SECRET"
+chmod 600 "$COOKIE_SECRET"
+export COOKIE_SECRET
+
+# mint <sub> <audience> — the same signed value the control server would hand
+# back from a login, and the same value the proxy puts in the session cookie.
+mint() {
+  python3 - "$1" "$2" <<'PY'
+import base64, hashlib, hmac, json, os, sys, time
+secret = open(os.environ["COOKIE_SECRET"], "rb").read().strip()
+claims = {"sub": sys.argv[1], "aud": sys.argv[2], "exp": int(time.time()) + 3600}
+b = base64.urlsafe_b64encode(json.dumps(claims, separators=(",", ":")).encode()).rstrip(b"=")
+sig = base64.urlsafe_b64encode(hmac.new(secret, b, hashlib.sha256).digest()).rstrip(b"=")
+print((b + b"." + sig).decode())
+PY
+}
+
 echo "--- writing configuration"
 cat >"$RUN/dpipe.yaml" <<EOF
 control_socket: $RUN/control.sock
@@ -151,9 +170,23 @@ http:
   listen: "127.0.0.1:$HTTP_PORT"
   reuseport: true
   hosts:
-    vm1.local: "127.0.0.1:$BACKEND1"
-    vm2.local: "127.0.0.1:$BACKEND2"
+    vm1.local:
+      host: 127.0.0.1
+      unauthenticated_ports: [$BACKEND1]
+      default_port: $BACKEND1
+    vm2.local: # protected: no port is reachable without a session
+      host: 127.0.0.1
+      unauthenticated_ports: []
+      default_port: $BACKEND2
   default: ""
+
+auth:
+  control_url: "http://control.local/login"
+  cookie_name: $COOKIE_NAME
+  cookie_secret_file: $RUN/cookie_secret
+  cookie_ttl: 1h
+  cookie_secure: false
+  cookie_samesite: lax
 
 https:
   listen: "127.0.0.1:$HTTPS_PORT"
@@ -202,7 +235,6 @@ wait_for_port 127.0.0.1 "$HTTPS_PORT"
 echo
 echo "=== 1. HTTP host routing"
 curl -sS -H "Host: vm1.local" "http://127.0.0.1:$HTTP_PORT/hello"
-curl -sS -H "Host: vm2.local" "http://127.0.0.1:$HTTP_PORT/hello"
 curl -sS -X POST -d "body-bytes" -H "Host: vm1.local" "http://127.0.0.1:$HTTP_PORT/submit"
 echo "unknown host ->"
 curl -sS -o /dev/null -w "  status %{http_code}\n" -H "Host: nope.local" "http://127.0.0.1:$HTTP_PORT/"
@@ -225,8 +257,6 @@ echo
 echo "=== 4. HTTPS terminated in dpipe"
 curl -sS --cacert "$KEYS/ca.crt" --resolve "vm1.local:$HTTPS_PORT:127.0.0.1" \
   "https://vm1.local:$HTTPS_PORT/secure" | sed 's/^/  /'
-curl -sS --cacert "$KEYS/ca.crt" --resolve "vm2.local:$HTTPS_PORT:127.0.0.1" \
-  "https://vm2.local:$HTTPS_PORT/secure" | sed 's/^/  /'
 echo "  http version negotiated:"
 curl -sS -o /dev/null --cacert "$KEYS/ca.crt" --resolve "vm1.local:$HTTPS_PORT:127.0.0.1" \
   -w "    %{http_version}\n" "https://vm1.local:$HTTPS_PORT/secure"
@@ -234,9 +264,41 @@ echo "  unknown host over TLS:"
 curl -sS -k -o /dev/null --resolve "nope.local:$HTTPS_PORT:127.0.0.1" \
   -w "    status %{http_code}\n" "https://nope.local:$HTTPS_PORT/" || true
 
+echo
+echo "=== 5. session auth (the policy lives in the proxy, on both ingresses)"
+HTTPS_VM2=(--cacert "$KEYS/ca.crt" --resolve "vm2.local:$HTTPS_PORT:127.0.0.1")
+SESSION=$(mint demo@example.com vm2.local)
+echo "  https, browser request with no session:"
+curl -sS -o /dev/null "${HTTPS_VM2[@]}" -H "Accept: text/html" \
+  -w "    status %{http_code} -> %{redirect_url}\n" "https://vm2.local:$HTTPS_PORT/private"
+echo "  https, api request with no session:"
+curl -sS -o /dev/null "${HTTPS_VM2[@]}" \
+  -w "    status %{http_code}\n" "https://vm2.local:$HTTPS_PORT/private"
+echo "  https, cookie with a tampered signature:"
+curl -sS -o /dev/null "${HTTPS_VM2[@]}" -H "Accept: text/html" \
+  -H "Cookie: $COOKIE_NAME=${SESSION}x" \
+  -w "    status %{http_code} -> %{redirect_url}\n" "https://vm2.local:$HTTPS_PORT/private"
+echo "  https, login callback exchanges the token for a session cookie:"
+curl -sS -o /dev/null -D - "${HTTPS_VM2[@]}" \
+  "https://vm2.local:$HTTPS_PORT/__auth/callback?token=$SESSION&next=/private" \
+  2>/dev/null | grep -iE '^(HTTP/|location:|set-cookie:)' | sed 's/^/    /'
+echo "  https, with the session cookie:"
+curl -sS "${HTTPS_VM2[@]}" -H "Cookie: $COOKIE_NAME=$SESSION" \
+  "https://vm2.local:$HTTPS_PORT/private" | sed 's/^/    /'
+echo "  the same session on the plaintext ingress:"
+curl -sS -H "Host: vm2.local" -H "Cookie: $COOKIE_NAME=$SESSION" \
+  "http://127.0.0.1:$HTTP_PORT/private" | sed 's/^/    /'
+echo "  a session for another host is not accepted here:"
+curl -sS -o /dev/null "${HTTPS_VM2[@]}" -H "Accept: text/html" \
+  -H "Cookie: $COOKIE_NAME=$(mint demo@example.com vm1.local)" \
+  -w "    status %{http_code} -> %{redirect_url}\n" "https://vm2.local:$HTTPS_PORT/private"
+echo "  vm1.local publishes an unauthenticated port and still serves directly:"
+curl -sS --cacert "$KEYS/ca.crt" --resolve "vm1.local:$HTTPS_PORT:127.0.0.1" \
+  "https://vm1.local:$HTTPS_PORT/open" | sed 's/^/    /'
+
 if [[ "$SSH_READY" == 1 ]]; then
   echo
-  echo "=== 5. SSH terminated in dpipe"
+  echo "=== 6. SSH terminated in dpipe"
   SSH_OPTS=(-p "$SSH_PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
             -o IdentitiesOnly=yes -i "$KEYS/alice")
   ssh "${SSH_OPTS[@]}" "$USER@127.0.0.1" 'echo "  remote shell says: $(hostname) as $(whoami)"' || true
@@ -254,7 +316,7 @@ if [[ "$SSH_READY" == 1 ]]; then
 fi
 
 echo
-echo "=== 6. proxy redeploy (SO_REUSEPORT) with traffic in flight"
+echo "=== 7. proxy redeploy (SO_REUSEPORT) with traffic in flight"
 # A slow HTTPS transfer plus a long-lived TCP connection, both handed off already.
 (curl -sS --cacert "$KEYS/ca.crt" --resolve "vm1.local:$HTTPS_PORT:127.0.0.1" \
   "https://vm1.local:$HTTPS_PORT/slow" >"$LOGS/inflight-https.log" 2>&1) &
@@ -280,7 +342,7 @@ wait "$INFLIGHT" 2>/dev/null || true
 wait "$TCP_INFLIGHT" 2>/dev/null || true
 
 echo
-echo "=== 7. dpipe self-upgrade absorbed by the proxy"
+echo "=== 8. dpipe self-upgrade absorbed by the proxy"
 "$RUN/dpipe" -config "$RUN/dpipe.yaml" -upgrade >"$LOGS/dpipe2.log" 2>&1 &
 DPIPE2_PID=$!
 PIDS+=("$DPIPE2_PID")

@@ -264,18 +264,9 @@ func (c *Config) Validate() error {
 			}
 			// Fail closed: a host that wants auth but has nowhere to send the
 			// user would otherwise serve the site unauthenticated.
-			if h.NeedsAuth(h.DefaultPort) {
-				if c.Auth == nil {
-					return fmt.Errorf("config: %s requires auth (port %d is not in unauthenticated_ports) but auth: is not configured",
-						field, h.DefaultPort)
-				}
-				// The https ingress hands the raw socket to dpipe, which
-				// terminates TLS — the proxy never sees the request and cannot
-				// apply this policy there.
-				if c.HTTPS != nil {
-					return fmt.Errorf("config: %s requires auth, which is not enforced on the https ingress yet; remove https: or make the port unauthenticated",
-						field)
-				}
+			if h.NeedsAuth(h.DefaultPort) && c.Auth == nil {
+				return fmt.Errorf("config: %s requires auth (port %d is not in unauthenticated_ports) but auth: is not configured",
+					field, h.DefaultPort)
 			}
 		}
 		if c.HTTP.Default != "" {
@@ -363,13 +354,6 @@ func (c *Config) Validate() error {
 		// there is nothing a console name could resolve to.
 		if c.HTTP == nil {
 			return errors.New("config: console requires http.hosts (a console host is derived from a VM's host entry)")
-		}
-		// dpipe terminates TLS and routes the https ingress by Host alone, so the
-		// proxy never sees these requests and could not claim the name there --
-		// which would leave the console reachable only on plaintext while looking
-		// configured for both.
-		if c.HTTPS != nil {
-			return errors.New("config: console is not supported on the https ingress yet; remove https: or console:")
 		}
 		if l := c.Console.label(); !hostLabelPattern.MatchString(l) {
 			return fmt.Errorf("config: console.label %q is not a single hostname label", l)
