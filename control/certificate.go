@@ -98,12 +98,18 @@ func validateCertificate(certPEM, keyPEM, tld string) (certInfo, error) {
 // certificateNames is what a certificate for tld has to cover, and what an acme
 // order for it asks for. One list, so the check and the request cannot drift.
 //
-// The apex is included because it costs nothing in a dns-01 order and a fleet
-// whose control server or docs sit on the bare domain would otherwise need a
-// second certificate for it.
+// Two names, and deliberately not the apex as well. Nothing this fleet serves
+// lives at the bare domain -- guests are "<vm>.<tld>" and their terminals are
+// "<vm>.console.<tld>" -- so asking for it buys nothing, and it costs something
+// real: the dns-01 challenge for "<tld>" and the one for "*.<tld>" are published
+// at the same record name with different values, which reads as a contradiction
+// to anyone creating them by hand and is easy to satisfy by replacing one with
+// the other. Both authorizations then fail.
+//
+// A certificate that happens to carry the apex anyway is still accepted; this is
+// the minimum, not the exact set.
 func certificateNames(tld string) []string {
 	return []string{
-		tld,
 		"*." + tld,
 		"*." + proxyConsoleLabel + "." + tld,
 	}

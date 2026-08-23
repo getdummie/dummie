@@ -46,7 +46,13 @@ type certificateDTO struct {
 	// Pending is set while a guided order is waiting for its TXT records to be
 	// created. InFlight without Pending means an order is running but has not
 	// published a challenge yet.
+	//
+	// Stage says which of those it is, and what a slow order is currently blocked
+	// on -- the difference between "nothing has happened yet", "your records are
+	// not resolving" and "the ca is deciding", which otherwise all present as a
+	// screen that is not changing.
 	InFlight bool        `json:"in_flight"`
+	Stage    string      `json:"stage,omitempty"`
 	Pending  []dnsRecord `json:"pending,omitempty"`
 }
 
@@ -73,8 +79,9 @@ func (h *AdminHandler) certificateDTO(d db.Domain) certificateDTO {
 		dto.IssuedAt = d.CertIssuedAt.Time.Format(time.RFC3339)
 	}
 	if h.certs != nil {
-		records, ok := h.certs.Pending(d.ID)
+		records, stage, ok := h.certs.Pending(d.ID)
 		dto.InFlight = ok
+		dto.Stage = stage
 		dto.Pending = records
 	}
 	return dto

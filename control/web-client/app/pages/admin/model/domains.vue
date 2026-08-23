@@ -58,6 +58,7 @@ interface CertificateState {
   expires_in_days?: number
   error?: string
   in_flight: boolean
+  stage?: string
   pending?: DnsRecord[]
 }
 
@@ -320,6 +321,21 @@ function tlsVariant(d: DomainRow): 'default' | 'secondary' | 'destructive' | 'ou
 
 const isACME = computed(() => cert.value != null && cert.value.cert_mode !== 'upload')
 
+// Grouped by record name, because two authorizations can land on one name with
+// different values and a flat list of three rows reads as a contradiction --
+// which is satisfied by replacing one with the other, and then both fail. Every
+// value under a name has to exist at the same time.
+//
+// With the apex dropped from the requested names this is normally one value per
+// name, but grouping is what makes the other case survivable rather than a trap.
+const pendingGroups = computed(() => {
+  const byName = new Map<string, string[]>()
+  for (const r of cert.value?.pending ?? []) {
+    byName.set(r.name, [...(byName.get(r.name) ?? []), r.value])
+  }
+  return [...byName].map(([name, values]) => ({ name, values }))
+})
+
 // Listed rather than written inline in the template: SelectValue renders the
 // selected item's own text, so the option labels have to be short enough to read
 // inside the trigger. The reasoning behind each one is in the help text below it.
@@ -568,24 +584,49 @@ const acmeDirectories = [
 
           <!-- acme -->
           <div v-else class="space-y-3 border-t border-border pt-4">
-            <div v-if="cert.in_flight && cert.pending?.length" class="space-y-3">
+            <div v-if="cert.in_flight && pendingGroups.length" class="space-y-3">
               <p class="text-sm">
-                Create these TXT records, wait for them to propagate, then continue.
+                Create {{ pendingGroups.length === 1 ? 'this TXT record' : 'these TXT records' }},
+                wait for {{ pendingGroups.length === 1 ? 'it' : 'them' }} to propagate, then continue.
               </p>
-              <div v-for="(r, i) in cert.pending" :key="i" class="space-y-1 rounded-md border border-border p-3">
+
+              <div v-for="g in pendingGroups" :key="g.name" class="space-y-2 rounded-md border border-border p-3">
                 <div class="flex items-center justify-between gap-2">
-                  <span class="truncate font-mono text-xs">{{ r.name }}</span>
-                  <Button variant="ghost" size="icon" aria-label="Copy record name" @click="copy(r.name)">
+                  <div class="min-w-0">
+                    <p class="eyebrow text-muted-foreground">Name</p>
+                    <p class="truncate font-mono text-xs">{{ g.name }}</p>
+                  </div>
+                  <Button variant="ghost" size="icon" aria-label="Copy record name" @click="copy(g.name)">
                     <Copy class="size-3.5" aria-hidden="true" />
                   </Button>
                 </div>
-                <div class="flex items-center justify-between gap-2">
-                  <span class="truncate font-mono text-xs text-muted-foreground">{{ r.value }}</span>
-                  <Button variant="ghost" size="icon" aria-label="Copy record value" @click="copy(r.value)">
-                    <Copy class="size-3.5" aria-hidden="true" />
-                  </Button>
+
+                <div>
+                  <p class="eyebrow text-muted-foreground">
+                    {{ g.values.length === 1 ? 'Value' : `${g.values.length} values — add all of them` }}
+                  </p>
+                  <div v-for="(v, i) in g.values" :key="i" class="flex items-center justify-between gap-2">
+                    <span class="truncate font-mono text-xs text-muted-foreground">{{ v }}</span>
+                    <Button variant="ghost" size="icon" aria-label="Copy record value" @click="copy(v)">
+                      <Copy class="size-3.5" aria-hidden="true" />
+                    </Button>
+                  </div>
                 </div>
+
+                <!-- The trap this is guarding against: most registrar UIs make
+                     replacing an existing TXT record easier than adding a second
+                     one at the same name, and a replacement fails both. -->
+                <p v-if="g.values.length > 1" class="text-xs text-muted-foreground">
+                  Both values must exist at this name at the same time. Add the second as a new
+                  record — do not replace the first.
+                </p>
               </div>
+
+              <p v-if="cert.stage && cert.stage !== 'waiting for the dns records to be created'"
+                 class="text-sm text-muted-foreground">
+                {{ cert.stage }}
+              </p>
+
               <div class="flex gap-2">
                 <Button class="font-mono text-xs" :disabled="certBusy" @click="continueOrder">
                   The records are live
@@ -594,10 +635,15 @@ const acmeDirectories = [
                   Cancel order
                 </Button>
               </div>
+
+              <p class="text-xs text-muted-foreground">
+                Check them yourself first:
+                <span class="font-mono">dig +short TXT {{ pendingGroups[0]?.name }}</span>
+              </p>
             </div>
 
             <div v-else-if="cert.in_flight" class="flex items-center gap-3">
-              <p class="text-sm text-muted-foreground">Order running…</p>
+              <p class="text-sm text-muted-foreground">{{ cert.stage || 'Order running…' }}</p>
               <!-- Only offered for a guided order. An automated one is already
                    mid-conversation with the CA and the DNS provider, and there is
                    no safe point to stop it at; a button that did nothing would be

@@ -108,12 +108,24 @@ type dnsRecord struct {
 // none of that survives a restart, so writing the records to a table would only
 // make a dead order look resumable. A control server that restarts mid-flow
 // drops the order, and the admin starts another.
+// The stages an order moves through, shown against the domain. Without them a
+// guided order is a spinner: "nothing has happened yet", "your records are not
+// resolving", and "the ca is deciding" all look the same from the outside, and
+// they need completely different things done about them.
+const (
+	stageStarting   = "contacting the certificate authority"
+	stageWaiting    = "waiting for the dns records to be created"
+	stageValidating = "checking the dns records and validating with the ca"
+	stageStoring    = "storing the certificate and sending it to the hosts"
+)
+
 type pendingOrder struct {
-	// mu guards records only. It is the order's own rather than the issuer's
+	// mu guards records and stage. It is the order's own rather than the issuer's
 	// because the writer is lego's goroutine, deep inside Obtain, and the reader
 	// is whatever request is polling the screen.
 	mu      sync.Mutex
 	records []dnsRecord
+	stage   string
 
 	// proceed is closed when the operator confirms. Every Present call blocks on
 	// it, so an order with several authorizations waits once, not once per name.
@@ -142,12 +154,18 @@ func (p *pendingOrder) clearRecords() {
 	p.mu.Unlock()
 }
 
-// snapshot returns a copy, so a caller ranging over it cannot be reading the
-// slice lego is appending to.
-func (p *pendingOrder) snapshot() []dnsRecord {
+// snapshot returns a copy of the records and the current stage, so a caller
+// reading them cannot be looking at what lego is writing.
+func (p *pendingOrder) snapshot() ([]dnsRecord, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return append([]dnsRecord(nil), p.records...)
+	return append([]dnsRecord(nil), p.records...), p.stage
+}
+
+func (p *pendingOrder) setStage(s string) {
+	p.mu.Lock()
+	p.stage = s
+	p.mu.Unlock()
 }
 
 // certIssuer owns every in-flight issuance. One per process, constructed
@@ -173,15 +191,17 @@ func newCertIssuer(q *db.Queries, blobs *blobStore, hub *Hub, proxy proxyAuthCon
 	return &certIssuer{q: q, blobs: blobs, hub: hub, proxy: proxy, inFlight: map[string]*pendingOrder{}}
 }
 
-// Pending returns the TXT records a manual order is waiting on, if there is one.
-func (ci *certIssuer) Pending(domainID pgtype.UUID) ([]dnsRecord, bool) {
+// Pending returns the TXT records a manual order is waiting on and what the
+// order is currently doing, if there is one running.
+func (ci *certIssuer) Pending(domainID pgtype.UUID) ([]dnsRecord, string, bool) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
 	p, ok := ci.inFlight[uuid.UUID(domainID.Bytes).String()]
 	if !ok {
-		return nil, false
+		return nil, "", false
 	}
-	return p.snapshot(), true
+	records, stage := p.snapshot()
+	return records, stage, true
 }
 
 // Confirm tells a waiting manual order that its records are live.
@@ -192,7 +212,7 @@ func (ci *certIssuer) Confirm(domainID pgtype.UUID) error {
 	if !ok {
 		return errors.New("there is no certificate order waiting for this domain")
 	}
-	if len(p.snapshot()) == 0 {
+	if records, _ := p.snapshot(); len(records) == 0 {
 		return errors.New("the order has not published its challenge yet")
 	}
 	p.confirm()
@@ -229,7 +249,11 @@ func (ci *certIssuer) Start(domain db.Domain) error {
 		ci.mu.Unlock()
 		return errors.New("a certificate order is already running for this domain")
 	}
-	p := &pendingOrder{proceed: make(chan struct{}), cancel: make(chan struct{})}
+	p := &pendingOrder{
+		proceed: make(chan struct{}),
+		cancel:  make(chan struct{}),
+		stage:   stageStarting,
+	}
 	ci.inFlight[id] = p
 	ci.mu.Unlock()
 
@@ -242,6 +266,12 @@ func (ci *certIssuer) Start(domain db.Domain) error {
 
 		ctx, cancel := context.WithTimeout(context.Background(), acmeChallengeTimeout+30*time.Minute)
 		defer cancel()
+
+		// The directory is in the line because it is the setting people forget: a
+		// certificate that installs cleanly and is trusted by nothing is a staging
+		// certificate, and this is where that shows.
+		log.Printf("certificate order for %s: mode=%s directory=%s names=%v",
+			domain.TLD, domain.CertMode, domain.AcmeDirectory, certificateNames(domain.TLD))
 
 		if err := ci.obtain(ctx, domain, p); err != nil {
 			log.Printf("certificate order for %s failed: %v", domain.TLD, err)
@@ -282,7 +312,7 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 		return fmt.Errorf("could not reach the certificate authority: %w", err)
 	}
 
-	provider, err := ci.dnsProvider(domain, p)
+	provider, opts, err := ci.dnsProvider(domain, p)
 	if err != nil {
 		return err
 	}
@@ -290,7 +320,7 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 	// stops an order being submitted to the ca before the record is actually
 	// visible, which is the difference between waiting a minute and spending an
 	// authorization failure.
-	if err := client.Challenge.SetDNS01Provider(provider); err != nil {
+	if err := client.Challenge.SetDNS01Provider(provider, opts...); err != nil {
 		return fmt.Errorf("could not set up the dns challenge: %w", err)
 	}
 
@@ -310,34 +340,37 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 		return fmt.Errorf("the certificate authority did not issue: %w", err)
 	}
 
+	p.setStage(stageStoring)
 	return ci.store(ctx, domain, string(res.Certificate), string(res.PrivateKey))
 }
 
-// dnsProvider builds the solver for a domain's mode.
-func (ci *certIssuer) dnsProvider(domain db.Domain, p *pendingOrder) (challenge.Provider, error) {
+// dnsProvider builds the solver for a domain's mode, and any challenge options
+// that go with it.
+func (ci *certIssuer) dnsProvider(domain db.Domain, p *pendingOrder) (challenge.Provider, []dns01.ChallengeOption, error) {
 	switch domain.CertMode {
 	case certModeACMECloudflare:
 		var creds struct {
 			APIToken string `json:"api_token"`
 		}
 		if err := json.Unmarshal([]byte(domain.AcmeCredentials), &creds); err != nil {
-			return nil, errors.New("the cloudflare credentials are not readable; save them again")
+			return nil, nil, errors.New("the cloudflare credentials are not readable; save them again")
 		}
 		if strings.TrimSpace(creds.APIToken) == "" {
-			return nil, errors.New("a cloudflare api token is required")
+			return nil, nil, errors.New("a cloudflare api token is required")
 		}
 		cf := cloudflare.NewDefaultConfig()
 		cf.AuthToken = creds.APIToken
 		provider, err := cloudflare.NewDNSProviderConfig(cf)
 		if err != nil {
-			return nil, fmt.Errorf("could not set up the cloudflare provider: %w", err)
+			return nil, nil, fmt.Errorf("could not set up the cloudflare provider: %w", err)
 		}
-		return provider, nil
+		return provider, nil, nil
 
 	case certModeACMEManual:
-		return &manualProvider{order: p}, nil
+		m := &manualProvider{order: p}
+		return m, []dns01.ChallengeOption{dns01.WrapPreCheck(m.manualPreCheck)}, nil
 	}
-	return nil, fmt.Errorf("%q is not a mode that asks a ca for anything", domain.CertMode)
+	return nil, nil, fmt.Errorf("%q is not a mode that asks a ca for anything", domain.CertMode)
 }
 
 // store validates what came back, puts it in the bucket, records it, and pushes
@@ -437,25 +470,26 @@ type manualProvider struct {
 	order *pendingOrder
 }
 
-// Present records the TXT record for one authorization and blocks until the
-// operator confirms.
+// Present records the TXT record for one authorization and returns immediately.
 //
-// lego calls this once per name in the order, sequentially, so the records
-// accumulate and only the last call actually waits -- the earlier ones return as
-// soon as the operator confirms, which they do together. The alternative,
-// waiting per record, would ask someone to click three times for one order.
+// It must not wait here, however natural that reads. lego solves an order in
+// phases: it calls Present for every authorization first, and only then starts
+// validating them. Blocking in the first call means the operator is shown one
+// record, and the moment they confirm it the remaining calls return at once --
+// publishing records nobody has been given the chance to create, which are then
+// submitted to the ca and fail.
+//
+// The wait belongs between the two phases, which is what the pre-check in
+// manualPreCheck is for.
 func (m *manualProvider) Present(domain, token, keyAuth string) error {
 	info := dns01.GetChallengeInfo(domain, keyAuth)
 	m.order.addRecord(dnsRecord{Name: info.FQDN, Value: info.Value})
-
-	select {
-	case <-m.order.proceed:
-		return nil
-	case <-m.order.cancel:
-		return errors.New("the order was cancelled")
-	case <-time.After(acmeChallengeTimeout):
-		return fmt.Errorf("no one confirmed the dns records within %s", acmeChallengeTimeout)
-	}
+	m.order.setStage(stageWaiting)
+	// Logged as well as shown: a record the screen displays and dns does not
+	// return is the single most common way one of these orders fails, and having
+	// both halves in the log is what makes that comparison possible after the fact.
+	log.Printf("certificate order for %s: needs TXT %s = %q", domain, info.FQDN, info.Value)
+	return nil
 }
 
 // CleanUp forgets the record. There is nothing to remove at a registrar from
@@ -464,6 +498,32 @@ func (m *manualProvider) Present(domain, token, keyAuth string) error {
 func (m *manualProvider) CleanUp(domain, token, keyAuth string) error {
 	m.order.clearRecords()
 	return nil
+}
+
+// manualPreCheck is the wait, and it sits where lego checks propagation: after
+// every Present, before the first validation. By then the screen is showing the
+// complete set of records, so the operator creates them all and confirms once.
+//
+// It runs per authorization, but only the first call actually waits -- the
+// confirmation is for the order, not for one record.
+func (m *manualProvider) manualPreCheck(domain, fqdn, value string, check dns01.PreCheckFunc) (bool, error) {
+	select {
+	case <-m.order.proceed:
+	case <-m.order.cancel:
+		return false, errors.New("the order was cancelled")
+	case <-time.After(acmeChallengeTimeout):
+		return false, fmt.Errorf("no one confirmed the dns records within %s", acmeChallengeTimeout)
+	}
+
+	m.order.setStage(stageValidating)
+	// lego's own propagation check still runs. It is what stops a record that was
+	// created a second ago from being submitted before it is visible, which would
+	// spend an authorization rather than wait for one.
+	ok, err := check(fqdn, value)
+	if err != nil {
+		return false, fmt.Errorf("%s is not resolving with the expected value yet: %w", fqdn, err)
+	}
+	return ok, nil
 }
 
 // --- the acme account ------------------------------------------------------

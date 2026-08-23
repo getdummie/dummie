@@ -54,7 +54,7 @@ func testFleetCert(t *testing.T, tld string) (string, string) {
 
 func TestCertificateNamesCoverConsoles(t *testing.T) {
 	got := certificateNames("example.com")
-	want := []string{"example.com", "*.example.com", "*.console.example.com"}
+	want := []string{"*.example.com", "*.console.example.com"}
 	if len(got) != len(want) {
 		t.Fatalf("certificateNames = %v, want %v", got, want)
 	}
@@ -62,6 +62,29 @@ func TestCertificateNamesCoverConsoles(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("certificateNames[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+// The apex and "*.<tld>" publish their dns-01 challenges at the same record
+// name, so asking for both turns one order into two TXT values an operator has
+// to add side by side -- and replacing rather than adding fails both. Nothing
+// this fleet serves is at the apex, so it is not asked for.
+func TestCertificateNamesOmitTheApex(t *testing.T) {
+	for _, n := range certificateNames("example.com") {
+		if n == "example.com" {
+			t.Error("the apex is requested; its challenge collides with the wildcard's")
+		}
+	}
+}
+
+// Dropping the apex from what is requested must not start rejecting certificates
+// that carry it anyway -- every public ca includes it with a wildcard.
+func TestValidateCertificateAcceptsAnApexItDidNotAskFor(t *testing.T) {
+	names := append([]string{"example.com"}, certificateNames("example.com")...)
+	certPEM, keyPEM := testCert(t, names, time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour))
+
+	if _, err := validateCertificate(certPEM, keyPEM, "example.com"); err != nil {
+		t.Fatalf("a certificate carrying the apex as well was rejected: %v", err)
 	}
 }
 
