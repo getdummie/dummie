@@ -152,6 +152,22 @@ func s3Client(ctx context.Context, endpoint string) (*s3.Client, error) {
 		if endpoint != "" || strings.EqualFold(os.Getenv("S3_FORCE_PATH_STYLE"), "true") {
 			o.UsePathStyle = true
 		}
+
+		// Both default to WhenSupported in current versions of the sdk, and both
+		// break presigned links for this fleet.
+		//
+		// Response validation adds "x-amz-checksum-mode: ENABLED" to a GetObject and
+		// signs it. Whatever follows the link -- dclient fetching a rootfs, a browser
+		// downloading a kernel -- issues a plain GET with no such header, so the
+		// signature covers a header that is not sent and the store answers 403.
+		//
+		// Request calculation is the same bargain on the way in: it adds a checksum
+		// header that a non-AWS store may reject outright.
+		//
+		// WhenRequired keeps checksums for the operations that genuinely need them
+		// and leaves everything else as it was.
+		o.ResponseChecksumValidation = aws.ResponseChecksumValidationWhenRequired
+		o.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 	}), nil
 }
 
@@ -177,6 +193,40 @@ func (b *blobStore) Put(ctx context.Context, key, contentType string, r io.Reade
 		ContentType: aws.String(contentType),
 	})
 	return err
+}
+
+// maxInlineObjectBytes bounds what Get will hold in memory. Sized for
+// certificates, which are a few kilobytes; it exists so a caller that is handed
+// the wrong key cannot pull a kernel image into the heap.
+const maxInlineObjectBytes = 1 << 20
+
+// Get reads a whole object into memory. The only reader in the server -- every
+// other download goes to the caller as a presigned URL, because every other
+// object is an image measured in gigabytes.
+//
+// Certificates are the exception: the server has to hold the bytes to put them
+// in a job, and handing a host a presigned URL for a private key would be a
+// second way to reach it, with a lifetime and an audience of its own.
+func (b *blobStore) Get(ctx context.Context, key string) ([]byte, error) {
+	out, err := b.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(b.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer out.Body.Close()
+
+	// LimitReader at one byte past the cap, so an object that is exactly at it
+	// still reads and one over is caught rather than silently truncated.
+	body, err := io.ReadAll(io.LimitReader(out.Body, maxInlineObjectBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxInlineObjectBytes {
+		return nil, fmt.Errorf("object %s is larger than %d bytes", key, maxInlineObjectBytes)
+	}
+	return body, nil
 }
 
 // Delete removes an object. Only used to clean up after an upload whose row

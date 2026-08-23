@@ -11,6 +11,46 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const clearDomainCert = `-- name: ClearDomainCert :one
+UPDATE domains
+SET cert_object_key  = '',
+    key_object_key   = '',
+    cert_fingerprint = '',
+    cert_not_after   = NULL,
+    cert_issued_at   = NULL,
+    cert_error       = '',
+    tls_enabled      = false,
+    updated_at       = now()
+WHERE id = $1
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
+`
+
+// Forgets the certificate and turns tls off in the same statement, because a
+// host left with tls on and nothing to serve it with is a dpipe that will not
+// start.
+func (q *Queries) ClearDomainCert(ctx context.Context, id pgtype.UUID) (Domain, error) {
+	row := q.db.QueryRow(ctx, clearDomainCert, id)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.TLD,
+		&i.TlsEnabled,
+		&i.CertMode,
+		&i.AcmeDirectory,
+		&i.AcmeEmail,
+		&i.AcmeCredentials,
+		&i.AcmeAccountKey,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertError,
+		&i.CertIssuedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const countDomains = `-- name: CountDomains :one
 SELECT count(*) FROM domains
 `
@@ -25,13 +65,29 @@ func (q *Queries) CountDomains(ctx context.Context) (int64, error) {
 const createDomain = `-- name: CreateDomain :one
 INSERT INTO domains (tld)
 VALUES ($1)
-RETURNING id, tld
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
 `
 
 func (q *Queries) CreateDomain(ctx context.Context, tld string) (Domain, error) {
 	row := q.db.QueryRow(ctx, createDomain, tld)
 	var i Domain
-	err := row.Scan(&i.ID, &i.TLD)
+	err := row.Scan(
+		&i.ID,
+		&i.TLD,
+		&i.TlsEnabled,
+		&i.CertMode,
+		&i.AcmeDirectory,
+		&i.AcmeEmail,
+		&i.AcmeCredentials,
+		&i.AcmeAccountKey,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertError,
+		&i.CertIssuedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
@@ -45,8 +101,68 @@ func (q *Queries) DeleteDomain(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const getClientDomain = `-- name: GetClientDomain :one
+SELECT d.id, d.tld, d.tls_enabled, d.cert_mode, d.acme_directory, d.acme_email, d.acme_credentials, d.acme_account_key, d.cert_object_key, d.key_object_key, d.cert_fingerprint, d.cert_not_after, d.cert_error, d.cert_issued_at, d.updated_at FROM domains d
+JOIN clients c ON c.domain_id = d.id
+WHERE c.id = $1
+`
+
+// GetClientDomain returns the domain of one client, and no rows when the client
+// has none. The push paths need the whole row rather than the tld, because what
+// they are deciding is whether to turn tls on for that host.
+func (q *Queries) GetClientDomain(ctx context.Context, id pgtype.UUID) (Domain, error) {
+	row := q.db.QueryRow(ctx, getClientDomain, id)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.TLD,
+		&i.TlsEnabled,
+		&i.CertMode,
+		&i.AcmeDirectory,
+		&i.AcmeEmail,
+		&i.AcmeCredentials,
+		&i.AcmeAccountKey,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertError,
+		&i.CertIssuedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getDomain = `-- name: GetDomain :one
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
+WHERE id = $1
+`
+
+func (q *Queries) GetDomain(ctx context.Context, id pgtype.UUID) (Domain, error) {
+	row := q.db.QueryRow(ctx, getDomain, id)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.TLD,
+		&i.TlsEnabled,
+		&i.CertMode,
+		&i.AcmeDirectory,
+		&i.AcmeEmail,
+		&i.AcmeCredentials,
+		&i.AcmeAccountKey,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertError,
+		&i.CertIssuedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getSoleDomain = `-- name: GetSoleDomain :one
-SELECT id, tld FROM domains
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
 WHERE (SELECT count(*) FROM domains) = 1
 `
 
@@ -57,12 +173,54 @@ WHERE (SELECT count(*) FROM domains) = 1
 func (q *Queries) GetSoleDomain(ctx context.Context) (Domain, error) {
 	row := q.db.QueryRow(ctx, getSoleDomain)
 	var i Domain
-	err := row.Scan(&i.ID, &i.TLD)
+	err := row.Scan(
+		&i.ID,
+		&i.TLD,
+		&i.TlsEnabled,
+		&i.CertMode,
+		&i.AcmeDirectory,
+		&i.AcmeEmail,
+		&i.AcmeCredentials,
+		&i.AcmeAccountKey,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertError,
+		&i.CertIssuedAt,
+		&i.UpdatedAt,
+	)
 	return i, err
 }
 
+const listClientIDsByDomain = `-- name: ListClientIDsByDomain :many
+SELECT id FROM clients
+WHERE domain_id = $1 AND NOT revoked
+`
+
+// Who to push to when a domain's certificate changes.
+func (q *Queries) ListClientIDsByDomain(ctx context.Context, domainID pgtype.UUID) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listClientIDsByDomain, domainID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listDomains = `-- name: ListDomains :many
-SELECT id, tld FROM domains
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
 ORDER BY tld
 `
 
@@ -75,7 +233,23 @@ func (q *Queries) ListDomains(ctx context.Context) ([]Domain, error) {
 	var items []Domain
 	for rows.Next() {
 		var i Domain
-		if err := rows.Scan(&i.ID, &i.TLD); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.TLD,
+			&i.TlsEnabled,
+			&i.CertMode,
+			&i.AcmeDirectory,
+			&i.AcmeEmail,
+			&i.AcmeCredentials,
+			&i.AcmeAccountKey,
+			&i.CertObjectKey,
+			&i.KeyObjectKey,
+			&i.CertFingerprint,
+			&i.CertNotAfter,
+			&i.CertError,
+			&i.CertIssuedAt,
+			&i.UpdatedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -84,4 +258,195 @@ func (q *Queries) ListDomains(ctx context.Context) ([]Domain, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const listDomainsDueForRenewal = `-- name: ListDomainsDueForRenewal :many
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
+WHERE tls_enabled
+  AND cert_mode = 'acme_cloudflare'
+  AND acme_credentials <> ''
+  AND (cert_not_after IS NULL OR cert_not_after < now() + make_interval(secs => $1::float))
+ORDER BY cert_not_after NULLS FIRST
+`
+
+// What the daily renewal task acts on. Only the automated mode: an uploaded or
+// hand-walked certificate cannot be replaced without a person, so listing one
+// here would produce a failure every day instead of a warning once.
+func (q *Queries) ListDomainsDueForRenewal(ctx context.Context, withinSeconds float64) ([]Domain, error) {
+	rows, err := q.db.Query(ctx, listDomainsDueForRenewal, withinSeconds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Domain
+	for rows.Next() {
+		var i Domain
+		if err := rows.Scan(
+			&i.ID,
+			&i.TLD,
+			&i.TlsEnabled,
+			&i.CertMode,
+			&i.AcmeDirectory,
+			&i.AcmeEmail,
+			&i.AcmeCredentials,
+			&i.AcmeAccountKey,
+			&i.CertObjectKey,
+			&i.KeyObjectKey,
+			&i.CertFingerprint,
+			&i.CertNotAfter,
+			&i.CertError,
+			&i.CertIssuedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setDomainAccountKey = `-- name: SetDomainAccountKey :exec
+UPDATE domains
+SET acme_account_key = $2,
+    updated_at       = now()
+WHERE id = $1
+`
+
+type SetDomainAccountKeyParams struct {
+	ID             pgtype.UUID
+	AcmeAccountKey string
+}
+
+// Written once, the first time a domain talks to a ca.
+func (q *Queries) SetDomainAccountKey(ctx context.Context, arg SetDomainAccountKeyParams) error {
+	_, err := q.db.Exec(ctx, setDomainAccountKey, arg.ID, arg.AcmeAccountKey)
+	return err
+}
+
+const setDomainCertError = `-- name: SetDomainCertError :exec
+UPDATE domains
+SET cert_error = $2,
+    updated_at = now()
+WHERE id = $1
+`
+
+type SetDomainCertErrorParams struct {
+	ID        pgtype.UUID
+	CertError string
+}
+
+// A failed attempt records why and changes nothing else: the certificate already
+// in place stays in place and stays served.
+func (q *Queries) SetDomainCertError(ctx context.Context, arg SetDomainCertErrorParams) error {
+	_, err := q.db.Exec(ctx, setDomainCertError, arg.ID, arg.CertError)
+	return err
+}
+
+const updateDomainCert = `-- name: UpdateDomainCert :one
+UPDATE domains
+SET cert_object_key  = $2,
+    key_object_key   = $3,
+    cert_fingerprint = $4,
+    cert_not_after   = $5,
+    cert_issued_at   = now(),
+    cert_error       = '',
+    updated_at       = now()
+WHERE id = $1
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
+`
+
+type UpdateDomainCertParams struct {
+	ID              pgtype.UUID
+	CertObjectKey   string
+	KeyObjectKey    string
+	CertFingerprint string
+	CertNotAfter    pgtype.Timestamptz
+}
+
+// One statement for a successful issuance: where the certificate is, what it is,
+// and the clearing of whatever error the last attempt left behind.
+func (q *Queries) UpdateDomainCert(ctx context.Context, arg UpdateDomainCertParams) (Domain, error) {
+	row := q.db.QueryRow(ctx, updateDomainCert,
+		arg.ID,
+		arg.CertObjectKey,
+		arg.KeyObjectKey,
+		arg.CertFingerprint,
+		arg.CertNotAfter,
+	)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.TLD,
+		&i.TlsEnabled,
+		&i.CertMode,
+		&i.AcmeDirectory,
+		&i.AcmeEmail,
+		&i.AcmeCredentials,
+		&i.AcmeAccountKey,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertError,
+		&i.CertIssuedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateDomainTLS = `-- name: UpdateDomainTLS :one
+UPDATE domains
+SET tls_enabled      = $2,
+    cert_mode        = $3,
+    acme_directory   = $4,
+    acme_email       = $5,
+    acme_credentials = COALESCE(NULLIF($6::text, ''), acme_credentials),
+    updated_at       = now()
+WHERE id = $1
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
+`
+
+type UpdateDomainTLSParams struct {
+	ID              pgtype.UUID
+	TlsEnabled      bool
+	CertMode        string
+	AcmeDirectory   string
+	AcmeEmail       string
+	AcmeCredentials string
+}
+
+// The operator-editable half. acme_credentials keeps its stored value when the
+// argument is empty, so saving the form without retyping a token does not wipe
+// it -- which also means the only way to remove one is to change provider.
+func (q *Queries) UpdateDomainTLS(ctx context.Context, arg UpdateDomainTLSParams) (Domain, error) {
+	row := q.db.QueryRow(ctx, updateDomainTLS,
+		arg.ID,
+		arg.TlsEnabled,
+		arg.CertMode,
+		arg.AcmeDirectory,
+		arg.AcmeEmail,
+		arg.AcmeCredentials,
+	)
+	var i Domain
+	err := row.Scan(
+		&i.ID,
+		&i.TLD,
+		&i.TlsEnabled,
+		&i.CertMode,
+		&i.AcmeDirectory,
+		&i.AcmeEmail,
+		&i.AcmeCredentials,
+		&i.AcmeAccountKey,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertError,
+		&i.CertIssuedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

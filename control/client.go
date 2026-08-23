@@ -40,6 +40,10 @@ type ClientHandler struct {
 	// proxy is carried only to be handed to pushProxyConfig: the generated
 	// proxy.yaml names this server and carries the key its hosts verify with.
 	proxy proxyAuthConfig
+	// blobs is where the domains' certificates are kept, read on connect so the
+	// dpipe config can carry one. Nil when object storage is not configured, which
+	// simply means no host is served over tls.
+	blobs *blobStore
 }
 
 // openEnrollment reports whether a machine may join the fleet unauthenticated.
@@ -275,13 +279,16 @@ func (h *ClientHandler) serveClient(client db.Client, clientID, remoteIP string,
 	// host was away, and this is also what installs vector on a host that has
 	// just enrolled.
 	pushVectorConfig(ctx, h.q, h.hub, client.ID)
-	// suricata.yaml and dpipe.yaml are sent here and nowhere else: neither is
-	// built from anything that changes while a host is connected, so a connect is
-	// the only moment either can be out of date. The suricata one needs the pool
-	// the hello just carried, which is why it is not sent from anywhere that has
-	// only an client id.
+	// suricata.yaml is sent here and nowhere else: it is not built from anything
+	// that changes while a host is connected, so a connect is the only moment it
+	// can be out of date. It needs the pool the hello just carried, which is why
+	// it is not sent from anywhere that has only an client id.
 	pushSuricataConfig(ctx, h.hub, client.ID, hello.Pool)
-	pushDpipeConfig(ctx, h.hub, client.ID)
+	// dpipe.yaml was in the same position until it started carrying the domain's
+	// certificate, which changes on its own schedule -- so the issuance and renewal
+	// paths send one too. This is still where a host that was offline for a renewal
+	// catches up.
+	pushDpipeConfig(ctx, h.q, h.blobs, h.hub, client.ID)
 
 	h.readLoop(ctx, conn, client, clientID)
 }

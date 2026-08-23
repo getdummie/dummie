@@ -38,6 +38,11 @@ const taskExpireAttempts = 240
 // itself, so this is both the initial delay and the interval.
 const taskCleanupEvery = 24 * time.Hour
 
+// taskCertRenewEvery is how often the renewal sweep runs, and like the cleanup
+// it is both the initial delay and the interval. Daily against a thirty-day
+// window, so a certificate has a month of chances before anyone notices.
+const taskCertRenewEvery = 24 * time.Hour
+
 // vmTargetExpirePayload is what an allowance expiry carries beyond its subject
 // id: enough to name what was withdrawn once the row it points at is deleted.
 // Without it the audit view of a completed expiry reads "some destination".
@@ -177,4 +182,50 @@ func handleTaskCleanup(ctx context.Context, r *taskRunner, t db.ScheduledTask) t
 		return taskRetry(taskExpireRetry, "pruned %d task(s) but could not schedule the next cleanup: %v", n, err)
 	}
 	return taskDone("pruned %d settled task(s) older than %d days", n, int(taskRetention.Hours()/24))
+}
+
+// handleCertRenew starts an order for every automated domain whose certificate
+// is running out, and puts itself back in the queue.
+//
+// It starts orders rather than running them. An attempt here is given thirty
+// seconds and a dns-01 order takes minutes, so the handler's job is to decide
+// what needs doing; the issuer does it in the background and records the outcome
+// on the domain row, which is where the admin screen reads it from.
+//
+// Only the automated mode is listed -- an uploaded or hand-walked certificate
+// cannot be replaced without a person, and putting one here would produce a
+// failure every single day instead of an expiry warning on the screen.
+func handleCertRenew(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome {
+	started, skipped := 0, 0
+	if r.certs != nil {
+		due, err := r.q.ListDomainsDueForRenewal(ctx, certRenewBefore.Seconds())
+		if err != nil {
+			return taskRetry(taskExpireRetry, "could not list the domains due for renewal: %v", err)
+		}
+		for _, domain := range due {
+			// Start refuses when an order is already running for the domain, which is
+			// the whole of the guard against a sweep piling onto yesterday's attempt.
+			if err := r.certs.Start(domain); err != nil {
+				log.Printf("not renewing %s: %v", domain.TLD, err)
+				skipped++
+				continue
+			}
+			started++
+		}
+	}
+
+	// Scheduled before reporting done, for the same reason the cleanup is: a
+	// failure to queue the next sweep should leave this one retrying rather than
+	// leave the fleet with nothing watching its expiry dates.
+	if _, err := scheduleTask(ctx, r.q, scheduleTaskParams{
+		Kind:   taskCertRenew,
+		Reason: "replace certificates that are close to expiring",
+		After:  taskCertRenewEvery,
+	}); err != nil {
+		return taskRetry(taskExpireRetry, "started %d renewal(s) but could not schedule the next sweep: %v", started, err)
+	}
+	if skipped > 0 {
+		return taskDone("started %d certificate renewal(s), skipped %d already in progress", started, skipped)
+	}
+	return taskDone("started %d certificate renewal(s)", started)
 }

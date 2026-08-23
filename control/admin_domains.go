@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -15,10 +16,27 @@ import (
 type domainDTO struct {
 	ID  string `json:"id"`
 	TLD string `json:"tld"`
+	// Enough of the certificate state for the list to show a status without a
+	// second request per row. The rest of it -- the mode, the account, whether a
+	// credential is stored -- is on the certificate endpoint.
+	TLSEnabled bool   `json:"tls_enabled"`
+	HasCert    bool   `json:"has_cert"`
+	NotAfter   string `json:"cert_not_after,omitempty"`
+	CertError  string `json:"cert_error,omitempty"`
 }
 
 func toDomainDTO(d db.Domain) domainDTO {
-	return domainDTO{ID: uuid.UUID(d.ID.Bytes).String(), TLD: d.TLD}
+	dto := domainDTO{
+		ID:         uuid.UUID(d.ID.Bytes).String(),
+		TLD:        d.TLD,
+		TLSEnabled: d.TlsEnabled,
+		HasCert:    d.CertObjectKey != "",
+		CertError:  d.CertError,
+	}
+	if d.CertNotAfter.Valid {
+		dto.NotAfter = d.CertNotAfter.Time.Format(time.RFC3339)
+	}
+	return dto
 }
 
 // normalizeTLD validates and canonicalises an operator-entered domain. It checks
@@ -89,8 +107,20 @@ func (h *AdminHandler) DeleteDomain(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid domain id")
 	}
-	if err := h.q.DeleteDomain(c.Request().Context(), pgID); err != nil {
+	ctx := c.Request().Context()
+
+	// Read before the delete, because the object keys go with the row and nothing
+	// else records them. A read failure is not fatal to the delete -- it costs two
+	// objects in a bucket, and refusing to remove a domain over that would be the
+	// wrong trade.
+	domain, certErr := h.q.GetDomain(ctx, pgID)
+
+	if err := h.q.DeleteDomain(ctx, pgID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete domain")
+	}
+	if certErr == nil && h.blobs != nil && domain.CertObjectKey != "" {
+		_ = h.blobs.Delete(ctx, domain.CertObjectKey)
+		_ = h.blobs.Delete(ctx, domain.KeyObjectKey)
 	}
 	return c.NoContent(http.StatusNoContent)
 }

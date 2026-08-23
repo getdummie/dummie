@@ -46,6 +46,12 @@ type parsedProxyConfig struct {
 		} `yaml:"hosts"`
 		Default string `yaml:"default"`
 	} `yaml:"http"`
+	// Absent entirely on a host with no certificate, which is what the zero value
+	// here distinguishes.
+	HTTPS struct {
+		Listen    string `yaml:"listen"`
+		Reuseport bool   `yaml:"reuseport"`
+	} `yaml:"https"`
 	Console struct {
 		Label      string `yaml:"label"`
 		RemoteUser string `yaml:"remote_user"`
@@ -67,7 +73,7 @@ func TestGenerateProxyConfigOneVMPerUser(t *testing.T) {
 		{VMIP: "10.64.0.3", HostVMID: "def456", VMName: "test", PublicKey: "ssh-ed25519 AAAAC3Ny two"},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, rows, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, false, rows, nil))
 	if got.SSH.Listen != proxySSHListen {
 		t.Errorf("listen is %q, want %q", got.SSH.Listen, proxySSHListen)
 	}
@@ -95,7 +101,7 @@ func TestGenerateProxyConfigOneVMPerUser(t *testing.T) {
 // missing keys: "nothing is published" and "not configured" should not look
 // alike.
 func TestGenerateProxyConfigEmptyHost(t *testing.T) {
-	out := generateProxyConfig(testProxyAuth, nil, nil)
+	out := generateProxyConfig(testProxyAuth, false, nil, nil)
 	if !strings.Contains(out, "users: []") {
 		t.Errorf("an empty host did not emit an empty user list:\n%s", out)
 	}
@@ -120,7 +126,7 @@ func TestGenerateProxyConfigHTTPHosts(t *testing.T) {
 		{VMName: "quirky-curie", VMIP: "10.64.0.3", HostVMID: "def456", DomainTLD: "example.com", DefaultPort: 3000, PublicPorts: []int32{3000, 9090}},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, nil, rows))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, false, nil, rows))
 	if got.HTTP.Listen != proxyHTTPListen {
 		t.Errorf("http listen is %q, want %q", got.HTTP.Listen, proxyHTTPListen)
 	}
@@ -159,7 +165,7 @@ func TestGenerateProxyConfigHTTPNoPublicPorts(t *testing.T) {
 		{VMName: "quirky-curie", VMIP: "10.64.0.3", HostVMID: "def456", DomainTLD: "example.com", DefaultPort: 8000},
 	}
 
-	out := generateProxyConfig(testProxyAuth, nil, rows)
+	out := generateProxyConfig(testProxyAuth, false, nil, rows)
 	if !strings.Contains(out, "unauthenticated_ports: []") {
 		t.Errorf("a vm with no published ports did not emit an empty list:\n%s", out)
 	}
@@ -179,7 +185,7 @@ func TestGenerateProxyConfigSkipsUnusableHostnames(t *testing.T) {
 		{VMName: "peaceful-tesla", VMIP: "10.64.0.4", HostVMID: "ghi789", DomainTLD: "example.com", DefaultPort: 8000},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, nil, rows))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, false, nil, rows))
 	if len(got.HTTP.Hosts) != 1 {
 		t.Fatalf("got %d http hosts, want 1: %v", len(got.HTTP.Hosts), got.HTTP.Hosts)
 	}
@@ -197,7 +203,7 @@ func TestGenerateProxyConfigQuotesAwkwardComments(t *testing.T) {
 		{VMIP: "10.64.0.2", HostVMID: "abc123", VMName: "build", PublicKey: awkward},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, rows, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, false, rows, nil))
 	if len(got.SSH.Users) != 1 {
 		t.Fatalf("got %d users, want 1", len(got.SSH.Users))
 	}
@@ -218,7 +224,7 @@ func TestGenerateProxyConfigNeutralisesNamesInComments(t *testing.T) {
 		},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, rows, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, false, rows, nil))
 	if len(got.SSH.Users) != 1 {
 		t.Fatalf("a name broke out of its comment and changed the document: got %d users, want 1", len(got.SSH.Users))
 	}
@@ -228,7 +234,7 @@ func TestGenerateProxyConfigNeutralisesNamesInComments(t *testing.T) {
 // in it has to be the login path under the origin browsers reach us on -- not
 // the address this process binds.
 func TestGenerateProxyConfigAuthBlock(t *testing.T) {
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, false, nil, nil))
 
 	if want := "http://control.example.com:1323/login"; got.Auth.ControlURL != want {
 		t.Errorf("control_url = %q, want %q", got.Auth.ControlURL, want)
@@ -250,13 +256,13 @@ func TestGenerateProxyConfigAuthBlock(t *testing.T) {
 
 	// The key itself is never in the file -- it is written to a 0600 file the
 	// block names, and proxy.yaml is readable by anyone on the host.
-	if strings.Contains(generateProxyConfig(testProxyAuth, nil, nil), testProxySecret) {
+	if strings.Contains(generateProxyConfig(testProxyAuth, false, nil, nil), testProxySecret) {
 		t.Error("the shared secret was written into proxy.yaml")
 	}
 }
 
 func TestGenerateProxyConfigAuthBlockOmittedWithoutASecret(t *testing.T) {
-	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, nil, nil)
+	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, false, nil, nil)
 
 	if strings.Contains(out, "auth:") {
 		t.Errorf("an auth block was written with no key to verify tokens with:\n%s", out)
@@ -269,7 +275,7 @@ func TestGenerateProxyConfigAuthBlockOmittedWithoutASecret(t *testing.T) {
 }
 
 func TestGenerateProxyConfigConsoleBlock(t *testing.T) {
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, false, nil, nil))
 
 	if got.Console.Label != proxyConsoleLabel {
 		t.Errorf("console label is %q, want %q", got.Console.Label, proxyConsoleLabel)
@@ -284,7 +290,7 @@ func TestGenerateProxyConfigConsoleBlock(t *testing.T) {
 // The console token is verified with the key the auth block names, so a fleet
 // with no key must not be told to answer on the console hostnames at all.
 func TestGenerateProxyConfigConsoleOmittedWithoutASecret(t *testing.T) {
-	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, nil, nil)
+	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, false, nil, nil)
 
 	if strings.Contains(out, "console:") {
 		t.Errorf("a console block was written with no key to verify tokens with:\n%s", out)
@@ -297,7 +303,7 @@ func TestGenerateProxyConfigCookieSecureInProd(t *testing.T) {
 	auth := testProxyAuth
 	auth.cookieSecure = true
 
-	got := parseProxyConfig(t, generateProxyConfig(auth, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(auth, false, nil, nil))
 	if !got.Auth.CookieSecure {
 		t.Error("cookie_secure is off in prod")
 	}
@@ -306,6 +312,71 @@ func TestGenerateProxyConfigCookieSecureInProd(t *testing.T) {
 	// sends, which reads as every request being unauthenticated.
 	if got.Auth.CookieSameSite != "none" {
 		t.Errorf("cookie_samesite = %q in prod, want \"none\"", got.Auth.CookieSameSite)
+	}
+}
+
+// A host with no certificate must not be told to listen on 443. dpipe is the
+// half that would fail -- it refuses to start with tls on and nothing to serve
+// -- and a host that will not start is a worse answer to "no certificate yet"
+// than a host still on plain http.
+func TestGenerateProxyConfigWithoutACertificate(t *testing.T) {
+	out := generateProxyConfig(testProxyAuth, false, nil, nil)
+
+	if strings.Contains(out, "https:") {
+		t.Errorf("an https ingress was written for a host with no certificate:\n%s", out)
+	}
+	if got := parseProxyConfig(t, out); got.HTTPS.Listen != "" {
+		t.Errorf("https.listen = %q, want it absent", got.HTTPS.Listen)
+	}
+}
+
+func TestGenerateProxyConfigWithACertificate(t *testing.T) {
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, true, nil, nil))
+
+	if got.HTTPS.Listen != proxyHTTPSListen {
+		t.Errorf("https.listen = %q, want %q", got.HTTPS.Listen, proxyHTTPSListen)
+	}
+	if !got.HTTPS.Reuseport {
+		t.Error("https.reuseport is off, so a restart cannot bind before the old process is gone")
+	}
+	// The plain http ingress stays: a fleet on https still answers on 80, and
+	// removing it would strand anything that has not been told about the move.
+	if got.HTTP.Listen != proxyHTTPListen {
+		t.Errorf("http.listen = %q, want %q", got.HTTP.Listen, proxyHTTPListen)
+	}
+}
+
+// Once a host's own domain has a certificate its guests are on https, so the
+// session cookie can be Secure whether or not the control plane is in prod. This
+// is the flip that has to happen automatically -- an operator who issued a
+// certificate should not also have to know about a cookie flag.
+func TestGenerateProxyConfigCookieFollowsTheCertificate(t *testing.T) {
+	auth := testProxyAuth
+	auth.cookieSecure = false
+
+	got := parseProxyConfig(t, generateProxyConfig(auth, true, nil, nil))
+	if !got.Auth.CookieSecure {
+		t.Error("cookie_secure is off on a host serving https")
+	}
+	// Secure is what lets a browser keep a SameSite=None cookie, which is what
+	// lets the workspace view frame a guest from another origin.
+	if got.Auth.CookieSameSite != "none" {
+		t.Errorf("cookie_samesite = %q, want \"none\" once the cookie is Secure", got.Auth.CookieSameSite)
+	}
+}
+
+// The flip only ever turns the cookie on. A dev fleet with no certificate must
+// keep serving guests over plain http with a cookie the browser will accept.
+func TestGenerateProxyConfigCookieStaysOpenWithoutACertificate(t *testing.T) {
+	auth := testProxyAuth
+	auth.cookieSecure = false
+
+	got := parseProxyConfig(t, generateProxyConfig(auth, false, nil, nil))
+	if got.Auth.CookieSecure {
+		t.Error("cookie_secure is on for a host serving plain http; the browser would drop the cookie")
+	}
+	if got.Auth.CookieSameSite != "lax" {
+		t.Errorf("cookie_samesite = %q, want \"lax\"", got.Auth.CookieSameSite)
 	}
 }
 
@@ -320,7 +391,7 @@ func TestGenerateProxyConfigIsDeterministic(t *testing.T) {
 		{VMName: "interesting-hawking", VMIP: "10.64.0.2", HostVMID: "abc123", DomainTLD: "example.com", DefaultPort: 8000, PublicPorts: []int32{8000}},
 		{VMName: "quirky-curie", VMIP: "10.64.0.3", HostVMID: "def456", DomainTLD: "example.com", DefaultPort: 8000},
 	}
-	if generateProxyConfig(testProxyAuth, rows, httpRows) != generateProxyConfig(testProxyAuth, rows, httpRows) {
+	if generateProxyConfig(testProxyAuth, false, rows, httpRows) != generateProxyConfig(testProxyAuth, false, rows, httpRows) {
 		t.Error("two runs over the same rows produced different files")
 	}
 }

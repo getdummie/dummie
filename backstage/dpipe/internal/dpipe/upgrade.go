@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 
 	"dpipe/internal/control"
 	"dpipe/internal/xnet"
@@ -178,6 +179,18 @@ func (s *Server) AdoptRunning() error {
 
 	s.log.Info("adopted listeners from running instance", "sockets", len(m.Sockets))
 	s.Start()
+
+	// Before the ack, not after: the ack is what starts the old process draining,
+	// and a drain with no active connections ends immediately. Notifying second
+	// would race a systemd that has already watched the unit's main process exit
+	// cleanly and given up on the unit.
+	//
+	// A failure here is logged rather than returned. The listeners are already
+	// ours, so there is no unwinding this -- and outside a Type=notify unit there
+	// is no socket to write to and this is a no-op.
+	if err := NotifyMainPID(os.Getpid()); err != nil {
+		s.log.Warn("could not tell systemd the main pid moved", "err", err)
+	}
 
 	if err := k.SendMsg(control.Msg{V: control.Version, Type: control.TypeHandoverAck, ID: m.ID}, nil); err != nil {
 		return fmt.Errorf("handover ack: %w", err)

@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"control/internal/db"
@@ -53,6 +55,11 @@ const proxyGuestSSHPort = 22
 // CAP_NET_BIND_SERVICE on the unit. That is a property of the client host, not of
 // this file, and it is the thing that breaks if it is not true.
 const proxyHTTPListen = "0.0.0.0:80"
+
+// proxyHTTPSListen is the tls ingress, present only on hosts whose domain has a
+// certificate. Privileged like 80, and bound by the same process, so a host that
+// can serve one can serve the other.
+const proxyHTTPSListen = "0.0.0.0:443"
 
 // proxyConfigHeader says the file is not the operator's, because it looks
 // exactly like the one that used to be.
@@ -108,16 +115,37 @@ const proxyCookieTTL = "1h"
 // generateProxyConfig compiles every reachable VM on one host into a proxy.yaml.
 // Rows arrive in the order the queries fix, so an unchanged fleet compiles to a
 // byte-identical file -- which is what lets the client skip the restart.
-func generateProxyConfig(auth proxyAuthConfig, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow) string {
+func generateProxyConfig(auth proxyAuthConfig, tls bool, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow) string {
+	// The flip lives here rather than at the call site because it is a property of
+	// the file: a host serving https can have a Secure cookie whatever the fleet
+	// default says, and one serving plain http cannot. Only ever upwards -- prod
+	// turns it on everywhere, and a certificate turns it on for one host.
+	auth.cookieSecure = auth.cookieSecure || tls
+
 	var b strings.Builder
 	b.WriteString(proxyConfigHeader)
 	b.WriteString(proxyStaticConfig)
 	writeProxyAuth(&b, auth)
 	writeProxyConsole(&b, auth)
 	writeProxyHTTP(&b, http)
+	writeProxyHTTPS(&b, tls)
 	writeProxySSH(&b, ssh)
 	b.WriteString(proxyConfigFooter)
 	return b.String()
+}
+
+// clientServesTLS reports whether the domain a client belongs to has a
+// certificate that has been turned on. False for a client with no domain, which
+// is also a client with no published VMs.
+func clientServesTLS(ctx context.Context, q *db.Queries, clientID pgtype.UUID) (bool, error) {
+	domain, err := q.GetClientDomain(ctx, clientID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return domain.TlsEnabled && domain.CertObjectKey != "", nil
 }
 
 // writeProxyAuth emits the block that points proxy back at this server: where to
@@ -226,6 +254,24 @@ func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByClientRow
 	b.WriteString(`  default: ""` + "\n")
 }
 
+// writeProxyHTTPS emits the tls ingress. There is nothing per VM in it: proxy
+// routes an https request through the same host table above -- it accepts the
+// socket, dpipe terminates and sniffs the decrypted Host header -- so this block
+// only says where to listen.
+//
+// Omitted entirely when the host has no certificate, rather than written with
+// the listener disabled. dpipe is the half that would fail: it refuses to start
+// with tls on and nothing to serve, and a host that will not start is a worse
+// answer to "no certificate yet" than a host still serving plain http.
+func writeProxyHTTPS(b *strings.Builder, tls bool) {
+	if !tls {
+		return
+	}
+	b.WriteString("\nhttps:\n")
+	fmt.Fprintf(b, "  listen: %q\n", proxyHTTPSListen)
+	b.WriteString("  reuseport: true\n")
+}
+
 // hostnamePattern is the shape of a DNS name: dotted lowercase labels, each
 // starting and ending alphanumeric. Used to validate the domains an operator
 // enters; a VM name is the stricter vmNamePattern.
@@ -305,13 +351,21 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 		log.Printf("could not read the http routes for client %s: %v", id, err)
 		return
 	}
+	// Whether this host serves https decides two things in the file: the ingress
+	// that accepts it, and whether the session cookie may be Secure. A read failure
+	// is treated as "no certificate" rather than abandoning the push -- the ssh and
+	// http tables above are the part a guest cannot reach without.
+	tls, err := clientServesTLS(ctx, q, clientID)
+	if err != nil {
+		log.Printf("could not tell whether client %s has a certificate, writing its proxy config without tls: %v", id, err)
+	}
 	// The key rides with the config rather than being provisioned separately: the
 	// file it lands in is named by the config, so a host that has one and not the
 	// other has an auth block pointing at a key that is not there.
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindProxyConfig,
 		Proxy: &proto.ProxyConfig{
-			Config:           generateProxyConfig(auth, sshRows, httpRows),
+			Config:           generateProxyConfig(auth, tls, sshRows, httpRows),
 			CookieSecret:     auth.secret,
 			CookieSecretPath: proxyCookieSecretPath,
 		},

@@ -94,6 +94,12 @@ func (s *Server) Start() {
 // process should terminate.
 func (s *Server) Exit() <-chan struct{} { return s.exitCh }
 
+// Draining reports whether this process has already handed its listeners over
+// and is only finishing the sessions it still holds. An upgrade request arriving
+// now would start a second replacement to race the first for listeners that are
+// no longer ours to give.
+func (s *Server) Draining() bool { return s.reg.Draining() }
+
 func (s *Server) acceptControl() {
 	for {
 		c, err := s.ctrlLn.AcceptUnix()

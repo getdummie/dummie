@@ -70,7 +70,7 @@ Wants=network-online.target
 After=dclient.service
 
 [Service]
-Type=simple
+Type=%s
 # /run/dpipe, created by systemd before ExecStart. dclient makes this directory
 # too, but only once its own startup gets that far -- and dclient is Type=exec, so
 # systemd calls this unit started the moment it execs and will happily launch
@@ -81,12 +81,55 @@ Type=simple
 RuntimeDirectory=dpipe
 RuntimeDirectoryPreserve=yes
 ExecStart=%s -config %s
-Restart=on-failure
+%sRestart=on-failure
 RestartSec=2
 
 [Install]
 WantedBy=multi-user.target
 `
+
+// managedUnit renders one companion's unit file.
+//
+// proxy is a plain Type=simple daemon: it owns the listening sockets the outside
+// world arrives on, and replacing it means dropping them, which is what the
+// restart-only-when-the-file-changed rule elsewhere is careful about.
+//
+// dpipe is Type=notify because it can be replaced without dropping anything. A
+// `systemctl reload` signals it, and it starts the replacement itself: the new
+// process takes the control and upgrade sockets over the existing handover
+// protocol and serves immediately, while the old one finishes the sessions it is
+// already carrying. The new process is the service from that moment, and it says
+// so with MAINPID -- without which systemd would keep watching the old one and
+// call the unit dead as soon as it drained.
+//
+// ExecReload sends a signal rather than starting the replacement directly, which
+// is the obvious spelling and does not work: systemd refuses to hand the main pid
+// to the process it spawned for ExecReload ("New main PID N is the control
+// process, refusing"), so the handover would succeed and the service manager
+// would sit there until the reload timed out. A child of the main process is
+// accepted, so dpipe forks its own successor.
+//
+// NotifyAccess=all rather than main for the same reason: the notification comes
+// from a process that is not the main pid yet, and `main` would drop it.
+func managedUnit(name string) string {
+	unitType, reload := "simple", ""
+	if name == dpipeService {
+		unitType = "notify"
+		// RestartForceExitStatus is the guard against a host that has this unit and
+		// an older dpipe. SIGHUP terminates a process that does not handle it, and
+		// systemd counts death by SIGHUP as a clean exit -- so Restart=on-failure
+		// would not fire and a reload would leave the host with no dpipe at all,
+		// reported as a success. This turns that combination into a restart.
+		//
+		// It never fires against a dpipe that understands the signal, because that
+		// one does not die of it.
+		reload = "NotifyAccess=all\n" +
+			"ExecReload=/bin/kill -HUP $MAINPID\n" +
+			"RestartForceExitStatus=SIGHUP\n"
+	}
+	return fmt.Sprintf(managedUnitTemplate,
+		name, unitType, serviceBinary(name), serviceConfigPath(name), reload)
+}
 
 // defaultDpipeConfig and defaultProxyConfig are written once, on the first start
 // after the service is enabled, so the unit has something to read before the
@@ -201,13 +244,25 @@ func ensureManagedService(ctx context.Context, data, name string, cfg ServiceCon
 		return err
 	}
 
-	unit := fmt.Sprintf(managedUnitTemplate, name, serviceBinary(name), serviceConfigPath(name))
-	changed, err := writeIfDifferent(serviceUnitPath(name), unit, 0o644)
+	changed, err := writeIfDifferent(serviceUnitPath(name), managedUnit(name), 0o644)
 	if err != nil {
 		return err
 	}
 	if changed {
 		if err := systemctl(ctx, "daemon-reload"); err != nil {
+			return err
+		}
+		// A running process keeps the definition it was started with, and Type and
+		// NotifyAccess are decided at start. A dpipe started under the old unit was
+		// given no NOTIFY_SOCKET, so its replacement could not tell systemd the main
+		// pid had moved -- systemd would watch the draining process instead, and call
+		// the unit dead the moment it exited while a live dpipe kept serving.
+		//
+		// So the move onto the new unit costs one restart, which does drop the
+		// sessions this host is carrying. It is the last one: every replacement after
+		// this is a handover. try-restart rather than restart so a unit that is
+		// deliberately stopped stays stopped -- enable --now below is what starts it.
+		if err := systemctl(ctx, "try-restart", name+".service"); err != nil {
 			return err
 		}
 	}
@@ -371,6 +426,31 @@ func writeIfDifferent(path, content string, mode os.FileMode) (bool, error) {
 		return false, err
 	}
 	return true, os.WriteFile(path, []byte(content), mode)
+}
+
+// reloadService replaces a running service without dropping the connections it
+// is carrying. Only dpipe can do this -- its unit carries the ExecReload that
+// hands the listeners to a fresh process -- so this is a reload for dpipe and a
+// restart for anything else.
+//
+// The fallback covers a unit with no ExecReload, which is what a host running an
+// older dclient has. It should not normally be reached: ensureManagedService
+// restarts dpipe when it rewrites the unit, so by the time any config or
+// certificate arrives the process is already one that can hand over.
+//
+// Note that a reload returns as soon as the signal is delivered, not once the
+// replacement is serving -- the handover runs on its own after that. A failure to
+// start the replacement is logged by the process that was signalled, not
+// reported here.
+func reloadService(ctx context.Context, name string) error {
+	if name == dpipeService {
+		err := systemctl(ctx, "reload", name+".service")
+		if err == nil {
+			return nil
+		}
+		log.Printf("could not reload %s (%v); restarting it instead", name, err)
+	}
+	return systemctl(ctx, "restart", name+".service")
 }
 
 func systemctl(ctx context.Context, args ...string) error {

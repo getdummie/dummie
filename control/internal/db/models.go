@@ -57,8 +57,21 @@ type ControlMetum struct {
 }
 
 type Domain struct {
-	ID  pgtype.UUID
-	TLD string
+	ID              pgtype.UUID
+	TLD             string
+	TlsEnabled      bool
+	CertMode        string
+	AcmeDirectory   string
+	AcmeEmail       string
+	AcmeCredentials string
+	AcmeAccountKey  string
+	CertObjectKey   string
+	KeyObjectKey    string
+	CertFingerprint string
+	CertNotAfter    pgtype.Timestamptz
+	CertError       string
+	CertIssuedAt    pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type Kernel struct {

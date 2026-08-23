@@ -100,6 +100,9 @@ type AdminHandler struct {
 	// report how far behind it is, which is a fact about the process rather than
 	// about the table.
 	tasks *taskRunner
+	// certs runs the acme orders. Carried here rather than reached through tasks
+	// because an order outlives the request that starts it and is not a task.
+	certs *certIssuer
 }
 
 // --- helpers ---------------------------------------------------------------

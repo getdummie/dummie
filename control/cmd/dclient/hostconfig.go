@@ -8,6 +8,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"control/internal/proto"
 )
 
 // suricata.yaml, dpipe.yaml and the Corefile arrive from the control server
@@ -133,10 +135,20 @@ func applyCoreDNSConfig(ctx context.Context, config string) (bool, error) {
 	return true, nil
 }
 
-// applyDpipeConfig installs a pushed dpipe.yaml and restarts dpipe if it
-// changed. Restarting drops every live ssh session and browser terminal on the
-// host, which is the whole reason this compares before writing.
-func applyDpipeConfig(ctx context.Context, config string) (bool, error) {
+// applyDpipeConfig installs a pushed dpipe.yaml, and the wildcard certificate it
+// may name, and replaces dpipe if either changed.
+//
+// The certificate travels with the config rather than as a job of its own
+// because the two have to land in order and jobs have none: dclient runs each in
+// its own goroutine, so a config that turns tls on could reach a host before the
+// files it points at, and dpipe refuses to start without a usable certificate.
+// Same rule as the proxy cookie secret -- key material first, then the file that
+// names it.
+//
+// An unchanged push is a no-op, which matters even now that replacement is a
+// handover: the control server sends one on every connect, and a handover per
+// connect would be a new process every few seconds.
+func applyDpipeConfig(ctx context.Context, config string, certs *proto.DpipeCerts) (bool, error) {
 	cfg, err := loadConfig("")
 	if err != nil {
 		return false, fmt.Errorf("could not read the dclient config: %w", err)
@@ -153,20 +165,100 @@ func applyDpipeConfig(ctx context.Context, config string) (bool, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("could not read %s: %w", path, err)
 	}
-	if err == nil && string(existing) == config {
+	configChanged := err != nil || string(existing) != config
+
+	// Before the config either way: on a first install the config names the files,
+	// and on a renewal the config is byte-identical and the certificate is the only
+	// thing that changed.
+	certsChanged, err := writeDpipeCerts(certs)
+	if err != nil {
+		return false, err
+	}
+	if !configChanged && !certsChanged {
 		return false, nil
 	}
 
-	// The config turns ssh on and names both key files, so it must not land
-	// before they exist or the restart below is a restart loop.
-	if err := ensureDpipeKeys(); err != nil {
+	if configChanged {
+		// The config turns ssh on and names both key files, so it must not land
+		// before they exist or the replacement below is a restart loop.
+		if err := ensureDpipeKeys(); err != nil {
+			return false, err
+		}
+		if err := writeFileAtomic(path, []byte(config), 0o644); err != nil {
+			return false, err
+		}
+	}
+
+	if err := reloadService(ctx, dpipeService); err != nil {
+		// Everything is already on disk and is what the next start reads. Left in
+		// place for the same reason the proxy config is: rolling it back would leave
+		// the host serving something the control plane believes it replaced.
+		return true, fmt.Errorf("wrote %s but could not replace %s: %w", path, dpipeService, err)
+	}
+	return true, nil
+}
+
+// writeDpipeCerts puts the fleet's wildcard certificate where the pushed
+// dpipe.yaml says it is, and reports whether either file changed.
+//
+// A nil or empty pair leaves whatever is on disk alone rather than removing it.
+// It means the control server has no certificate for this host's domain, and the
+// config that arrived with it therefore has tls disabled -- so nothing reads
+// these files, and deleting them would turn a control server that has not
+// finished issuing into an outage on the next start.
+func writeDpipeCerts(certs *proto.DpipeCerts) (bool, error) {
+	if certs == nil || certs.Cert == "" || certs.Key == "" {
+		return false, nil
+	}
+
+	// 0700 for the same reason the key directory is: the private key below is what
+	// every guest on this host is impersonated with.
+	if err := os.MkdirAll(dpipeCertDir, 0o700); err != nil {
+		return false, fmt.Errorf("could not create %s: %w", dpipeCertDir, err)
+	}
+	// MkdirAll leaves an existing directory's mode alone, so this is the repair
+	// for one that was created looser -- by an earlier version, or by hand.
+	if err := os.Chmod(dpipeCertDir, 0o700); err != nil {
+		return false, fmt.Errorf("could not tighten %s: %w", dpipeCertDir, err)
+	}
+
+	certChanged, err := writeIfChanged(dpipeCertPath, certs.Cert, 0o644)
+	if err != nil {
 		return false, err
 	}
-	if err := writeFileAtomic(path, []byte(config), 0o644); err != nil {
+	// 0600, and never named in an error or a log line on this path.
+	keyChanged, err := writeIfChanged(dpipeKeyPath, certs.Key, 0o600)
+	if err != nil {
 		return false, err
 	}
-	if err := systemctl(ctx, "restart", dpipeService+".service"); err != nil {
-		return true, fmt.Errorf("wrote %s but could not restart %s: %w", path, dpipeService, err)
+	if certChanged || keyChanged {
+		log.Printf("installed a new wildcard certificate in %s", dpipeCertDir)
+	}
+	return certChanged || keyChanged, nil
+}
+
+// writeIfChanged writes content only when it differs from what is there, and
+// says whether it wrote. The comparison is what keeps a re-push of an unchanged
+// certificate from replacing a running dpipe.
+//
+// Not writeIfDifferent, which looks like the same function: that one writes with
+// os.WriteFile, which truncates in place. A dpipe starting in that window reads
+// an empty or half-written key and refuses to come up -- and the window is
+// exactly when a replacement is happening, because that is when both run at once.
+// This one stages and renames.
+func writeIfChanged(path, content string, mode os.FileMode) (bool, error) {
+	if !strings.HasSuffix(content, "\n") {
+		content += "\n"
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("could not read %s: %w", path, err)
+	}
+	if err == nil && string(existing) == content {
+		return false, nil
+	}
+	if err := writeFileAtomic(path, []byte(content), mode); err != nil {
+		return false, err
 	}
 	return true, nil
 }

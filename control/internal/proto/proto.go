@@ -163,6 +163,14 @@ type Job struct {
 	// one payload rather than each having a struct with a single Config field in
 	// it.
 	File *FileConfig `json:"file,omitempty"`
+	// DpipeCerts may be set when Kind is KindDpipeConfig, and carries the wildcard
+	// certificate for the domain of the host it is addressed to.
+	//
+	// It rides with the config rather than travelling as a kind of its own because
+	// the two have to be applied in order and separate jobs have none -- the client
+	// runs each in its own goroutine. A dpipe.yaml with tls on that reaches a host
+	// before the files it names is a dpipe that will not start.
+	DpipeCerts *DpipeCerts `json:"dpipe_certs,omitempty"`
 }
 
 // FileConfig is a complete config file for a service on the host. The client
@@ -171,6 +179,27 @@ type Job struct {
 // disruptive to restart.
 type FileConfig struct {
 	Config string `json:"config"`
+}
+
+// DpipeCerts is the wildcard certificate a host terminates tls with: the full
+// chain and its private key, both PEM.
+//
+// The key is sent inline rather than as a link the host fetches, for the same
+// reason the proxy cookie secret is: the socket it travels over is already the
+// authenticated channel this fleet trusts with the rest of its key material, and
+// a presigned URL would be a second way to reach the same bytes with a different
+// lifetime and a different audience.
+//
+// One certificate, not a list. A client belongs to exactly one domain, and the
+// wildcard cut for that domain covers every name it serves -- which is why the
+// generated config points dpipe's default_cert at it rather than adding it to
+// the sni table, where an exact-match lookup would never find a wildcard.
+type DpipeCerts struct {
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
+	// Fingerprint is the sha256 of the leaf, so a host and the control plane can
+	// be compared without moving the certificate around to do it.
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // VectorConfig is a complete vector.yaml plus the release meant to run it. The

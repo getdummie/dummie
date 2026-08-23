@@ -196,7 +196,18 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	//
 	// Nil pool means no database, which is the one case there is nothing to poll;
 	// starting the runner then would be a log line every second saying so.
-	tasks := newTaskRunner(q, hub)
+	//
+	// Both are built before the runner starts: the renewal task calls into the
+	// issuer, so a runner polling before it exists would be a nil dereference on
+	// whichever tick came first.
+	//
+	// blobs is hoisted rather than built inline in the admin handler because the
+	// client link reads certificates out of it on every connect, and the issuer
+	// writes them.
+	blobs := loadBlobStore(context.Background())
+	certs := newCertIssuer(q, blobs, hub, proxyCfg)
+
+	tasks := newTaskRunner(q, hub, certs)
 	if pool != nil {
 		runnerCtx, stopRunner := context.WithCancel(context.Background())
 		defer stopRunner()
@@ -208,7 +219,7 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	// Admin: user management + refresh-token session management, JWT + admin gated.
 	adminH := &AdminHandler{
 		q: q, pool: pool, cfg: cfg, hub: hub,
-		blobs: loadBlobStore(context.Background()), tasks: tasks,
+		blobs: blobs, tasks: tasks, certs: certs,
 	}
 	admin := api.Group("/admin", adminJWT(cfg))
 	admin.GET("/users", adminH.ListUsers)
@@ -229,6 +240,7 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	admin.GET("/clients/:id", adminH.GetClient)
 	admin.POST("/clients/:id/revoke", adminH.RevokeClient)
 	admin.DELETE("/clients/:id", adminH.DeleteClient)
+	admin.PUT("/clients/:id/domain", adminH.SetClientDomain)
 	admin.GET("/clients/:id/vms", adminH.ListClientVMs)
 	admin.POST("/clients/:id/vms", adminH.CreateVM)
 	admin.GET("/vms", adminH.ListVMs)
@@ -241,6 +253,13 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	admin.GET("/domains", adminH.ListDomains)
 	admin.POST("/domains", adminH.CreateDomain)
 	admin.DELETE("/domains/:id", adminH.DeleteDomain)
+	admin.GET("/domains/:id/certificate", adminH.GetCertificate)
+	admin.PUT("/domains/:id/tls", adminH.UpdateTLS)
+	admin.PUT("/domains/:id/certificate", adminH.UploadCertificate)
+	admin.POST("/domains/:id/certificate/issue", adminH.IssueCertificate)
+	admin.POST("/domains/:id/certificate/continue", adminH.ContinueCertificate)
+	admin.POST("/domains/:id/certificate/cancel", adminH.CancelCertificate)
+	admin.DELETE("/domains/:id/certificate", adminH.DeleteCertificate)
 	admin.GET("/kernels", adminH.ListKernels)
 	admin.POST("/kernels", adminH.CreateKernel)
 	admin.GET("/kernels/:id", adminH.GetKernel)
@@ -298,7 +317,7 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 
 	// Clients: enrollment + the persistent socket the server pushes jobs down.
 	// Authenticated by enrollment key / client token, not by the user JWT.
-	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg}
+	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg, blobs: blobs}
 	ag := api.Group("/client")
 	ag.POST("/enroll", clientH.Enroll)
 	ag.GET("/connect", clientH.Connect)

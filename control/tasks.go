@@ -41,6 +41,11 @@ const (
 	// subject, which is why it is deduplicated by kind rather than by the
 	// live-subject index.
 	taskCleanup = "tasks.cleanup"
+
+	// taskCertRenew replaces certificates that are running out and reschedules
+	// itself. Subjectless like the cleanup, because it is a sweep over every
+	// domain rather than work on one of them.
+	taskCertRenew = "cert.renew"
 )
 
 // Subject kinds, matching the table a subject_id points into.
@@ -184,6 +189,10 @@ type taskHandler func(ctx context.Context, r *taskRunner, t db.ScheduledTask) ta
 type taskRunner struct {
 	q   *db.Queries
 	hub *Hub
+	// certs is what the renewal sweep hands its work to. Orders run there rather
+	// than in a handler because an acme order takes minutes and an attempt here is
+	// given thirty seconds.
+	certs *certIssuer
 
 	// instance identifies this process in the lease columns. Regenerated per
 	// start, so a task held by a previous run is recognisable as stale even on the
@@ -202,16 +211,18 @@ type taskRunner struct {
 	lastTick atomic.Int64
 }
 
-func newTaskRunner(q *db.Queries, hub *Hub) *taskRunner {
+func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer) *taskRunner {
 	r := &taskRunner{
 		q:        q,
 		hub:      hub,
+		certs:    certs,
 		instance: uuid.NewString(),
 	}
 	r.handlers = map[string]taskHandler{
 		taskVMTargetExpire: handleVMTargetExpire,
 		taskVMExpire:       handleVMExpire,
 		taskCleanup:        handleTaskCleanup,
+		taskCertRenew:      handleCertRenew,
 	}
 	return r
 }
@@ -232,6 +243,15 @@ func (r *taskRunner) run(ctx context.Context) {
 		DelaySeconds: taskCleanupEvery.Seconds(),
 	}); err != nil {
 		log.Printf("could not schedule the task cleanup: %v", err)
+	}
+	// The renewal sweep, for the same reason: a fleet that has never run one gets
+	// it on the next start rather than on the next migration.
+	if err := r.q.CreateSingletonScheduledTask(ctx, db.CreateSingletonScheduledTaskParams{
+		Kind:         taskCertRenew,
+		Reason:       "replace certificates that are close to expiring",
+		DelaySeconds: taskCertRenewEvery.Seconds(),
+	}); err != nil {
+		log.Printf("could not schedule the certificate renewal sweep: %v", err)
 	}
 
 	tick := time.NewTicker(taskTick)

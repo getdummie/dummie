@@ -447,7 +447,7 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 		}
 		// Off the read loop like the rest: each restarts or signals something, and a
 		// slow docker or systemctl must not stop the socket answering pings.
-		go l.applyHostConfig(ctx, env.ID, job.Kind, job.File.Config)
+		go l.applyHostConfig(ctx, env.ID, job.Kind, job.File.Config, job.DpipeCerts)
 	default:
 		l.reply(ctx, env.ID, proto.JobResult{
 			Kind:  job.Kind,
@@ -521,14 +521,19 @@ func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConf
 // owns. Detached like the rest: a write that has begun should finish, since
 // abandoning it leaves the host running a config the control plane believes it
 // replaced.
-func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.JobKind, config string) {
+func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.JobKind, config string, certs *proto.DpipeCerts) {
 	ctx = context.WithoutCancel(ctx)
 
+	// dpipe's takes a second argument -- the certificate the config may name,
+	// which has to be written before it -- so it is wrapped rather than assigned.
 	apply := applySuricataConfig
 	name := "suricata"
 	switch kind {
 	case proto.KindDpipeConfig:
-		apply, name = applyDpipeConfig, dpipeService
+		name = dpipeService
+		apply = func(ctx context.Context, config string) (bool, error) {
+			return applyDpipeConfig(ctx, config, certs)
+		}
 	case proto.KindCoreDNSConfig:
 		apply, name = applyCoreDNSConfig, corednsContainer
 	}

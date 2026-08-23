@@ -37,6 +37,14 @@ const (
 	// generated here like the two above: it is the control server's, shared with
 	// every host in the fleet, and arrives with the proxy config that names it.
 	dpipeCookieSecretPath = dpipeKeyDir + "/cookie_secret"
+
+	// The fleet's wildcard certificate for this host's domain, issued by the
+	// control server and pushed with the dpipe config that names it. Kept apart
+	// from the keys above because these are replaced on every renewal, whereas
+	// those are generated here once and never rotated without an operator.
+	dpipeCertDir  = "/etc/dpipe/certs"
+	dpipeCertPath = dpipeCertDir + "/fullchain.pem"
+	dpipeKeyPath  = dpipeCertDir + "/privkey.pem"
 )
 
 // ensureDpipeKeys creates the key directory and both keypairs if they are not

@@ -288,6 +288,60 @@ func (q *Queries) SetAllClientsOffline(ctx context.Context) error {
 	return err
 }
 
+const setClientDomain = `-- name: SetClientDomain :one
+UPDATE clients
+SET domain_id = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id
+`
+
+type SetClientDomainParams struct {
+	ID       pgtype.UUID
+	DomainID pgtype.UUID
+}
+
+// SetClientDomain moves one client to a domain, or clears it when the argument
+// is null.
+//
+// Enrollment assigns a domain only when there is exactly one to assign, and only
+// on the row's first insert, so without this an installation that added its
+// domain after its hosts enrolled has no way to attach them -- and a host with no
+// domain publishes no vms and can never be served over tls.
+func (q *Queries) SetClientDomain(ctx context.Context, arg SetClientDomainParams) (Client, error) {
+	row := q.db.QueryRow(ctx, setClientDomain, arg.ID, arg.DomainID)
+	var i Client
+	err := row.Scan(
+		&i.ID,
+		&i.MachineID,
+		&i.Hostname,
+		&i.TokenHash,
+		&i.Status,
+		&i.OS,
+		&i.OSVersion,
+		&i.Arch,
+		&i.ClientVersion,
+		&i.LastSeenAt,
+		&i.LastIP,
+		&i.EnrolledKeyID,
+		&i.Revoked,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.CPUCount,
+		&i.CPUPercent,
+		&i.Load1,
+		&i.Load5,
+		&i.Load15,
+		&i.MemTotalBytes,
+		&i.MemUsedBytes,
+		&i.DiskTotalBytes,
+		&i.DiskUsedBytes,
+		&i.UptimeSeconds,
+		&i.MetricsAt,
+		&i.DomainID,
+	)
+	return i, err
+}
+
 const setClientOffline = `-- name: SetClientOffline :exec
 UPDATE clients
 SET status = 'offline', last_seen_at = now(), updated_at = now()

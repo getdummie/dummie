@@ -168,6 +168,9 @@ type clientDTO struct {
 	// "" when the client has no domain: none was configured when it enrolled, or
 	// there were several and the choice was left to an operator.
 	Domain string `json:"domain"`
+	// DomainID is what the assignment control writes back, and is "" alongside
+	// Domain. Both, because the screen shows one and edits the other.
+	DomainID string `json:"domain_id"`
 
 	Metrics clientMetricsDTO `json:"metrics"`
 }
@@ -189,6 +192,16 @@ type clientMetricsDTO struct {
 	UptimeSeconds  int64   `json:"uptime_seconds"`
 }
 
+// domainIDString renders a nullable domain reference as the empty string rather
+// than as the zero uuid, which is what the assignment control sends back to mean
+// "no domain".
+func domainIDString(id pgtype.UUID) string {
+	if !id.Valid {
+		return ""
+	}
+	return uuid.UUID(id.Bytes).String()
+}
+
 func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 	d := clientDTO{
 		ID:            uuid.UUID(a.ID.Bytes).String(),
@@ -197,6 +210,7 @@ func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 		Status:        a.Status,
 		Connected:     connected,
 		Domain:        domain,
+		DomainID:      domainIDString(a.DomainID),
 		OS:            a.OS,
 		OSVersion:     a.OSVersion,
 		Arch:          a.Arch,
@@ -305,5 +319,59 @@ func (h *AdminHandler) DeleteClient(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete client")
 	}
 	h.hub.Kick(id, "client deleted")
+	return c.NoContent(http.StatusNoContent)
+}
+
+// setClientDomainReq names the domain a host belongs to. An empty string clears
+// it.
+type setClientDomainReq struct {
+	DomainID string `json:"domain_id"`
+}
+
+// SetClientDomain moves one host to a domain.
+//
+// Enrollment picks a domain only when there is exactly one to pick and only on a
+// row's first insert, so an installation that added its domain after its hosts
+// enrolled has no other way to attach them -- and a host with no domain publishes
+// no VMs and can never be served over tls.
+//
+// Both configs that depend on the domain are pushed afterwards: the host's
+// published names change, and so does whether it has a certificate to serve.
+func (h *AdminHandler) SetClientDomain(c *echo.Context) error {
+	id := c.Param("id")
+	pgID, err := parseUUID(id)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid client id")
+	}
+
+	var req setClientDomainReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	// The zero pgtype.UUID is null, which is how the domain is cleared.
+	var domainID pgtype.UUID
+	if strings.TrimSpace(req.DomainID) != "" {
+		domainID, err = parseUUID(req.DomainID)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid domain id")
+		}
+		if _, err := h.q.GetDomain(c.Request().Context(), domainID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return echo.NewHTTPError(http.StatusBadRequest, "unknown domain")
+			}
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not load the domain")
+		}
+	}
+
+	if _, err := h.q.SetClientDomain(c.Request().Context(), db.SetClientDomainParams{
+		ID: pgID, DomainID: domainID,
+	}); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not set the client's domain")
+	}
+
+	if h.certs != nil {
+		h.certs.PushToClient(c.Request().Context(), pgID)
+	}
 	return c.NoContent(http.StatusNoContent)
 }

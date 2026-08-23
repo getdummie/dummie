@@ -116,3 +116,16 @@ ORDER BY (
     SELECT count(*) FROM vms
     WHERE vms.client_id = clients.id AND vms.status IN ('pending', 'running')
 ) ASC, last_seen_at DESC NULLS LAST;
+
+-- name: SetClientDomain :one
+-- SetClientDomain moves one client to a domain, or clears it when the argument
+-- is null.
+--
+-- Enrollment assigns a domain only when there is exactly one to assign, and only
+-- on the row's first insert, so without this an installation that added its
+-- domain after its hosts enrolled has no way to attach them -- and a host with no
+-- domain publishes no vms and can never be served over tls.
+UPDATE clients
+SET domain_id = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;

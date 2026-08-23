@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TableCell, TableRow } from '@/components/ui/table'
 import type { DataTableColumn } from '@/lib/table'
@@ -50,7 +51,13 @@ interface Client {
   // "" when no domain was configured at enrollment, or several were and the
   // choice was left to an operator.
   domain: string
+  domain_id: string
   metrics: ClientMetrics
+}
+
+interface DomainOption {
+  id: string
+  tld: string
 }
 
 interface VMRow {
@@ -167,6 +174,60 @@ async function load(quiet = false) {
   }
   finally {
     loading.value = false
+  }
+}
+
+// --- domain assignment ---
+//
+// A draft rather than an edit in place, so the Save button can appear only when
+// the selection differs from what the server holds -- and so a background reload
+// of the client cannot silently discard a choice mid-edit.
+// noDomain is the select's stand-in for "no domain". reka-ui treats the empty
+// string as "nothing is selected", which would show the placeholder and make
+// clearing an assignment impossible to express.
+const noDomain = 'none'
+
+const domains = ref<DomainOption[]>([])
+const domainDraft = ref(noDomain)
+const savingDomain = ref(false)
+const domainError = ref<string | null>(null)
+
+// Seeded from the client once it arrives, and re-seeded whenever the server's
+// answer changes -- which is what resets the draft after a save.
+watch(() => client.value?.domain_id, (v) => { domainDraft.value = v || noDomain }, { immediate: true })
+
+const domainDirty = computed(() => domainDraft.value !== (client.value?.domain_id || noDomain))
+
+async function loadDomains() {
+  try {
+    const res = await authFetch('/admin/domains')
+    if (!res.ok) return
+    domains.value = (await res.json()).items ?? []
+  }
+  catch {
+    // The select falls back to "none assigned" plus whatever is already set. A
+    // failure here should not take the rest of the page with it.
+  }
+}
+onMounted(loadDomains)
+
+async function saveDomain() {
+  savingDomain.value = true
+  domainError.value = null
+  try {
+    const res = await authFetch(`/admin/clients/${id.value}/domain`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ domain_id: domainDraft.value === noDomain ? '' : domainDraft.value }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await load(true)
+  }
+  catch (e) {
+    domainError.value = e instanceof Error ? e.message : 'Could not set the domain'
+  }
+  finally {
+    savingDomain.value = false
   }
 }
 
@@ -356,8 +417,35 @@ async function confirmDelete() {
           <div>
             <dt class="eyebrow text-muted-foreground">Domain</dt>
             <!-- No domain is a real state: none was configured at enrollment, or
-                 several were and the choice was left to an operator. -->
-            <dd class="mt-1 font-mono text-sm">{{ client.domain || 'none assigned' }}</dd>
+                 several were and the choice was left to an operator. Editable
+                 because enrollment only ever assigns one on a row's first insert,
+                 so a host that enrolled before the domain existed has no other
+                 way to get one -- and a host with no domain publishes no VMs and
+                 can never be served over TLS. -->
+            <dd class="mt-1 flex items-center gap-2">
+              <Select v-model="domainDraft" :disabled="savingDomain">
+                <SelectTrigger id="client-domain" class="max-w-xs font-mono text-sm" aria-label="Domain">
+                  <SelectValue placeholder="none assigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  <!-- reka-ui reserves the empty string for "nothing selected",
+                       so clearing the domain needs a sentinel of its own. -->
+                  <SelectItem value="none">none assigned</SelectItem>
+                  <SelectItem v-for="d in domains" :key="d.id" :value="d.id">
+                    {{ d.tld }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <Button
+                v-if="domainDirty"
+                class="font-mono text-xs"
+                :disabled="savingDomain"
+                @click="saveDomain"
+              >
+                {{ savingDomain ? 'Saving…' : 'Save' }}
+              </Button>
+            </dd>
+            <FormError id="client-domain-error" :message="domainError" />
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">OS</dt>
