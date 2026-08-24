@@ -166,6 +166,14 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	ah := &AuthHandler{q: q, cfg: cfg}
 	api.GET("/signup_status", ah.SignupStatus)
 	api.POST("/signup", ah.Signup)
+
+	// Federated sign-in. Public like the rest of this group: these are the routes
+	// someone uses to *get* a session, and the flow authenticates itself with the
+	// state cookie and the provider's signature rather than with one.
+	oidcH := &OIDCHandler{q: q, auth: ah, controlURL: proxyCfg.controlURL}
+	api.GET("/oidc/providers", oidcH.ListPublicProviders)
+	api.GET("/oidc/:slug/start", oidcH.Start)
+	api.GET("/oidc/:slug/callback", oidcH.Callback)
 	api.POST("/signin", ah.Signin)
 	api.POST("/token_refresh", ah.TokenRefresh)
 	api.POST("/signout", ah.Signout)
@@ -221,6 +229,7 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	adminH := &AdminHandler{
 		q: q, pool: pool, cfg: cfg, hub: hub,
 		blobs: blobs, tasks: tasks, certs: certs,
+		controlURL: proxyCfg.controlURL,
 	}
 	admin := api.Group("/admin", adminJWT(cfg))
 	admin.GET("/users", adminH.ListUsers)
@@ -273,6 +282,11 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	admin.DELETE("/osimages/:id", adminH.DeleteOSImage)
 	admin.GET("/settings", adminH.ListSettings)
 	admin.PUT("/settings/:key", adminH.UpdateSetting)
+	admin.GET("/oidc/templates", adminH.ListOIDCTemplates)
+	admin.GET("/oidc/providers", adminH.ListOIDCProviders)
+	admin.POST("/oidc/providers", adminH.CreateOIDCProvider)
+	admin.PUT("/oidc/providers/:id", adminH.UpdateOIDCProvider)
+	admin.DELETE("/oidc/providers/:id", adminH.DeleteOIDCProvider)
 	admin.GET("/tasks", adminH.ListScheduledTasks)
 	admin.GET("/tasks/:id", adminH.GetScheduledTask)
 	admin.POST("/tasks/:id/cancel", adminH.CancelScheduledTask)

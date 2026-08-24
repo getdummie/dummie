@@ -118,19 +118,19 @@ func clientIP(c *echo.Context) string {
 	return host
 }
 
-// issueSession starts a NEW session: it mints an access JWT + a fresh refresh
-// token, persists the (hashed) refresh token as a session row, sets both
-// cookies, and returns the body the SPA reads into its in-memory state. Used by
-// sign-up and sign-in only — refreshing an access token does NOT call this, so
-// reloads don't create new sessions.
-func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
+// startSession does the work of issueSession without writing a body: it mints
+// the tokens, records the session row, sets both cookies, and hands back the
+// access token. Split out for the federated sign-in callback, which ends in a
+// redirect rather than a JSON response and must not be a second, subtly
+// different way of establishing a session.
+func (h *AuthHandler) startSession(c *echo.Context, u db.User) (string, error) {
 	access, err := newAccessToken(u, h.cfg.jwtSecret, h.cfg.accessTTL)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not mint token")
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "could not mint token")
 	}
 	raw, err := newRefreshToken()
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not mint token")
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "could not mint token")
 	}
 	_, err = h.q.CreateRefreshToken(c.Request().Context(), db.CreateRefreshTokenParams{
 		UserID:    u.ID,
@@ -140,10 +140,23 @@ func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
 		IP:        clientIP(c),
 	})
 	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not create session")
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "could not create session")
 	}
 	h.setAccessCookie(c, access)
 	h.setRefreshCookie(c, raw)
+	return access, nil
+}
+
+// issueSession starts a NEW session: it mints an access JWT + a fresh refresh
+// token, persists the (hashed) refresh token as a session row, sets both
+// cookies, and returns the body the SPA reads into its in-memory state. Used by
+// sign-up and sign-in only — refreshing an access token does NOT call this, so
+// reloads don't create new sessions.
+func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
+	access, err := h.startSession(c, u)
+	if err != nil {
+		return err
+	}
 	return c.JSON(http.StatusOK, map[string]any{
 		"access_token": access,
 		"user":         toUserDTO(u),

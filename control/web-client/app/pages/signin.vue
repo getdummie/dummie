@@ -15,7 +15,11 @@ const route = useRoute()
 const identifier = ref('')
 const password = ref('')
 const loading = ref(false)
-const error = ref<string | null>(null)
+// A failed federated sign-in comes back as a redirect carrying its reason, since
+// the browser was navigating and there was no fetch to reject.
+const error = ref<string | null>(
+  typeof route.query.oidc_error === 'string' ? route.query.oidc_error : null,
+)
 
 async function onSubmit() {
   error.value = null
@@ -48,6 +52,7 @@ async function onSubmit() {
         <CardDescription>Welcome back. Use your username or email.</CardDescription>
       </CardHeader>
       <CardContent>
+        <SsoButtons />
         <form class="space-y-4" :aria-busy="loading" @submit.prevent="onSubmit">
           <div class="space-y-2">
             <Label for="identifier">Username or email</Label>

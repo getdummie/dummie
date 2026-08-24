@@ -242,6 +242,8 @@ function isDirty(row: SettingRow) {
         </div>
       </div>
 
+      <AdminOIDCProviders />
+
       <!-- The switch's own state change isn't announced as a save confirmation,
            so the outcome gets its own live region. (WCAG 4.1.3) -->
       <p role="status" aria-live="polite" class="sr-only">

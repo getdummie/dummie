@@ -270,6 +270,20 @@
                 },
                 "type": "object"
             },
+            "main.oidcProviderPublicDTO": {
+                "properties": {
+                    "display_name": {
+                        "type": "string"
+                    },
+                    "slug": {
+                        "type": "string"
+                    },
+                    "start_url": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.pagedVMs": {
                 "properties": {
                     "items": {
@@ -1022,6 +1036,88 @@
                 "summary": "Revoke a personal access token",
                 "tags": [
                     "tokens"
+                ]
+            }
+        },
+        "/oidc/providers": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "items": {
+                                            "$ref": "#/components/schemas/main.oidcProviderPublicDTO"
+                                        },
+                                        "type": "array"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "Sign-in providers on offer",
+                "tags": [
+                    "auth"
+                ]
+            }
+        },
+        "/oidc/{slug}/callback": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "provider slug",
+                        "in": "path",
+                        "name": "slug",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    }
+                },
+                "summary": "Complete a federated sign-in",
+                "tags": [
+                    "auth"
+                ]
+            }
+        },
+        "/oidc/{slug}/start": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "provider slug",
+                        "in": "path",
+                        "name": "slug",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "same-origin path to land on afterwards",
+                        "in": "query",
+                        "name": "redirect",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    }
+                },
+                "summary": "Begin a federated sign-in",
+                "tags": [
+                    "auth"
                 ]
             }
         },

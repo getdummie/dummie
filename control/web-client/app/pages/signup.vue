@@ -102,10 +102,13 @@ async function onSubmit() {
       <CardHeader>
         <CardTitle as="h1" class="text-2xl tracking-tight">Sign-ups are disabled</CardTitle>
         <CardDescription>
-          This control plane is not accepting new accounts. Ask an administrator to create one for you.
+          This control plane is not accepting new accounts by email and password.
         </CardDescription>
       </CardHeader>
       <CardContent>
+        <!-- A configured provider may still be allowed to create accounts: the
+             two are separate settings, so this is not necessarily a dead end. -->
+        <SsoButtons label="Sign up with" :divider="false" />
         <p class="text-center text-sm text-muted-foreground">
           Already have an account?
           <NuxtLink to="/signin" class="text-primary-text underline underline-offset-4">Sign in</NuxtLink>
@@ -119,6 +122,7 @@ async function onSubmit() {
         <CardDescription>Spin up your first sandbox in minutes.</CardDescription>
       </CardHeader>
       <CardContent>
+        <SsoButtons label="Sign up with" />
         <form class="space-y-4" :aria-busy="loading" @submit.prevent="onSubmit">
           <!-- Grid drops to one column under 380px so the two name fields
                don't get squeezed below a usable width at 320px. -->

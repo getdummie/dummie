@@ -65,9 +65,11 @@ var settingDefs = []settingDef{
 	{
 		Key:   settingSignupsEnabled,
 		Kind:  settingBool,
-		Label: "Open sign-ups",
-		Description: "Let anyone create an account from the sign-up page. With this off " +
-			"the page says so and the endpoint refuses, and only an admin can add users.",
+		Label: "Email and password sign-ups",
+		Description: "Let anyone create an account with an email and a password from the " +
+			"sign-up page. With this off the form says so and the endpoint refuses. This " +
+			"governs that form only -- each sign-in provider below decides separately " +
+			"whether it may create accounts.",
 		Default: "true",
 	},
 	{

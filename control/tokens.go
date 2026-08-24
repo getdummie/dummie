@@ -27,13 +27,20 @@ func newAccessToken(u db.User, secret string, ttl time.Duration) (string, error)
 	return tok.SignedString([]byte(secret))
 }
 
-// newRefreshToken returns a high-entropy opaque token (raw, to hand to the client).
-func newRefreshToken() (string, error) {
+// randomToken returns 256 bits of entropy in a form that is safe in a URL, a
+// cookie and a header. Used for anything opaque and unguessable: refresh tokens,
+// and the state and nonce of a federated sign-in.
+func randomToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// newRefreshToken returns a high-entropy opaque token (raw, to hand to the client).
+func newRefreshToken() (string, error) {
+	return randomToken()
 }
 
 // hashRefresh is the value we persist: we never store the raw refresh token.

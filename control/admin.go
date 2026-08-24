@@ -90,6 +90,11 @@ type AdminHandler struct {
 	q   *db.Queries
 	cfg authConfig
 	hub *Hub
+	// controlURL is the origin browsers reach this server on. Only the OIDC
+	// routes need it, to show an admin the redirect URI their provider has to
+	// have registered -- which is a fact about where users are, not about the
+	// address this process binds.
+	controlURL string
 	// nil when no bucket is configured; only the kernel routes need it, and they
 	// report it as an operator's omission rather than failing at startup.
 	blobs *blobStore

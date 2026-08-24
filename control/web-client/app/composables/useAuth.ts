@@ -14,6 +14,12 @@ interface SessionResponse {
   user: AuthUser
 }
 
+export interface OIDCProvider {
+  slug: string
+  display_name: string
+  start_url: string
+}
+
 export interface SignupPayload {
   username: string
   email: string
@@ -102,6 +108,29 @@ export function useAuth() {
     }
   }
 
+  // The providers on offer, for the buttons above the password form. Empty on
+  // any failure: a deployment with no federated sign-in is the common case, so
+  // "none" and "could not ask" render the same and neither is worth an error.
+  async function oidcProviders(): Promise<OIDCProvider[]> {
+    try {
+      const res = await fetch(`${base}/api/v1/oidc/providers`, { credentials: 'include' })
+      if (!res.ok) return []
+      return (await res.json())?.items ?? []
+    }
+    catch {
+      return []
+    }
+  }
+
+  // Where to send the browser to begin a federated sign-in. A full navigation,
+  // not a fetch: the flow is a chain of redirects through the provider's own
+  // pages, which is the whole point of it.
+  function oidcStartURL(slug: string, redirect?: string | null): string {
+    const url = new URL(`${base}/api/v1/oidc/${encodeURIComponent(slug)}/start`, window.location.origin)
+    if (redirect) url.searchParams.set('redirect', redirect)
+    return url.toString()
+  }
+
   async function refresh(): Promise<boolean> {
     try {
       const res = await api('/token_refresh')
@@ -160,6 +189,8 @@ export function useAuth() {
     signin,
     signup,
     signupEnabled,
+    oidcProviders,
+    oidcStartURL,
     refresh,
     signout,
     authFetch,

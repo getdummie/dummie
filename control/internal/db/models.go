@@ -85,6 +85,29 @@ type Kernel struct {
 	SoftDeletedAt pgtype.Timestamptz
 }
 
+type OidcIdentity struct {
+	ProviderID pgtype.UUID
+	Subject    string
+	UserID     pgtype.UUID
+	Email      string
+	CreatedAt  pgtype.Timestamptz
+	LastLogin  pgtype.Timestamptz
+}
+
+type OidcProvider struct {
+	ID           pgtype.UUID
+	Slug         string
+	DisplayName  string
+	Issuer       string
+	ClientID     string
+	ClientSecret string
+	Scopes       string
+	Enabled      bool
+	AllowSignup  bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+}
+
 type Osimage struct {
 	ID            pgtype.UUID
 	Name          string
