@@ -25,7 +25,7 @@ const columns: DataTableColumn[] = [
 ]
 
 definePageMeta({ middleware: ['auth', 'admin'] })
-useHead({ title: 'dummie — admin · tokens' })
+useHead({ title: 'dummie — admin · sessions' })
 
 interface TokenRow {
   id: string
@@ -80,7 +80,7 @@ async function load() {
     total.value = data.total ?? 0
   }
   catch (e) {
-    error.value = e instanceof Error ? e.message : 'Failed to load tokens'
+    error.value = e instanceof Error ? e.message : 'Failed to load sessions'
   }
   finally {
     loading.value = false
@@ -178,7 +178,7 @@ async function confirmCleanup() {
 
     <div class="mt-8 flex items-end justify-between gap-4">
       <div>
-        <p class="eyebrow mb-2 text-primary-text">// admin · tokens</p>
+        <p class="eyebrow mb-2 text-primary-text">// admin · sessions</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Sessions</h1>
       </div>
       <Button variant="outline" class="font-mono text-xs" @click="cleanupOpen = true">
@@ -188,7 +188,7 @@ async function confirmCleanup() {
     </div>
 
     <Alert v-if="error" variant="destructive" class="mt-6">
-      <AlertTitle>Could not load tokens</AlertTitle>
+      <AlertTitle>Could not load sessions</AlertTitle>
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
     <!-- Success confirmations are status messages: announce them without

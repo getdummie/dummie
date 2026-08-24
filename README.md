@@ -134,7 +134,6 @@ just sdk-install
 Archlinux Setup
 
 ```sh
-pacman -Syyu ncdu neovim sudo btop htop
-pacman -S docker
+pacman -Syyu ncdu neovim sudo btop htop qemu-base qemu-img docker
 sudo systemctl enable --now docker
 ```

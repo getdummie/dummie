@@ -28,10 +28,10 @@ const groups: AdminLink[][] = [
   ],
   [
     { label: 'Users', to: '/admin/model/users', icon: Users },
-    { label: 'Tokens', to: '/admin/model/tokens', icon: Ticket },
+    { label: 'Sessions', to: '/admin/model/sessions', icon: Ticket },
   ],
   [
-    { label: 'Keys', to: '/admin/model/client-keys', icon: KeyRound },
+    { label: 'Enrollment keys', to: '/admin/model/client-keys', icon: KeyRound },
     { label: 'Clients', to: '/admin/model/clients', icon: Server },
     { label: 'Domains', to: '/admin/model/domains', icon: Globe },
     { label: 'Scheduled tasks', to: '/admin/model/scheduled-tasks', icon: Clock },
