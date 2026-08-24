@@ -1,6 +1,7 @@
 GORELEASER := "goreleaser/goreleaser:v2.17.1"
 CONTROL_IMAGE := "codingcoffee/dummie-control"
-# arm64 can be added here; the Nuxt stage then builds a second time under emulation.
+WEBSITE_IMAGE := "codingcoffee/dummie-website"
+# arm64 can be added here; the Nuxt stages then build a second time under emulation.
 IMAGE_PLATFORMS := "linux/amd64"
 
 # print the version everything is built from.
@@ -59,6 +60,7 @@ release bump:
 
   just _goreleaser release --clean
   just release-image "$next"
+  just release-website-image "$next"
 
 # build the binaries and the image without tagging, pushing or publishing anything.
 release-snapshot:
@@ -73,6 +75,11 @@ release-snapshot:
     --build-arg DATE="$(git log -1 --format=%cI)" \
     -t "{{CONTROL_IMAGE}}:snapshot" \
     control/
+  docker buildx build \
+    --platform "{{IMAGE_PLATFORMS}}" \
+    -f website/Dockerfile \
+    -t "{{WEBSITE_IMAGE}}:snapshot" \
+    website/
 
 # build and push the control image for a version that is already tagged. Takes
 # the bare number (0.0.3), the way VERSION and the release notes write it; the
@@ -90,6 +97,21 @@ release-image version:
     -t "{{CONTROL_IMAGE}}:latest" \
     --push \
     control/
+
+# build and push the website image for a version that is already tagged. Takes
+# the bare number, like release-image. The site carries no build-time reference
+# to any control plane -- CONSOLE_URL is read at container start -- so there is
+# nothing version-shaped to stamp into it beyond the tag.
+release-website-image version:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  docker buildx build \
+    --platform "{{IMAGE_PLATFORMS}}" \
+    -f website/Dockerfile \
+    -t "{{WEBSITE_IMAGE}}:{{version}}" \
+    -t "{{WEBSITE_IMAGE}}:latest" \
+    --push \
+    website/
 
 # goreleaser in a container, so the binaries never depend on the host toolchain.
 # GOTOOLCHAIN=auto lets it fetch the Go the go.mod files ask for.

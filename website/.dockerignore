@@ -1,0 +1,25 @@
+# Build inputs only. node_modules is reinstalled from the lockfile in the image,
+# and a local .output/.nuxt/.data must never leak in -- a stale prerender would
+# be served in place of the one this build produces.
+node_modules
+.output
+.nuxt
+.nitro
+.cache
+.data
+dist
+
+Dockerfile
+Dockerfile.dev
+.dockerignore
+README.md
+
+# NB: nginx.conf and docker-entrypoint.d/ are deliberately NOT ignored -- the
+# runtime stage copies them out of the build context.
+
+.git
+.gitignore
+*.log
+.DS_Store
+.env
+.env.*

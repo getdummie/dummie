@@ -3,6 +3,7 @@ import { ArrowLeft, ArrowRight } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 
 const route = useRoute()
+const { consoleUrl } = useRuntimeConfig().public
 
 const { data: page } = await useAsyncData(`casestudy-${route.path}`, () =>
   queryCollection('casestudies').path(route.path).first(),
@@ -92,7 +93,7 @@ const toc = computed(() => page.value?.body?.toc?.links ?? [])
           </p>
         </div>
         <Button as-child size="lg" class="font-mono text-sm">
-          <NuxtLink to="/dashboard">Open dashboard <ArrowRight class="size-4" aria-hidden="true" /></NuxtLink>
+          <a :href="`${consoleUrl}/dashboard`">Open dashboard <ArrowRight class="size-4" aria-hidden="true" /></a>
         </Button>
       </div>
     </section>

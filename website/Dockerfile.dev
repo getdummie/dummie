@@ -1,0 +1,32 @@
+# Development image: the Nuxt dev server with HMR, for docker-compose.yml.
+# The source tree is bind-mounted over /app, so this image only needs to carry
+# the dependencies; the production build lives in Dockerfile.
+#
+# Has to be bun: @nuxt/content is pinned to the bun:sqlite connector, and the
+# default one is a native node module this image cannot build.
+FROM oven/bun:1.4.0-alpine
+
+# git: some Nuxt/Nitro tooling shells out to it. curl: healthcheck.
+RUN apk add --no-cache git curl
+
+WORKDIR /app
+
+# Dependencies are installed into the image, and compose keeps /app/node_modules
+# on its own volume so the bind mount does not shadow them. Nothing here is
+# rebuilt when a .vue file changes.
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile
+
+# Bind to every interface: the default is loopback inside the container, which
+# the published port cannot reach.
+ENV HOST=0.0.0.0 \
+    PORT=3000 \
+    NODE_ENV=development
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=5 \
+  CMD curl -fsS http://127.0.0.1:3000/ >/dev/null || exit 1
+
+# --host so HMR's websocket is reachable from the browser on the host.
+CMD ["bun", "run", "dev", "--host", "0.0.0.0"]

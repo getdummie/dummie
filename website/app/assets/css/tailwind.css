@@ -1,12 +1,17 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
+/* Oxide-style type: a Swiss neo-grotesque (Archivo, standing in for Neue Haas
+   Grotesk) paired with a monospace (IBM Plex Mono, standing in for GT America Mono). */
+
 @import "tailwindcss";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+  --font-sans: 'Archivo', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
   --font-heading: var(--font-sans);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
@@ -25,6 +30,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-primary-text: var(--primary-text);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -45,73 +51,88 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
+/* Oxide palette. Signature "oxide green" (~#48D597) is the single accent; the
+   dark theme is the primary, dark-dominant experience. Light is a clean inverse. */
 :root {
-  --radius: 0.625rem;
+  --radius: 0.375rem;
   --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
+  --foreground: oklch(0.17 0.008 220);
+  --card: oklch(0.99 0.002 220);
+  --card-foreground: oklch(0.17 0.008 220);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.646 0.222 41.116);
-  --chart-2: oklch(0.6 0.118 184.704);
-  --chart-3: oklch(0.398 0.07 227.392);
-  --chart-4: oklch(0.828 0.189 84.429);
-  --chart-5: oklch(0.769 0.188 70.08);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --popover-foreground: oklch(0.17 0.008 220);
+  --primary: oklch(0.8 0.15 162);
+  --primary-foreground: oklch(0.18 0.02 200);
+  /* `--primary` is a *background* colour: it hits 10.7:1 against
+     `--primary-foreground`, but only 1.8:1 as text on white. `--primary-text`
+     is the accent tuned for text and icons — 5.1:1 on `--background`, 4.6:1 on
+     the lightest tinted surface. Use it anywhere the green carries meaning
+     rather than fills a shape. (WCAG 1.4.3) */
+  --primary-text: oklch(0.52 0.12 162);
+  --secondary: oklch(0.96 0.005 220);
+  --secondary-foreground: oklch(0.2 0.008 220);
+  --muted: oklch(0.96 0.005 220);
+  --muted-foreground: oklch(0.46 0.01 215);
+  --accent: oklch(0.94 0.03 162);
+  --accent-foreground: oklch(0.2 0.02 200);
+  --destructive: oklch(0.58 0.22 25);
+  --border: oklch(0.9 0.005 220);
+  /* Darker than `--border`: an input's outline is the only thing identifying
+     it, so it owes 3:1 against the page. Plain dividers don't. (WCAG 1.4.11) */
+  --input: oklch(0.62 0.01 220);
+  /* Focus rings owe 3:1 too, so light mode borrows the text-tuned accent. */
+  --ring: oklch(0.52 0.12 162);
+  --chart-1: oklch(0.8 0.15 162);
+  --chart-2: oklch(0.6 0.13 220);
+  --chart-3: oklch(0.75 0.15 85);
+  --chart-4: oklch(0.62 0.2 25);
+  --chart-5: oklch(0.55 0.16 300);
+  --sidebar: oklch(0.98 0.002 220);
+  --sidebar-foreground: oklch(0.17 0.008 220);
+  --sidebar-primary: oklch(0.8 0.15 162);
+  --sidebar-primary-foreground: oklch(0.18 0.02 200);
+  --sidebar-accent: oklch(0.96 0.005 220);
+  --sidebar-accent-foreground: oklch(0.2 0.008 220);
+  --sidebar-border: oklch(0.9 0.005 220);
+  --sidebar-ring: oklch(0.8 0.15 162);
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.488 0.243 264.376);
-  --chart-2: oklch(0.696 0.17 162.48);
-  --chart-3: oklch(0.769 0.188 70.08);
-  --chart-4: oklch(0.627 0.265 303.9);
-  --chart-5: oklch(0.645 0.246 16.439);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --background: oklch(0.17 0.008 220);
+  --foreground: oklch(0.93 0.002 220);
+  --card: oklch(0.21 0.008 220);
+  --card-foreground: oklch(0.93 0.002 220);
+  --popover: oklch(0.21 0.008 220);
+  --popover-foreground: oklch(0.93 0.002 220);
+  --primary: oklch(0.8 0.15 162);
+  --primary-foreground: oklch(0.18 0.02 200);
+  /* On a dark ground the brand green already clears 10:1 as text, so the
+     text-tuned token collapses back onto `--primary` here. */
+  --primary-text: oklch(0.8 0.15 162);
+  --secondary: oklch(0.27 0.008 220);
+  --secondary-foreground: oklch(0.93 0.002 220);
+  --muted: oklch(0.25 0.008 220);
+  --muted-foreground: oklch(0.64 0.01 215);
+  --accent: oklch(0.28 0.02 200);
+  --accent-foreground: oklch(0.93 0.002 220);
+  --destructive: oklch(0.64 0.2 25);
+  --border: oklch(0.3 0.008 220);
+  /* 3.2:1 against `--card`, 3.5:1 against `--background`. (WCAG 1.4.11) */
+  --input: oklch(0.52 0.008 220);
+  --ring: oklch(0.8 0.15 162);
+  --chart-1: oklch(0.8 0.15 162);
+  --chart-2: oklch(0.65 0.13 220);
+  --chart-3: oklch(0.75 0.15 85);
+  --chart-4: oklch(0.64 0.2 25);
+  --chart-5: oklch(0.6 0.16 300);
+  --sidebar: oklch(0.2 0.008 220);
+  --sidebar-foreground: oklch(0.93 0.002 220);
+  --sidebar-primary: oklch(0.8 0.15 162);
+  --sidebar-primary-foreground: oklch(0.18 0.02 200);
+  --sidebar-accent: oklch(0.27 0.008 220);
+  --sidebar-accent-foreground: oklch(0.93 0.002 220);
+  --sidebar-border: oklch(0.3 0.008 220);
+  --sidebar-ring: oklch(0.8 0.15 162);
 }
 
 @layer base {
@@ -120,6 +141,229 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-feature-settings: "ss01", "cv01";
+  }
+
+  /* A single visible focus indicator for everything. The shadcn primitives
+     bring their own `focus-visible:ring-*`, which layers on top; this is the
+     floor that catches every hand-rolled link, nav item and icon button.
+     `:focus-visible` (not `:focus`) so pointer users don't see rings.
+     (WCAG 2.4.7, 2.4.11) */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  /* Tailwind v4's Preflight sets `cursor: default` on buttons. Put the hand
+     back on anything that acts like a control. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  label[for],
+  summary,
+  select:not(:disabled) {
+    cursor: pointer;
+  }
+
+  /* Honour the OS "reduce motion" setting globally rather than per-component:
+     this covers the terminal cursor pulse and everything `tw-animate-css`
+     drives for the reka-ui popovers. Motion is neutralised, not removed, so
+     transition-end handlers still fire. (WCAG 2.3.3) */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
   }
 }
 
+@layer utilities {
+  /* Faint technical grid, Oxide-style. Uses the theme border color so it
+     adapts to light/dark automatically. */
+  .bg-grid {
+    background-image:
+      linear-gradient(to right, var(--border) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--border) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  }
+  /* Uppercase monospace eyebrow label. Uppercasing is done in CSS so the
+     accessible text stays sentence-case for screen readers. */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  /* Long-form article body: styles the elements @nuxt/content renders, since
+     the markdown is the source of truth and carries no classes of its own. */
+  .article-prose {
+    max-width: 46rem;
+    font-size: 1rem;
+    line-height: 1.75;
+  }
+  /* Descendant selectors, not a child combinator: ContentRenderer wraps the
+     body in its own element, so `> * + *` matches nothing. */
+  .article-prose :is(p, ul, ol, pre, blockquote, table, hr, .code-block) {
+    margin-top: 1.5rem;
+  }
+  .article-prose > :first-child,
+  .article-prose > * > :first-child {
+    margin-top: 0;
+  }
+  .article-prose h2,
+  .article-prose h3 {
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    scroll-margin-top: 5rem;
+  }
+  .article-prose h2 {
+    margin-top: 4.5rem;
+    padding-top: 2.25rem;
+    border-top: 1px solid var(--border);
+    font-size: 1.5rem;
+    line-height: 1.25;
+  }
+  .article-prose h3 {
+    margin-top: 3rem;
+    font-size: 1.125rem;
+  }
+  .article-prose h2 + *,
+  .article-prose h3 + * {
+    margin-top: 1rem;
+  }
+  .article-prose a {
+    color: var(--primary-text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  /* Heading anchors keep the accent but drop the prose link's underline. */
+  .article-prose :is(h2, h3) a {
+    text-decoration: none;
+  }
+  .article-prose strong {
+    font-weight: 600;
+    color: var(--foreground);
+  }
+  .article-prose ul,
+  .article-prose ol {
+    padding-left: 1.125rem;
+  }
+  .article-prose ul {
+    list-style: none;
+  }
+  .article-prose ol {
+    list-style: decimal;
+  }
+  .article-prose li + li {
+    margin-top: 0.625rem;
+  }
+  .article-prose li p {
+    margin-top: 0.5rem;
+  }
+  .article-prose li p:first-child {
+    margin-top: 0;
+  }
+  .article-prose ul > li::before {
+    content: "";
+    display: inline-block;
+    width: 0.3rem;
+    height: 1px;
+    margin-right: 0.6rem;
+    margin-left: -1.125rem;
+    vertical-align: middle;
+    background-color: var(--primary);
+  }
+  .article-prose blockquote {
+    padding-left: 1rem;
+    border-left: 2px solid var(--primary);
+    color: var(--muted-foreground);
+  }
+  /* Inline code only: the highlighter puts its own spans inside `pre > code`. */
+  .article-prose :not(pre) > code {
+    padding: 0.1rem 0.3rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background-color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+    word-break: break-word;
+  }
+  /* The border and ground live on ProsePre's wrapper, which also carries the
+     sticky language/copy bar. */
+  .article-prose .code-block pre {
+    margin-top: 0;
+  }
+  .article-prose pre {
+    /* Shiki inlines the light theme's background; ours has to win in both
+       themes or the block fights the page. */
+    padding: 1rem 1.125rem;
+    background-color: var(--card) !important;
+    /* A 200-line script should not push the rest of the article off the page. */
+    max-height: min(32rem, 70vh);
+    overflow: auto;
+    overscroll-behavior: contain;
+    font-size: 0.8125rem;
+    line-height: 1.65;
+    tab-size: 2;
+  }
+  .article-prose pre code {
+    font-family: var(--font-mono);
+  }
+  /* Both themes ship at once: the dark one rides along as `--shiki-dark`. */
+  .dark .article-prose pre span {
+    color: var(--shiki-dark) !important;
+  }
+  .article-prose table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+  }
+  .article-prose th,
+  .article-prose td {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--border);
+    text-align: left;
+  }
+  .article-prose th {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted-foreground);
+  }
+  .article-prose hr {
+    margin-block: 2rem;
+    border-color: var(--border);
+  }
+
+  /* Skip link: off-screen until focused, then pinned top-left. Kept in flow
+     (never `display: none`) so it stays in the tab order. (WCAG 2.4.1) */
+  .skip-link {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 100;
+    transform: translateY(-150%);
+    padding: 0.625rem 1rem;
+    background-color: var(--background);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    transition: transform 150ms ease;
+  }
+  .skip-link:focus-visible {
+    transform: translateY(0.5rem) translateX(0.5rem);
+  }
+}

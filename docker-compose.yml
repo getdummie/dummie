@@ -1,4 +1,15 @@
 services:
+  website:
+    restart: unless-stopped
+    build:
+      context: ./website
+      dockerfile: Dockerfile.dev
+    volumes:
+      - ./website:/app
+    working_dir: /app
+    ports:
+      - 3000:3000
+
   control-sdk:
     restart: unless-stopped
     build:

@@ -1,116 +1,18 @@
 <script setup lang="ts">
-import { ArrowRight } from '@lucide/vue'
-import { Button } from '@/components/ui/button'
-
-// Signed-in visitors go straight to the app shell.
-definePageMeta({ middleware: 'guest' })
-
-useHead({
-  title: 'dummie — secure sandbox runtime',
-  meta: [
-    {
-      name: 'description',
-      content:
-        'dummie boots secure, isolated cloud sandboxes in milliseconds for running untrusted and AI-generated code.',
-    },
+// The console owns no landing page -- that lives on the marketing site, on its
+// own domain. `/` exists only to send a visitor onward.
+definePageMeta({
+  middleware: [
+    // Sends a signed-in visitor to the dashboard (or to their ?redirect, which
+    // is how the proxy hand-off comes back through here).
+    'guest',
+    // Only reached when `guest` let it through, i.e. nobody is signed in. The
+    // query rides along so an unauthenticated hand-off keeps its destination.
+    to => navigateTo({ path: '/signin', query: to.query }, { replace: true }),
   ],
 })
-
-const stats = [
-  { value: '142ms', label: 'cold boot' },
-  { value: '10k+', label: 'concurrent sandboxes' },
-  { value: '<200ms', label: 'snapshot restore' },
-  { value: '99.99%', label: 'run isolation' },
-]
 </script>
 
 <template>
-  <div>
-    <!-- Hero -->
-    <section aria-labelledby="hero-heading" class="relative overflow-hidden border-b border-border">
-      <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-60" />
-      <div class="relative mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28 lg:py-32">
-        <div class="grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
-          <div>
-            <p class="eyebrow mb-5 flex items-center gap-2 text-primary-text">
-              <span aria-hidden="true" class="inline-block size-1.5 bg-primary" />
-              Secure sandbox runtime
-            </p>
-            <h1 id="hero-heading" class="text-balance text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
-              Run untrusted code like you own the box.
-            </h1>
-            <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
-              dummie boots hardware-isolated microVMs in milliseconds. Give your
-              agents a real machine to work on — files, network, a full shell —
-              without ever risking your own.
-            </p>
-            <div id="start" class="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button as-child size="lg" class="font-mono text-sm">
-                <NuxtLink to="/health">Start building <ArrowRight class="size-4" aria-hidden="true" /></NuxtLink>
-              </Button>
-              <Button as-child size="lg" variant="outline" class="font-mono text-sm">
-                <a href="#runtime">See it in action</a>
-              </Button>
-            </div>
-            <p class="eyebrow mt-8 text-muted-foreground/70">
-              $ curl -fsSL dummie.sh | sh
-            </p>
-          </div>
-
-          <!-- `tabindex="-1"` so following the in-page link moves keyboard
-               focus here, not just the viewport. (WCAG 2.4.3) -->
-          <div id="runtime" tabindex="-1" class="lg:pl-4">
-            <TerminalMock />
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- Stats -->
-    <section aria-label="Runtime performance figures" class="border-b border-border">
-      <ul class="mx-auto grid max-w-6xl grid-cols-2 divide-x divide-border border-x border-border sm:grid-cols-4">
-        <li v-for="s in stats" :key="s.label" class="px-4 py-8 sm:px-6">
-          <span class="block font-mono text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            {{ s.value }}
-          </span>
-          <span class="eyebrow mt-2 block text-muted-foreground">
-            {{ s.label }}
-          </span>
-        </li>
-      </ul>
-    </section>
-
-    <!-- Features -->
-    <section id="product" aria-labelledby="product-heading" class="border-b border-border">
-      <div class="mx-auto max-w-6xl px-4 pt-16 sm:px-6 sm:pt-20">
-        <p class="eyebrow mb-4 text-primary-text">// Built for agents</p>
-        <h2 id="product-heading" class="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-          A production runtime for code you didn't write.
-        </h2>
-        <p class="mt-4 max-w-xl text-muted-foreground">
-          Isolation, speed, and control as primitives — not add-ons.
-        </p>
-      </div>
-      <div class="mx-auto mt-12 max-w-6xl px-4 sm:px-6">
-        <FeatureGrid />
-      </div>
-      <div class="h-16 sm:h-20" />
-    </section>
-
-    <!-- Closing CTA -->
-    <section aria-labelledby="cta-heading" class="relative overflow-hidden">
-      <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-40" />
-      <div class="relative mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-28">
-        <p class="eyebrow mb-5 text-primary-text">// Ship it</p>
-        <h2 id="cta-heading" class="mx-auto max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-5xl">
-          Your first sandbox is one command away.
-        </h2>
-        <div class="mt-8 flex justify-center">
-          <Button as-child size="lg" class="font-mono text-sm">
-            <NuxtLink to="/health">Check system health <ArrowRight class="size-4" aria-hidden="true" /></NuxtLink>
-          </Button>
-        </div>
-      </div>
-    </section>
-  </div>
+  <div />
 </template>

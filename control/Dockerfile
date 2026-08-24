@@ -3,10 +3,9 @@
 # migration sets embedded in it.
 
 # ---- web: the Nuxt SPA -------------------------------------------------------
-# nuxt.config.ts sets ssr:false, so `generate` emits a static SPA into
-# .output/public. It has to run under bun: @nuxt/content is pinned to the
-# bun:sqlite connector, and the default one is a native module this image cannot
-# build.
+# The console only. nuxt.config.ts sets ssr:false, so `generate` emits a static
+# SPA into .output/public. The landing page and prose docs are not here -- they
+# are their own image, built from website/.
 FROM oven/bun:1.3.14-alpine AS web
 
 WORKDIR /web

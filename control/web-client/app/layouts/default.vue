@@ -14,8 +14,8 @@ import {
 const { user, isAuthenticated, signout } = useAuth()
 const route = useRoute()
 
-// The rail is for the signed-in app shell only; the marketing/auth pages keep
-// their full-bleed layout and the public header.
+// The rail is for the signed-in app shell only; sign-in, sign-up and health keep
+// their full-bleed layout under the plain header below.
 const appRoutes = ['/dashboard', '/vms', '/settings', '/admin']
 const showSidebar = computed(() =>
   isAuthenticated.value && appRoutes.some(p => route.path === p || route.path.startsWith(`${p}/`)),
@@ -72,11 +72,8 @@ const initials = computed(() => {
         </NuxtLink>
 
         <nav aria-label="Site" class="ml-auto flex items-center gap-4 font-mono text-xs">
-          <NuxtLink to="/casestudies" class="text-muted-foreground transition-colors hover:text-primary-text">
-            Case studies
-          </NuxtLink>
           <NuxtLink to="/docs" class="text-muted-foreground transition-colors hover:text-primary-text">
-            Docs
+            API docs
           </NuxtLink>
         </nav>
 
@@ -147,28 +144,5 @@ const initials = computed(() => {
     <main id="main-content" tabindex="-1" class="flex-1 focus-visible:outline-none">
       <slot />
     </main>
-
-    <!-- Footer -->
-    <footer v-if="!showSidebar" class="border-t border-border/80">
-      <div class="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-4 py-8 sm:flex-row sm:items-center sm:px-6">
-        <div class="flex items-center gap-2.5">
-          <img src="/logo.svg" alt="" aria-hidden="true" class="size-5">
-          <span class="font-mono text-xs text-muted-foreground">
-            dummie — secure sandbox runtime
-          </span>
-        </div>
-        <p class="eyebrow text-muted-foreground">
-          Crafted by
-          <a
-            href="https://codingcoffee.dev"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="text-foreground underline-offset-4 transition-colors hover:text-primary-text hover:underline"
-          >
-            Ameya Shenoy<span class="sr-only"> (opens in a new tab)</span>
-          </a>
-        </p>
-      </div>
-    </footer>
   </div>
 </template>
