@@ -352,8 +352,7 @@ const acmeDirectories = [
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-    <AdminNav />
+  <AdminShell>
 
     <div class="mt-8 flex items-end justify-between gap-4">
       <div>
@@ -702,5 +701,5 @@ const acmeDirectories = [
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  </div>
+  </AdminShell>
 </template>

@@ -97,9 +97,10 @@ var settingDefs = []settingDef{
 		Key:   settingClickHouseURL,
 		Kind:  settingString,
 		Label: "ClickHouse URL",
-		Description: "The HTTP endpoint clients ship events to. It must be reachable from " +
-			"every qemu host, not just from the control server. Empty stops vector from " +
-			"being installed at all.",
+		Description: "The HTTP endpoint vector on each host ships events to. Not this server's " +
+			"own clickhouse connection, which is CLICKHOUSE_URL in the environment and is usually " +
+			"a different address and protocol -- this one has to be reachable from every qemu host, " +
+			"not just from the control server. Empty stops vector from being installed at all.",
 		Placeholder: "http://10.68.0.1:8123",
 		validate:    validateClickHouseURL,
 	},

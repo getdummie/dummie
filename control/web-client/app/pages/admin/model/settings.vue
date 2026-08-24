@@ -134,8 +134,7 @@ function isDirty(row: SettingRow) {
 
 <template>
   <TooltipProvider :delay-duration="150">
-    <div class="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-      <AdminNav />
+    <AdminShell>
 
       <div class="mt-8">
         <p class="eyebrow mb-2 text-primary-text">// admin · settings</p>
@@ -249,6 +248,6 @@ function isDirty(row: SettingRow) {
       <p role="status" aria-live="polite" class="sr-only">
         {{ savedKey ? `${savedKey} saved` : '' }}
       </p>
-    </div>
+    </AdminShell>
   </TooltipProvider>
 </template>

@@ -199,8 +199,7 @@ async function saveKey() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-4 py-12 sm:px-6">
-    <AdminNav />
+  <AdminShell>
 
     <NuxtLink
       to="/admin/model/users"
@@ -376,5 +375,5 @@ async function saveKey() {
         </form>
       </section>
     </template>
-  </div>
+  </AdminShell>
 </template>
