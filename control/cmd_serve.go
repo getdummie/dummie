@@ -164,6 +164,7 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 	// Auth: password signup/signin, refresh-token rotation, and session teardown.
 	q := db.New(pool)
 	ah := &AuthHandler{q: q, cfg: cfg}
+	api.GET("/signup_status", ah.SignupStatus)
 	api.POST("/signup", ah.Signup)
 	api.POST("/signin", ah.Signin)
 	api.POST("/token_refresh", ah.TokenRefresh)

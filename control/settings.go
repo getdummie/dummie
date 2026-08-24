@@ -17,6 +17,8 @@ import (
 const (
 	settingClientOpenEnrollment = "client_open_enrollment"
 
+	settingSignupsEnabled = "signups_enabled"
+
 	settingVectorVersion      = "vector_version"
 	settingClickHouseURL      = "clickhouse_url"
 	settingClickHouseUser     = "clickhouse_user"
@@ -60,6 +62,14 @@ type settingDef struct {
 }
 
 var settingDefs = []settingDef{
+	{
+		Key:   settingSignupsEnabled,
+		Kind:  settingBool,
+		Label: "Open sign-ups",
+		Description: "Let anyone create an account from the sign-up page. With this off " +
+			"the page says so and the endpoint refuses, and only an admin can add users.",
+		Default: "true",
+	},
 	{
 		Key:   settingClientOpenEnrollment,
 		Kind:  settingBool,

@@ -415,6 +415,14 @@
                 },
                 "type": "object"
             },
+            "main.signupStatusResp": {
+                "properties": {
+                    "enabled": {
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
             "main.targetList": {
                 "properties": {
                     "items": {
@@ -1165,6 +1173,16 @@
                         },
                         "description": "Bad Request"
                     },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "sign-ups are disabled"
+                    },
                     "409": {
                         "content": {
                             "application/json": {
@@ -1177,6 +1195,26 @@
                     }
                 },
                 "summary": "Create an account",
+                "tags": [
+                    "auth"
+                ]
+            }
+        },
+        "/signup_status": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.signupStatusResp"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "Whether sign-ups are open",
                 "tags": [
                     "auth"
                 ]

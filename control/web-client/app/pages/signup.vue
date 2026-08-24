@@ -4,11 +4,18 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Skeleton } from '@/components/ui/skeleton'
 
 definePageMeta({ middleware: 'guest' })
 useHead({ title: 'dummie — create account' })
 
-const { signup } = useAuth()
+const { signup, signupEnabled } = useAuth()
+
+// Starts null so the form isn't flashed on screen before we know it is offered.
+const enabled = ref<boolean | null>(null)
+onMounted(async () => {
+  enabled.value = await signupEnabled()
+})
 
 const username = ref('')
 const email = ref('')
@@ -90,7 +97,23 @@ async function onSubmit() {
 <template>
   <div class="mx-auto flex min-h-[70vh] w-full max-w-md flex-col justify-center px-4 py-16 sm:px-6">
     <p class="eyebrow mb-4 text-primary-text">// Get started</p>
-    <Card>
+
+    <Card v-if="enabled === false">
+      <CardHeader>
+        <CardTitle as="h1" class="text-2xl tracking-tight">Sign-ups are disabled</CardTitle>
+        <CardDescription>
+          This control plane is not accepting new accounts. Ask an administrator to create one for you.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p class="text-center text-sm text-muted-foreground">
+          Already have an account?
+          <NuxtLink to="/signin" class="text-primary-text underline underline-offset-4">Sign in</NuxtLink>
+        </p>
+      </CardContent>
+    </Card>
+
+    <Card v-else-if="enabled">
       <CardHeader>
         <CardTitle as="h1" class="text-2xl tracking-tight">Create your account</CardTitle>
         <CardDescription>Spin up your first sandbox in minutes.</CardDescription>
@@ -176,6 +199,16 @@ async function onSubmit() {
           Already have an account?
           <NuxtLink to="/signin" class="text-primary-text underline underline-offset-4">Sign in</NuxtLink>
         </p>
+      </CardContent>
+    </Card>
+
+    <Card v-else aria-busy="true">
+      <CardHeader>
+        <Skeleton class="h-7 w-56" />
+        <Skeleton class="h-4 w-64" />
+      </CardHeader>
+      <CardContent class="space-y-4">
+        <Skeleton v-for="n in 4" :key="n" class="h-9 w-full" />
       </CardContent>
     </Card>
   </div>

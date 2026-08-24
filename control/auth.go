@@ -152,6 +152,26 @@ func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
 
 // --- handlers --------------------------------------------------------------
 
+type signupStatusResp struct {
+	Enabled bool `json:"enabled"`
+}
+
+// SignupStatus says whether the sign-up form should be offered at all.
+//
+// Public, and deliberately so: it says nothing an anonymous visitor cannot
+// learn by submitting the form once, and the page needs it before it can decide
+// what to render.
+//
+// @Summary     Whether sign-ups are open
+// @Tags        auth
+// @Produce     json
+// @Success     200 {object} signupStatusResp
+// @Router      /signup_status [get]
+func (h *AuthHandler) SignupStatus(c *echo.Context) error {
+	enabled := boolSetting(c.Request().Context(), h.q, settingSignupsEnabled)
+	return c.JSON(http.StatusOK, signupStatusResp{Enabled: enabled})
+}
+
 type signupReq struct {
 	Username  string `json:"username"`
 	Email     string `json:"email"`
@@ -170,6 +190,7 @@ type signupReq struct {
 // @Param       body body signupReq true "username and email are required"
 // @Success     200 {object} sessionResp
 // @Failure     400 {object} apiError
+// @Failure     403 {object} apiError "sign-ups are disabled"
 // @Failure     409 {object} apiError "username or email already taken"
 // @Router      /signup [post]
 func (h *AuthHandler) Signup(c *echo.Context) error {
@@ -181,6 +202,9 @@ func (h *AuthHandler) Signup(c *echo.Context) error {
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if req.Username == "" || req.Email == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "username and email are required")
+	}
+	if !boolSetting(c.Request().Context(), h.q, settingSignupsEnabled) {
+		return echo.NewHTTPError(http.StatusForbidden, "sign-ups are disabled")
 	}
 	if err := validatePassword(req.Password, h.cfg.prod); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())

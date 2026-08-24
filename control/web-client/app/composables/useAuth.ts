@@ -87,6 +87,21 @@ export function useAuth() {
     setSession(await res.json())
   }
 
+  // Unreachable or malformed answers are treated as "open": the server rejects a
+  // disabled sign-up anyway, and a form that hides itself whenever this call
+  // hiccups is worse than one that fails on submit.
+  async function signupEnabled(): Promise<boolean> {
+    try {
+      const res = await fetch(`${base}/api/v1/signup_status`, { credentials: 'include' })
+      if (!res.ok) return true
+      const data = await res.json()
+      return data?.enabled !== false
+    }
+    catch {
+      return true
+    }
+  }
+
   async function refresh(): Promise<boolean> {
     try {
       const res = await api('/token_refresh')
@@ -144,6 +159,7 @@ export function useAuth() {
     init,
     signin,
     signup,
+    signupEnabled,
     refresh,
     signout,
     authFetch,

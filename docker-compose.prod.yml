@@ -5,9 +5,6 @@ services:
     ports:
       - 8080:8080
     environment:
-      # Where this deployment's control plane lives. Every "Sign in" link on the
-      # site is a same-origin path redirected here, so re-pointing the site is
-      # this variable and a restart -- no rebuild.
       CONSOLE_URL: http://localhost:1323
 
   control:
