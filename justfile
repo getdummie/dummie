@@ -31,21 +31,15 @@ release bump:
   branch=$(git rev-parse --abbrev-ref HEAD)
   [ "$branch" = "main" ] || { echo "not on main (on $branch)" >&2; exit 1; }
 
-  # Both image builds install with --frozen-lockfile, so a bun.lock that has
-  # drifted from its package.json fails them. Checked here because by the time
-  # the build discovers it, the tag and the github release have already gone out
-  # and the release is half-published.
-  if command -v bun >/dev/null 2>&1; then
-    for d in control/web-client website; do
-      (cd "$d" && bun install --frozen-lockfile --dry-run) >/dev/null 2>&1 || {
-        echo "$d/bun.lock is out of sync with its package.json" >&2
-        echo "run 'cd $d && bun install' and commit the result" >&2
-        exit 1
-      }
-    done
-  else
-    echo "warning: bun not on PATH, skipping lockfile check" >&2
-  fi
+  # Prove both images build before anything is published. They are the likeliest
+  # step to fail -- lockfile drift, a tarball that will not extract, a base image
+  # tag that moved -- and until this ran last, a failure there left the tag and
+  # the github release already public with no images to go with them.
+  #
+  # Not free: it is a full build. But buildx caches the layers, so the pushing
+  # builds at the end of this recipe mostly reuse this work rather than repeat it.
+  echo "preflight: building images before tagging"
+  just _preflight-images
 
   prev=$(tr -d '[:space:]' < VERSION)
   if git rev-parse -q --verify "refs/tags/v${prev}" >/dev/null; then
@@ -77,6 +71,25 @@ release bump:
   just _goreleaser release --clean
   just release-image "$next"
   just release-website-image "$next"
+
+# build both images without tagging or pushing, to prove they build. Used as the
+# release preflight; VERSION is a placeholder because nothing here is published.
+_preflight-images:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  docker buildx build \
+    --platform "{{IMAGE_PLATFORMS}}" \
+    -f control/Dockerfile \
+    --build-arg VERSION="preflight" \
+    --build-arg COMMIT="$(git rev-parse --short HEAD)" \
+    --build-arg DATE="$(git log -1 --format=%cI)" \
+    -t "{{CONTROL_IMAGE}}:preflight" \
+    control/
+  docker buildx build \
+    --platform "{{IMAGE_PLATFORMS}}" \
+    -f website/Dockerfile \
+    -t "{{WEBSITE_IMAGE}}:preflight" \
+    website/
 
 # build the binaries and the image without tagging, pushing or publishing anything.
 release-snapshot:

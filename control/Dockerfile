@@ -6,7 +6,7 @@
 # The console only. nuxt.config.ts sets ssr:false, so `generate` emits a static
 # SPA into .output/public. The landing page and prose docs are not here -- they
 # are their own image, built from website/.
-FROM oven/bun:1.3.14-alpine AS web
+FROM oven/bun:1.4.0-alpine AS web
 
 WORKDIR /web
 COPY web-client/package.json web-client/bun.lock ./
