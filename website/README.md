@@ -45,10 +45,11 @@ CONSOLE_URL=https://console.example.com bun run generate
 ```
 
 Because the URL is baked into the prerendered HTML, a **prebuilt image** would
-otherwise be stuck with whatever it was built against. So the image bakes the
-sentinel `__CONSOLE_URL__` instead, and `docker-entrypoint.d/10-console-url.sh`
-swaps it for `$CONSOLE_URL` before nginx starts — the nginx image runs anything
-in that directory at container start. One image, any deployment, no rebuild:
+otherwise be stuck with whatever it was built against. So the image builds
+against the sentinel host `https://console-url.invalid`, and
+`docker-entrypoint.d/10-console-url.sh` swaps it for `$CONSOLE_URL` before nginx
+starts — the nginx image runs anything in that directory at container start. One
+image, any deployment, no rebuild:
 
 ```sh
 docker build -t dummie-website .
@@ -59,6 +60,12 @@ The substitution covers `.html`, `.js` and `.json`, since the URL appears both i
 the prerendered markup and in the payload the client hydrates from — they have to
 agree or Vue reports a mismatch. It also means the container writes to `/srv` on
 boot, so it cannot run with a read-only root filesystem.
+
+The sentinel is an absolute URL rather than a bare token on purpose: the
+prerender crawler treats a schemeless value as a same-origin path and fails
+trying to render it. `.invalid` is reserved by RFC 2606, so a missed substitution
+can never resolve to a real host — and the entrypoint refuses to start nginx if
+it finds the sentinel left in `/srv`.
 
 ## Production
 
