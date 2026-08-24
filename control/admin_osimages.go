@@ -106,70 +106,23 @@ func (h *AdminHandler) CreateOSImage(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
 	}
 
-	req := c.Request()
-	// Caps the whole request, not just the file part, and fails the read rather
-	// than buffering an oversized upload to disk first.
-	req.Body = http.MaxBytesReader(c.Response(), req.Body, h.blobs.maxUploadBytes+(1<<20))
-	// Parts above this stay on disk instead of in memory; an OS image is always
-	// above it.
-	if err := req.ParseMultipartForm(32 << 20); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "that file is larger than this server accepts")
-		}
-		return echo.NewHTTPError(http.StatusBadRequest, "expected a multipart form with a file")
-	}
-	defer func() {
-		if req.MultipartForm != nil {
-			_ = req.MultipartForm.RemoveAll()
-		}
-	}()
-
-	name := strings.TrimSpace(req.FormValue("name"))
-	if name == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
-	}
-	if len(name) > 128 {
-		return echo.NewHTTPError(http.StatusBadRequest, "name is too long")
-	}
-	description := strings.TrimSpace(req.FormValue("description"))
-
-	file, header, err := req.FormFile("file")
+	up, err := h.readUploadedBlob(c, "osimages")
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "a file is required")
-	}
-	defer file.Close()
-	if header.Size <= 0 {
-		return echo.NewHTTPError(http.StatusBadRequest, "that file is empty")
-	}
-	if header.Size > h.blobs.maxUploadBytes {
-		return echo.NewHTTPError(http.StatusRequestEntityTooLarge, "that file is larger than this server accepts")
-	}
-
-	fileName := sanitizeFileName(header.Filename)
-	contentType := header.Header.Get("Content-Type")
-	if contentType == "" {
-		contentType = "application/octet-stream"
-	}
-	key := h.blobs.newKey("osimages", fileName)
-
-	if err := h.blobs.Put(ctx, key, contentType, file); err != nil {
-		log.Printf("could not upload os image %q: %v", name, err)
-		return echo.NewHTTPError(http.StatusBadGateway, "could not upload the file to object storage")
+		return err
 	}
 
 	o, err := h.q.CreateOSImage(ctx, db.CreateOSImageParams{
-		Name:        name,
-		Description: description,
-		ObjectKey:   key,
-		FileName:    fileName,
-		SizeBytes:   header.Size,
+		Name:        up.name,
+		Description: up.description,
+		ObjectKey:   up.key,
+		FileName:    up.fileName,
+		SizeBytes:   up.size,
 	})
 	if err != nil {
 		// Best effort: an object with no row is invisible to everything here, and
 		// the alternative is failing the request twice over.
-		if delErr := h.blobs.Delete(ctx, key); delErr != nil {
-			log.Printf("orphaned os image object %q after a failed insert: %v", key, delErr)
+		if delErr := h.blobs.Delete(ctx, up.key); delErr != nil {
+			log.Printf("orphaned os image object %q after a failed insert: %v", up.key, delErr)
 		}
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
