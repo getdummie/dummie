@@ -31,6 +31,22 @@ release bump:
   branch=$(git rev-parse --abbrev-ref HEAD)
   [ "$branch" = "main" ] || { echo "not on main (on $branch)" >&2; exit 1; }
 
+  # Both image builds install with --frozen-lockfile, so a bun.lock that has
+  # drifted from its package.json fails them. Checked here because by the time
+  # the build discovers it, the tag and the github release have already gone out
+  # and the release is half-published.
+  if command -v bun >/dev/null 2>&1; then
+    for d in control/web-client website; do
+      (cd "$d" && bun install --frozen-lockfile --dry-run) >/dev/null 2>&1 || {
+        echo "$d/bun.lock is out of sync with its package.json" >&2
+        echo "run 'cd $d && bun install' and commit the result" >&2
+        exit 1
+      }
+    done
+  else
+    echo "warning: bun not on PATH, skipping lockfile check" >&2
+  fi
+
   prev=$(tr -d '[:space:]' < VERSION)
   if git rev-parse -q --verify "refs/tags/v${prev}" >/dev/null; then
     IFS=. read -r major minor patch <<< "$prev"
