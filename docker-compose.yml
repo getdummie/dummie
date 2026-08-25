@@ -46,7 +46,7 @@ services:
     volumes:
       - ./backstage:/app
     working_dir: /app
-    entrypoint: sh -c 'cd /app/dpipe && go build -o dpipe ./cmd/dpipe/ && cd /app/proxy && go build -o proxy ./cmd/proxy/ && echo "Building proxy and dpipe complete" && sleep inf'
+    entrypoint: sh -c 'echo "Building proxy and dpipe" && cd /app/dpipe && go build -o dpipe ./cmd/dpipe/ && cd /app/proxy && go build -o proxy ./cmd/proxy/ && echo "Building complete" && sleep inf'
 
   clickhouse:
     image: clickhouse/clickhouse-server:26.7.3.19
