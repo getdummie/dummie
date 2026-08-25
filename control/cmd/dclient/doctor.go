@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -52,6 +53,7 @@ var checks = []check{
 	{"cgroup v2 is available", checkCgroup2},
 	{"vms can run as their own uid", checkVMUID},
 	{"rootfs images can be built from tars", checkRootfsTools},
+	{"sshd is off port 22", checkSSHPort},
 	{"tap devices can be created", checkTun},
 	{"nftables is usable", checkNftables},
 	{"ip forwarding is enabled", checkForwarding},
@@ -233,6 +235,125 @@ func checkRootfsTools() (result, string) {
 		return warn, strings.Join(missing, " and ") + " not on PATH; --rootfs-tar will not work (install tar and e2fsprogs)"
 	}
 	return pass, "tar and mkfs.ext4 are present"
+}
+
+// checkSSHPort is a hard failure: proxy binds 0.0.0.0:22 to front VM ssh, so a
+// host sshd on the same port means one of the two will not start. Which one
+// loses depends on boot order, which is the worst way to find out.
+func checkSSHPort() (result, string) {
+	bin, err := lookSSHD()
+	if err != nil {
+		return pass, "no sshd on this host; proxy can have :22"
+	}
+
+	ports, source, err := sshdPorts(bin)
+	if err != nil {
+		return warn, "cannot read the sshd configuration (" + err.Error() + "); make sure it does not listen on 22"
+	}
+	// sshd's own default when nothing sets a port.
+	if len(ports) == 0 {
+		ports = []string{"22"}
+		source += " (no Port directive; sshd defaults to 22)"
+	}
+	if slices.Contains(ports, "22") {
+		return fail, "sshd listens on 22 per " + source +
+			"; move it to another port and restart it -- proxy needs :22 for vm ssh"
+	}
+	return pass, "sshd on " + strings.Join(ports, ", ") + " per " + source
+}
+
+// sshdConfigPath is a variable so tests can point it elsewhere.
+var sshdConfigPath = "/etc/ssh/sshd_config"
+
+func lookSSHD() (string, error) {
+	if path, err := exec.LookPath("sshd"); err == nil {
+		return path, nil
+	}
+	// sshd lives in sbin, which is not on a non-root user's PATH.
+	for _, p := range []string{"/usr/sbin/sshd", "/sbin/sshd"} {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
+	return "", os.ErrNotExist
+}
+
+// sshdPorts asks sshd for its own effective configuration and falls back to
+// parsing the file. `sshd -T` is the answer that counts -- it resolves includes
+// and defaults the same way the daemon does -- but it wants root and readable
+// host keys, so it is not always available.
+func sshdPorts(bin string) ([]string, string, error) {
+	if out, err := exec.Command(bin, "-T").Output(); err == nil {
+		var ports []string
+		for _, line := range strings.Split(string(out), "\n") {
+			if p, ok := strings.CutPrefix(strings.TrimSpace(line), "port "); ok {
+				ports = append(ports, strings.TrimSpace(p))
+			}
+		}
+		return ports, bin + " -T", nil
+	}
+	ports, err := parseSSHDPorts(sshdConfigPath, 0)
+	return ports, sshdConfigPath, err
+}
+
+// parseSSHDPorts collects Port directives, plus the port half of any
+// ListenAddress that carries one, following Include globs.
+func parseSSHDPorts(path string, depth int) ([]string, error) {
+	if depth > 8 {
+		return nil, fmt.Errorf("include nesting too deep at %s", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var ports []string
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(strings.ReplaceAll(line, "=", " "), " ")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch strings.ToLower(key) {
+		case "port":
+			ports = append(ports, strings.Fields(value)...)
+		case "listenaddress":
+			fields := strings.Fields(value)
+			if len(fields) == 0 {
+				continue
+			}
+			if _, port, err := net.SplitHostPort(fields[0]); err == nil && port != "" {
+				ports = append(ports, port)
+			}
+		case "include":
+			for _, pattern := range strings.Fields(value) {
+				if !filepath.IsAbs(pattern) {
+					pattern = filepath.Join(filepath.Dir(path), pattern)
+				}
+				matches, err := filepath.Glob(pattern)
+				if err != nil {
+					return nil, err
+				}
+				for _, m := range matches {
+					included, err := parseSSHDPorts(m, depth+1)
+					if err != nil {
+						return nil, err
+					}
+					ports = append(ports, included...)
+				}
+			}
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return ports, nil
 }
 
 // checkTun is a hard failure: without /dev/net/tun no VM can have a network
