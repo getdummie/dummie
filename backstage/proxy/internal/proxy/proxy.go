@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -142,7 +144,36 @@ func (p *Proxy) bind() error {
 		}
 		go p.acceptLoop("ssh", ln, func(conn net.Conn) { p.handleSSH(conn) })
 	}
+	if c := p.cfg.Site; c != nil {
+		page, err := os.ReadFile(c.HTMLFile)
+		if err != nil {
+			return fmt.Errorf("read site.html_file %s: %w", c.HTMLFile, err)
+		}
+		ln, err := p.listen("site", c.listen(), false)
+		if err != nil {
+			return err
+		}
+		p.log.Info("site hosts", "hosts", c.Hosts, "target", ln.Addr().String())
+		go p.serveSite(ln, page)
+	}
 	return nil
+}
+
+// serveSite answers the static page on the loopback listener the site hostnames
+// route to. Every path gets the page: the listener serves one document, and a
+// landing page that 404s on /favicon.ico has nothing better to say there.
+func (p *Proxy) serveSite(ln net.Listener, page []byte) {
+	srv := &http.Server{
+		ReadHeaderTimeout: 10 * time.Second,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.Header().Set("Content-Length", strconv.Itoa(len(page)))
+			_, _ = w.Write(page)
+		}),
+	}
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, net.ErrClosed) {
+		p.log.Warn("site listener stopped", "err", err)
+	}
 }
 
 func (p *Proxy) listen(kind, addr string, reuseport bool) (net.Listener, error) {

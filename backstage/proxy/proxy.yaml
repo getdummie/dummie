@@ -39,6 +39,16 @@ https: # TLS ingress (proxy accepts raw, dpipe terminates)
   # certs live in dpipe.tls
   # NOTE: dpipe.tls.enabled must be true for this ingress to work.
 
+# The fleet's own page, served for hostnames that are not guests. It is a
+# loopback backend rather than a canned response so both ingresses reach it the
+# same way: plaintext routes through http.hosts, and TLS is terminated by dpipe,
+# which only ever dials a target. The file is read once, at startup.
+site:
+  listen: "127.0.0.1:8079"
+  html_file: /etc/dclient/proxy-site.html
+  hosts:
+    - www.vm.local
+
 tcp:
   - listen: ":9000"
     target: "127.0.0.1:9000"

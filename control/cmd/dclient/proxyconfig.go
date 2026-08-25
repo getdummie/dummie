@@ -58,13 +58,21 @@ func applyProxyConfig(ctx context.Context, cfg proto.ProxyConfig) (bool, error) 
 		return false, err
 	}
 
+	// Before the config for the same reason: proxy reads the page once at startup
+	// and will not bind the site listener without it, so a restart between the two
+	// would fail to come up at all.
+	siteChanged, err := writeProxySitePage(cfg.SitePath, cfg.SiteHTML)
+	if err != nil {
+		return false, err
+	}
+
 	path := serviceConfigPath(proxyService)
 	existing, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("could not read %s: %w", path, err)
 	}
 	configChanged := err != nil || string(existing) != config
-	if !configChanged && !secretChanged {
+	if !configChanged && !secretChanged && !siteChanged {
 		return false, nil
 	}
 
@@ -131,6 +139,33 @@ func writeProxyCookieSecret(path, secret string) (bool, error) {
 		return false, fmt.Errorf("could not write the proxy cookie secret to %s: %w", path, err)
 	}
 	log.Printf("wrote the proxy cookie secret to %s", path)
+	return true, nil
+}
+
+// writeProxySitePage puts the page proxy serves on the fleet's own hostnames
+// where the config says it is. It reports whether the file changed, so a new
+// page reaches visitors without waiting for the routing table to change too --
+// proxy reads it once, at start.
+//
+// An empty page leaves any existing file alone rather than truncating it: it
+// means the control server sent no page, and a proxy whose config claims a site
+// host would then refuse to start on a file it could not read.
+func writeProxySitePage(path, html string) (bool, error) {
+	if html == "" || path == "" {
+		return false, nil
+	}
+
+	existing, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("could not read %s: %w", path, err)
+	}
+	if err == nil && string(existing) == html {
+		return false, nil
+	}
+	if err := writeFileAtomic(path, []byte(html), 0o644); err != nil {
+		return false, fmt.Errorf("could not write the proxy site page to %s: %w", path, err)
+	}
+	log.Printf("wrote the proxy site page to %s", path)
 	return true, nil
 }
 

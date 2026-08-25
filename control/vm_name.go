@@ -69,7 +69,10 @@ func validateVMName(s string) (string, error) {
 // on one of these would shadow it for everyone, so they are refused in code
 // rather than through the settings table: an admin who could edit this list
 // could take the console offline by clearing it.
-var systemReservedVMNames = []string{"www", "console", "shell", "int"}
+// Two of them are named by the constants that make them mean something: a VM
+// called "www" would collide with the page proxy serves, and one called "shell"
+// with the label a console hostname is spliced out of.
+var systemReservedVMNames = []string{proxySiteLabel, proxyConsoleLabel, "console", "int"}
 
 // vmNameAllowed reports whether a validated name is out of reach, either as one
 // of the system names above or by an operator's list. Generated names are always

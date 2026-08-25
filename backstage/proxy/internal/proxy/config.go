@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"proxy/internal/httpsniff"
 )
 
 // Duration is a time.Duration that unmarshals from a YAML string like "5s".
@@ -62,6 +64,7 @@ type Config struct {
 	SSH     *SSHConfig     `yaml:"ssh"`
 	Auth    *AuthConfig    `yaml:"auth"`
 	Console *ConsoleConfig `yaml:"console"`
+	Site    *SiteConfig    `yaml:"site"`
 
 	ListenForwards []ForwardConfig `yaml:"listen_forwards"`
 
@@ -146,6 +149,11 @@ const defaultConsoleLabel = "shell"
 // console name mean two different things.
 var hostLabelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
+// hostnamePattern is a whole DNS name: dotted lowercase labels. Site hostnames
+// become routing table keys, so one that is not a hostname would be a key no
+// request could ever match.
+var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
 func (c *ConsoleConfig) label() string {
 	if c.Label != "" {
 		return c.Label
@@ -158,6 +166,49 @@ func (c *ConsoleConfig) remoteUser() string {
 		return c.RemoteUser
 	}
 	return defaultConsoleRemoteUser
+}
+
+// SiteConfig is the static page this host answers on hostnames of its own --
+// "www.<domain>" -- rather than forwarding to a guest.
+//
+// It is served from a loopback listener rather than written straight onto the
+// client socket because both ingresses have to reach it: the plaintext path
+// routes through the host table, and the TLS path is terminated by dpipe, which
+// only ever dials a target. A loopback backend is the one shape both understand.
+type SiteConfig struct {
+	// Listen is where the page is served, and is what the host entries below
+	// point at. Loopback: nothing outside the machine should reach it directly.
+	Listen string `yaml:"listen"`
+	// Hosts are the hostnames served the page. They are added to the routing
+	// table, but never over a published VM -- a real guest always wins.
+	Hosts []string `yaml:"hosts"`
+	// HTMLFile is the page itself, written by the control server alongside this
+	// config. Read once at startup, so a change to it needs a restart -- which is
+	// what the client does when the file it pushed changed.
+	HTMLFile string `yaml:"html_file"`
+}
+
+const defaultSiteListen = "127.0.0.1:8079"
+
+func (s *SiteConfig) listen() string {
+	if s.Listen != "" {
+		return s.Listen
+	}
+	return defaultSiteListen
+}
+
+// entry is the routing table entry a site hostname gets: the loopback listener,
+// with its port unauthenticated -- a landing page nobody can read is not one.
+func (s *SiteConfig) entry() (HTTPHost, error) {
+	host, port, err := net.SplitHostPort(s.listen())
+	if err != nil {
+		return HTTPHost{}, err
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return HTTPHost{}, err
+	}
+	return HTTPHost{Host: host, UnauthenticatedPorts: []int{p}, DefaultPort: p}, nil
 }
 
 // HTTPSConfig is the TLS ingress. Routing reuses http.hosts via
@@ -280,8 +331,10 @@ func (c *Config) Validate() error {
 			return err
 		}
 		ingress++
-		if c.HTTP == nil || len(c.HTTP.Hosts) == 0 {
-			return errors.New("config: https requires http.hosts (HTTPS routing reuses the host map)")
+		// A site block is enough on its own: a host with no VMs yet still has a
+		// landing page to serve, and it is routed through the same host map.
+		if c.HTTP == nil || (len(c.HTTP.Hosts) == 0 && c.Site == nil) {
+			return errors.New("config: https requires http.hosts or site (HTTPS routing reuses the host map)")
 		}
 	}
 	for i, r := range c.TCP {
@@ -357,6 +410,31 @@ func (c *Config) Validate() error {
 		}
 		if l := c.Console.label(); !hostLabelPattern.MatchString(l) {
 			return fmt.Errorf("config: console.label %q is not a single hostname label", l)
+		}
+	}
+
+	if c.Site != nil {
+		if err := claim("site", c.Site.listen()); err != nil {
+			return err
+		}
+		// Beyond claim's host:port check: the port is parsed into a routing table
+		// entry, where a named port would have nowhere to go.
+		if err := validHostPort("site.listen", c.Site.listen()); err != nil {
+			return err
+		}
+		if c.HTTP == nil {
+			return errors.New("config: site requires an http ingress (a site host is routed through the host map)")
+		}
+		if c.Site.HTMLFile == "" {
+			return errors.New("config: site.html_file is required")
+		}
+		if len(c.Site.Hosts) == 0 {
+			return errors.New("config: site requires at least one host")
+		}
+		for i, h := range c.Site.Hosts {
+			if !hostnamePattern.MatchString(httpsniff.NormalizeHost(h)) {
+				return fmt.Errorf("config: site.hosts[%d] %q is not a hostname", i, h)
+			}
 		}
 	}
 

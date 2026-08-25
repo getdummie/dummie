@@ -82,6 +82,12 @@ https:                      # TLS ingress (proxy accepts raw, dpipe terminates)
   reuseport: true
   # routing reuses http.hosts via resolve{kind:"http"}; certs live in dpipe.tls
 
+site:                       # the fleet's own page, on hostnames that are not guests
+  listen: "127.0.0.1:8079"  # loopback backend, so both ingresses reach it
+  html_file: /etc/dclient/proxy-site.html
+  hosts:
+    - www.vm.local          # added to the routing table, never over a published VM
+
 tcp:
   - listen: ":9000"
     target: "127.0.0.1:9000"
@@ -110,7 +116,9 @@ log_level: info
 Validation: `control_socket` required; ≥1 ingress; unique listeners; each
 `ssh.users[]` has exactly one of `pubkey`/`pubkey_file` + `target` (`host:port`) +
 `remote_user`. If `https` is set, `dpipe.tls.enabled` must be true (document the
-cross-process dependency).
+cross-process dependency). `site` requires an `http` ingress, an `html_file` that
+exists at startup, and ≥1 host; its listener is claimed like any other, so it
+cannot collide with an ingress.
 
 **Dependencies** (verify approved list first): `golang.org/x/sys/unix`,
 `golang.org/x/crypto/ssh` (only to parse/normalize pubkeys for the policy map — the

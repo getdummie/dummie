@@ -24,6 +24,21 @@ func NewRouter(cfg *Config) *Router {
 		}
 		r.def = cfg.HTTP.Default
 	}
+	// After the VM table, and never over it: a published guest keeps its name
+	// even if the control plane ever names it as a site host too.
+	if cfg.Site != nil {
+		entry, err := cfg.Site.entry()
+		if err == nil {
+			for _, host := range cfg.Site.Hosts {
+				h := httpsniff.NormalizeHost(host)
+				if _, taken := r.entries[h]; taken || h == "" {
+					continue
+				}
+				r.hosts[h] = entry.Target()
+				r.entries[h] = entry
+			}
+		}
+	}
 	for _, route := range cfg.TCP {
 		r.tcp[route.Listen] = route
 		r.tcpList = append(r.tcpList, route)

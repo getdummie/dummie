@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
+	"html"
 	"log"
 	"regexp"
 	"strings"
@@ -102,6 +104,45 @@ log_level: info
 // the certificate.
 const proxyConsoleLabel = "shell"
 
+// proxySiteLabel is the hostname the fleet's own page answers on: "www.<domain>"
+// is not a VM and never routes to one, which is why the name is refused as a VM
+// name in the first place.
+const proxySiteLabel = "www"
+
+// proxySiteListen is the loopback address proxy serves that page from. It is a
+// backend like any other, because the tls ingress can only reach a page it can
+// dial -- dpipe terminates and forwards, it does not serve documents.
+const proxySiteListen = "127.0.0.1:8079"
+
+// proxySitePath is where the client writes the page and where proxy reads it:
+// beside proxy.yaml, since it arrives with it and is replaced with it.
+const proxySitePath = "/etc/dclient/proxy-site.html"
+
+// proxySiteTemplate is the page itself. Embedded rather than fetched so a host
+// that cannot reach anything but this server still has one.
+//
+//go:embed site/index.html
+var proxySiteTemplate string
+
+// proxySiteControlPlaceholder is where the console's address goes. The page is
+// static on the host that serves it -- proxy reads a file, it does not render
+// anything -- so the one thing that varies per deployment is substituted here,
+// before it is ever sent.
+const proxySiteControlPlaceholder = "{{CONTROL_URL}}"
+
+// proxySitePage fills the page in for this deployment. controlURL is CONTROL_URL
+// from the environment, which is the origin browsers reach this server on rather
+// than the address it binds -- the same value every other link into the console
+// is built from, and never empty in practice: serve refuses to start without one
+// in prod and falls back to localhost otherwise.
+//
+// Escaped rather than trusted: it is an operator-set string landing in an href,
+// and a quote in it would end the attribute.
+func proxySitePage(controlURL string) string {
+	url := strings.TrimRight(strings.TrimSpace(controlURL), "/")
+	return strings.ReplaceAll(proxySiteTemplate, proxySiteControlPlaceholder, html.EscapeString(url))
+}
+
 // proxyCookieSecretPath is where the client writes the shared key and where proxy
 // reads it. A path rather than the value inline: proxy.yaml is world-readable on
 // the host, and the key is what tokens for every guest on it are signed with.
@@ -112,15 +153,23 @@ const proxyCookieSecretPath = "/etc/dpipe/keys/cookie_secret"
 // token is the hand-off, this is the session it buys.
 const proxyCookieTTL = "1h"
 
+// proxyHost is what the file needs to know about the machine it is for, as
+// opposed to about the VMs on it: which domain its names hang off, and whether
+// it has a certificate for them.
+type proxyHost struct {
+	tld string
+	tls bool
+}
+
 // generateProxyConfig compiles every reachable VM on one host into a proxy.yaml.
 // Rows arrive in the order the queries fix, so an unchanged fleet compiles to a
 // byte-identical file -- which is what lets the client skip the restart.
-func generateProxyConfig(auth proxyAuthConfig, tls bool, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow) string {
+func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow) string {
 	// The flip lives here rather than at the call site because it is a property of
 	// the file: a host serving https can have a Secure cookie whatever the fleet
 	// default says, and one serving plain http cannot. Only ever upwards -- prod
 	// turns it on everywhere, and a certificate turns it on for one host.
-	auth.cookieSecure = auth.cookieSecure || tls
+	auth.cookieSecure = auth.cookieSecure || host.tls
 
 	var b strings.Builder
 	b.WriteString(proxyConfigHeader)
@@ -128,24 +177,25 @@ func generateProxyConfig(auth proxyAuthConfig, tls bool, ssh []db.ListProxySSHUs
 	writeProxyAuth(&b, auth)
 	writeProxyConsole(&b, auth)
 	writeProxyHTTP(&b, http)
-	writeProxyHTTPS(&b, tls)
+	writeProxyHTTPS(&b, host.tls)
+	writeProxySite(&b, host.tld)
 	writeProxySSH(&b, ssh)
 	b.WriteString(proxyConfigFooter)
 	return b.String()
 }
 
-// clientServesTLS reports whether the domain a client belongs to has a
-// certificate that has been turned on. False for a client with no domain, which
-// is also a client with no published VMs.
-func clientServesTLS(ctx context.Context, q *db.Queries, clientID pgtype.UUID) (bool, error) {
+// clientProxyHost reads the domain a client belongs to. A client with no domain
+// -- which is also a client with no published VMs -- serves neither tls nor a
+// landing page, so the zero value is the honest answer rather than an error.
+func clientProxyHost(ctx context.Context, q *db.Queries, clientID pgtype.UUID) (proxyHost, error) {
 	domain, err := q.GetClientDomain(ctx, clientID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
+		return proxyHost{}, nil
 	}
 	if err != nil {
-		return false, err
+		return proxyHost{}, err
 	}
-	return domain.TlsEnabled && domain.CertObjectKey != "", nil
+	return proxyHost{tld: domain.TLD, tls: domain.TlsEnabled && domain.CertObjectKey != ""}, nil
 }
 
 // writeProxyAuth emits the block that points proxy back at this server: where to
@@ -272,6 +322,31 @@ func writeProxyHTTPS(b *strings.Builder, tls bool) {
 	b.WriteString("  reuseport: true\n")
 }
 
+// writeProxySite emits the block that claims "www.<domain>" for the page proxy
+// serves itself. Omitted for a host with no domain: there is no hostname to
+// claim, and an empty one would be a routing key nothing can match.
+//
+// The page is not per host and not per VM -- every host on a domain answers the
+// same document -- so nothing here varies but the name.
+func writeProxySite(b *strings.Builder, tld string) {
+	if tld == "" {
+		return
+	}
+	host := proxySiteLabel + "." + tld
+	// The domain was validated when the operator entered it, so this should never
+	// reject anything; it is here for the same reason the http table checks its
+	// keys, since a name that is not a name would land in the same map.
+	if !hostnamePattern.MatchString(host) {
+		log.Printf("skipping the site host: %q is not a usable hostname", host)
+		return
+	}
+	b.WriteString("\nsite:\n")
+	fmt.Fprintf(b, "  listen: %s\n", yamlString(proxySiteListen))
+	fmt.Fprintf(b, "  html_file: %s\n", yamlString(proxySitePath))
+	b.WriteString("  hosts:\n")
+	fmt.Fprintf(b, "    - %s\n", yamlString(host))
+}
+
 // hostnamePattern is the shape of a DNS name: dotted lowercase labels, each
 // starting and ending alphanumeric. Used to validate the domains an operator
 // enters; a VM name is the stricter vmNamePattern.
@@ -355,9 +430,9 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 	// that accepts it, and whether the session cookie may be Secure. A read failure
 	// is treated as "no certificate" rather than abandoning the push -- the ssh and
 	// http tables above are the part a guest cannot reach without.
-	tls, err := clientServesTLS(ctx, q, clientID)
+	host, err := clientProxyHost(ctx, q, clientID)
 	if err != nil {
-		log.Printf("could not tell whether client %s has a certificate, writing its proxy config without tls: %v", id, err)
+		log.Printf("could not read the domain of client %s, writing its proxy config without tls: %v", id, err)
 	}
 	// The key rides with the config rather than being provisioned separately: the
 	// file it lands in is named by the config, so a host that has one and not the
@@ -365,9 +440,15 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindProxyConfig,
 		Proxy: &proto.ProxyConfig{
-			Config:           generateProxyConfig(auth, tls, sshRows, httpRows),
+			Config:           generateProxyConfig(auth, host, sshRows, httpRows),
 			CookieSecret:     auth.secret,
 			CookieSecretPath: proxyCookieSecretPath,
+			// Sent whether or not the config claims a site host: a host that has
+			// just lost its domain would otherwise keep a page it no longer serves,
+			// and one that gains a domain would serve a config naming a file that is
+			// not there yet.
+			SiteHTML: proxySitePage(auth.controlURL),
+			SitePath: proxySitePath,
 		},
 	})
 	if err != nil {

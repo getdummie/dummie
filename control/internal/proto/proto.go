@@ -252,6 +252,17 @@ type ProxyConfig struct {
 	// alone in that case rather than truncating it.
 	CookieSecret     string `json:"cookie_secret,omitempty"`
 	CookieSecretPath string `json:"cookie_secret_path,omitempty"`
+
+	// SiteHTML is the page proxy serves on the fleet's own hostnames, and
+	// SitePath is where the config it arrives with says to find it. It travels
+	// with the config for the same reason the key does: proxy reads the file at
+	// startup and refuses to bind the site listener without it, so a config that
+	// claims a site host is only usable on a host that already has the page.
+	//
+	// Not a secret and safe to log, but there is no reason to: it is the same
+	// bytes for every host in the fleet.
+	SiteHTML string `json:"site_html,omitempty"`
+	SitePath string `json:"site_path,omitempty"`
 }
 
 // VMSpec is one VM creation request. It is the same shape the client's own unix
