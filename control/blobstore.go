@@ -185,7 +185,13 @@ func (b *blobStore) newKey(kind, fileName string) string {
 // Put streams r into the bucket under key. The uploader splits large bodies
 // into parts itself, so a kernel image is never held in memory whole.
 func (b *blobStore) Put(ctx context.Context, key, contentType string, r io.Reader) error {
-	up := manager.NewUploader(b.client)
+	// Bigger parts than the 5 MiB default: a rootfs is hundreds of megabytes, and
+	// at the default it is hundreds of round trips. Buffers are held per
+	// concurrent part, so this is ~80 MiB of memory at peak.
+	up := manager.NewUploader(b.client, func(u *manager.Uploader) {
+		u.PartSize = 16 << 20
+		u.Concurrency = 4
+	})
 	_, err := up.Upload(ctx, &s3.PutObjectInput{
 		Bucket:      aws.String(b.bucket),
 		Key:         aws.String(key),

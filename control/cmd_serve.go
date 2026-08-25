@@ -103,7 +103,7 @@ func runServe(host string, port int) error {
 		}
 	}
 
-	return runEchoServer(host, port, web, pool, ch, cfg, loadProxyAuthConfig(cfg.prod))
+	return runEchoServer(ctx, host, port, web, pool, ch, cfg, loadProxyAuthConfig(cfg.prod))
 }
 
 // startNuxtDevServer launches `bun run dev` and, on interrupt/SIGTERM (Ctrl-C or
@@ -140,7 +140,7 @@ func startNuxtDevServer(ctx context.Context) error {
 // runEchoServer starts the Echo API server: /api/v1/* is handled here, every
 // other path is served from the embedded SPA, or reverse-proxied to the Nuxt dev
 // server when web is nil.
-func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driver.Conn, cfg authConfig, proxyCfg proxyAuthConfig) error {
+func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *pgxpool.Pool, ch driver.Conn, cfg authConfig, proxyCfg proxyAuthConfig) error {
 	e := echo.New()
 
 	e.Use(middleware.RequestLogger())
@@ -375,8 +375,26 @@ func runEchoServer(host string, port int, web fs.FS, pool *pgxpool.Pool, ch driv
 		return c.JSON(http.StatusOK, body)
 	})
 
-	addr := host + ":" + strconv.Itoa(port)
-	if err := e.Start(addr); err != nil {
+	// Not e.Start: that builds a server with ReadTimeout at 30s, which is a
+	// deadline on reading the whole request rather than on a stalled one. An OS
+	// image is minutes of body, so every upload past the first half-gigabyte died
+	// mid-stream with an i/o timeout the handler could only report as a failed
+	// upload to object storage.
+	//
+	// ReadHeaderTimeout keeps what that default was there for -- a client that
+	// dribbles headers is still cut off -- and the body is bounded by size instead
+	// of by time (see readUploadedBlob). WriteTimeout stays unset: the console
+	// streams a VM's serial output over a long-lived response.
+	sc := echo.StartConfig{
+		Address: host + ":" + strconv.Itoa(port),
+		BeforeServeFunc: func(s *http.Server) error {
+			s.ReadTimeout = 0
+			s.ReadHeaderTimeout = 30 * time.Second
+			s.IdleTimeout = 120 * time.Second
+			return nil
+		},
+	}
+	if err := sc.Start(ctx, e); err != nil {
 		e.Logger.Error("failed to start server", "error", err)
 		return err
 	}
