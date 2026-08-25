@@ -528,6 +528,9 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	if err := vmNameAllowed(c.Request().Context(), h.q, name); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	defaultPort, publicPorts, err := normalizePorts(req.DefaultPort, req.PublicPorts)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())

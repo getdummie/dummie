@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
+	"control/internal/db"
 )
 
 // A VM's name is what proxy routes http by, so it is a fleet-wide identifier
@@ -61,6 +63,30 @@ func validateVMName(s string) (string, error) {
 		return "", errors.New("a name must be lowercase letters, digits and single hyphens, like \"hello-kitty\"")
 	}
 	return name, nil
+}
+
+// systemReservedVMNames are the control plane's own hostnames. A VM answering
+// on one of these would shadow it for everyone, so they are refused in code
+// rather than through the settings table: an admin who could edit this list
+// could take the console offline by clearing it.
+var systemReservedVMNames = []string{"www", "console", "shell", "int"}
+
+// vmNameAllowed reports whether a validated name is out of reach, either as one
+// of the system names above or by an operator's list. Generated names are always
+// an adjective-noun pair, so this only ever has anything to say about a name
+// someone chose.
+func vmNameAllowed(ctx context.Context, q *db.Queries, name string) error {
+	if name == "" {
+		return nil
+	}
+	for _, list := range [][]string{systemReservedVMNames, parseReservedVMNames(setting(ctx, q, settingReservedVMNames))} {
+		for _, r := range list {
+			if r == name {
+				return fmt.Errorf("%q is reserved and cannot be used as a name", name)
+			}
+		}
+	}
+	return nil
 }
 
 // randomVMName returns a name like "interesting-hawking".

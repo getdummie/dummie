@@ -606,6 +606,12 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 		// row's name alone, so the name a guest is reachable at does not move on
 		// every tick.
 		preferred, _ := validateVMName(v.Name)
+		// A host that picked a reserved name gets a generated one instead: there is
+		// nobody to report the refusal to, and a VM that is really running has to
+		// appear either way.
+		if vmNameAllowed(ctx, h.q, preferred) != nil {
+			preferred = ""
+		}
 		if err := withAdoptedVMName(ctx, preferred, func(ctx context.Context, name string) error {
 			return h.q.UpsertVMFromInventory(ctx, db.UpsertVMFromInventoryParams{
 				ClientID:  client.ID,

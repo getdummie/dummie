@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"regexp"
@@ -25,6 +26,8 @@ const (
 	settingClickHousePassword = "clickhouse_password"
 
 	settingResolverUpstream = "resolver_upstream"
+
+	settingReservedVMNames = "reserved_vm_names"
 )
 
 // settingKind says how a value is stored and rendered. The column is TEXT
@@ -130,6 +133,43 @@ var settingDefs = []settingDef{
 		Default:     "1.1.1.1",
 		validate:    validateResolverUpstream,
 	},
+	{
+		Key:   settingReservedVMNames,
+		Kind:  settingString,
+		Label: "Disallowed VM names",
+		Description: "Further names nobody may give a VM, comma separated. A VM's name is the " +
+			"host its http route is published under, so a name that collides with one of the " +
+			"control plane's own hostnames would shadow it for the whole fleet -- which is why " +
+			"www, console, shell and int are always refused and are not listed here. Existing " +
+			"VMs keep the names they already have.",
+		Placeholder: "status, api",
+		validate:    validateReservedVMNames,
+	},
+}
+
+// validateReservedVMNames accepts an empty list -- the names the control plane
+// needs are reserved in code regardless -- but every entry has to be shaped like
+// a name someone could actually ask for, or it reserves nothing.
+func validateReservedVMNames(v string) error {
+	for _, name := range parseReservedVMNames(v) {
+		if !vmNamePattern.MatchString(name) {
+			return fmt.Errorf("%q is not a name anyone could request: use lowercase letters, digits and single hyphens", name)
+		}
+	}
+	return nil
+}
+
+// parseReservedVMNames splits the stored list. Entries are lowercased and
+// trimmed so they compare against a validated name, which has been through the
+// same treatment.
+func parseReservedVMNames(v string) []string {
+	var out []string
+	for _, part := range strings.Split(v, ",") {
+		if name := strings.ToLower(strings.TrimSpace(part)); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // validateResolverUpstream takes an address, optionally with a port, and nothing
