@@ -246,9 +246,9 @@ const exampleConfig = `# control_url: https://control.example.com
 #   enable: false           # generates /etc/dpipe/keys/* on first start if absent
 #   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dpipe_0.0.4_linux_amd64.tar.gz
 #
-# proxy:
+# dproxy:
 #   enable: false
-#   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/proxy_0.0.4_linux_amd64.tar.gz
+#   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dproxy_0.0.4_linux_amd64.tar.gz
 #
 # vector:
 #   enable: false           # ships suricata's eve.json to clickhouse; needs suricata.

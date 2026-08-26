@@ -11,8 +11,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"proxy/internal/control"
-	"proxy/internal/httpsniff"
+	"dproxy/internal/control"
+	"dproxy/internal/httpsniff"
 )
 
 // sshPolicy is one entry of the {pubkey, vm name} → {target, remote_user}

@@ -1,7 +1,7 @@
 # dpipe
 
 The data plane described in [SPEC.md](SPEC.md). A long-lived process that owns
-network connections and moves their bytes, taking commands from `proxy` over a
+network connections and moves their bytes, taking commands from `dproxy` over a
 unix socket. It stays byte-opaque for TCP/HTTP and terminates SSH and TLS, the
 two protocols that cannot be fd-passed once encrypted.
 
@@ -9,21 +9,21 @@ two protocols that cannot be fd-passed once encrypted.
 
 ```
 cmd/dpipe/main.go
-internal/control/       # SHARED with proxy: protocol.go, conn.go, peer.go
-internal/httpsniff/     # SHARED with proxy
-internal/xnet/          # SHARED with proxy
+internal/control/       # SHARED with dproxy: protocol.go, conn.go, peer.go
+internal/httpsniff/     # SHARED with dproxy
+internal/xnet/          # SHARED with dproxy
 internal/dpipe/         # server, copy, listenforward, sshterm, sshrelay, tlsterm,
                         # registry, upgrade, config
 ```
 
 `internal/control`, `internal/httpsniff` and `internal/xnet` are shared *source*:
-byte-identical copies live in the `proxy` repository (the two are separate Go
+byte-identical copies live in the `dproxy` repository (the two are separate Go
 modules). Change them in one place and copy the files across:
 
 ```sh
 for pkg in control httpsniff xnet; do
-  cp internal/$pkg/*.go ../proxy/internal/$pkg/
-  sed -i 's|"dpipe/internal/|"proxy/internal/|g' ../proxy/internal/$pkg/*.go
+  cp internal/$pkg/*.go ../dproxy/internal/$pkg/
+  sed -i 's|"dpipe/internal/|"dproxy/internal/|g' ../dproxy/internal/$pkg/*.go
 done
 ```
 
@@ -37,7 +37,7 @@ go mod tidy
 just build     # go build -o bin/dpipe ./cmd/dpipe
 just test      # go test ./...
 just race      # go test -race ./...
-just demo      # full proxy + dpipe demo, builds both repos
+just demo      # full dproxy + dpipe demo, builds both repos
 ```
 
 ## Running
@@ -49,7 +49,7 @@ bin/dpipe -config dpipe.yaml -upgrade   # take over the running instance
 
 `-upgrade` adopts the control, upgrade and `listen_forward` listeners of the
 running process; the old process keeps its active connections (copies, SSH
-relays, TLS sessions) until they finish, drops proxy control connections so
+relays, TLS sessions) until they finish, drops dproxy control connections so
 proxies reconnect to the new instance, and then exits 0. The socket files stay in
 place.
 
@@ -91,4 +91,4 @@ live copy and exits, the new one serves new work, socket files survive).
 
 SSH termination end to end needs a real `ssh` client and `sshd`, so it is
 exercised by `scripts/demo.sh` (steps 5) rather than by `go test`, along with the
-proxy redeploy and the upgrade-under-traffic scenarios.
+dproxy redeploy and the upgrade-under-traffic scenarios.

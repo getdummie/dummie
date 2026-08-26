@@ -309,7 +309,7 @@ type ListProxyHTTPRoutesByClientRow struct {
 	DomainTLD   string
 }
 
-// ListProxyHTTPRoutesByClient is the other half of the proxy.yaml input: every VM
+// ListProxyHTTPRoutesByClient is the other half of the dproxy.yaml input: every VM
 // on the host that can be reached over http, with the ports it publishes and the
 // domain its hostname sits under.
 //
@@ -370,7 +370,7 @@ type ListProxySSHUsersByClientRow struct {
 	PublicKey string
 }
 
-// ListProxySSHUsersByClient is the input to the proxy.yaml generator: every VM on
+// ListProxySSHUsersByClient is the input to the dproxy.yaml generator: every VM on
 // the host that can be reached over ssh, carrying the key of whoever owns it.
 //
 // One query for the whole host, like the Suricata one, because the file is

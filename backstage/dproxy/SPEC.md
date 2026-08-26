@@ -1,4 +1,4 @@
-# proxy — Implementation Spec (v1)
+# dproxy — Implementation Spec (v1)
 
 **Role:** the control plane / "brains." It owns the public ingress listeners,
 decides where each connection goes, and hands connections to `dpipe` so it holds
@@ -10,13 +10,13 @@ Per protocol:
 - **TCP** (opaque) — route by ingress listener; dial backend; hand off (`copy`).
 - **HTTPS/TLS** — accept the raw TCP and hand it to dpipe (`tls_accept`) *before*
   any TLS bytes; dpipe terminates TLS, sniffs `Host`, and calls back with
-  `resolve{kind:"http"}`, which the proxy answers from its host map. TLS is
-  terminated in dpipe (not the proxy) for the same reason as SSH: a live TLS
+  `resolve{kind:"http"}`, which dproxy answers from its host map. TLS is
+  terminated in dpipe (not dproxy) for the same reason as SSH: a live TLS
   session can't be fd-passed, so it must live in the process that isn't redeployed.
 - **SSH** — accept raw TCP and hand off (`ssh_accept`); dpipe terminates SSH and
   calls back with `resolve{kind:"ssh"}`.
 
-The proxy never sees TLS/SSH payload; it only makes routing/authorization
+dproxy never sees TLS/SSH payload; it only makes routing/authorization
 decisions.
 
 **Language / target:** **Go 1.26.5**; Linux primary, macOS for local dev.
@@ -46,14 +46,14 @@ routing.
 ## 2. Process model & lifecycle
 - **Start:** load config; connect `control_socket` (retry w/ backoff); submit
   `listen_forward`s; bind all ingress listeners with **SO_REUSEPORT**; serve.
-- **Redeploy:** new proxy binds same ports (SO_REUSEPORT) → no gap; `SIGTERM` old →
+- **Redeploy:** new dproxy binds same ports (SO_REUSEPORT) → no gap; `SIGTERM` old →
   stop accepting, exit immediately. All handed-off TCP/HTTP copies and all
   terminated TLS/SSH sessions live in dpipe and are unaffected.
 - **Signals:** `SIGTERM`/`SIGINT` → stop accepting, close control conn, exit 0.
 
 Redeploy-safety = (a) all long-lived connections live in dpipe; (b) SO_REUSEPORT
 overlap covers new-connection continuity. For a *new* HTTPS/SSH connection the only
-proxy dependency is the brief `resolve` round trip during termination; if the proxy
+dproxy dependency is the brief `resolve` round trip during termination; if dproxy
 is momentarily down then, that one connection retries — established ones are
 untouched.
 
@@ -63,7 +63,7 @@ untouched.
 ```yaml
 control_socket: /run/dpipe/control.sock
 
-http:                       # plaintext HTTP (proxy sniffs + hands off copy)
+http:                       # plaintext HTTP (dproxy sniffs + hands off copy)
   listen: ":8080"
   reuseport: true
   hosts:
@@ -77,14 +77,14 @@ http:                       # plaintext HTTP (proxy sniffs + hands off copy)
       default_port: 8002
   default: ""               # host:port; empty => 502
 
-https:                      # TLS ingress (proxy accepts raw, dpipe terminates)
+https:                      # TLS ingress (dproxy accepts raw, dpipe terminates)
   listen: ":8443"
   reuseport: true
   # routing reuses http.hosts via resolve{kind:"http"}; certs live in dpipe.tls
 
 site:                       # the fleet's own page, on hostnames that are not guests
   listen: "127.0.0.1:8079"  # loopback backend, so both ingresses reach it
-  html_file: /etc/dclient/proxy-site.html
+  html_file: /etc/dclient/dproxy-site.html
   hosts:
     - www.vm.local          # added to the routing table, never over a published VM
 
@@ -127,13 +127,13 @@ cannot collide with an ingress.
 
 **Dependencies** (verify approved list first): `golang.org/x/sys/unix`,
 `golang.org/x/crypto/ssh` (only to parse/normalize pubkeys for the policy map — the
-proxy does no SSH/TLS I/O), `gopkg.in/yaml.v3`.
+dproxy does no SSH/TLS I/O), `gopkg.in/yaml.v3`.
 
 ---
 
 ## 4. Repository layout (shared with dpipe)
 ```
-/cmd/proxy/main.go
+/cmd/dproxy/main.go
 /internal/control/       # SHARED (canonical in dpipe-spec.md)
 /internal/httpsniff/     # SHARED
 /internal/proxy/
@@ -157,13 +157,13 @@ and dispatch inbound requests.
 ### Requests
 | type             | direction        | extra fields                                | fds                       |
 |------------------|------------------|---------------------------------------------|---------------------------|
-| `copy`           | proxy → dpipe    | `protocol:"tcp"\|"http"`                     | `[client_fd, backend_fd]` |
-| `ssh_accept`     | proxy → dpipe    | `protocol:"ssh"`                             | `[client_fd]` (raw TCP)   |
-| `tls_accept`     | proxy → dpipe    | `protocol:"tls"`                             | `[client_fd]` (raw TCP)   |
-| `listen_forward` | proxy → dpipe    | `listen`, `target`                           | none                      |
-| `stop`           | proxy → dpipe    | targets a listen_forward `id`                | none                      |
-| `status`         | proxy → dpipe    | —                                            | none                      |
-| `resolve`        | dpipe → proxy    | `kind:"ssh"\|"http"` + kind fields           | none                      |
+| `copy`           | dproxy → dpipe    | `protocol:"tcp"\|"http"`                     | `[client_fd, backend_fd]` |
+| `ssh_accept`     | dproxy → dpipe    | `protocol:"ssh"`                             | `[client_fd]` (raw TCP)   |
+| `tls_accept`     | dproxy → dpipe    | `protocol:"tls"`                             | `[client_fd]` (raw TCP)   |
+| `listen_forward` | dproxy → dpipe    | `listen`, `target`                           | none                      |
+| `stop`           | dproxy → dpipe    | targets a listen_forward `id`                | none                      |
+| `status`         | dproxy → dpipe    | —                                            | none                      |
+| `resolve`        | dpipe → dproxy    | `kind:"ssh"\|"http"` + kind fields           | none                      |
 
 `resolve` kind fields — `ssh`: `ssh_user, ssh_pubkey, ssh_fp, client_ip`;
 `http`: `host, sni, client_ip`, plus the request details the auth policy reads —
@@ -265,7 +265,7 @@ func handoffTLSAccept(client net.Conn) error:  // one fd
     sc.Control(func(c uintptr){ e = ctrl.TLSAccept(ctx, int(c)) }); return e
 ```
 Use `SyscallConn().Control` (raw fd; no dup; no blocking-mode change). `sendmsg`
-inside the callback while fds are live; kernel dups into dpipe; proxy `Close()`s
+inside the callback while fds are live; kernel dups into dpipe; dproxy `Close()`s
 so dpipe is sole owner. For TLS/SSH the handed-off socket is raw TCP (no crypto
 state yet), which is why it's fd-passable — dpipe then runs the TLS/SSH server on
 it.
@@ -286,7 +286,7 @@ func Handle(m Msg) Msg:
         return resolved{ID:m.ID, Authorized:false}
     case "http":
         req := requestFrom(m)                           // the details dpipe forwarded
-        if consoleVMHost(m.Host) is a published vm:      // a console name is the proxy's own
+        if consoleVMHost(m.Host) is a published vm:      // a console name is dproxy's own
             v := authorizeConsole(...)                  // same policy as plaintext console
             return resolved{ID:m.ID, Authorized:true, Protocol:"console",
                             Target:v.target, RemoteUser:v.remoteUser, Sub:v.sub, WSKey:v.wsKey}
@@ -300,7 +300,7 @@ func Handle(m Msg) Msg:
 The host map is the single source of truth for HTTP routing: the plaintext path
 reads it directly; the HTTPS path reads it via `resolve`. The auth policy
 (`unauthenticated_ports`, cookie verification, the login round trip) is likewise
-one implementation, `authorizeRequest` in `auth.go`: on plaintext the proxy writes
+one implementation, `authorizeRequest` in `auth.go`: on plaintext dproxy writes
 the verdict to the client itself, on https it returns it to dpipe, which never
 holds the cookie secret or the per-host port policy. SSH authorizes on the
 {pubkey, login name} pair: the key says who you are, the login name says which of
@@ -311,7 +311,7 @@ anyone else's — which dpipe prints on the session before hanging up.
 ---
 
 ## 10. Scope notes
-- **TLS and SSH terminate in dpipe**; the proxy only accepts raw sockets and
+- **TLS and SSH terminate in dpipe**; dproxy only accepts raw sockets and
   answers `resolve`. This preserves redeploy-safety uniformly across HTTPS, SSH,
   and handed-off TCP/HTTP.
 - **HTTP/1.1 only** over TLS (dpipe forces it via ALPN); no HTTP/2, no mTLS, no
@@ -354,7 +354,7 @@ forged cookie, cookie for another host, callback token, valid session).
 1. HTTP host routing incl. POST body passthrough.
 2. TCP echo.
 3. **HTTPS end-to-end (must pass):** `curl https://vm1.local --resolve` to the
-   proxy with a trusted demo CA → correct backend, correct SNI cert, body intact,
+   dproxy with a trusted demo CA → correct backend, correct SNI cert, body intact,
    unknown host → 502, HTTP/1.1 enforced.
 3b. **Auth on both ingresses (must pass):** a protected host over https → 302 to
    the login URL (401 for a non-browser request); a forged, expired or
@@ -365,15 +365,15 @@ forged cookie, cookie for another host, callback token, valid session).
    status; `scp`/`sftp`; `-L` forward; unauthorized key rejected; authorized key +
    owned vm name → correct target/remote_user; authorized key + no/unknown vm name →
    the VM list printed and the session closed.
-5. **Proxy redeploy-safe (must pass):** with a live HTTPS transfer, a live SSH
-   session, and a TCP/HTTP transfer in flight, `SIGTERM` the proxy and start a new
+5. **dproxy redeploy-safe (must pass):** with a live HTTPS transfer, a live SSH
+   session, and a TCP/HTTP transfer in flight, `SIGTERM` dproxy and start a new
    instance (SO_REUSEPORT); assert all survive and new connections are served with
    no refused gap.
 6. **Absorb dpipe upgrade:** during traffic, `dpipe -upgrade`; assert control
    conn drops+reconnects, new handoffs/logins land on the new dpipe, existing
    sessions complete in the old one.
 
-`justfile` + `scripts/demo.sh` (dpipe + proxy + dummy HTTP/TCP backends + a local
+`justfile` + `scripts/demo.sh` (dpipe + dproxy + dummy HTTP/TCP backends + a local
 `sshd` + a demo CA and per-SNI certs) + `scripts/keys.sh`.
 
 ---
@@ -382,5 +382,5 @@ forged cookie, cookie for another host, callback token, valid session).
 - Builds on Linux+macOS with Go 1.26.5; `go test -race ./...` green incl.
   integration 1–6.
 - `just demo` shows: HTTP host routing, TCP echo, HTTPS via dpipe TLS
-  termination, a real SSH shell, a proxy redeploy preserving a live HTTPS + SSH
+  termination, a real SSH shell, a dproxy redeploy preserving a live HTTPS + SSH
   session, and a dpipe upgrade absorbed by reconnect.

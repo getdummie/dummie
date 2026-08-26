@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"proxy/internal/control"
-	"proxy/internal/xnet"
+	"dproxy/internal/control"
+	"dproxy/internal/xnet"
 )
 
 // fakeDpipe is a minimal stand-in for the data plane: it performs copy by

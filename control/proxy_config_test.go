@@ -266,9 +266,9 @@ func TestGenerateProxyConfigAuthBlock(t *testing.T) {
 	}
 
 	// The key itself is never in the file -- it is written to a 0600 file the
-	// block names, and proxy.yaml is readable by anyone on the host.
+	// block names, and dproxy.yaml is readable by anyone on the host.
 	if strings.Contains(generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil), testProxySecret) {
-		t.Error("the shared secret was written into proxy.yaml")
+		t.Error("the shared secret was written into dproxy.yaml")
 	}
 }
 

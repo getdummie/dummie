@@ -30,7 +30,7 @@ import (
 // start rather than need an operator.
 
 const (
-	proxyService = "proxy"
+	proxyService = "dproxy"
 	dpipeService = "dpipe"
 
 	// binDir is where the downloaded binaries land, alongside dclient itself.
@@ -137,7 +137,7 @@ func managedUnit(name string) string {
 // running service's listeners on every restart would be an outage.
 //
 // Both are bootstrap only. The control server compiles the real version of each
-// and pushes it -- proxy.yaml whenever the set of VMs on this host changes,
+// and pushes it -- dproxy.yaml whenever the set of VMs on this host changes,
 // dpipe.yaml on every connect -- and the client replaces the file wholesale when
 // it does. What is below is what each service runs on until the first push
 // arrives, which is also all a host with no control server ever gets.

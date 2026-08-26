@@ -103,7 +103,7 @@ const (
 	// the ones left out stop being enforced.
 	KindSuricataRules JobKind = "suricata.rules"
 
-	// KindProxyConfig replaces the host's whole proxy.yaml, for the same reason:
+	// KindProxyConfig replaces the host's whole dproxy.yaml, for the same reason:
 	// proxy routes an inbound ssh session by which key authenticated it, so the
 	// entry for every VM on the host is one list that has to be written together.
 	// A file carrying only the VM that just changed would revoke the rest.
@@ -233,7 +233,7 @@ type SuricataRules struct {
 	Rules string `json:"rules"`
 }
 
-// ProxyConfig carries a complete proxy.yaml. Like SuricataRules the client writes
+// ProxyConfig carries a complete dproxy.yaml. Like SuricataRules the client writes
 // it as given and never merges: the ssh user list is derived from which user owns
 // which VM, and that is knowable only in the control plane.
 type ProxyConfig struct {

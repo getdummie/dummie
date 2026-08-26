@@ -38,7 +38,7 @@ type ClientHandler struct {
 	pool *pgxpool.Pool
 	hub  *Hub
 	// proxy is carried only to be handed to pushProxyConfig: the generated
-	// proxy.yaml names this server and carries the key its hosts verify with.
+	// dproxy.yaml names this server and carries the key its hosts verify with.
 	proxy proxyAuthConfig
 	// blobs is where the domains' certificates are kept, read on connect so the
 	// dpipe config can carry one. Nil when object storage is not configured, which
@@ -271,7 +271,7 @@ func (h *ClientHandler) serveClient(client db.Client, clientID, remoteIP string,
 	// version than the other is a resolver and a ruleset that disagree about what a
 	// guest may reach.
 	pushCoreDNSConfig(ctx, h.q, h.hub, client.ID)
-	// Same reasoning for proxy.yaml: VMs may have come or gone while the host was
+	// Same reasoning for dproxy.yaml: VMs may have come or gone while the host was
 	// away. Cheap to send unconditionally -- the client compares the file it is
 	// given against the one on disk and only restarts proxy when they differ.
 	pushProxyConfig(ctx, h.q, h.hub, h.proxy, client.ID)

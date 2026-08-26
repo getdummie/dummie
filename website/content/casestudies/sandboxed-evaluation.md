@@ -40,7 +40,7 @@ Two addresses are involved and only one of them comes from the API:
 
 - `DUMMIE_BASE_URL` — the control API, `http://control:1323/api/v1` from the sdk
   container.
-- `DUMMIE_SSH_HOST` — the **qemu host**, where `proxy` listens on port 22 and
+- `DUMMIE_SSH_HOST` — the **qemu host**, where `dproxy` listens on port 22 and
   routes the session to a guest by the key it authenticated with. `10.68.0.2` for
   the local `nix-vms` host. `GET /vms/hosts` will not tell you this: `hostname` is
   what the host reported about itself, not necessarily anything you can dial.
@@ -158,7 +158,7 @@ def delete_vm(client: AuthenticatedClient, vm_id: str) -> None:
     """Destroy the guest, drop the record, and wait for it to actually be gone.
 
     The 202 means the destroy reached the host, not that it finished. What the
-    next run needs -- the quota, and the host's one proxy entry per key -- is only
+    next run needs -- the quota, and the host's one dproxy entry per key -- is only
     released once the host confirms, so the wait is the useful part. A 204 is a VM
     that had nothing on a host, and is already gone by the time it returns.
     """
@@ -180,7 +180,7 @@ def delete_vm(client: AuthenticatedClient, vm_id: str) -> None:
 def connect_ssh() -> paramiko.SSHClient:
     """Connect once a command actually runs, not once the handshake succeeds.
 
-    Every step here is transient while a guest comes up. The proxy routes by
+    Every step here is transient while a guest comes up. dproxy routes by
     public key, so a session opened before its regenerated config lands
     authenticates and then dies at the first channel -- which is why the probe
     is part of the attempt rather than the first turn's problem.
@@ -287,11 +287,11 @@ Mount your private key into the container, or run it on the host with
 
 ## Things that will bite you
 
-**One VM per user per host.** `proxy` routes SSH by public key alone, and the
+**One VM per user per host.** `dproxy` routes SSH by public key alone, and the
 control plane writes one entry per VM keyed by its owner's key
 (`control/proxy_config.go:246-251`). Two live VMs owned by you on the same host
-produce two entries with the same key, and `proxy` rejects the whole config as a
-duplicate rather than picking one (`backstage/proxy/internal/proxy/resolver.go:48-50`).
+produce two entries with the same key, and `dproxy` rejects the whole config as a
+duplicate rather than picking one (`backstage/dproxy/internal/proxy/resolver.go:48-50`).
 So this script deletes its VM, and waits for the record to go, before another run
 creates one. Parallel evaluation needs either a host each or a routing key that is
 not just the owner.
@@ -305,7 +305,7 @@ the boot can race. `GET /vms/{id}/denied` shows what a turn tried to reach.
 **`202` is not "booted".** The create returns `pending`; the host reports the real
 outcome over its own socket afterwards, which is what `wait_running` is polling
 for. And `running` is the host's claim as of `reported_at`, not a live check: it
-says qemu started, not that sshd is listening or that the host's regenerated proxy
+says qemu started, not that sshd is listening or that the host's regenerated dproxy
 config has landed. Both of those accept a connection before they can serve one, so
 `connect_ssh` runs a throwaway command and only counts the session as ready once
 that succeeds. Retrying the handshake alone is not enough — a session opened too

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"proxy/internal/httpsniff"
+	"dproxy/internal/httpsniff"
 )
 
 func TestHeaderOnly(t *testing.T) {

@@ -116,9 +116,9 @@ const proxySiteLabel = "www"
 // dial -- dpipe terminates and forwards, it does not serve documents.
 const proxySiteListen = "127.0.0.1:8079"
 
-// proxySitePath is where the client writes the page and where proxy reads it:
-// beside proxy.yaml, since it arrives with it and is replaced with it.
-const proxySitePath = "/etc/dclient/proxy-site.html"
+// proxySitePath is where the client writes the page and where dproxy reads it:
+// beside dproxy.yaml, since it arrives with it and is replaced with it.
+const proxySitePath = "/etc/dclient/dproxy-site.html"
 
 // proxySiteTemplate is the page itself. Embedded rather than fetched so a host
 // that cannot reach anything but this server still has one.
@@ -146,7 +146,7 @@ func proxySitePage(controlURL string) string {
 }
 
 // proxyCookieSecretPath is where the client writes the shared key and where proxy
-// reads it. A path rather than the value inline: proxy.yaml is world-readable on
+// reads it. A path rather than the value inline: dproxy.yaml is world-readable on
 // the host, and the key is what tokens for every guest on it are signed with.
 const proxyCookieSecretPath = "/etc/dpipe/keys/cookie_secret"
 
@@ -163,7 +163,7 @@ type proxyHost struct {
 	tls bool
 }
 
-// generateProxyConfig compiles every reachable VM on one host into a proxy.yaml.
+// generateProxyConfig compiles every reachable VM on one host into a dproxy.yaml.
 // Rows arrive in the order the queries fix, so an unchanged fleet compiles to a
 // byte-identical file -- which is what lets the client skip the restart.
 func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow) string {
@@ -407,7 +407,7 @@ func yamlComment(s string) string {
 	return out
 }
 
-// pushProxyConfig regenerates the host's proxy.yaml and sends it. Called after
+// pushProxyConfig regenerates the host's dproxy.yaml and sends it. Called after
 // anything that changes which VMs are on the host or who owns them.
 //
 // Failures are logged rather than returned: the VM has already been recorded, and

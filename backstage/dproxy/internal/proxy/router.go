@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"proxy/internal/httpsniff"
+	"dproxy/internal/httpsniff"
 )
 
 // Router is the single source of truth for HTTP routing: the plaintext path

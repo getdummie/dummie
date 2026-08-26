@@ -31,7 +31,7 @@ type Config struct {
 
 	// Companion binaries dclient downloads and runs as systemd units. Off by
 	// default like everything else that changes the host.
-	Proxy ServiceConfig `yaml:"proxy"`
+	Proxy ServiceConfig `yaml:"dproxy"`
 	Dpipe ServiceConfig `yaml:"dpipe"`
 
 	// Vector ships suricata's events off the host. It has no download_url or

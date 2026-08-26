@@ -1,4 +1,4 @@
-module proxy
+module dproxy
 
 go 1.26.5
 

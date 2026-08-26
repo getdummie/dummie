@@ -14,7 +14,7 @@ import (
 	"control/internal/proto"
 )
 
-// dpipe.yaml is compiled here for a narrower reason than proxy.yaml. Almost
+// dpipe.yaml is compiled here for a narrower reason than dproxy.yaml. Almost
 // nothing in it is a per-host fact: session limits, timeouts and log levels are
 // policy about how the fleet behaves, and policy that lives in a write-once file
 // on each host is policy nobody can change without visiting every machine.

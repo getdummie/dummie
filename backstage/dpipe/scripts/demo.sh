@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# End-to-end demo of the proxy + dpipe pair.
+# End-to-end demo of the dproxy + dpipe pair.
 #
 # Shows: HTTP host routing, TCP echo, a listen_forward, HTTPS terminated in
 # dpipe, session auth on both ingresses, an SSH shell terminated in dpipe (when a
-# local sshd can be started), a proxy redeploy that preserves live sessions, and a
-# dpipe self-upgrade absorbed by the proxy's reconnect.
+# local sshd can be started), a dproxy redeploy that preserves live sessions, and a
+# dpipe self-upgrade absorbed by dproxy's reconnect.
 #
-# This script is identical in the proxy and dpipe repositories.
+# This script is identical in the dproxy and dpipe repositories.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -67,7 +67,7 @@ DEMO_SSHD_PORT=$SSHD_PORT "$HERE/keys.sh"
 
 echo "--- building binaries"
 (cd "$ROOT/dpipe" && go build -o "$RUN/dpipe" ./cmd/dpipe)
-(cd "$ROOT/proxy" && go build -o "$RUN/proxy" ./cmd/proxy)
+(cd "$ROOT/dproxy" && go build -o "$RUN/dproxy" ./cmd/dproxy)
 
 echo "--- starting dummy backends"
 python3 "$HERE/backends.py" http "$BACKEND1" vm1 >"$LOGS/backend1.log" 2>&1 &
@@ -118,7 +118,7 @@ chmod 600 "$COOKIE_SECRET"
 export COOKIE_SECRET
 
 # mint <sub> <audience> — the same signed value the control server would hand
-# back from a login, and the same value the proxy puts in the session cookie.
+# back from a login, and the same value dproxy puts in the session cookie.
 mint() {
   python3 - "$1" "$2" <<'PY'
 import base64, hashlib, hmac, json, os, sys, time
@@ -163,7 +163,7 @@ tls:
   sniff_max_bytes: 65536
 EOF
 
-cat >"$RUN/proxy.yaml" <<EOF
+cat >"$RUN/dproxy.yaml" <<EOF
 control_socket: $RUN/control.sock
 
 http:
@@ -225,8 +225,8 @@ DPIPE_PID=$!
 PIDS+=("$DPIPE_PID")
 wait_for_file "$RUN/control.sock"
 
-echo "--- starting proxy"
-"$RUN/proxy" -config "$RUN/proxy.yaml" >"$LOGS/proxy.log" 2>&1 &
+echo "--- starting dproxy"
+"$RUN/dproxy" -config "$RUN/dproxy.yaml" >"$LOGS/dproxy.log" 2>&1 &
 PROXY_PID=$!
 PIDS+=("$PROXY_PID")
 wait_for_port 127.0.0.1 "$HTTP_PORT"
@@ -265,7 +265,7 @@ curl -sS -k -o /dev/null --resolve "nope.local:$HTTPS_PORT:127.0.0.1" \
   -w "    status %{http_code}\n" "https://nope.local:$HTTPS_PORT/" || true
 
 echo
-echo "=== 5. session auth (the policy lives in the proxy, on both ingresses)"
+echo "=== 5. session auth (the policy lives in dproxy, on both ingresses)"
 HTTPS_VM2=(--cacert "$KEYS/ca.crt" --resolve "vm2.local:$HTTPS_PORT:127.0.0.1")
 SESSION=$(mint demo@example.com vm2.local)
 echo "  https, browser request with no session:"
@@ -316,7 +316,7 @@ if [[ "$SSH_READY" == 1 ]]; then
 fi
 
 echo
-echo "=== 7. proxy redeploy (SO_REUSEPORT) with traffic in flight"
+echo "=== 7. dproxy redeploy (SO_REUSEPORT) with traffic in flight"
 # A slow HTTPS transfer plus a long-lived TCP connection, both handed off already.
 (curl -sS --cacert "$KEYS/ca.crt" --resolve "vm1.local:$HTTPS_PORT:127.0.0.1" \
   "https://vm1.local:$HTTPS_PORT/slow" >"$LOGS/inflight-https.log" 2>&1) &
@@ -331,18 +331,18 @@ print("  tcp session after redeploy:", s.recv(4096).decode())
 TCP_INFLIGHT=$!
 sleep 1
 
-"$RUN/proxy" -config "$RUN/proxy.yaml" >"$LOGS/proxy2.log" 2>&1 &
+"$RUN/dproxy" -config "$RUN/dproxy.yaml" >"$LOGS/dproxy2.log" 2>&1 &
 PROXY2_PID=$!
 PIDS+=("$PROXY2_PID")
 sleep 1
 kill "$PROXY_PID" 2>/dev/null || true
-echo "  old proxy terminated, new proxy serving:"
+echo "  old dproxy terminated, new dproxy serving:"
 curl -sS -H "Host: vm1.local" "http://127.0.0.1:$HTTP_PORT/after-redeploy" | sed 's/^/    /'
 wait "$INFLIGHT" 2>/dev/null || true
 wait "$TCP_INFLIGHT" 2>/dev/null || true
 
 echo
-echo "=== 8. dpipe self-upgrade absorbed by the proxy"
+echo "=== 8. dpipe self-upgrade absorbed by dproxy"
 "$RUN/dpipe" -config "$RUN/dpipe.yaml" -upgrade >"$LOGS/dpipe2.log" 2>&1 &
 DPIPE2_PID=$!
 PIDS+=("$DPIPE2_PID")

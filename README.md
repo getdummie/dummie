@@ -99,9 +99,9 @@ dpipe:
   enable: true
   download_url: http://10.68.0.1:8081/backstage/dpipe/dpipe
 
-proxy:
+dproxy:
   enable: true
-  download_url: http://10.68.0.1:8081/backstage/proxy/proxy
+  download_url: http://10.68.0.1:8081/backstage/dproxy/dproxy
 
 vector:
   enable: true
@@ -119,9 +119,9 @@ dpipe:
   enable: true
   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dpipe_0.0.4_linux_amd64.tar.gz
 
-proxy:
+dproxy:
   enable: true
-  download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/proxy_0.0.4_linux_amd64.tar.gz
+  download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dproxy_0.0.4_linux_amd64.tar.gz
 ```
 
 For generating python sdk

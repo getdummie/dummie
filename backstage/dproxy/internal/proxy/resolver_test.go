@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"proxy/internal/control"
+	"dproxy/internal/control"
 )
 
 func newTestKey(t *testing.T) ssh.PublicKey {

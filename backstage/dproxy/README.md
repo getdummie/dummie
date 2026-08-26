@@ -1,4 +1,4 @@
-# proxy
+# dproxy
 
 The control plane described in [SPEC.md](SPEC.md). It owns the public ingress
 listeners, decides where each connection goes, and hands connections to `dpipe`
@@ -16,11 +16,11 @@ so it holds no long-lived connection state and can be redeployed at any time.
 ## Layout
 
 ```
-cmd/proxy/main.go
+cmd/dproxy/main.go
 internal/control/       # SHARED with dpipe: protocol.go, conn.go, peer.go
 internal/httpsniff/     # SHARED with dpipe
 internal/xnet/          # SHARED with dpipe
-internal/proxy/         # proxy, router, handoff, resolver, client, config
+internal/proxy/         # dproxy, router, handoff, resolver, client, config
 ```
 
 The three shared packages are byte-identical copies of the ones in the `dpipe`
@@ -29,28 +29,28 @@ repository (separate Go modules). To sync after a change there:
 ```sh
 for pkg in control httpsniff xnet; do
   cp ../dpipe/internal/$pkg/*.go internal/$pkg/
-  sed -i 's|"dpipe/internal/|"proxy/internal/|g' internal/$pkg/*.go
+  sed -i 's|"dpipe/internal/|"dproxy/internal/|g' internal/$pkg/*.go
 done
 ```
 
 ## Build and test
 
 Dependencies are `golang.org/x/sys`, `golang.org/x/crypto` (only to parse public
-keys for the policy map — the proxy does no SSH or TLS I/O) and
+keys for the policy map — dproxy does no SSH or TLS I/O) and
 `gopkg.in/yaml.v3`. `go.sum` is not committed yet, so run once:
 
 ```sh
 go mod tidy
-just build     # go build -o bin/proxy ./cmd/proxy
+just build     # go build -o bin/dproxy ./cmd/dproxy
 just test
 just race
-just demo      # full proxy + dpipe demo, builds both repos
+just demo      # full dproxy + dpipe demo, builds both repos
 ```
 
 ## Running
 
 ```sh
-bin/proxy -config proxy.yaml
+bin/dproxy -config dproxy.yaml
 ```
 
 Startup order: connect the control socket (retrying with capped backoff), submit
@@ -61,7 +61,7 @@ and are untouched, and a replacement process can already be bound to the same
 ports.
 
 If `https` is configured, `dpipe.tls.enabled` must be true and the
-certificates must live in dpipe's config; the proxy logs this cross-process
+certificates must live in dpipe's config; dproxy logs this cross-process
 dependency at startup (it cannot verify it).
 
 ## Implementation notes and deviations from the spec
@@ -88,5 +88,5 @@ duplex control connection, and that the HTTPS/SSH ingress hands over the raw
 pre-crypto socket with the client's first bytes intact.
 
 The scenarios that need real clients and a real dpipe — `curl https://…` with
-a demo CA, a real `ssh` shell/`scp`/`-L`, the proxy redeploy with live sessions,
+a demo CA, a real `ssh` shell/`scp`/`-L`, dproxy redeploy with live sessions,
 and absorbing a `dpipe -upgrade` — are driven by `scripts/demo.sh`.

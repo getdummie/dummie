@@ -24,7 +24,7 @@ import (
 // policy keeps being enforced, and the only thing lost is the record of what
 // happened. So a failure to install it is logged and the daemon carries on.
 //
-// vector.yaml arrives from the control server whole, like proxy.yaml and for
+// vector.yaml arrives from the control server whole, like dproxy.yaml and for
 // the same kind of reason: the transform in it writes exactly the columns the
 // control plane's clickhouse migrations create, so the file and the schema have
 // to ship together. Rendered here, adding a column would mean rolling a new

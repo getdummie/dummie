@@ -13,7 +13,7 @@ import (
 )
 
 // suricata.yaml, dpipe.yaml and the Corefile arrive from the control server
-// whole, like proxy.yaml and vector.yaml before them. None is merged: the file
+// whole, like dproxy.yaml and vector.yaml before them. None is merged: the file
 // the server sent is the file the host runs.
 //
 // All three are more disruptive to apply than proxy is, so all three are written

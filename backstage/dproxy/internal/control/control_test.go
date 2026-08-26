@@ -9,7 +9,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"proxy/internal/control"
+	"dproxy/internal/control"
 )
 
 func socketPair(t *testing.T) (*net.UnixConn, *net.UnixConn) {

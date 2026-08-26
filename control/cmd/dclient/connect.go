@@ -500,7 +500,7 @@ func (l *link) applyRules(ctx context.Context, jobID, rules string) {
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindSuricataRules, OK: true})
 }
 
-// applyProxy installs a pushed proxy.yaml. Detached for the same reason as the
+// applyProxy installs a pushed dproxy.yaml. Detached for the same reason as the
 // ruleset: a write that has begun should finish, since abandoning it leaves the
 // host routing by a table the control plane believes it replaced.
 func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConfig) {

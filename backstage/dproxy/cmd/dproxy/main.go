@@ -1,4 +1,4 @@
-// Command proxy is the control plane: it owns the public ingress listeners,
+// Command dproxy is the control plane: it owns the public ingress listeners,
 // decides where each connection goes and hands connections to dpipe.
 package main
 
@@ -11,7 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"proxy/internal/proxy"
+	"dproxy/internal/proxy"
 )
 
 // Set at build time with -X main.version; "dev" in a plain `go build`.
@@ -22,17 +22,17 @@ var (
 )
 
 func main() {
-	cfgPath := flag.String("config", "proxy.yaml", "path to the configuration file")
+	cfgPath := flag.String("config", "dproxy.yaml", "path to the configuration file")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("proxy %s (%s, %s)\n", version, commit, date)
+		fmt.Printf("dproxy %s (%s, %s)\n", version, commit, date)
 		return
 	}
 
 	if err := run(*cfgPath); err != nil {
-		fmt.Fprintln(os.Stderr, "proxy:", err)
+		fmt.Fprintln(os.Stderr, "dproxy:", err)
 		os.Exit(1)
 	}
 }
@@ -55,6 +55,6 @@ func run(cfgPath string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	log.Info("proxy starting", "control_socket", cfg.ControlSocket)
+	log.Info("dproxy starting", "control_socket", cfg.ControlSocket)
 	return p.Run(ctx)
 }

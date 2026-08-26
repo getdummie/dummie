@@ -1,16 +1,16 @@
 # dpipe — Implementation Spec (v1)
 
 **Role:** the data plane. A long-lived process that owns network connections and
-moves their bytes. It takes commands from the `proxy` over a Unix socket. It stays
+moves their bytes. It takes commands from the `dproxy` over a Unix socket. It stays
 byte-opaque for TCP/HTTP, and **terminates the two protocols that can't be
 fd-passed once encrypted — SSH and TLS** — because a terminated encrypted session's
 state lives in userspace and must therefore live in the process that isn't
-redeployed. For those it asks the proxy for the routing/authorization decision.
+redeployed. For those it asks dproxy for the routing/authorization decision.
 
 **Language / target:** **Go 1.26.5**. Primary target Linux (`splice(2)` fast path);
 must also build/run on macOS for local dev.
 
-> Paired with **proxy-spec.md**. The **Wire Protocol v1** section MUST be
+> Paired with **dproxy-spec.md**. The **Wire Protocol v1** section MUST be
 > byte-for-byte compatible across both. `internal/control`, `internal/xnet`, and
 > `internal/httpsniff` are shared source.
 
@@ -18,19 +18,19 @@ must also build/run on macOS for local dev.
 
 ## 1. Responsibilities
 
-1. Accept **duplex** control connections from `proxy` over a Unix domain socket
-   (proxy initiates most commands; dpipe initiates `resolve`).
-2. proxy→dpipe commands:
+1. Accept **duplex** control connections from `dproxy` over a Unix domain socket
+   (dproxy initiates most commands; dpipe initiates `resolve`).
+2. dproxy→dpipe commands:
    - **copy** — adopt two connected socket fds; copy bytes bidirectionally (TCP
-     and plaintext HTTP; opaque after the proxy's setup).
+     and plaintext HTTP; opaque after dproxy's setup).
    - **ssh_accept** — adopt one *raw* (pre-SSH) TCP fd; run the SSH server;
      authorize+route via `resolve`; dial the target VM as SSH client; relay SSH
      channels.
    - **tls_accept** — adopt one *raw* (pre-TLS) TCP fd; terminate TLS; sniff the
      HTTP `Host`; route via `resolve`; dial the backend; copy the decrypted stream.
    - **listen_forward** / **stop** / **status** — as before.
-3. dpipe→proxy command:
-   - **resolve** — ask the proxy to authorize/route a connection. Two kinds:
+3. dpipe→dproxy command:
+   - **resolve** — ask dproxy to authorize/route a connection. Two kinds:
      `ssh` (`{ssh_user, ssh_pubkey, ssh_fp, client_ip}` → `{authorized, target,
      remote_user}`, or `{notice}` when the key selected no VM) and `http` (`{host, sni, client_ip}` → `{authorized, target}`).
 4. **Self-upgrade:** a new dpipe adopts all *listening* sockets; the old keeps
@@ -102,11 +102,11 @@ warning (dev only). `min_version` maps to `tls.VersionTLS12/13`.
 
 ---
 
-## 4. Repository layout (shared with proxy)
+## 4. Repository layout (shared with dproxy)
 ```
 /cmd/dpipe/main.go
 /internal/control/       # SHARED: protocol.go (Msg+JSON), conn.go (SendMsg/RecvMsg + SCM_RIGHTS)
-/internal/httpsniff/     # SHARED: ReadHeaderBlock + ParseHost (used by proxy plaintext & dpipe post-TLS)
+/internal/httpsniff/     # SHARED: ReadHeaderBlock + ParseHost (used by dproxy plaintext & dpipe post-TLS)
 /internal/dpipe/
     server.go            # duplex control loop
     copy.go              # bidirectional byte copy + half-close
@@ -122,7 +122,7 @@ warning (dev only). `min_version` maps to `tls.VersionTLS12/13`.
 
 ---
 
-## 5. Wire Protocol v1  *(identical in proxy-spec.md)*
+## 5. Wire Protocol v1  *(identical in dproxy-spec.md)*
 
 **Transport** `AF_UNIX`/`SOCK_STREAM`/`"unix"`. **Framing** one message per
 `sendmsg(2)`/`recvmsg(2)`, JSON ≤4096B, fds via one `SCM_RIGHTS` (`MAXFDS=2`).
@@ -132,16 +132,16 @@ warning (dev only). `min_version` maps to `tls.VersionTLS12/13`.
 ### Requests
 | type             | direction        | extra fields                                     | fds                       |
 |------------------|------------------|--------------------------------------------------|---------------------------|
-| `copy`           | proxy → dpipe    | `protocol:"tcp"\|"http"`                          | `[client_fd, backend_fd]` |
-| `ssh_accept`     | proxy → dpipe    | `protocol:"ssh"`                                  | `[client_fd]` (raw TCP)   |
-| `tls_accept`     | proxy → dpipe    | `protocol:"tls"`                                  | `[client_fd]` (raw TCP)   |
-| `listen_forward` | proxy → dpipe    | `listen`, `target`                                | none                      |
-| `stop`           | proxy → dpipe    | targets a listen_forward `id`                     | none                      |
-| `status`         | proxy → dpipe    | —                                                 | none                      |
-| `resolve`        | dpipe → proxy    | `kind:"ssh"\|"http"` + kind fields (below)        | none                      |
+| `copy`           | dproxy → dpipe    | `protocol:"tcp"\|"http"`                          | `[client_fd, backend_fd]` |
+| `ssh_accept`     | dproxy → dpipe    | `protocol:"ssh"`                                  | `[client_fd]` (raw TCP)   |
+| `tls_accept`     | dproxy → dpipe    | `protocol:"tls"`                                  | `[client_fd]` (raw TCP)   |
+| `listen_forward` | dproxy → dpipe    | `listen`, `target`                                | none                      |
+| `stop`           | dproxy → dpipe    | targets a listen_forward `id`                     | none                      |
+| `status`         | dproxy → dpipe    | —                                                 | none                      |
+| `resolve`        | dpipe → dproxy    | `kind:"ssh"\|"http"` + kind fields (below)        | none                      |
 
 `resolve` kind fields — `ssh`: `ssh_user, ssh_pubkey, ssh_fp, client_ip`;
-`http`: `host, sni, client_ip`, plus the request details the proxy's auth policy
+`http`: `host, sni, client_ip`, plus the request details dproxy's auth policy
 reads — `cookie` (the `Cookie` header verbatim, ≤ `MaxResolveCookie`), `path`
 (request target, ≤ `MaxResolvePath`), `accept`, `upgrade`. dpipe interprets none of
 them and omits any that does not fit the message budget.
@@ -218,11 +218,11 @@ Linux `io.Copy(TCP,TCP)` uses `splice(2)`. For TLS one side is a `*tls.Conn`
 
 ### 6.3 `ssh_accept` — SSH termination (`sshterm.go` + `sshrelay.go`)
 Unchanged from the SSH-termination design: adopt the raw fd, `ssh.NewServerConn`
-with a `PublicKeyCallback` that issues `resolve{kind:"ssh"}` to the proxy, dial the
+with a `PublicKeyCallback` that issues `resolve{kind:"ssh"}` to dproxy, dial the
 returned `target` as an SSH client using `ssh.client_key`, then relay channels and
 requests both directions (global requests, client- and vm-opened channels, data +
 stderr with half-close, channel requests incl. exit-status). Verify key ownership
-via the library's signature check; the proxy authorizes which VM the key may reach,
+via the library's signature check; dproxy authorizes which VM the key may reach,
 using the login name (`ssh_user`) as the VM selector — one key may own several VMs.
 
 A reply carrying `notice` and no `target` is the "which VM?" case. Auth must
@@ -235,7 +235,7 @@ session has nowhere to be told anything.
 
 ### 6.4 `tls_accept` — TLS termination (`tlsterm.go`, NEW)
 Rationale identical to SSH: a live TLS session can't be fd-passed, so dpipe owns
-it end to end; the proxy hands over the raw pre-TLS socket.
+it end to end; dproxy hands over the raw pre-TLS socket.
 ```
 on tls_accept(fds=[clientFD]):
     if draining or !tls.enabled: close(clientFD); return
@@ -261,12 +261,12 @@ func serveTLS(client net.Conn):
     routeHost := firstNonEmpty(host, sni)
     if err != nil || routeHost == "" { writeQuickTLS(tc,400); tc.Close(); return }
 
-    req, _ := http.ReadRequest(buf)          // for the proxy's auth policy only
+    req, _ := http.ReadRequest(buf)          // for dproxy's auth policy only
     rep, err := ctrl.Resolve(ctx(tls.resolve_timeout), Msg{
         Type:"resolve", ID:uuid(), Kind:"http", Host:routeHost, SNI:sni, ClientIP:remoteIP,
         Cookie:req.Cookie, Path:req.RequestURI, Accept:req.Accept, Upgrade:req.Upgrade})
     if err != nil { writeQuickTLS(tc,502); tc.Close(); return }
-    // the proxy answered for itself: login redirect, 401, ...
+    // dproxy answered for itself: login redirect, 401, ...
     if rep.Location != "" || rep.Status != 0 {
         writeAuthTLS(tc, rep.Status, rep.Location, rep.SetCookie); tc.Close(); return }
     if !rep.Authorized { writeQuickTLS(tc,502); tc.Close(); return }
@@ -291,7 +291,7 @@ As before; `status` returns `registry.Snapshot()`.
 ## 7. Self-upgrade
 Same as the opaque design; TLS sessions and SSH relays are ordinary "active
 connections" that drain in the old process. Old side after `handover_ack`: set
-`draining`; close listeners with `SetUnlinkOnClose(false)`; close proxy control
+`draining`; close listeners with `SetUnlinkOnClose(false)`; close dproxy control
 connections (so proxies reconnect to the new instance — carrying future
 `resolve`s); keep active conns running; exit 0 at `Active()==0` or timeout.
 
@@ -316,7 +316,7 @@ identically. `Active()==0` while draining → exit.
 - `resolve` failure/timeout: SSH → reject auth (retryable); TLS → `502` over the
   TLS conn then close. Existing sessions unaffected.
 - Backend dial/handshake failure → close cleanly.
-- Proxy crash → control conns close (normal); active conns continue.
+- dproxy crash → control conns close (normal); active conns continue.
 
 ---
 
@@ -340,12 +340,12 @@ loss; absolute-form URI; missing Host; oversize).
 **Integration (Linux + macOS):**
 1. `copy`: echo backend, bytes both ways.
 2. `listen_forward` + `stop`.
-3. **SSH termination (must pass):** real `ssh` → proxy → dpipe terminates →
+3. **SSH termination (must pass):** real `ssh` → dproxy → dpipe terminates →
    local `sshd`: interactive shell; `exec` exit status; `scp`/`sftp`; `-L` forward;
    unauthorized key rejected; authorized key + owned vm name → correct target; a
    key with no vm named → the VM list printed, exit non-zero, no backend dialled.
 4. **TLS termination (must pass):** real `curl https://…` (with `--resolve` to the
-   proxy and a trusted demo CA) for `vm1.local`/`vm2.local`: assert correct backend,
+   dproxy and a trusted demo CA) for `vm1.local`/`vm2.local`: assert correct backend,
    correct SNI cert served, request+response body intact, unknown host → 502,
    HTTP/1.1 enforced (no h2).
 5. **dpipe self-upgrade (must pass):** with a long `copy`, a live SSH session,

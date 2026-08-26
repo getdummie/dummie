@@ -182,7 +182,7 @@ WHERE created_by = $1
   AND status IN ('pending', 'running', 'stopped');
 
 -- name: ListProxySSHUsersByClient :many
--- ListProxySSHUsersByClient is the input to the proxy.yaml generator: every VM on
+-- ListProxySSHUsersByClient is the input to the dproxy.yaml generator: every VM on
 -- the host that can be reached over ssh, carrying the key of whoever owns it.
 --
 -- One query for the whole host, like the Suricata one, because the file is
@@ -207,7 +207,7 @@ WHERE v.client_id = $1
 ORDER BY v.created_at, v.vm_id;
 
 -- name: ListProxyHTTPRoutesByClient :many
--- ListProxyHTTPRoutesByClient is the other half of the proxy.yaml input: every VM
+-- ListProxyHTTPRoutesByClient is the other half of the dproxy.yaml input: every VM
 -- on the host that can be reached over http, with the ports it publishes and the
 -- domain its hostname sits under.
 --

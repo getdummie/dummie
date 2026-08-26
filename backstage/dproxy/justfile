@@ -1,8 +1,8 @@
 default: build
 
-# Build the proxy binary.
+# Build the dproxy binary.
 build:
-    go build -o bin/proxy ./cmd/proxy
+    go build -o bin/dproxy ./cmd/dproxy
 
 # Unit + integration tests.
 test:
@@ -19,7 +19,7 @@ lint:
 keys:
     ./scripts/keys.sh
 
-# Full proxy + dpipe demo (builds both repos).
+# Full dproxy + dpipe demo (builds both repos).
 demo:
     ./scripts/demo.sh
 

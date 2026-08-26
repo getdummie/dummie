@@ -73,7 +73,7 @@ type proxyAuthConfig struct {
 	cookieSecure bool
 }
 
-// loginURL is what goes in the generated proxy.yaml: the control server's
+// loginURL is what goes in the generated dproxy.yaml: the control server's
 // origin plus the hand-off path, so there is one place that decides that path.
 func (c proxyAuthConfig) loginURL() string {
 	return strings.TrimRight(c.controlURL, "/") + proxyLoginPath

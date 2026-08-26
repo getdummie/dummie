@@ -12,7 +12,7 @@ import (
 	"control/internal/proto"
 )
 
-// proxy.yaml is written by the control server, not by this host: its ssh user
+// dproxy.yaml is written by the control server, not by this host: its ssh user
 // list maps a public key to the VM its owner created, and who owns which VM is
 // only knowable in the control plane. dclient's job is to put the file down and
 // restart the service, in that order and atomically.
@@ -22,7 +22,7 @@ import (
 // the control plane -- and there would be no way to express a removal, since a
 // merged-in entry looks the same as one that was never taken out.
 
-// applyProxyConfig installs a pushed proxy.yaml -- and the key its auth block
+// applyProxyConfig installs a pushed dproxy.yaml -- and the key its auth block
 // names -- and restarts proxy if either changed.
 //
 // It reports whether anything changed, so the caller can say so. An identical
@@ -95,7 +95,7 @@ func applyProxyConfig(ctx context.Context, cfg proto.ProxyConfig) (bool, error) 
 }
 
 // writeProxyCookieSecret puts the key the control server signs login tokens with
-// where the auth block in proxy.yaml says it is. It reports whether the file
+// where the auth block in dproxy.yaml says it is. It reports whether the file
 // changed, so the caller restarts proxy on a rotation even when the config it
 // arrived with is byte-identical -- proxy reads the key once, at start.
 //

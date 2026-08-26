@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"proxy/internal/control"
+	"dproxy/internal/control"
 )
 
 const (

@@ -4,8 +4,8 @@ import (
 	"context"
 	"net"
 
-	"proxy/internal/control"
-	"proxy/internal/xnet"
+	"dproxy/internal/control"
+	"dproxy/internal/xnet"
 )
 
 // handoffCopy passes both descriptors to dpipe in one sendmsg while they are

@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"proxy/internal/control"
-	"proxy/internal/httpsniff"
-	"proxy/internal/xnet"
+	"dproxy/internal/control"
+	"dproxy/internal/httpsniff"
+	"dproxy/internal/xnet"
 )
 
 const (

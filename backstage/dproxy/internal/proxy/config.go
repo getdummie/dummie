@@ -15,7 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"proxy/internal/httpsniff"
+	"dproxy/internal/httpsniff"
 )
 
 // Duration is a time.Duration that unmarshals from a YAML string like "5s".
