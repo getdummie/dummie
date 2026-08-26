@@ -52,6 +52,49 @@ func defaultAppend() string {
 	return fmt.Sprintf("console=%s root=/dev/vda rw reboot=k panic=1", console)
 }
 
+// guestHostname is a VM's name in the form a guest can carry: one DNS label,
+// which is what the fleet's names already are. Anything else comes back empty
+// and the guest keeps whatever hostname its image had -- a name is not worth
+// mangling into something that no longer matches what the VM is called.
+func guestHostname(name string) string {
+	if name == "" || len(name) > 63 {
+		return ""
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '-' && i > 0 && i < len(name)-1:
+		default:
+			return ""
+		}
+	}
+	return name
+}
+
+// withHostname names the guest on the kernel command line. systemd reads
+// systemd.hostname= before /etc/hostname, so this lands at PID 1 -- before sshd
+// or anything else that reports a hostname has started.
+//
+// The image cannot carry it: the built rootfs is content-addressed and shared by
+// every VM built from the same tar, so the command line is where anything per-VM
+// has to go. An operator who named a hostname in their own --append keeps it.
+func withHostname(line, name string) string {
+	h := guestHostname(name)
+	if h == "" {
+		return line
+	}
+	for _, f := range strings.Fields(line) {
+		if strings.HasPrefix(f, "systemd.hostname=") {
+			return line
+		}
+	}
+	if line == "" {
+		return "systemd.hostname=" + h
+	}
+	return line + " systemd.hostname=" + h
+}
+
 // qemuArgs builds the whole command line. Everything the VM can touch is named
 // here explicitly -- -nodefaults plus -no-user-config means qemu adds nothing of
 // its own, so this list is the complete hardware inventory of the guest.

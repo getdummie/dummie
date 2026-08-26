@@ -122,8 +122,13 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 		Disk:      vmPath(data, id, vmOverlayImage),
 		UID:       uid,
 	}
-	if boot == bootDirect && v.Append == "" {
-		v.Append = defaultAppend()
+	if boot == bootDirect {
+		if v.Append == "" {
+			v.Append = defaultAppend()
+		}
+		// Recorded in vm.json along with the rest of the command line, so a restart
+		// boots the guest under the same name rather than losing it.
+		v.Append = withHostname(v.Append, name)
 	}
 
 	cache := imagesDir(data)

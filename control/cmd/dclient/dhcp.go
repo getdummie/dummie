@@ -42,6 +42,7 @@ const (
 	optSubnetMask     = 1
 	optRouter         = 3
 	optDNS            = 6
+	optHostname       = 12
 	optMTU            = 26
 	optRequestedIP    = 50
 	optLeaseTime      = 51
@@ -112,8 +113,9 @@ func parsePacket(b []byte) (*packet, error) {
 }
 
 // reply builds an OFFER or an ACK. yiaddr is what the client is being given;
-// everything else describes how to use it.
-func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP) []byte {
+// everything else describes how to use it. name is the VM's own name, offered as
+// its hostname.
+func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP, name string) []byte {
 	b := make([]byte, 240, 400)
 	b[0] = bootReply
 	b[1] = 1 // ethernet
@@ -138,6 +140,13 @@ func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP) []byte {
 	// A /32: the guest owns exactly one address and nothing else is on its wire.
 	add(optSubnetMask, []byte{255, 255, 255, 255})
 	add(optMTU, be16(guestMTU))
+
+	// The guest's own name. Direct boot already carries it on the kernel command
+	// line, which is earlier and does not depend on the client; this is what names
+	// a disk-boot guest, where there is no command line to put it on.
+	if h := guestHostname(name); h != "" {
+		add(optHostname, []byte(h))
+	}
 
 	// The important one. Two routes: the gateway itself, on-link on this
 	// interface, and then everything else through it. Without the first, the
@@ -292,7 +301,7 @@ func (s *dhcpServer) handle(fd int, raw []byte) error {
 	if err != nil {
 		return fmt.Errorf("vm %s: tap %s: %w", v.ID, v.Net.Tap, err)
 	}
-	return sendBroadcast(fd, iface.Index, s.reply(req, kind, yiaddr))
+	return sendBroadcast(fd, iface.Index, s.reply(req, kind, yiaddr, v.Name))
 }
 
 // sendBroadcast writes one packet to 255.255.255.255:68 out of exactly one

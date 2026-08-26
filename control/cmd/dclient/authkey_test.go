@@ -132,13 +132,13 @@ func TestKeyedDigest(t *testing.T) {
 // and the key alone cannot tell two such images apart.
 func TestAuthKeyRecipeIsInTheCacheIdentity(t *testing.T) {
 	const key = "ssh-ed25519 AAAA one"
-	before := keyedDigest("abc123", authKeyRecipe()+"\x00"+key)
+	before := keyedDigest("abc123", imageRecipe(key))
 
 	restore := authKeyAccounts
 	t.Cleanup(func() { authKeyAccounts = restore })
 	authKeyAccounts = []string{"ubuntu"}
 
-	if before == keyedDigest("abc123", authKeyRecipe()+"\x00"+key) {
+	if before == keyedDigest("abc123", imageRecipe(key)) {
 		t.Error("changing the accounts left the cache entry the same")
 	}
 }

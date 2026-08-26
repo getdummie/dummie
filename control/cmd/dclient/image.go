@@ -152,8 +152,9 @@ const tarSlack = 256 << 20
 //
 // The image is built with mkfs.ext4 -d, which populates from a directory
 // without a loop mount, so nothing here needs to mount anything. That window --
-// the rootfs as a plain directory -- is also where pubKey, when there is one,
-// is installed into the guest's authorized_keys.
+// the rootfs as a plain directory -- is also where the container markers are
+// stripped and where pubKey, when there is one, is installed into the guest's
+// authorized_keys.
 //
 // The result is shared by every VM built from the same tar, so pubKey must be a
 // host-wide key rather than anything per VM.
@@ -162,17 +163,12 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes i
 	if err != nil {
 		return "", err
 	}
-	// Keyed on everything that goes into the image: the tar, the dpipe key baked
-	// in below, and which accounts receive it. Keying on the tar alone would mean
-	// a host that gained or rotated a key kept serving the image built before it,
-	// forever and silently: the filename would still match, so the build that
-	// installs the new key would never run.
-	//
-	// Left as the bare tar digest when there is no key, so a host that does not
-	// run dpipe keeps the images it has already built.
-	if pubKey != "" {
-		digest = keyedDigest(digest, authKeyRecipe()+"\x00"+pubKey)
-	}
+	// Keyed on everything that goes into the image, not just the tar: keying on
+	// the tar alone would mean a host that gained or rotated a key, or a dclient
+	// that changed what it does to the rootfs, kept serving the image built before
+	// it -- forever and silently, because the filename would still match and the
+	// build that fixes it would never run.
+	digest = keyedDigest(digest, imageRecipe(pubKey))
 	// Rebuilding a 400 MiB image on every create, for inputs that have not
 	// changed, is a minute of nothing.
 	dst := filepath.Join(cache, digest[:32]+"-rootfs.ext4")
@@ -211,9 +207,14 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes i
 	}
 
 	// Between the extraction and the mkfs is the only moment the root filesystem
-	// is an ordinary directory this process can write to. Fatal rather than a
-	// warning: the cache key says this image has the key in it, so building one
-	// without it would poison the cache with an image no later create can fix.
+	// is an ordinary directory this process can write to.
+	if err := stripContainerMarkers(work); err != nil {
+		return "", fmt.Errorf("could not strip the container markers from the rootfs: %w", err)
+	}
+
+	// Fatal rather than a warning: the cache key says this image has the key in
+	// it, so building one without it would poison the cache with an image no
+	// later create can fix.
 	if pubKey != "" {
 		if err := injectAuthorizedKey(work, pubKey); err != nil {
 			return "", fmt.Errorf("could not install the dpipe key into the rootfs: %w", err)
@@ -245,6 +246,46 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes i
 		return "", err
 	}
 	return dst, nil
+}
+
+// imageRecipe is everything the build does to the tar beyond unpacking it. It
+// goes into the cache key so that changing any of it is a different image rather
+// than a stale hit, which the tar's own digest cannot tell apart.
+//
+// The version leads it and is bumped whenever the steps change; doing so
+// invalidates every image on every host, which is the point.
+func imageRecipe(pubKey string) string {
+	r := "recipe=2;strip=" + strings.Join(containerMarkers, ",") + ";" + authKeyRecipe()
+	if pubKey != "" {
+		r += ";key=" + pubKey
+	}
+	return r
+}
+
+// containerMarkers are the files docker leaves at the root of an exported
+// filesystem to tell whatever runs inside that it is containerized.
+//
+// They have to go. systemd finds them, concludes it is running in a container,
+// and a containerized systemd ignores /proc/cmdline entirely -- it reads pid 1's
+// argv instead, on the reasoning that the kernel command line belongs to the
+// host and not to it. These images *are* the whole machine, and the lie costs
+// every systemd.* option we pass, the guest's hostname included.
+var containerMarkers = []string{".dockerenv", "run/.containerenv"}
+
+// stripContainerMarkers removes them from the extracted rootfs. Absent is the
+// normal case for an image that was not built from a container, so only a
+// removal that actually fails is an error.
+func stripContainerMarkers(root string) error {
+	for _, m := range containerMarkers {
+		p, err := imagePath(root, m)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(p); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 // keyedDigest folds a second input into a digest. Used to make the cache
