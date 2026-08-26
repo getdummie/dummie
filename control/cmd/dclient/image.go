@@ -162,16 +162,16 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes i
 	if err != nil {
 		return "", err
 	}
-	// Keyed on everything that goes into the image, which is the tar and -- since
-	// the dpipe key is baked in below -- the key too. Keying on the tar alone
-	// would mean a host that gained or rotated a key kept serving the image built
-	// before it, forever and silently: the filename would still match, so the
-	// build that installs the new key would never run.
+	// Keyed on everything that goes into the image: the tar, the dpipe key baked
+	// in below, and which accounts receive it. Keying on the tar alone would mean
+	// a host that gained or rotated a key kept serving the image built before it,
+	// forever and silently: the filename would still match, so the build that
+	// installs the new key would never run.
 	//
 	// Left as the bare tar digest when there is no key, so a host that does not
 	// run dpipe keeps the images it has already built.
 	if pubKey != "" {
-		digest = keyedDigest(digest, pubKey)
+		digest = keyedDigest(digest, authKeyRecipe()+"\x00"+pubKey)
 	}
 	// Rebuilding a 400 MiB image on every create, for inputs that have not
 	// changed, is a minute of nothing.

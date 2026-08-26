@@ -28,41 +28,65 @@ func fakeRoot(t *testing.T, passwd string, homes ...string) string {
 
 const ubuntuPasswd = "root:x:0:0:root:/root:/bin/bash\nubuntu:x:1000:1000:Ubuntu:/home/ubuntu:/bin/bash\n"
 
-func TestAuthKeyTarget(t *testing.T) {
+func TestAuthKeyTargets(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		passwd   string
-		homes    []string
-		wantUser string
-		wantUID  int
+		name    string
+		passwd  string
+		homes   []string
+		symlink string         // a guest-absolute home to make a symlink instead
+		want    map[string]int // account -> uid
 	}{
-		{"ubuntu wins when it is there", ubuntuPasswd,
-			[]string{"root", "home/ubuntu"}, "ubuntu", 1000},
-		{"root when there is no ubuntu", "root:x:0:0:root:/root:/bin/bash\n",
-			[]string{"root"}, "root", 0},
+		{"both when the image has both", ubuntuPasswd,
+			[]string{"root", "home/ubuntu"}, "", map[string]int{"ubuntu": 1000, "root": 0}},
+		{"root alone when there is no ubuntu", "root:x:0:0:root:/root:/bin/bash\n",
+			[]string{"root"}, "", map[string]int{"root": 0}},
 		// A passwd entry whose home was never created is an account that looks
-		// usable and is not; root is the more useful answer.
-		{"root when ubuntu has no home", ubuntuPasswd,
-			[]string{"root"}, "root", 0},
+		// usable and is not.
+		{"ubuntu is skipped when it has no home", ubuntuPasswd,
+			[]string{"root"}, "", map[string]int{"root": 0}},
+		// uid 0 owns whatever is made for it, so a missing /root is created rather
+		// than skipped.
+		{"root survives a missing home", ubuntuPasswd,
+			[]string{"home/ubuntu"}, "", map[string]int{"ubuntu": 1000, "root": 0}},
+		// A home that is odd rather than absent is skipped: the tar is operator
+		// supplied and this runs as root on the host.
+		{"a symlinked home is not followed", ubuntuPasswd,
+			[]string{"home/ubuntu"}, "root", map[string]int{"ubuntu": 1000}},
 		// Not every image gives ubuntu 1000; assuming it would chown to the wrong
 		// user, which sshd answers by ignoring the key.
 		{"uid is read from the image", "root:x:0:0:root:/root:/bin/sh\nubuntu:x:1500:1600:U:/home/ubuntu:/bin/sh\n",
-			[]string{"root", "home/ubuntu"}, "ubuntu", 1500},
+			[]string{"root", "home/ubuntu"}, "", map[string]int{"ubuntu": 1500, "root": 0}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := authKeyTarget(fakeRoot(t, tc.passwd, tc.homes...))
-			if err != nil {
-				t.Fatalf("authKeyTarget: %v", err)
+			root := fakeRoot(t, tc.passwd, tc.homes...)
+			if tc.symlink != "" {
+				if err := os.Symlink("/etc", filepath.Join(root, tc.symlink)); err != nil {
+					t.Fatal(err)
+				}
 			}
-			if got.name != tc.wantUser || got.uid != tc.wantUID {
-				t.Errorf("got %s (uid %d), want %s (uid %d)", got.name, got.uid, tc.wantUser, tc.wantUID)
+			got, err := authKeyTargets(root)
+			if err != nil {
+				t.Fatalf("authKeyTargets: %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d accounts, want %d: %+v", len(got), len(tc.want), got)
+			}
+			for _, u := range got {
+				uid, ok := tc.want[u.name]
+				if !ok {
+					t.Errorf("unexpected account %s", u.name)
+					continue
+				}
+				if u.uid != uid {
+					t.Errorf("%s has uid %d, want %d", u.name, u.uid, uid)
+				}
 			}
 		})
 	}
 }
 
-func TestAuthKeyTargetNeedsAPasswd(t *testing.T) {
-	if _, err := authKeyTarget(t.TempDir()); err == nil {
+func TestAuthKeyTargetsNeedAPasswd(t *testing.T) {
+	if _, err := authKeyTargets(t.TempDir()); err == nil {
 		t.Error("expected an error for an image with no /etc/passwd")
 	}
 }
@@ -104,12 +128,28 @@ func TestKeyedDigest(t *testing.T) {
 	}
 }
 
+// The accounts the key lands in are part of what an image contains, and the tar
+// and the key alone cannot tell two such images apart.
+func TestAuthKeyRecipeIsInTheCacheIdentity(t *testing.T) {
+	const key = "ssh-ed25519 AAAA one"
+	before := keyedDigest("abc123", authKeyRecipe()+"\x00"+key)
+
+	restore := authKeyAccounts
+	t.Cleanup(func() { authKeyAccounts = restore })
+	authKeyAccounts = []string{"ubuntu"}
+
+	if before == keyedDigest("abc123", authKeyRecipe()+"\x00"+key) {
+		t.Error("changing the accounts left the cache entry the same")
+	}
+}
+
 func TestInjectAuthorizedKeyAppends(t *testing.T) {
 	if os.Geteuid() != 0 {
 		t.Skip("injectAuthorizedKey chowns, which needs root")
 	}
 	root := fakeRoot(t, ubuntuPasswd, "root", "home/ubuntu")
 	authKeys := filepath.Join(root, "home", "ubuntu", ".ssh", "authorized_keys")
+	rootKeys := filepath.Join(root, "root", ".ssh", "authorized_keys")
 
 	// An image that ships its own keys put them there on purpose.
 	if err := os.MkdirAll(filepath.Dir(authKeys), 0o700); err != nil {
@@ -146,5 +186,14 @@ func TestInjectAuthorizedKeyAppends(t *testing.T) {
 	}
 	if fi.Mode().Perm() != 0o600 {
 		t.Errorf("authorized_keys is %v, want 0600 -- sshd refuses anything looser", fi.Mode().Perm())
+	}
+
+	// Root gets it too, so an image whose ubuntu cannot sudo is still reachable.
+	rb, err := os.ReadFile(rootKeys)
+	if err != nil {
+		t.Fatalf("root did not get the key: %v", err)
+	}
+	if n := strings.Count(string(rb), key); n != 1 {
+		t.Errorf("the dpipe key appears %d times in root's authorized_keys, want 1:\n%s", n, rb)
 	}
 }

@@ -90,28 +90,56 @@ func lookupPasswdUser(root, name string) (passwdUser, bool) {
 	return passwdUser{}, false
 }
 
-// authKeyTarget picks who the key goes to: ubuntu when the image has it, root
-// otherwise.
+// authKeyAccounts is who the key goes to, in the order they are tried. Both, not
+// one: an image that brings its own ubuntu without sudo would otherwise leave
+// dpipe unable to reach anything but that account.
+var authKeyAccounts = []string{"ubuntu", "root"}
+
+// authKeyRecipe is folded into a built image's cache identity so that editing
+// authKeyAccounts rebuilds rather than serving the image built under the old
+// list, which the tar and the key alone cannot tell apart.
+func authKeyRecipe() string { return "authkeys=" + strings.Join(authKeyAccounts, ",") }
+
+// authKeyTargets resolves authKeyAccounts against the image's own /etc/passwd,
+// skipping the ones it does not have.
 //
-// "Has it" means a passwd entry *and* a home directory that is really a
-// directory. A minimal image can carry an ubuntu entry pointing at a home that
-// was never created, and creating it here would produce an account that looks
-// usable and is not -- root, which always exists, is the more useful answer.
-func authKeyTarget(root string) (passwdUser, error) {
-	if u, ok := lookupPasswdUser(root, "ubuntu"); ok {
-		home, err := imagePath(root, u.home)
-		if err == nil {
-			if fi, err := os.Lstat(home); err == nil && fi.IsDir() {
-				return u, nil
-			}
+// An account counts only with a passwd entry *and* a home directory that is
+// really a directory. A minimal image can carry an ubuntu entry pointing at a
+// home that was never created, and creating it here would produce an account
+// that looks usable and is not. Root is the one exception, and only for a home
+// that is absent rather than odd: uid 0 owns whatever is created for it.
+func authKeyTargets(root string) ([]passwdUser, error) {
+	var out []passwdUser
+	for _, name := range authKeyAccounts {
+		u, ok := lookupPasswdUser(root, name)
+		if !ok {
+			continue
 		}
+		home, err := imagePath(root, u.home)
+		if err != nil {
+			continue
+		}
+		fi, err := os.Lstat(home)
+		switch {
+		case err == nil && fi.IsDir():
+		// A home that is not there at all is made below, but only for uid 0,
+		// which owns whatever is created for it.
+		case os.IsNotExist(err) && u.uid == 0:
+		// Anything else -- a symlink most of all, since the tar is operator
+		// supplied and this runs as root on the host.
+		default:
+			continue
+		}
+		out = append(out, u)
 	}
-	if u, ok := lookupPasswdUser(root, "root"); ok {
-		return u, nil
+	if len(out) == 0 {
+		// No passwd at all, or one with neither account usable: not a filesystem
+		// anything will boot from, so guessing at uid 0 and /root would be
+		// inventing an answer.
+		return nil, fmt.Errorf("none of %s is a usable account in the image's /etc/passwd",
+			strings.Join(authKeyAccounts, ", "))
 	}
-	// No passwd at all, or one without root: not a filesystem anything will boot
-	// from, so guessing at uid 0 and /root would be inventing an answer.
-	return passwdUser{}, fmt.Errorf("neither ubuntu nor root is in the image's /etc/passwd")
+	return out, nil
 }
 
 // imagePath resolves a guest-absolute path inside the extracted image and
@@ -130,7 +158,12 @@ func imagePath(root, guestPath string) (string, error) {
 	return p, nil
 }
 
-// injectAuthorizedKey adds dpipe's client key to the image rooted at root.
+// injectAuthorizedKey adds dpipe's client key to every account of
+// authKeyAccounts the image rooted at root has.
+//
+// All of them rather than the first: an image that brings its own ubuntu without
+// sudo leaves root the only way to configure anything, and an image with no
+// ubuntu at all leaves root the only way in.
 //
 // Appended, never written over: an image that ships its own authorized_keys put
 // them there on purpose, and replacing the file would lock out whoever was
@@ -145,10 +178,20 @@ func injectAuthorizedKey(root, key string) error {
 		return errors.New("installing the dpipe key needs root, so that authorized_keys ends up owned by the guest user")
 	}
 
-	u, err := authKeyTarget(root)
+	targets, err := authKeyTargets(root)
 	if err != nil {
 		return err
 	}
+	for _, u := range targets {
+		if err := installAuthorizedKey(root, key, u); err != nil {
+			return fmt.Errorf("%s: %w", u.name, err)
+		}
+	}
+	return nil
+}
+
+// installAuthorizedKey adds the key to one account in the image.
+func installAuthorizedKey(root, key string, u passwdUser) error {
 	home, err := imagePath(root, u.home)
 	if err != nil {
 		return err
