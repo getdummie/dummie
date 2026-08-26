@@ -337,6 +337,9 @@ func (h *AdminHandler) UpdateUserPublicKey(c *echo.Context) error {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "user not found")
 		}
+		if isDuplicatePublicKey(err) {
+			return echo.NewHTTPError(http.StatusConflict, "that public key is already on another account; a key identifies one user")
+		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the public key")
 	}
 	return c.JSON(http.StatusOK, toAdminUserDTO(u))

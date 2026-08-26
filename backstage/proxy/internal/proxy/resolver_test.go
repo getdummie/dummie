@@ -52,6 +52,7 @@ func TestResolveSSHKnownKey(t *testing.T) {
 		ControlSocket: "/tmp/ignored.sock",
 		SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{{
 			PubKey:     authorizedLine(alice, " alice@laptop"),
+			VMName:     "build",
 			Target:     "127.0.0.1:22",
 			RemoteUser: "dev",
 		}}},
@@ -61,7 +62,7 @@ func TestResolveSSHKnownKey(t *testing.T) {
 	// The offered key carries a different comment: normalization must ignore it.
 	rep := r.Handle(control.Msg{
 		V: control.Version, Type: control.TypeResolve, ID: "r1", Kind: control.KindSSH,
-		SSHUser: "whoever", SSHPubKey: authorizedLine(alice, " someone-else@host"),
+		SSHUser: "build", SSHPubKey: authorizedLine(alice, " someone-else@host"),
 		SSHFingerprint: ssh.FingerprintSHA256(alice), ClientIP: "10.0.0.2",
 	})
 	if rep.Type != control.TypeResolved || !rep.Authorized {
@@ -75,7 +76,7 @@ func TestResolveSSHKnownKey(t *testing.T) {
 func TestResolveSSHUnknownKey(t *testing.T) {
 	alice, bob := newTestKey(t), newTestKey(t)
 	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{{
-		PubKey: authorizedLine(alice, ""), Target: "127.0.0.1:22", RemoteUser: "dev",
+		PubKey: authorizedLine(alice, ""), VMName: "build", Target: "127.0.0.1:22", RemoteUser: "dev",
 	}}}}
 	r := newTestResolver(t, cfg)
 
@@ -338,15 +339,106 @@ func TestResolveUnknownKind(t *testing.T) {
 	}
 }
 
-func TestDuplicateKeyRejected(t *testing.T) {
+func TestDuplicateKeyAndVMRejected(t *testing.T) {
 	alice := newTestKey(t)
 	line := authorizedLine(alice, "")
 	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{
-		{PubKey: line, Target: "127.0.0.1:22", RemoteUser: "dev"},
-		{PubKey: line, Target: "127.0.0.1:2200", RemoteUser: "root"},
+		{PubKey: line, VMName: "build", Target: "127.0.0.1:22", RemoteUser: "dev"},
+		{PubKey: line, VMName: "build", Target: "127.0.0.1:2200", RemoteUser: "root"},
 	}}}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	if _, err := NewResolver(log, NewRouter(cfg), nil, cfg); err == nil {
-		t.Fatal("expected duplicate public keys to be rejected")
+		t.Fatal("expected the same key and vm name twice to be rejected")
+	}
+}
+
+// An entry a client cannot name is unreachable, not merely unused.
+func TestValidateRejectsUnusableVMNames(t *testing.T) {
+	line := authorizedLine(newTestKey(t), "")
+	for name, vm := range map[string]string{"empty": "", "with a space": "my vm", "with an at": "vm@host"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := &Config{ControlSocket: "/tmp/ignored.sock", SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{
+				{PubKey: line, VMName: vm, Target: "10.64.0.2:22", RemoteUser: "ubuntu"},
+			}}}
+			if err := cfg.Validate(); err == nil {
+				t.Errorf("vm_name %q was accepted", vm)
+			}
+		})
+	}
+}
+
+// One user owns one key and may own many VMs, which is what the login name
+// picks between.
+func TestResolveSSHOneKeyManyVMs(t *testing.T) {
+	alice := newTestKey(t)
+	line := authorizedLine(alice, " alice@laptop")
+	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{
+		{PubKey: line, VMName: "build", Target: "10.64.0.2:22", RemoteUser: "ubuntu"},
+		{PubKey: line, VMName: "test", Target: "10.64.0.3:22", RemoteUser: "ubuntu"},
+	}}}
+	r := newTestResolver(t, cfg)
+
+	for vm, want := range map[string]string{"build": "10.64.0.2:22", "test": "10.64.0.3:22"} {
+		rep := r.Handle(control.Msg{V: control.Version, Type: control.TypeResolve, ID: "m1",
+			Kind: control.KindSSH, SSHUser: vm, SSHPubKey: line})
+		if !rep.Authorized || rep.Target != want {
+			t.Errorf("%s resolved to %+v, want target %q", vm, rep, want)
+		}
+	}
+}
+
+func TestResolveSSHNoVMSelected(t *testing.T) {
+	alice := newTestKey(t)
+	line := authorizedLine(alice, "")
+	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{
+		{PubKey: line, VMName: "build", Target: "10.64.0.2:22", RemoteUser: "ubuntu"},
+		{PubKey: line, VMName: "test", Target: "10.64.0.3:22", RemoteUser: "ubuntu"},
+	}}}
+	r := newTestResolver(t, cfg)
+
+	rep := r.Handle(control.Msg{V: control.Version, Type: control.TypeResolve, ID: "n1",
+		Kind: control.KindSSH, SSHUser: "ameya", SSHPubKey: line})
+	if rep.Authorized || rep.Target != "" {
+		t.Fatalf("a bare login must not route anywhere: %+v", rep)
+	}
+	if !strings.Contains(rep.Notice, "build") || !strings.Contains(rep.Notice, "test") {
+		t.Errorf("notice must list the vms this key owns, got %q", rep.Notice)
+	}
+	if len(rep.Notice) > control.MaxNotice {
+		t.Errorf("notice is %d bytes, over MaxNotice", len(rep.Notice))
+	}
+}
+
+// An unknown key learns nothing, not even that the mechanism exists.
+func TestResolveSSHUnknownKeyGetsNoNotice(t *testing.T) {
+	alice, bob := newTestKey(t), newTestKey(t)
+	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{
+		{PubKey: authorizedLine(alice, ""), VMName: "build", Target: "10.64.0.2:22", RemoteUser: "ubuntu"},
+	}}}
+	r := newTestResolver(t, cfg)
+
+	rep := r.Handle(control.Msg{V: control.Version, Type: control.TypeResolve, ID: "n2",
+		Kind: control.KindSSH, SSHUser: "build", SSHPubKey: authorizedLine(bob, "")})
+	if rep.Authorized || rep.Notice != "" {
+		t.Fatalf("unknown key must get a bare denial: %+v", rep)
+	}
+}
+
+// A key may not reach a VM it does not own even by naming it exactly.
+func TestResolveSSHOtherUsersVM(t *testing.T) {
+	alice, bob := newTestKey(t), newTestKey(t)
+	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{
+		{PubKey: authorizedLine(alice, ""), VMName: "alices", Target: "10.64.0.2:22", RemoteUser: "ubuntu"},
+		{PubKey: authorizedLine(bob, ""), VMName: "bobs", Target: "10.64.0.3:22", RemoteUser: "ubuntu"},
+	}}}
+	r := newTestResolver(t, cfg)
+
+	rep := r.Handle(control.Msg{V: control.Version, Type: control.TypeResolve, ID: "n3",
+		Kind: control.KindSSH, SSHUser: "bobs", SSHPubKey: authorizedLine(alice, "")})
+	if rep.Authorized || rep.Target != "" {
+		t.Fatalf("alice must not reach bob's vm: %+v", rep)
+	}
+	if strings.Contains(rep.Notice, "bobs") {
+		t.Errorf("the notice must not name another user's vm: %q", rep.Notice)
 	}
 }

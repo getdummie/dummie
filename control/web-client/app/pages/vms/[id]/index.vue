@@ -409,7 +409,22 @@ const sshHost = computed(() => {
     return ''
   }
 })
-const sshCommand = computed(() => `ssh ${sshHost.value}`)
+
+// The hostname above with the VM's own label taken off. Wildcard DNS points both
+// at the same proxy, so either is the same address to connect to.
+const sshDomain = computed(() => {
+  const host = sshHost.value
+  const name = vm.value?.name
+  if (!host || !name) return host
+  return host.startsWith(`${name}.`) ? host.slice(name.length + 1) : host
+})
+
+// The login name selects the VM: without it the proxy cannot tell which of the
+// owner's VMs this is, and answers with the list instead.
+const sshDestination = computed(() =>
+  vm.value?.name ? `${vm.value.name}@${sshDomain.value}` : sshDomain.value,
+)
+const sshCommand = computed(() => `ssh ${sshDestination.value}`)
 const sshCopied = ref(false)
 
 // Where an editor lands inside the guest. Every image this fleet builds runs as
@@ -417,10 +432,10 @@ const sshCopied = ref(false)
 // generated proxy config sends an ssh session to.
 const remoteHome = '/home/ubuntu'
 
-// Every editor reaches the VM the same way the SSH button does -- by hostname,
-// over the host's proxy, authorised by the key the user already has registered
-// -- so none of them needs a username or a port here. What differs is only the
-// url each one registers with the OS.
+// Every editor reaches the VM the same way the SSH button does -- the same
+// name@domain destination, over the host's proxy, authorised by the key the user
+// already has registered -- so none of them needs a port here. What differs is
+// only the url each one registers with the OS.
 //
 // The schemes are not interchangeable. The VS Code forks change the scheme but
 // keep the `vscode-remote` authority, so `cursor://cursor-remote/...` is not a
@@ -428,8 +443,8 @@ const remoteHome = '/home/ubuntu'
 // own. The `ssh-remote+` resolver is contributed by a remote-ssh extension, so
 // each editor needs one installed before its link resolves.
 const editors = computed(() => {
-  const host = sshHost.value
-  if (!host) return []
+  const host = sshDestination.value
+  if (!sshHost.value) return []
   const vscodeRemote = (scheme: string) =>
     `${scheme}://vscode-remote/ssh-remote+${host}${remoteHome}`
   return [

@@ -41,6 +41,10 @@ const (
 	MaxResolveDetails = 3072
 	MaxResolveHeader  = 256
 	MaxResolvePath    = 1024
+
+	// MaxNotice bounds the text an ssh resolve can send back for dpipe to print,
+	// so a key owning many VMs cannot push the reply past MaxMsgSize.
+	MaxNotice = 1024
 )
 
 // Message types.
@@ -141,6 +145,12 @@ type Msg struct {
 
 	Authorized bool   `json:"authorized,omitempty"`
 	RemoteUser string `json:"remote_user,omitempty"`
+
+	// resolved for an ssh resolve whose key is known but whose login name named no
+	// VM the key owns: the key authenticates, there is nothing to route to, and
+	// this is the text dpipe prints before closing the session. Bounded by
+	// MaxNotice. Empty with authorized false is a plain denial.
+	Notice string `json:"notice,omitempty"`
 
 	Error string `json:"error,omitempty"`
 

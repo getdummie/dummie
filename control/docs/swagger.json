@@ -764,6 +764,16 @@
                             }
                         },
                         "description": "Unauthorized"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "that public key is already on another account"
                     }
                 },
                 "security": [

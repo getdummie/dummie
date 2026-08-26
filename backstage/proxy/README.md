@@ -10,7 +10,8 @@ so it holds no long-lived connection state and can be redeployed at any time.
 - **HTTPS** — accept the raw socket and hand it to dpipe (`tls_accept`) before
   any TLS byte; answer dpipe's `resolve{kind:"http"}` from the host map.
 - **SSH** — accept the raw socket and hand it off (`ssh_accept`); answer
-  `resolve{kind:"ssh"}` from the pubkey policy.
+  `resolve{kind:"ssh"}` from the pubkey policy, routing on the key plus the login
+  name that selects which of its VMs (`ssh <vm-name>@host`).
 
 ## Layout
 

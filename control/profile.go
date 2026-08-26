@@ -71,6 +71,7 @@ type updateProfileReq struct {
 // @Success     200 {object} adminUserDTO
 // @Failure     400 {object} apiError "a name over 100 characters, or a key that is not a valid public key"
 // @Failure     401 {object} apiError
+// @Failure     409 {object} apiError "that public key is already on another account"
 // @Router      /me [put]
 func (h *ProfileHandler) UpdateMe(c *echo.Context) error {
 	id, err := callerID(c)
@@ -102,6 +103,9 @@ func (h *ProfileHandler) UpdateMe(c *echo.Context) error {
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusUnauthorized, "your account no longer exists")
+		}
+		if isDuplicatePublicKey(err) {
+			return echo.NewHTTPError(http.StatusConflict, "that public key is already on another account; a key identifies one user")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save your profile")
 	}

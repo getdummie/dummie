@@ -302,6 +302,7 @@ func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 		HTTPS:         &HTTPSConfig{Listen: "127.0.0.1:0"},
 		SSH: &SSHConfig{Listen: "127.0.0.1:0", Users: []SSHUser{{
 			PubKey:     authorizedLine(newTestKey(t), " test@example"),
+			VMName:     "build",
 			Target:     "127.0.0.1:22",
 			RemoteUser: "dev",
 		}}},

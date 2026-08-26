@@ -5,8 +5,20 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/crypto/ssh"
 )
+
+// userPublicKeyConstraint is the unique index on users.public_key, matched by
+// name so a key someone else already holds is distinguished from a clash on
+// username or email.
+const userPublicKeyConstraint = "users_public_key_key"
+
+// isDuplicatePublicKey reports whether err is the unique violation above.
+func isDuplicatePublicKey(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == userPublicKeyConstraint
+}
 
 // maxPublicKeyLen bounds what will be parsed at all. An RSA-4096 key in
 // authorized_keys form is around 750 bytes, so this leaves room for a long
@@ -14,15 +26,11 @@ import (
 const maxPublicKeyLen = 4096
 
 // normalizePublicKey parses an SSH public key in authorized_keys form and
-// returns it canonicalised: "<type> <base64> <comment>".
+// returns it canonicalised: "<type> <base64>", with the comment and any
+// authorized_keys options dropped.
 //
-// Canonicalised rather than stored as typed, for two reasons. The base64 is
-// re-encoded from the parsed key, so whitespace and line-wrapping variations of
-// the same key are one stored value rather than several. And authorized_keys
-// options -- command=, environment=, permitopen= and friends -- are dropped:
-// they are instructions to sshd, and a user-supplied string that changes what
-// happens when a key is used is not something this server should carry into a
-// guest unreviewed.
+// The comment goes because users.public_key is unique: two accounts pasting the
+// same key under different comments have to collide, not both be stored.
 //
 // An empty input is not an error, it is "no key". Deciding what a missing key
 // means belongs to the caller: /settings allows clearing one, VM creation does
@@ -36,7 +44,7 @@ func normalizePublicKey(s string) (string, error) {
 		return "", fmt.Errorf("that key is longer than %d characters; paste one public key, not a file", maxPublicKeyLen)
 	}
 
-	key, comment, _, rest, err := ssh.ParseAuthorizedKey([]byte(s))
+	key, _, _, rest, err := ssh.ParseAuthorizedKey([]byte(s))
 	if err != nil {
 		return "", errors.New("that does not look like an SSH public key; paste the contents of a .pub file, e.g. ssh-ed25519 AAAA… you@host")
 	}
@@ -54,15 +62,5 @@ func normalizePublicKey(s string) (string, error) {
 		return "", errors.New("DSA keys are too weak to accept; use an ed25519 or RSA key")
 	}
 
-	// MarshalAuthorizedKey returns "<type> <base64>\n" and drops the comment, so
-	// the comment is re-attached rather than kept from the input verbatim.
-	out := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
-	// The comment is free text from the client and this line is destined for an
-	// authorized_keys file, where a newline starts a new key. Parsing is
-	// line-oriented so one should never reach here -- dropping it rather than
-	// trusting that is a one-line guarantee instead of an assumption.
-	if comment = strings.TrimSpace(comment); comment != "" && !strings.ContainsAny(comment, "\r\n") {
-		out += " " + comment
-	}
-	return out, nil
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key))), nil
 }

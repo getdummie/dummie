@@ -32,7 +32,7 @@ must also build/run on macOS for local dev.
 3. dpipe→proxy command:
    - **resolve** — ask the proxy to authorize/route a connection. Two kinds:
      `ssh` (`{ssh_user, ssh_pubkey, ssh_fp, client_ip}` → `{authorized, target,
-     remote_user}`) and `http` (`{host, sni, client_ip}` → `{authorized, target}`).
+     remote_user}`, or `{notice}` when the key selected no VM) and `http` (`{host, sni, client_ip}` → `{authorized, target}`).
 4. **Self-upgrade:** a new dpipe adopts all *listening* sockets; the old keeps
    its open connections (copies, SSH relays, TLS sessions) running to completion,
    then exits.
@@ -151,7 +151,7 @@ them and omits any that does not fit the message budget.
 |------------|-------------------------------------------------------------------------------|
 | `ok`       | `status`: `active_conns`, `listen_forwards`, `draining`                         |
 | `error`    | `error`                                                                        |
-| `resolved` | `authorized:bool`; if true `target:"host:port"`, and `remote_user` (ssh only); if not authorized on an `http` resolve, the response dpipe writes before closing: `status:int`, and `location`/`set_cookie` for a 302; an `http` resolve on a console hostname replies `protocol:"console"` with `target`, `remote_user`, `sub`, `ws_key` and is served on the TLS conn, not forwarded |
+| `resolved` | `authorized:bool`; if true `target:"host:port"`, and `remote_user` (ssh only); on an `ssh` resolve, `notice` instead of a target means the key is known but named no VM of its own: auth succeeds, dpipe prints the text on the first session channel and hangs up; if not authorized on an `http` resolve, the response dpipe writes before closing: `status:int`, and `location`/`set_cookie` for a 302; an `http` resolve on a console hostname replies `protocol:"console"` with `target`, `remote_user`, `sub`, `ws_key` and is served on the TLS conn, not forwarded |
 
 ### Self-upgrade (over `upgrade_socket`)
 `handover_request` (new→old); `handover` (old→new) with
@@ -183,6 +183,7 @@ type Msg struct {
     ClientIP string `json:"client_ip,omitempty"`
     Authorized bool   `json:"authorized,omitempty"`
     RemoteUser string `json:"remote_user,omitempty"`
+    Notice     string `json:"notice,omitempty"`       // resolved ssh: text to print, no target
     Error string `json:"error,omitempty"`
     ActiveConns    int  `json:"active_conns,omitempty"`
     ListenForwards int  `json:"listen_forwards,omitempty"`
@@ -221,8 +222,16 @@ with a `PublicKeyCallback` that issues `resolve{kind:"ssh"}` to the proxy, dial 
 returned `target` as an SSH client using `ssh.client_key`, then relay channels and
 requests both directions (global requests, client- and vm-opened channels, data +
 stderr with half-close, channel requests incl. exit-status). Verify key ownership
-via the library's signature check; the proxy authorizes which VM the key may reach.
-(See the SSH sections — behavior is identical.)
+via the library's signature check; the proxy authorizes which VM the key may reach,
+using the login name (`ssh_user`) as the VM selector — one key may own several VMs.
+
+A reply carrying `notice` and no `target` is the "which VM?" case. Auth must
+succeed for the client to see any text at all (an error from `PublicKeyCallback`
+reaches it as a bare "Permission denied"), so the notice is carried in
+`Permissions.Extensions` and printed on the first `session` channel, with
+`exit-status` 1, before the connection closes. Non-session channels are rejected
+and a connection that opens none is closed after `noticeWait` — a forward-only
+session has nowhere to be told anything.
 
 ### 6.4 `tls_accept` — TLS termination (`tlsterm.go`, NEW)
 Rationale identical to SSH: a live TLS session can't be fd-passed, so dpipe owns
@@ -333,7 +342,8 @@ loss; absolute-form URI; missing Host; oversize).
 2. `listen_forward` + `stop`.
 3. **SSH termination (must pass):** real `ssh` → proxy → dpipe terminates →
    local `sshd`: interactive shell; `exec` exit status; `scp`/`sftp`; `-L` forward;
-   unauthorized key rejected; authorized key → correct target.
+   unauthorized key rejected; authorized key + owned vm name → correct target; a
+   key with no vm named → the VM list printed, exit non-zero, no backend dialled.
 4. **TLS termination (must pass):** real `curl https://…` (with `--resolve` to the
    proxy and a trusted demo CA) for `vm1.local`/`vm2.local`: assert correct backend,
    correct SNI cert served, request+response body intact, unknown host → 502,

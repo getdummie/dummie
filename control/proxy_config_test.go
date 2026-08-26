@@ -31,6 +31,7 @@ type parsedProxyConfig struct {
 		Listen string `yaml:"listen"`
 		Users  []struct {
 			Pubkey     string `yaml:"pubkey"`
+			VMName     string `yaml:"vm_name"`
 			Target     string `yaml:"target"`
 			RemoteUser string `yaml:"remote_user"`
 		} `yaml:"users"`
@@ -87,13 +88,16 @@ func TestGenerateProxyConfigOneVMPerUser(t *testing.T) {
 	if len(got.SSH.Users) != 2 {
 		t.Fatalf("got %d users, want 2", len(got.SSH.Users))
 	}
-	for i, want := range []struct{ pubkey, target string }{
-		{"ssh-ed25519 AAAAC3Nz one", "10.64.0.2:22"},
-		{"ssh-ed25519 AAAAC3Ny two", "10.64.0.3:22"},
+	for i, want := range []struct{ pubkey, vmName, target string }{
+		{"ssh-ed25519 AAAAC3Nz one", "build", "10.64.0.2:22"},
+		{"ssh-ed25519 AAAAC3Ny two", "test", "10.64.0.3:22"},
 	} {
 		u := got.SSH.Users[i]
 		if u.Pubkey != want.pubkey {
 			t.Errorf("user %d pubkey is %q, want %q", i, u.Pubkey, want.pubkey)
+		}
+		if u.VMName != want.vmName {
+			t.Errorf("user %d vm_name is %q, want %q", i, u.VMName, want.vmName)
 		}
 		if u.Target != want.target {
 			t.Errorf("user %d target is %q, want %q", i, u.Target, want.target)
@@ -201,9 +205,9 @@ func TestGenerateProxyConfigSkipsUnusableHostnames(t *testing.T) {
 	}
 }
 
-// The comment on a public key is free text the user typed. Unquoted, a " #" in
-// it would truncate the scalar and leave a valid-looking key that is not the one
-// on file -- so the value has to survive the round trip intact.
+// Stored keys carry no comment any more, so nothing here should be awkward --
+// which is exactly why the quoting is worth a test: an unquoted " #" would
+// truncate the scalar and leave a valid-looking key that is not the one on file.
 func TestGenerateProxyConfigQuotesAwkwardComments(t *testing.T) {
 	const awkward = `ssh-ed25519 AAAAC3Nz me@host # not a comment: "quoted" \ and: more`
 	rows := []db.ListProxySSHUsersByClientRow{
@@ -517,5 +521,22 @@ func TestNormalizePorts(t *testing.T) {
 	}
 	if _, _, err := normalizePorts(65536, nil); err == nil {
 		t.Error("default port 65536 was accepted")
+	}
+}
+
+// vm_name is a routing key now, not just a comment, so a name that tried to be
+// yaml has to arrive as one scalar.
+func TestGenerateProxyConfigQuotesVMNames(t *testing.T) {
+	const awkward = "evil\nssh:\n  users: []"
+	rows := []db.ListProxySSHUsersByClientRow{
+		{VMIP: "10.64.0.2", HostVMID: "abc123", VMName: awkward, PublicKey: "ssh-ed25519 AAAAC3Nz"},
+	}
+
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil))
+	if len(got.SSH.Users) != 1 {
+		t.Fatalf("got %d users, want 1", len(got.SSH.Users))
+	}
+	if got.SSH.Users[0].VMName != awkward {
+		t.Errorf("the name did not survive:\n got %q\nwant %q", got.SSH.Users[0].VMName, awkward)
 	}
 }

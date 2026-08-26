@@ -59,10 +59,13 @@ ssh:
   listen: ":2222"
   reuseport: true
   users:
+    # vm_name is the login name that selects this entry: ssh build@<host>
     - pubkey_file: ./keys/alice.pub
+      vm_name: "build"
       target: "127.0.0.1:22"
       remote_user: "dev"
     # - pubkey: "ssh-ed25519 AAAA... bob@laptop"
+    #   vm_name: "test"
     #   target: "127.0.0.1:2200"
     #   remote_user: "root"
 

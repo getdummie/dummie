@@ -24,15 +24,25 @@ func testKey(t *testing.T, seedByte byte) string {
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
 }
 
-func TestNormalizePublicKeyAcceptsAKey(t *testing.T) {
+// The comment is dropped, not kept: users.public_key is unique, and the same key
+// under two comments has to be one value.
+func TestNormalizePublicKeyDropsTheComment(t *testing.T) {
 	key := testKey(t, 1)
 
 	got, err := normalizePublicKey("  " + key + " me@laptop\n")
 	if err != nil {
 		t.Fatalf("normalizePublicKey: %v", err)
 	}
-	if want := key + " me@laptop"; got != want {
-		t.Errorf("got %q, want %q", got, want)
+	if got != key {
+		t.Errorf("got %q, want %q", got, key)
+	}
+
+	same, err := normalizePublicKey(key + " someone-else@host")
+	if err != nil {
+		t.Fatalf("normalizePublicKey: %v", err)
+	}
+	if same != got {
+		t.Errorf("the same key under two comments produced %q and %q", got, same)
 	}
 }
 
@@ -55,8 +65,8 @@ func TestNormalizePublicKeyDropsOptions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("normalizePublicKey: %v", err)
 	}
-	if want := key + " me@laptop"; got != want {
-		t.Errorf("got %q, want %q", got, want)
+	if got != key {
+		t.Errorf("got %q, want %q", got, key)
 	}
 }
 

@@ -34,7 +34,7 @@ decisions.
 3. HTTPS/SSH: hand the raw pre-crypto socket to dpipe; no backend dial here (the
    backend is chosen after termination, via `resolve`).
 4. Answer `resolve` from dpipe: `kind:"http"` (host→backend from the host map) and
-   `kind:"ssh"` (pubkey→{backend, remote_user} from the users policy).
+   `kind:"ssh"` ({pubkey, login name}→{backend, remote_user} from the users policy).
 5. Maintain a resilient **duplex** control connection to dpipe.
 6. Optionally program `listen_forward` jobs at startup.
 
@@ -98,9 +98,11 @@ ssh:
   reuseport: true
   users:
     - pubkey_file: ./keys/alice.pub
+      vm_name: "build"
       target: "127.0.0.1:22"
       remote_user: "dev"
     - pubkey: "ssh-ed25519 AAAA... bob@laptop"
+      vm_name: "test"
       target: "127.0.0.1:2200"
       remote_user: "root"
 
@@ -114,8 +116,11 @@ http_sniff_max_bytes: 65536
 log_level: info
 ```
 Validation: `control_socket` required; ≥1 ingress; unique listeners; each
-`ssh.users[]` has exactly one of `pubkey`/`pubkey_file` + `target` (`host:port`) +
-`remote_user`. If `https` is set, `dpipe.tls.enabled` must be true (document the
+`ssh.users[]` has exactly one of `pubkey`/`pubkey_file` + `vm_name` (usable as an
+ssh login name) + `target` (`host:port`) + `remote_user`. The same
+{`pubkey`, `vm_name`} twice is rejected; the same `pubkey` under different
+`vm_name`s is the normal case, since one user owns one key and may own many VMs.
+If `https` is set, `dpipe.tls.enabled` must be true (document the
 cross-process dependency). `site` requires an `http` ingress, an `html_file` that
 exists at startup, and ≥1 host; its listener is claimed like any other, so it
 cannot collide with an ingress.
@@ -171,7 +176,7 @@ omitted, which reads as "absent" and fails closed.
 |------------|------------------------------------------------------------------------------|
 | `ok`       | `status`: `active_conns`, `listen_forwards`, `draining`                        |
 | `error`    | `error`                                                                       |
-| `resolved` | `authorized`; if true `target`, and `remote_user` (ssh only); if not authorized on an `http` resolve, the response dpipe must write: `status`, and `location`/`set_cookie` for a 302; a console hostname replies `protocol:"console"` with `target`, `remote_user`, `sub`, `ws_key` |
+| `resolved` | `authorized`; if true `target`, and `remote_user` (ssh only); on an `ssh` resolve whose key is known but whose login name named none of its VMs, `notice` (≤ `MaxNotice`) — the text dpipe prints before hanging up; if not authorized on an `http` resolve, the response dpipe must write: `status`, and `location`/`set_cookie` for a 302; a console hostname replies `protocol:"console"` with `target`, `remote_user`, `sub`, `ws_key` |
 
 `Msg` struct: identical to dpipe-spec §5 (shared `internal/control`).
 
@@ -273,9 +278,11 @@ func Handle(m Msg) Msg:
     switch m.Kind:
     case "ssh":
         key := normalize(m.SSHPubKey)                  // ssh.ParseAuthorizedKey, re-marshal w/o comment
-        if u, ok := users[key]; ok:
-            log.Info("ssh authorize", user=m.SSHUser, fp=m.SSHFingerprint, client=m.ClientIP, target=u.target)
+        if u, ok := users[{key, m.SSHUser}]; ok:       // login name selects which VM
+            log.Info("ssh authorize", vm=m.SSHUser, fp=m.SSHFingerprint, client=m.ClientIP, target=u.target)
             return resolved{ID:m.ID, Authorized:true, Target:u.target, RemoteUser:u.remoteUser}
+        if owned := ownedBy[key]; len(owned) > 0:      // known key, no VM named
+            return resolved{ID:m.ID, Authorized:false, Notice:vmList(m.SSHUser, owned)}
         return resolved{ID:m.ID, Authorized:false}
     case "http":
         req := requestFrom(m)                           // the details dpipe forwarded
@@ -295,9 +302,11 @@ reads it directly; the HTTPS path reads it via `resolve`. The auth policy
 (`unauthenticated_ports`, cookie verification, the login round trip) is likewise
 one implementation, `authorizeRequest` in `auth.go`: on plaintext the proxy writes
 the verdict to the client itself, on https it returns it to dpipe, which never
-holds the cookie secret or the per-host port policy. SSH authorizes on pubkey
-(exe.dev's "the public key tells us the user"); `ssh_user`/`client_ip`/`sni` are
-available for richer v2 policy.
+holds the cookie secret or the per-host port policy. SSH authorizes on the
+{pubkey, login name} pair: the key says who you are, the login name says which of
+your VMs you want, and neither alone is enough. A known key that named no VM of
+its own gets `notice` instead of a target — the list of names it may use, never
+anyone else's — which dpipe prints on the session before hanging up.
 
 ---
 
@@ -328,7 +337,8 @@ available for richer v2 policy.
   `resolve` decisions (host/SNI or user/fingerprint + target — never secrets or
   payloads).
 - Fail closed: empty HTTP `default` → 502; unknown SSH pubkey / unknown HTTPS host →
-  unauthorized.
+  unauthorized. An SSH `notice` names only the VMs the offered key owns, so a
+  session never learns another user's VM exists.
 - Treat `ssh.users` and the host map as sensitive routing policy.
 - Validate all `target`/`hosts` are `host:port`; reject wildcards.
 
@@ -336,7 +346,9 @@ available for richer v2 policy.
 
 ## 13. Testing (acceptance criteria)
 **Unit:** `httpsniff.ReadHeaderBlock`; `router`; `resolver.Handle` (ssh known/unknown
-+ key normalization; http host hit/miss; http auth on a protected host — no cookie,
++ key normalization; one key over many VMs; a login name naming no owned VM → `notice`;
+a login name naming another user's VM → refused, and not named in the notice;
+http host hit/miss; http auth on a protected host — no cookie,
 forged cookie, cookie for another host, callback token, valid session).
 **Integration (with the paired dpipe):**
 1. HTTP host routing incl. POST body passthrough.
@@ -349,9 +361,10 @@ forged cookie, cookie for another host, callback token, valid session).
    wrong-audience cookie → same refusal; `/__auth/callback?token=…` → 302 with the
    session cookie; that cookie → served; an unauthenticated port → served with no
    cookie at all.
-4. **SSH end-to-end (must pass):** `ssh -p 2222` → shell; `exec` exit status;
-   `scp`/`sftp`; `-L` forward; unauthorized key rejected; authorized key → correct
-   target/remote_user.
+4. **SSH end-to-end (must pass):** `ssh -p 2222 <vm-name>@host` → shell; `exec` exit
+   status; `scp`/`sftp`; `-L` forward; unauthorized key rejected; authorized key +
+   owned vm name → correct target/remote_user; authorized key + no/unknown vm name →
+   the VM list printed and the session closed.
 5. **Proxy redeploy-safe (must pass):** with a live HTTPS transfer, a live SSH
    session, and a TCP/HTTP transfer in flight, `SIGTERM` the proxy and start a new
    instance (SO_REUSEPORT); assert all survive and new connections are served with

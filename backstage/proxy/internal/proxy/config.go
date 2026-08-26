@@ -233,10 +233,12 @@ type SSHConfig struct {
 	Users     []SSHUser `yaml:"users"`
 }
 
-// SSHUser maps one authorized public key to a target and remote user.
+// SSHUser maps one authorized public key to a target and remote user. VMName is
+// the login name that selects this entry, so one key can own several VMs.
 type SSHUser struct {
 	PubKey     string `yaml:"pubkey"`
 	PubKeyFile string `yaml:"pubkey_file"`
+	VMName     string `yaml:"vm_name"`
 	Target     string `yaml:"target"`
 	RemoteUser string `yaml:"remote_user"`
 }
@@ -363,6 +365,11 @@ func (c *Config) Validate() error {
 			}
 			if u.RemoteUser == "" {
 				return fmt.Errorf("config: ssh.users[%d].remote_user is required", i)
+			}
+			// The login name a client types has to be able to be this exactly, or
+			// the entry is unreachable rather than merely unused.
+			if u.VMName == "" || strings.ContainsAny(u.VMName, " \t@:") {
+				return fmt.Errorf("config: ssh.users[%d].vm_name %q is not a usable ssh login name", i, u.VMName)
 			}
 			if err := validHostPort(fmt.Sprintf("ssh.users[%d].target", i), u.Target); err != nil {
 				return err
