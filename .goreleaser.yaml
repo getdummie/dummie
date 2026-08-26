@@ -60,20 +60,28 @@ builds:
 
 # One entry per binary. A single entry listing every build id would group them
 # by target platform instead -- one tarball per OS/arch holding all three.
+#
+# `files: [none*]` is goreleaser's documented way to say "binary only". Without
+# it the default globs (readme*, license*, changelog*) are walked from the repo
+# root, which here includes the live clickhouse-data volume -- and a temp file
+# vanishing mid-walk fails the release.
 archives:
   - id: dpipe
     ids: [dpipe]
     formats: [tar.gz]
+    files: [none*]
     name_template: "dpipe_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
   - id: dproxy
     ids: [dproxy]
     formats: [tar.gz]
+    files: [none*]
     name_template: "dproxy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
   - id: dclient
     ids: [dclient]
     formats: [tar.gz]
+    files: [none*]
     name_template: "dclient_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
