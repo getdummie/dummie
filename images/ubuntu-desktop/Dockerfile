@@ -53,6 +53,7 @@ RUN set -ex \
 # which isn't available during `docker build`. The service is idempotent, so it also works
 # for ephemeral VMs whose root is wiped every boot.
 RUN set -ex \
+  && systemctl enable sshd \
   && install -d -m 0755 /etc/gnome-remote-desktop \
   && openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
        -subj "/CN=ubuntu-desktop" \
