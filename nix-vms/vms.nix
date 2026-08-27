@@ -46,8 +46,8 @@
   # };
   qemu-host = {
     cpu = 4;
-    mem = 1024; # MiB
-    diskSize = "6G"; # rootfs image size
+    mem = 4096; # MiB
+    diskSize = "20G"; # rootfs image size (sparse; guest images need room to build)
 
     # true  = pristine root every boot, changes discarded on shutdown
     # false = persistent root (writes survive reboots)
