@@ -18,6 +18,18 @@ scripts/config --enable  CONFIG_EXT4_FS
 scripts/config --enable  CONFIG_BLOCK
 scripts/config --enable  CONFIG_DEVTMPFS
 scripts/config --enable  CONFIG_DEVTMPFS_MOUNT
+# squashfs read-only rootfs, straight off virtio-blk. All four decompressors are
+# on because the compressor is a property of the image, not of the kernel.
+scripts/config --enable  CONFIG_SQUASHFS
+scripts/config --enable  CONFIG_SQUASHFS_ZLIB
+scripts/config --enable  CONFIG_SQUASHFS_LZ4
+scripts/config --enable  CONFIG_SQUASHFS_LZO
+scripts/config --enable  CONFIG_SQUASHFS_XZ
+scripts/config --enable  CONFIG_SQUASHFS_ZSTD
+scripts/config --enable  CONFIG_SQUASHFS_XATTR       # container images carry security.* xattrs
+scripts/config --enable  CONFIG_SQUASHFS_FILE_DIRECT
+scripts/config --enable  CONFIG_SQUASHFS_DECOMP_MULTI_PERCPU
+scripts/config --enable  CONFIG_BLK_DEV_LOOP         # needed only to mount a .squashfs file
 
 # 3. Directory sharing (virtiofs + 9p — both, so you can pick later)
 
