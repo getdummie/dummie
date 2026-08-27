@@ -30,9 +30,16 @@ RUN set -ex \
     dbus-x11 \
     libgl1-mesa-dri \
     openssl \
+    neovim \
+    firefox \
+    chromium
+
+RUN set -ex \
   && echo 'root:root' | chpasswd \
   && apt clean \
   && systemctl enable ssh \
+  && systemctl enable systemd-resolved \
+  && systemctl enable systemd-networkd \
   && systemctl enable systemd-resolved \
   && systemctl set-default graphical.target \
   && mkdir -p /root/.ssh \
@@ -53,7 +60,6 @@ RUN set -ex \
 # which isn't available during `docker build`. The service is idempotent, so it also works
 # for ephemeral VMs whose root is wiped every boot.
 RUN set -ex \
-  && systemctl enable sshd \
   && install -d -m 0755 /etc/gnome-remote-desktop \
   && openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
        -subj "/CN=ubuntu-desktop" \
@@ -65,6 +71,14 @@ RUN set -ex \
   && printf '[Unit]\nDescription=Configure gnome-remote-desktop RDP\nAfter=gnome-remote-desktop.service systemd-user-sessions.service\nWants=gnome-remote-desktop.service\n\n[Service]\nType=oneshot\nExecStart=/usr/local/sbin/grd-config.sh\nRemainAfterExit=yes\n\n[Install]\nWantedBy=graphical.target\n' \
      > /etc/systemd/system/grd-config.service \
   && systemctl enable grd-config.service
+
+RUN cat > /etc/systemd/network/10-eth0.network <<'EOF'
+[Match]
+Name=eth0
+
+[Network]
+DHCP=ipv4
+EOF
 
 USER ubuntu
 RUN set -ex \

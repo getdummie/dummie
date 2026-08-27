@@ -41,7 +41,6 @@ RUN set -ex \
 # This TigerVNC keeps its files under ~/.config/tigervnc (with ~/.vnc as a symlink);
 # creating them there up front avoids the "could not migrate ~/.vnc" first-run failure.
 RUN set -ex \
-  && systemctl enable sshd \
   && install -d -m 0700 -o ubuntu -g ubuntu /home/ubuntu/.config/tigervnc \
   && ln -s .config/tigervnc /home/ubuntu/.vnc \
   && printf '#!/bin/sh\nunset SESSION_MANAGER\nunset DBUS_SESSION_BUS_ADDRESS\nexec startxfce4\n' \
