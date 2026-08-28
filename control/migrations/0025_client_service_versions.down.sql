@@ -1,0 +1,9 @@
+ALTER TABLE clients
+    DROP COLUMN dclient_version,
+    DROP COLUMN dclient_download_url,
+    DROP COLUMN dpipe_version,
+    DROP COLUMN dpipe_download_url,
+    DROP COLUMN proxy_version,
+    DROP COLUMN proxy_download_url,
+    DROP COLUMN dpipe_installed_version,
+    DROP COLUMN proxy_installed_version;

@@ -239,22 +239,14 @@ const exampleConfig = `# control_url: https://control.example.com
 #   dns: 1.1.1.1
 #   queues: 4               # the suricata service will spin up the same number of queues
 #
-# download_url is either the binary itself or a .tar.gz holding it, decided by
-# the suffix -- so a release asset can be named directly:
+# There is nothing here about dpipe, dproxy or vector. Which build of each one this
+# host runs is set per host in the control server, on the client's own page, next to
+# the version it reports. Leave a version empty there and the host tracks the
+# control server's own; set a download_url beside it to run a custom build on this
+# machine without cutting a release for it.
 #
-# dpipe:
-#   enable: false           # generates /etc/dpipe/keys/* on first start if absent
-#   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dpipe_0.0.4_linux_amd64.tar.gz
-#
-# dproxy:
-#   enable: false
-#   download_url: https://github.com/getdummie/dummie/releases/download/v0.0.4/dproxy_0.0.4_linux_amd64.tar.gz
-#
-# vector:
-#   enable: false           # ships suricata's eve.json to clickhouse; needs suricata.
-#                           # no version or url here: which release runs, and which
-#                           # clickhouse it ships to, come from the control server's
-#                           # settings, so the fleet moves together
+# A connect installs whatever this host is missing and nothing else. Replacing a
+# binary that is already running is the Upgrade button on that page, per host.
 `
 
 // ensureGroup creates the group if it is missing. groupadd rather than writing

@@ -108,20 +108,31 @@ func TestGenerateProxyConfigOneVMPerUser(t *testing.T) {
 	}
 }
 
-// A host whose VMs were all destroyed must produce empty collections, not
-// missing keys: "nothing is published" and "not configured" should not look
-// alike.
+// A host whose VMs were all destroyed -- or which has just enrolled -- has to get
+// a file proxy will actually start on. It publishes nothing either way, but the
+// two halves express that differently, and the difference is not cosmetic:
+//
+//   - the http table is emitted empty, because http is the ingress that keeps
+//     proxy a valid configuration at all, and an empty table routes nothing
+//   - the ssh block is omitted entirely, because proxy refuses to load an ssh
+//     ingress with no users, so spelling it `users: []` produced a config no such
+//     host could start on
+//
+// Both mean "nobody may connect". Only one of them loads.
 func TestGenerateProxyConfigEmptyHost(t *testing.T) {
 	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil)
-	if !strings.Contains(out, "users: []") {
-		t.Errorf("an empty host did not emit an empty user list:\n%s", out)
+	if strings.Contains(out, "ssh:") {
+		t.Errorf("an empty host emitted an ssh block, which proxy will not start on:\n%s", out)
 	}
 	if !strings.Contains(out, "hosts: {}") {
 		t.Errorf("an empty host did not emit an empty host table:\n%s", out)
 	}
+	// The zero value is what distinguishes an absent block, the same way it does
+	// for https above.
 	got := parseProxyConfig(t, out)
-	if len(got.SSH.Users) != 0 {
-		t.Errorf("got %d users, want 0", len(got.SSH.Users))
+	if got.SSH.Listen != "" || len(got.SSH.Users) != 0 {
+		t.Errorf("got an ssh block (listen %q, %d users), want none at all",
+			got.SSH.Listen, len(got.SSH.Users))
 	}
 	if len(got.HTTP.Hosts) != 0 {
 		t.Errorf("got %d http hosts, want 0", len(got.HTTP.Hosts))

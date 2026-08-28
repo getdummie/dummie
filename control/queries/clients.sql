@@ -129,3 +129,36 @@ UPDATE clients
 SET domain_id = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: UpdateClientInstalledVersions :exec
+-- UpdateClientInstalledVersions records what dpipe and dproxy actually are on the
+-- host, as the host itself reported them.
+--
+-- Written through rather than merged: an empty value means the host could not say,
+-- which is a fact about the host now and not a reason to keep showing what it said
+-- last time. :exec because nothing waits on the row -- it is a report arriving,
+-- not a change being made.
+UPDATE clients
+SET dpipe_installed_version = $2,
+    proxy_installed_version = $3,
+    updated_at              = now()
+WHERE id = $1;
+
+-- name: UpdateClientServiceVersions :one
+-- UpdateClientServiceVersions sets which build of dclient, dpipe and dproxy this
+-- host should run. All six together rather than one at a time: an operator moving
+-- a host onto a release moves all three, and a partial write would leave the host
+-- running a mixture nobody asked for.
+--
+-- An empty version means "track this control server's version"; an empty url
+-- means "build it from the version".
+UPDATE clients
+SET dclient_version      = $2,
+    dclient_download_url = $3,
+    dpipe_version        = $4,
+    dpipe_download_url   = $5,
+    proxy_version        = $6,
+    proxy_download_url   = $7,
+    updated_at           = now()
+WHERE id = $1
+RETURNING *;

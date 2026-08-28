@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"control/internal/proto"
@@ -42,12 +41,6 @@ const (
 	// batches clickhouse has not accepted yet. It refuses to start without it.
 	vectorDataDir = "/var/lib/vector"
 )
-
-// vectorVersionRe mirrors the control server's validation. Checked again here
-// because this is where the value becomes a URL whose contents are installed
-// and executed as root, and an client should not depend on the server having
-// been careful.
-var vectorVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 // vectorUnitTemplate is separate from managedUnitTemplate: vector takes
 // --config rather than -config, needs no runtime directory, and must not be
@@ -96,20 +89,17 @@ func vectorDownloadURL(version string) string {
 // changed so the caller can say so, and restarts vector only when something did
 // -- the server pushes one of these on every connect, and restarting each time
 // would drop the read checkpoint's benefit for no reason.
+// Whether a host takes part is no longer its own decision: the empty config the
+// server sends when it has no clickhouse endpoint is the only "off" there is.
 func applyVectorConfig(ctx context.Context, data string, want proto.VectorConfig) (bool, error) {
-	// Read here rather than passed in: `dclient connect` does not otherwise hold
-	// the config, and the answer only matters when a push arrives.
-	dcfg, err := loadConfig("")
-	if err != nil {
-		return false, fmt.Errorf("could not read the dclient config: %w", err)
-	}
-	if !dcfg.Vector.Enable {
-		return false, errors.New("vector is not enabled on this host, so the config was not installed")
-	}
 	if want.Config == "" {
 		return false, errors.New("no clickhouse url is set in the control server settings, so vector was not installed")
 	}
-	if !vectorVersionRe.MatchString(want.Version) {
+	// releaseVersionRe mirrors the control server's validation, and is checked
+	// again here because this is where the value becomes a URL whose contents are
+	// installed and executed as root -- a client should not depend on the server
+	// having been careful.
+	if !releaseVersionRe.MatchString(want.Version) {
 		return false, fmt.Errorf("%q is not a vector release number", want.Version)
 	}
 
@@ -282,16 +272,14 @@ func installFromReader(r io.Reader, dst string) error {
 // It deliberately installs nothing. The config and the version come from the
 // control server, and a host that has never heard from one has nothing to write
 // -- it gets vector on its first connect instead.
-func ensureVectorRunning(ctx context.Context, cfg VectorService) {
-	if !cfg.Enable {
-		return
-	}
+func ensureVectorRunning(ctx context.Context) {
 	if _, err := os.Stat(vectorConfigPath); err != nil {
-		log.Print("vector is enabled but not configured yet; the control server sends its config on connect")
+		// Not a warning: a host with no control server, or one whose fleet has no
+		// clickhouse configured, is expected to reach here forever.
 		return
 	}
 	if _, err := os.Stat(vectorBinary()); err != nil {
-		log.Print("vector is enabled and configured but the binary is missing; it is reinstalled on the next connect")
+		log.Print("vector is configured but the binary is missing; it is reinstalled on the next connect")
 		return
 	}
 	if err := systemctl(ctx, "enable", "--now", vectorService+".service"); err != nil {
@@ -304,20 +292,16 @@ func ensureVectorRunning(ctx context.Context, cfg VectorService) {
 // checkVector is the doctor's read of the shipper. A stopped vector is a
 // warning rather than a failure: nothing about running VMs depends on it, and
 // the only casualty is the record of what their traffic did.
+// A host with no config is a pass rather than a warning: the fleet's clickhouse
+// endpoint is what decides whether vector is installed anywhere, and a host that
+// was never sent one has nothing wrong with it.
 func checkVector() (result, string) {
-	cfg, err := loadConfig("")
-	if err != nil {
-		return warn, "could not read the dclient config: " + err.Error()
-	}
-	if !cfg.Vector.Enable {
-		return pass, "vector is off; suricata events are not being shipped"
-	}
 	if _, err := os.Stat(vectorConfigPath); err != nil {
-		return warn, "vector is on but has no config yet; the control server sends one on connect"
+		return pass, "vector is not configured on this host; suricata events are not being shipped"
 	}
 	out, _ := exec.Command("systemctl", "is-active", vectorService+".service").Output()
 	if strings.TrimSpace(string(out)) != "active" {
-		return warn, "vector is on but the unit is not active; suricata events are not reaching clickhouse"
+		return warn, "vector is configured but the unit is not active; suricata events are not reaching clickhouse"
 	}
 	return pass, "vector is running"
 }

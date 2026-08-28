@@ -30,3 +30,6 @@ sql:
           memory_limit_mib: "MemoryLimitMiB"
           disk_limit_mib: "DiskLimitMiB"
           disk_mib: "DiskMiB"
+          dclient_download_url: "DclientDownloadURL"
+          dpipe_download_url: "DpipeDownloadURL"
+          proxy_download_url: "ProxyDownloadURL"

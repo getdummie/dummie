@@ -261,6 +261,16 @@ func (h *ClientHandler) serveClient(client db.Client, clientID, remoteIP string,
 	}
 	log.Printf("client %s connected (hostname=%s ip=%s)", clientID, client.Hostname, remoteIP)
 
+	// First, because everything below it is a config file for a binary this
+	// installs: on a host that has just enrolled, dpipe and dproxy do not exist
+	// until this arrives, and a config that lands before its unit does has nothing
+	// to restart. The client tolerates that order anyway -- it writes the file and
+	// leaves the start to this job -- but there is no reason to rely on it.
+	//
+	// Unforced, so this only ever fills in what the host is missing. Upgrading an
+	// installed binary is an operator's decision made per host, not something a
+	// reconnect does -- see pushServicesConfig.
+	pushServicesConfig(ctx, h.q, h.hub, client, false)
 	// The host may have been offline while destinations were added or removed, so
 	// its local.rules is only trustworthy once this server has written it. Sent on
 	// every connect rather than only when something changed: dclient's copy is not
@@ -324,6 +334,9 @@ func (h *ClientHandler) handshake(ctx context.Context, conn *clientConn, client 
 	}); err != nil {
 		log.Printf("client %s: could not update facts: %v", clientID, err)
 	}
+	// The companions' builds are facts about the host in the same way, but they
+	// arrive from a job result as well as from here, so they have their own query.
+	recordInstalledVersions(hctx, h.q, client.ID, clientID, hello.Services)
 
 	ack, err := proto.NewEnvelope(proto.TypeHelloAck, env.ID, proto.HelloAck{
 		ClientID:   clientID,
@@ -415,6 +428,17 @@ func (h *ClientHandler) handleResult(ctx context.Context, client db.Client, clie
 		if !res.OK {
 			log.Printf("client %s: could not apply the vector config: %s", clientID, res.Error)
 		}
+		return
+	}
+	// A services job settles no row either, but unlike the rest it reports a fact
+	// worth keeping: which build of each companion the host ended up with. Recorded
+	// on a failure too, since a job that installed one of the two and not the other
+	// still moved something.
+	if res.Kind == proto.KindServicesConfig {
+		if !res.OK {
+			log.Printf("client %s: could not apply the services config: %s", clientID, res.Error)
+		}
+		recordInstalledVersions(ctx, h.q, client.ID, clientID, res.Services)
 		return
 	}
 

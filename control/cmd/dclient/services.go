@@ -14,8 +14,12 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"time"
+
+	"control/internal/proto"
 )
 
 // dclient installs and runs two companion binaries, proxy and dpipe, as systemd
@@ -49,15 +53,56 @@ const (
 	downloadTimeout = 5 * time.Minute
 )
 
-// ServiceConfig is one managed companion binary.
-type ServiceConfig struct {
-	Enable bool `yaml:"enable"`
+// releaseURLTemplate is where a named release lives. The host builds this itself
+// from the version the control server sent, rather than being handed a finished
+// URL, for the same reason vector's is built here: the release layout is a fact
+// about this repo's builds, and a server that composed it would be a second place
+// that has to be right about it.
+//
+// runtime.GOARCH rather than a fixed amd64: goreleaser names its archives with
+// the same strings Go does, and this fleet is not all one architecture.
+const releaseURLTemplate = "https://github.com/getdummie/dummie/releases/download/v%s/%s_%s_linux_%s.tar.gz"
 
-	// DownloadURL is where the binary comes from. Changing it is what triggers a
-	// re-download: the URL is normally the only thing that carries a version, and
-	// an operator who points at a new one means to run it.
-	DownloadURL string `yaml:"download_url"`
+// releaseVersionRe mirrors the control server's validation. Checked again here
+// because this is where the value becomes a URL whose contents are installed and
+// executed as root, and a client should not depend on the server having been
+// careful.
+var releaseVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+
+func releaseURL(name, version string) string {
+	return fmt.Sprintf(releaseURLTemplate, version, name, version, runtime.GOARCH)
 }
+
+// resolveRelease turns what the control server said into the URL to fetch.
+//
+// The explicit URL wins when it is set, which is the whole point of having both:
+// a version moves a host onto a cut release, and a URL puts a build that was
+// never released onto one host without pretending it was.
+//
+// errNoRelease rather than a failure when neither is set. That is what a control
+// server with no version of its own -- a development build -- sends, and it means
+// "nothing to install", not "something went wrong".
+func resolveRelease(name string, rel proto.ServiceRelease) (string, error) {
+	if rel.DownloadURL != "" {
+		if err := checkDownloadURL(rel.DownloadURL); err != nil {
+			return "", err
+		}
+		return rel.DownloadURL, nil
+	}
+	if rel.Version == "" {
+		return "", errNoRelease
+	}
+	if !releaseVersionRe.MatchString(rel.Version) {
+		return "", fmt.Errorf("%q is not a release number", rel.Version)
+	}
+	return releaseURL(name, rel.Version), nil
+}
+
+// errNoRelease means the control server named neither a version nor a URL, so
+// there is nothing for this host to install. Sentinel rather than a string so the
+// callers can stay quiet about it: on a fleet run by a development build of the
+// control server it would otherwise be a warning on every connect.
+var errNoRelease = errors.New("no version or download url was named")
 
 // managedUnitTemplate is deliberately as plain as dclient's own unit. These are
 // long-running network daemons that read a config file and handle their own
@@ -176,12 +221,14 @@ http:
   hosts: {}
   default: ""
 
-# Empty, not absent: the control server fills this in, and until it does nobody
-# may connect. A missing key would read as "not configured" instead.
-ssh:
-  listen: "0.0.0.0:22"
-  reuseport: true
-  users: []
+# No ssh block at all, deliberately. dproxy refuses to start on an ssh listener
+# with no users -- an ingress that can authenticate nobody is a typo in almost
+# every case it appears in a file someone wrote -- and the user list is compiled
+# from who owns which VM, so this host cannot write one. Absent is how "not
+# configured yet" is spelled: dproxy reads it as no ssh ingress, which is the
+# closed reading, and the first push from the control server adds the block.
+#
+# So the bootstrap dproxy serves http to an empty host table and nothing else.
 
 dial_timeout: 5s
 http_sniff_timeout: 5s
@@ -209,14 +256,21 @@ func sourceMarker(data, name string) string {
 	return filepath.Join(data, "services", name+".url")
 }
 
-// ensureManagedService brings one companion up to the configured state. It
-// returns an error rather than logging one, so the caller decides whether a
-// service that will not install is fatal.
-func ensureManagedService(ctx context.Context, data, name string, cfg ServiceConfig) error {
-	if !cfg.Enable {
-		return nil
-	}
-	if err := checkDownloadURL(cfg.DownloadURL); err != nil {
+// ensureManagedService brings one companion up to the build the control server
+// named. It returns an error rather than logging one, so the caller decides
+// whether a service that will not install is fatal.
+//
+// There is no enable flag any more: dpipe and dproxy are how anything reaches a
+// guest on this host, so a host that has them off is a host with no reason to be
+// in the fleet. A release nobody has named is the only "off" state left, and that
+// arrives here as errNoRelease.
+// force decides only whether an already-installed binary may be replaced.
+// Everything else here -- the runtime directory, the keys, the unit file, the
+// enable -- is repair that runs either way, because a host whose unit was
+// stopped or whose unit file is out of date should converge on every connect.
+func ensureManagedService(ctx context.Context, data, name string, rel proto.ServiceRelease, force bool) error {
+	src, err := resolveRelease(name, rel)
+	if err != nil {
 		return err
 	}
 
@@ -240,7 +294,7 @@ func ensureManagedService(ctx context.Context, data, name string, cfg ServiceCon
 		return err
 	}
 
-	if err := ensureBinary(ctx, data, name, cfg.DownloadURL); err != nil {
+	if err := ensureBinary(ctx, data, name, src, force); err != nil {
 		return err
 	}
 
@@ -271,13 +325,88 @@ func ensureManagedService(ctx context.Context, data, name string, cfg ServiceCon
 	return systemctl(ctx, "enable", "--now", name+".service")
 }
 
+// installedServiceVersion asks the binary on disk what it is, and returns "" if
+// it cannot say -- it is not there, it is not executable, or it is old enough not
+// to understand the flag.
+//
+// Asked of the binary rather than derived from the marker file, which only records
+// the URL it was fetched from: that says nothing about a host provisioned by hand,
+// and a release URL is only a claim about what is inside the tarball.
+//
+// Both companions print "<name> <version> (<commit>, <date>)", so the version is
+// the second field.
+func installedServiceVersion(ctx context.Context, name string) string {
+	out, err := exec.CommandContext(ctx, serviceBinary(name), "-version").Output()
+	if err != nil {
+		return ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 2 {
+		return ""
+	}
+	return fields[1]
+}
+
+// installedServicesState is what the host reports upward: the build of each
+// companion as it is on disk. dclient's own version is reported separately, as
+// part of the hello, because it is this process rather than something it manages.
+//
+// One budget for the whole read rather than one per binary, because this runs
+// before the hello is sent and the server gives that a deadline of its own: two
+// hung binaries with a timeout each would add up to most of it and cost the host
+// its handshake. A binary that cannot answer in this long reports nothing, which
+// is the same as any other failure to answer.
+func installedServicesState(ctx context.Context) *proto.ServicesState {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	return &proto.ServicesState{
+		Dpipe: installedServiceVersion(ctx, dpipeService),
+		Proxy: installedServiceVersion(ctx, proxyService),
+	}
+}
+
+// serviceInstalled reports whether a previous push put this companion's unit
+// down. Used to decide whether a pushed config has anything to restart yet: on a
+// host that has just enrolled, a config can arrive before the job that installs
+// the binary it configures.
+func serviceInstalled(name string) bool {
+	_, err := os.Stat(serviceUnitPath(name))
+	return err == nil
+}
+
+// ensureManagedServicesRunning is the startup half, and the counterpart of
+// ensureVectorRunning: it re-enables and starts companions a previous push
+// already installed, so an operator's `systemctl stop` does not outlive a dclient
+// restart.
+//
+// It deliberately installs nothing. Which build to run comes from the control
+// server, and a start has not heard from one yet -- a host with no control server
+// never gets these at all, and one that has gets them on its first connect.
+func ensureManagedServicesRunning(ctx context.Context) {
+	for _, name := range []string{proxyService, dpipeService} {
+		if !serviceInstalled(name) {
+			continue
+		}
+		if _, err := os.Stat(serviceBinary(name)); err != nil {
+			log.Printf("%s has a unit but no binary; it is reinstalled on the next connect", name)
+			continue
+		}
+		if err := systemctl(ctx, "enable", "--now", name+".service"); err != nil {
+			log.Printf("WARNING: %s: %v", name, err)
+			continue
+		}
+		log.Printf("%s is installed and running as %s.service", name, name)
+	}
+}
+
 // checkDownloadURL rejects a URL that cannot be fetched at all, and warns about
 // one that can be tampered with. Plain http is allowed because the artifact
 // server is expected to be on the fleet's own network, but the file it serves is
 // executed as root, so whoever can answer for that host owns this one.
 func checkDownloadURL(raw string) error {
 	if strings.TrimSpace(raw) == "" {
-		return errors.New("enabled but download_url is empty")
+		return errors.New("the download url is empty")
 	}
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
@@ -296,18 +425,33 @@ func checkDownloadURL(raw string) error {
 	return nil
 }
 
-// ensureBinary downloads the binary if it is missing or if it came from a
-// different URL than the one now configured. Anything else -- a rebuild
-// published at the same URL, say -- is left alone: re-fetching on every start
-// would restart a working service on every boot.
-func ensureBinary(ctx context.Context, data, name, src string) error {
+// ensureBinary installs the binary if it is missing, and replaces one that came
+// from a different URL only when force says an operator asked for it.
+//
+// A rebuild published at the same URL is not re-fetched either way: the marker is
+// the URL, so nothing about it moved, and re-downloading on every connect would
+// restart a working service for no reason.
+//
+// The unforced case is why a host that is behind stays behind until someone says
+// otherwise. It is logged rather than silent, because "this host is not running
+// what the control plane says it should" is exactly the thing an operator reading
+// the journal wants to find.
+func ensureBinary(ctx context.Context, data, name, src string, force bool) error {
 	marker := sourceMarker(data, name)
 	installed, err := os.ReadFile(marker)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if _, err := os.Stat(serviceBinary(name)); err == nil && strings.TrimSpace(string(installed)) == src {
-		return nil
+	_, statErr := os.Stat(serviceBinary(name))
+	if statErr == nil {
+		if strings.TrimSpace(string(installed)) == src {
+			return nil
+		}
+		if !force {
+			log.Printf("%s is installed from a different build than %s; upgrade it from the control server to move it",
+				name, src)
+			return nil
+		}
 	}
 
 	if err := downloadBinary(ctx, src, serviceBinary(name)); err != nil {

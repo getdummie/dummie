@@ -149,14 +149,6 @@ func applyCoreDNSConfig(ctx context.Context, config string) (bool, error) {
 // handover: the control server sends one on every connect, and a handover per
 // connect would be a new process every few seconds.
 func applyDpipeConfig(ctx context.Context, config string, certs *proto.DpipeCerts) (bool, error) {
-	cfg, err := loadConfig("")
-	if err != nil {
-		return false, fmt.Errorf("could not read the dclient config: %w", err)
-	}
-	if !cfg.Dpipe.Enable {
-		return false, errors.New("dpipe is not enabled on this host, so the config was not installed")
-	}
-
 	if !strings.HasSuffix(config, "\n") {
 		config += "\n"
 	}
@@ -187,6 +179,14 @@ func applyDpipeConfig(ctx context.Context, config string, certs *proto.DpipeCert
 		if err := writeFileAtomic(path, []byte(config), 0o644); err != nil {
 			return false, err
 		}
+	}
+
+	// Same as the proxy config: on a host that has just enrolled this file can
+	// arrive before the job that installs dpipe, and that install starts the unit
+	// with what is already on disk.
+	if !serviceInstalled(dpipeService) {
+		log.Printf("wrote %s before %s was installed; it starts with that config", path, dpipeService)
+		return true, nil
 	}
 
 	if err := reloadService(ctx, dpipeService); err != nil {

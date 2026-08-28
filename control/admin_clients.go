@@ -172,6 +172,28 @@ type clientDTO struct {
 	// Domain. Both, because the screen shows one and edits the other.
 	DomainID string `json:"domain_id"`
 
+	// Which build of each managed binary this host is meant to run. A version is
+	// a bare release number the host turns into a github release URL; the URL
+	// beside it overrides that when set, which is how a custom build gets onto one
+	// machine. Both "" means "track this control server's own version", so the
+	// screen shows them empty rather than inventing a value the row does not hold.
+	//
+	// ClientVersion above is the other half of the pair: this is what the host was
+	// told to run, that is what it reported actually running.
+	DclientVersion     string `json:"dclient_version"`
+	DclientDownloadURL string `json:"dclient_download_url"`
+	DpipeVersion       string `json:"dpipe_version"`
+	DpipeDownloadURL   string `json:"dpipe_download_url"`
+	ProxyVersion       string `json:"proxy_version"`
+	ProxyDownloadURL   string `json:"proxy_download_url"`
+
+	// What the host reports it actually has, read off the binaries themselves. ""
+	// when it has not said -- either the binary is not there or it could not be
+	// asked -- which the screen shows as a dash. dclient's own is ClientVersion
+	// above, since it reports its own build rather than one it manages.
+	DpipeInstalledVersion string `json:"dpipe_installed_version"`
+	ProxyInstalledVersion string `json:"proxy_installed_version"`
+
 	Metrics clientMetricsDTO `json:"metrics"`
 }
 
@@ -217,6 +239,17 @@ func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 		ClientVersion: a.ClientVersion,
 		LastIP:        a.LastIP,
 		CreatedAt:     a.CreatedAt.Time.Format(time.RFC3339),
+
+		DclientVersion:     a.DclientVersion,
+		DclientDownloadURL: a.DclientDownloadURL,
+		DpipeVersion:       a.DpipeVersion,
+		DpipeDownloadURL:   a.DpipeDownloadURL,
+		ProxyVersion:       a.ProxyVersion,
+		ProxyDownloadURL:   a.ProxyDownloadURL,
+
+		DpipeInstalledVersion: a.DpipeInstalledVersion,
+		ProxyInstalledVersion: a.ProxyInstalledVersion,
+
 		Metrics: clientMetricsDTO{
 			CPUCount:       a.CPUCount,
 			CPUPercent:     a.CPUPercent,
@@ -373,5 +406,126 @@ func (h *AdminHandler) SetClientDomain(c *echo.Context) error {
 	if h.certs != nil {
 		h.certs.PushToClient(c.Request().Context(), pgID)
 	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+// updateClientServicesReq names the build of each managed binary a host should
+// run. An empty version means "track this control server's version"; an empty url
+// means "build it from the version".
+type updateClientServicesReq struct {
+	DclientVersion     string `json:"dclient_version"`
+	DclientDownloadURL string `json:"dclient_download_url"`
+	DpipeVersion       string `json:"dpipe_version"`
+	DpipeDownloadURL   string `json:"dpipe_download_url"`
+	ProxyVersion       string `json:"proxy_version"`
+	ProxyDownloadURL   string `json:"proxy_download_url"`
+}
+
+// UpdateClientServices records which builds a host should run. It does not move
+// a host that is already running something: that is UpgradeClientServices, behind
+// a button and a confirmation, because replacing these binaries drops every ssh
+// session on the machine and restarts its control plane.
+//
+// The push it does send is unforced, so it installs anything the host is missing
+// and changes nothing else. That is worth sending now rather than at the next
+// connect: a freshly enrolled host with nothing on it should not wait.
+//
+// All six fields are written together because they are one decision: the three
+// binaries are cut from the same release, and a host part-way between two of them
+// is a combination nobody tested. A request that omits a field clears it, which is
+// how a host goes back to tracking this server's version.
+//
+// Every value is validated before it is stored, not just before it is sent. These
+// end up as URLs whose contents each host installs and runs as root, and the row
+// is read again on every connect -- so a value that was never checked would be a
+// standing instruction rather than a one-off mistake.
+func (h *AdminHandler) UpdateClientServices(c *echo.Context) error {
+	pgID, err := parseUUID(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid client id")
+	}
+
+	var req updateClientServicesReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	params := db.UpdateClientServiceVersionsParams{
+		ID:                 pgID,
+		DclientVersion:     strings.TrimSpace(req.DclientVersion),
+		DclientDownloadURL: strings.TrimSpace(req.DclientDownloadURL),
+		DpipeVersion:       strings.TrimSpace(req.DpipeVersion),
+		DpipeDownloadURL:   strings.TrimSpace(req.DpipeDownloadURL),
+		ProxyVersion:       strings.TrimSpace(req.ProxyVersion),
+		ProxyDownloadURL:   strings.TrimSpace(req.ProxyDownloadURL),
+	}
+	for _, f := range []struct {
+		label   string
+		version string
+		url     string
+	}{
+		{"dclient", params.DclientVersion, params.DclientDownloadURL},
+		{"dpipe", params.DpipeVersion, params.DpipeDownloadURL},
+		{"dproxy", params.ProxyVersion, params.ProxyDownloadURL},
+	} {
+		// An empty version is allowed -- that is how a host goes back to this
+		// server's own -- but a value that is there has to be a release number.
+		if f.version != "" {
+			if err := validateReleaseVersion(f.version); err != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, f.label+" version "+err.Error())
+			}
+		}
+		if err := validateServiceDownloadURL(f.url); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, f.label+" download url "+err.Error())
+		}
+	}
+
+	client, err := h.q.UpdateClientServiceVersions(c.Request().Context(), params)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusNotFound, "no such client")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the client's versions")
+	}
+
+	pushServicesConfig(c.Request().Context(), h.q, h.hub, client, false)
+
+	// No body, like SetClientDomain: the row this returns carries no domain, and
+	// rendering a DTO without one would tell the screen the host lost its domain.
+	// The caller re-reads the client instead.
+	return c.NoContent(http.StatusNoContent)
+}
+
+// UpgradeClientServices moves one host onto the builds recorded against it.
+//
+// Separate from saving them, and the only thing in the control plane that
+// replaces a binary already running on a host. Everything else about this feature
+// converges quietly; this is the one action with a cost -- dproxy comes back with
+// new listeners, dpipe hands its sessions over, and dclient replaces itself and
+// restarts, so the host goes offline for a few seconds.
+//
+// Refused when the host is not connected rather than queued. A queued upgrade
+// would fire at whatever hour the machine next came back, which is not a thing
+// anyone asked for, and the fields are already saved -- so pressing this again
+// when it is up costs nothing.
+func (h *AdminHandler) UpgradeClientServices(c *echo.Context) error {
+	id := c.Param("id")
+	pgID, err := parseUUID(id)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid client id")
+	}
+	if !h.hub.Connected(id) {
+		return echo.NewHTTPError(http.StatusConflict, "this client is not connected, so it cannot be upgraded right now")
+	}
+
+	client, err := h.q.GetClientByID(c.Request().Context(), pgID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "no such client")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not read client")
+	}
+
+	pushServicesConfig(c.Request().Context(), h.q, h.hub, client, true)
 	return c.NoContent(http.StatusNoContent)
 }

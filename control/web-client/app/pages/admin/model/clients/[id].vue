@@ -12,6 +12,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TableCell, TableRow } from '@/components/ui/table'
@@ -52,6 +54,21 @@ interface Client {
   // choice was left to an operator.
   domain: string
   domain_id: string
+  // Which build of each managed binary this host is meant to run. A version is a
+  // bare release number the host turns into a GitHub release URL; the URL beside
+  // it overrides that, and either overrides the fleet default in the settings.
+  // Both "" means this host adds nothing of its own, so they are shown empty
+  // rather than filled in with whatever the fallback would resolve to.
+  dclient_version: string
+  dclient_download_url: string
+  dpipe_version: string
+  dpipe_download_url: string
+  proxy_version: string
+  proxy_download_url: string
+  // What the host reports it actually has, read off the binaries themselves. ""
+  // when it has not said. dclient's own running build is client_version above.
+  dpipe_installed_version: string
+  proxy_installed_version: string
   metrics: ClientMetrics
 }
 
@@ -228,6 +245,97 @@ async function saveDomain() {
   }
   finally {
     savingDomain.value = false
+  }
+}
+
+// --- managed binaries ---
+//
+// A draft for the same reason the domain is one: the page polls every ten
+// seconds, so binding the inputs straight at the client would discard whatever
+// was half-typed when an answer came back.
+const services = reactive({
+  dclient_version: '',
+  dclient_download_url: '',
+  dpipe_version: '',
+  dpipe_download_url: '',
+  proxy_version: '',
+  proxy_download_url: '',
+})
+const savingServices = ref(false)
+const servicesError = ref<string | null>(null)
+
+type ServiceField = keyof typeof services
+
+function serverServices() {
+  const c = client.value
+  return {
+    dclient_version: c?.dclient_version ?? '',
+    dclient_download_url: c?.dclient_download_url ?? '',
+    dpipe_version: c?.dpipe_version ?? '',
+    dpipe_download_url: c?.dpipe_download_url ?? '',
+    proxy_version: c?.proxy_version ?? '',
+    proxy_download_url: c?.proxy_download_url ?? '',
+  }
+}
+
+function seedServices() {
+  Object.assign(services, serverServices())
+}
+
+// Re-seeded whenever the server's answer changes, which is what resets the form
+// after a save. Keyed on the values rather than on the client object, so a poll
+// that returns new metrics does not wipe an edit in progress.
+watch(() => JSON.stringify(serverServices()), seedServices, { immediate: true })
+
+const servicesDirty = computed(() => {
+  const saved = serverServices()
+  return (Object.keys(services) as ServiceField[]).some(k => services[k].trim() !== saved[k])
+})
+
+// Saving records the intent; it never moves a host that is already running
+// something. Upgrading is the separate, confirmed action below -- these binaries
+// carry every live session on the machine, so replacing them is not a side effect
+// of pressing Save.
+const upgradeOpen = ref(false)
+const upgrading = ref(false)
+
+async function confirmUpgrade() {
+  upgrading.value = true
+  servicesError.value = null
+  try {
+    const res = await authFetch(`/admin/clients/${id.value}/services/upgrade`, { method: 'POST' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    upgradeOpen.value = false
+    await load(true)
+  }
+  catch (e) {
+    servicesError.value = e instanceof Error ? e.message : 'Could not upgrade this host'
+  }
+  finally {
+    upgrading.value = false
+  }
+}
+
+async function saveServices() {
+  savingServices.value = true
+  servicesError.value = null
+  try {
+    const body = Object.fromEntries(
+      (Object.keys(services) as ServiceField[]).map(k => [k, services[k].trim()]),
+    )
+    const res = await authFetch(`/admin/clients/${id.value}/services`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await load(true)
+  }
+  catch (e) {
+    servicesError.value = e instanceof Error ? e.message : 'Could not save the versions'
+  }
+  finally {
+    savingServices.value = false
   }
 }
 
@@ -473,6 +581,106 @@ async function confirmDelete() {
         </dl>
       </section>
 
+      <!-- managed binaries -->
+      <!-- The host used to name these itself in /etc/dclient/config.yaml, which
+           made upgrading the fleet an ssh loop and left nothing here able to say
+           what any machine was running. They are pushed on every connect, so an
+           edit takes effect as soon as the host is reachable. -->
+      <section aria-labelledby="services-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
+        <h2 id="services-heading" class="text-sm font-semibold">Managed binaries</h2>
+        <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+          Which build of each binary this host should run, and what it reports actually running.
+          Anything set here wins for this host alone — a download URL over a version, and either over
+          the fleet defaults. Leave both blank and the host follows the download URL in
+          <NuxtLink to="/admin/model/settings" class="underline">Settings</NuxtLink>, or the published
+          release for the control server's own version if that is blank too.
+        </p>
+        <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
+          Saving records what this host should run and installs anything it is missing. It does not move
+          a binary that is already there — nothing does that on its own, not a reconnect and not a
+          control server deploy. <span class="text-foreground">Upgrade now</span> is what moves it.
+        </p>
+
+        <form class="mt-4 space-y-4" :aria-busy="savingServices" @submit.prevent="saveServices">
+          <div class="grid gap-4 lg:grid-cols-3">
+            <div
+              v-for="svc in [
+                { key: 'dclient', label: 'dclient', version: 'dclient_version', url: 'dclient_download_url', running: 'client_version' },
+                { key: 'dpipe', label: 'dpipe', version: 'dpipe_version', url: 'dpipe_download_url', running: 'dpipe_installed_version' },
+                { key: 'dproxy', label: 'dproxy', version: 'proxy_version', url: 'proxy_download_url', running: 'proxy_installed_version' },
+              ] as const"
+              :key="svc.key"
+              class="space-y-2 rounded-md border border-border p-3"
+            >
+              <div class="flex items-baseline justify-between gap-2">
+                <p class="eyebrow text-muted-foreground">{{ svc.label }}</p>
+                <!-- What the host says it is actually running, as opposed to the
+                     two fields below it, which are what it has been told to run. A
+                     dash means it has not reported: the binary is not installed,
+                     or it is and could not be asked. -->
+                <p class="font-mono text-xs text-muted-foreground">
+                  running <span class="text-foreground">{{ client[svc.running] || '—' }}</span>
+                </p>
+              </div>
+              <div class="space-y-1">
+                <Label :for="`${svc.key}-version`" class="font-mono text-xs">Version</Label>
+                <Input
+                  :id="`${svc.key}-version`"
+                  v-model="services[svc.version]"
+                  class="font-mono text-sm"
+                  placeholder="fleet default"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="space-y-1">
+                <Label :for="`${svc.key}-url`" class="font-mono text-xs">Download URL</Label>
+                <Input
+                  :id="`${svc.key}-url`"
+                  v-model="services[svc.url]"
+                  class="font-mono text-sm"
+                  placeholder="from the version, or the fleet default"
+                  spellcheck="false"
+                />
+              </div>
+            </div>
+          </div>
+
+          <FormError id="services-error" :message="servicesError" />
+
+          <div class="flex items-center gap-3">
+            <Button type="submit" class="font-mono text-xs" :disabled="savingServices || !servicesDirty">
+              {{ savingServices ? 'Saving…' : 'Save' }}
+            </Button>
+            <Button
+              v-if="servicesDirty"
+              type="button"
+              variant="outline"
+              class="font-mono text-xs"
+              :disabled="savingServices"
+              @click="seedServices"
+            >
+              Reset
+            </Button>
+
+            <!-- Refused server-side for a host that is not connected, so it is
+                 disabled here rather than failing after the confirmation. Unsaved
+                 edits are not what would be applied, so it waits for a Save. -->
+            <Button
+              type="button"
+              variant="outline"
+              class="ml-auto font-mono text-xs"
+              :disabled="!client.connected || servicesDirty || savingServices"
+              :title="!client.connected
+                ? 'This host is not connected'
+                : servicesDirty ? 'Save the versions first' : undefined"
+              @click="upgradeOpen = true"
+            >
+              Upgrade now
+            </Button>
+          </div>
+        </form>
+      </section>
+
       <!-- metrics -->
       <section aria-labelledby="metrics-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="metrics-heading" class="text-sm font-semibold">Resources</h2>
@@ -574,6 +782,32 @@ async function confirmDelete() {
         </DataTable>
       </section>
     </template>
+
+    <!-- upgrade confirm -->
+    <Dialog v-model:open="upgradeOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Upgrade managed binaries</DialogTitle>
+          <DialogDescription>
+            Installs the recorded builds on
+            <span class="font-mono text-foreground">{{ client?.hostname || client?.machine_id }}</span>,
+            replacing anything already there. dproxy restarts, which drops the SSH sessions this host is
+            carrying; dpipe hands its own over. If the dclient version moved, dclient replaces itself and
+            restarts, so this page shows the host offline for a few seconds before it reports back on the
+            new version. VMs already running keep running throughout.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="upgrade-client-error" :message="servicesError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button class="font-mono text-xs" :disabled="upgrading" @click="confirmUpgrade">
+            {{ upgrading ? 'Upgrading…' : 'Upgrade' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <!-- revoke confirm -->
     <Dialog v-model:open="revokeOpen">

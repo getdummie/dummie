@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -30,21 +29,6 @@ import (
 // every connect and on every inventory tick, and restarting proxy each time
 // would drop every live ssh session on the host every few seconds.
 func applyProxyConfig(ctx context.Context, cfg proto.ProxyConfig) (bool, error) {
-	// Read here rather than passed in: `dclient connect` does not otherwise hold
-	// the config, and the answer only matters when a file arrives.
-	//
-	// With proxy disabled there is no unit to restart and nothing reads the file,
-	// so writing it would leave a routing table on disk that nothing serves and
-	// that would take effect the day someone enabled the feature. Saying so is
-	// more useful than silently half-doing it.
-	dcfg, err := loadConfig("")
-	if err != nil {
-		return false, fmt.Errorf("could not read the dclient config: %w", err)
-	}
-	if !dcfg.Proxy.Enable {
-		return false, errors.New("proxy is not enabled on this host, so the config was not installed")
-	}
-
 	config := cfg.Config
 	if !strings.HasSuffix(config, "\n") {
 		config += "\n"
@@ -80,6 +64,16 @@ func applyProxyConfig(ctx context.Context, cfg proto.ProxyConfig) (bool, error) 
 		if err := writeFileAtomic(path, []byte(config), 0o644); err != nil {
 			return false, err
 		}
+	}
+
+	// On a host that has just enrolled the unit may not exist yet: the config and
+	// the job that installs the binary are separate pushes, run in their own
+	// goroutines, so either can land first. The file is what matters -- the install
+	// enables the unit itself -- and restarting a unit that is not there would
+	// report a failure for work that is about to happen anyway.
+	if !serviceInstalled(proxyService) {
+		log.Printf("wrote %s before %s was installed; it starts with that config", path, proxyService)
+		return true, nil
 	}
 
 	// restart, not reload: proxy holds listening sockets and reads its config once

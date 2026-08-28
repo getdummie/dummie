@@ -29,22 +29,19 @@ type Config struct {
 	Features Features      `yaml:"features"`
 	Network  NetworkConfig `yaml:"network"`
 
-	// Companion binaries dclient downloads and runs as systemd units. Off by
-	// default like everything else that changes the host.
-	Proxy ServiceConfig `yaml:"dproxy"`
-	Dpipe ServiceConfig `yaml:"dpipe"`
-
-	// Vector ships suricata's events off the host. It has no download_url or
-	// version here because both, and the clickhouse it ships to, are fleet-wide
-	// decisions made in the control server's settings -- this only says whether
-	// the host takes part.
-	Vector VectorService `yaml:"vector"`
-}
-
-// VectorService is the host's half of the vector decision: on or off. What it
-// runs and where it ships arrive over the control link.
-type VectorService struct {
-	Enable bool `yaml:"enable"`
+	// The companion binaries dclient installs and runs as systemd units -- dpipe,
+	// dproxy and vector -- used to be configured here, each with an enable flag and
+	// a download_url. All of it moved to the control server: which build a host runs
+	// is a fleet decision, and having every machine hold its own answer meant an
+	// upgrade was an ssh loop and nothing in the control plane knew what any host
+	// was actually running.
+	//
+	// The three sections are still parsed so that a config written for an older
+	// build gets told, rather than an operator finding their download_url quietly
+	// ignored. Nothing reads the contents.
+	LegacyDpipe  *yaml.Node `yaml:"dpipe"`
+	LegacyProxy  *yaml.Node `yaml:"dproxy"`
+	LegacyVector *yaml.Node `yaml:"vector"`
 }
 
 // Features is every part of `serve` that changes something outside dclient's own
@@ -185,6 +182,19 @@ func warnIfMoved(path string, cfg Config) {
 	}
 	if cfg.Network.NoDockerCompat != nil {
 		log.Printf("WARNING: %s sets network.no_docker_compat, which is now features.docker_compat (off by default) and is being ignored", path)
+	}
+	for _, moved := range []struct {
+		section string
+		node    *yaml.Node
+	}{
+		{"dpipe", cfg.LegacyDpipe},
+		{"dproxy", cfg.LegacyProxy},
+		{"vector", cfg.LegacyVector},
+	} {
+		if moved.node != nil {
+			log.Printf("WARNING: %s sets %s, which the control server now decides per host and is being ignored",
+				path, moved.section)
+		}
 	}
 }
 

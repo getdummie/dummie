@@ -344,6 +344,10 @@ func sendHello(ctx context.Context, ws *websocket.Conn) error {
 		// renumbers a host and restarts dclient should not have to tell the control
 		// plane separately.
 		Pool: localPool(),
+		// Read fresh here for the same reason the pool is: a host whose companions
+		// were replaced by hand, or by a dclient that has since been restarted,
+		// should say what it is running rather than what anything remembers.
+		Services: installedServicesState(ctx),
 	})
 	if err != nil {
 		return err
@@ -440,6 +444,14 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 		// Off the read loop for a stronger reason than the rest: this one may
 		// download a release tarball, which takes as long as the link is slow.
 		go l.applyVector(ctx, env.ID, *job.Vector)
+	case proto.KindServicesConfig:
+		if job.Services == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no services config"})
+			return
+		}
+		// Off the read loop for the same reason the vector job is, and one more:
+		// this one may end by restarting this process.
+		go l.applyServices(ctx, env.ID, *job.Services)
 	case proto.KindSuricataConfig, proto.KindDpipeConfig, proto.KindCoreDNSConfig:
 		if job.File == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
@@ -568,6 +580,40 @@ func (l *link) applyVector(ctx context.Context, jobID string, cfg proto.VectorCo
 		log.Printf("job %s: installed vector %s and restarted it", jobID, cfg.Version)
 	}
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVectorConfig, OK: true})
+}
+
+// applyServices installs the builds of dpipe, dproxy and dclient the control
+// server named. Detached like the rest: an install that has begun should finish,
+// since abandoning it half way leaves a binary on disk that no marker claims.
+//
+// The result is reported before the restart, not after, because there is no after
+// -- reply writes to the socket synchronously, so the frame is on the wire by the
+// time systemd is asked for a new process.
+func (l *link) applyServices(ctx context.Context, jobID string, want proto.ServicesConfig) {
+	ctx = context.WithoutCancel(ctx)
+	upgradeSelf, err := applyServicesConfig(ctx, l.data, want)
+
+	// Read after the install, and reported whether it worked or not: a job that
+	// installed one companion and failed on the other still moved something, and
+	// the control plane should show what is actually there.
+	res := proto.JobResult{
+		Kind:     proto.KindServicesConfig,
+		Services: installedServicesState(ctx),
+	}
+	if err != nil {
+		log.Printf("job %s: could not apply the services config: %v", jobID, err)
+		res.Error = err.Error()
+	} else {
+		res.OK = true
+	}
+	l.reply(ctx, jobID, res)
+
+	// Even after a partial failure: a dclient that is already staged should be the
+	// one running, and whatever went wrong with a companion is retried by the new
+	// process on its own connect.
+	if upgradeSelf {
+		restartSelf(ctx)
+	}
 }
 
 // runVMAction handles the three jobs that act on a VM which already exists. All

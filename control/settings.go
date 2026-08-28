@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/url"
-	"regexp"
 	"strings"
 
 	"control/internal/db"
@@ -19,6 +18,12 @@ const (
 	settingClientOpenEnrollment = "client_open_enrollment"
 
 	settingSignupsEnabled = "signups_enabled"
+
+	// The fleet's default source for each managed binary. A client row that names
+	// a version or a URL of its own overrides these -- see serviceRelease.
+	settingDclientDownloadURL = "dclient_download_url"
+	settingDpipeDownloadURL   = "dpipe_download_url"
+	settingProxyDownloadURL   = "dproxy_download_url"
 
 	settingVectorVersion      = "vector_version"
 	settingClickHouseURL      = "clickhouse_url"
@@ -84,6 +89,35 @@ var settingDefs = []settingDef{
 			"so leave this off unless the control plane is on a network you own.",
 		Warn:    true,
 		Default: "false",
+	},
+	{
+		Key:   settingDclientDownloadURL,
+		Kind:  settingString,
+		Label: "dclient download URL",
+		Description: "Where hosts fetch dclient from, unless the host's own page names something " +
+			"else. Empty means the published release for this control server's version, which is " +
+			"what a normal installation wants -- set this to run builds that were never released, " +
+			"such as from a local artifact server. Either the binary itself or a .tar.gz holding " +
+			"it, decided by the suffix. Nothing is upgraded by saving this: it is the source a " +
+			"host uses when it installs, and installing is per host.",
+		Placeholder: "http://10.68.0.1:8081/backstage/dclient/dclient",
+		validate:    validateServiceDownloadURL,
+	},
+	{
+		Key:         settingDpipeDownloadURL,
+		Kind:        settingString,
+		Label:       "dpipe download URL",
+		Description: "The same, for dpipe.",
+		Placeholder: "http://10.68.0.1:8081/backstage/dpipe/dpipe",
+		validate:    validateServiceDownloadURL,
+	},
+	{
+		Key:         settingProxyDownloadURL,
+		Kind:        settingString,
+		Label:       "dproxy download URL",
+		Description: "The same, for dproxy.",
+		Placeholder: "http://10.68.0.1:8081/backstage/dproxy/dproxy",
+		validate:    validateServiceDownloadURL,
 	},
 	{
 		Key:   settingVectorVersion,
@@ -189,13 +223,12 @@ func validateResolverUpstream(v string) error {
 	return nil
 }
 
-// vectorVersionRe is deliberately strict. The value is interpolated into a
-// github release URL that the client downloads and installs as root, so anything
-// that is not a plain release number has no business being accepted here.
-var vectorVersionRe = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
-
+// The version is interpolated into a github release URL that the client
+// downloads and installs as root, so anything that is not a plain release number
+// has no business being accepted here. Same shape and same reasoning as the
+// per-client versions, so it is the same pattern -- see releaseVersionRe.
 func validateVectorVersion(v string) error {
-	if !vectorVersionRe.MatchString(v) {
+	if !releaseVersionRe.MatchString(v) {
 		return errors.New("must be a release number like 0.57.0")
 	}
 	return nil

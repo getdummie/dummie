@@ -354,19 +354,24 @@ func writeProxySite(b *strings.Builder, tld string) {
 // enters; a VM name is the stricter vmNamePattern.
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
+// The block is omitted entirely when nobody may connect, rather than written with
+// an empty user list. proxy refuses to load a config whose ssh ingress has no
+// users -- a listener that can authenticate nobody is a mistake in every
+// hand-written file it appears in -- so spelling the empty case as `users: []`
+// produced a file no host could start, on exactly the two hosts that get one:
+// freshly enrolled, and every VM destroyed.
+//
+// Absent is the closed reading, not the open one: with no ssh block proxy has no
+// ssh ingress at all, which is the same outcome an empty user list was meant to
+// express. It reappears the moment the host has a VM.
 func writeProxySSH(b *strings.Builder, rows []db.ListProxySSHUsersByClientRow) {
-	b.WriteString("\nssh:\n")
-	fmt.Fprintf(b, "  listen: %q\n", proxySSHListen)
-	b.WriteString("  reuseport: true\n")
-
 	if len(rows) == 0 {
-		// An empty list has to be spelled, not omitted: a missing `users` key would
-		// read to proxy as "not configured" rather than "nobody may connect", and
-		// the two should not look alike on a host whose VMs were all destroyed.
-		b.WriteString("  users: []\n")
 		return
 	}
 
+	b.WriteString("\nssh:\n")
+	fmt.Fprintf(b, "  listen: %q\n", proxySSHListen)
+	b.WriteString("  reuseport: true\n")
 	b.WriteString("  users:\n")
 	for _, r := range rows {
 		fmt.Fprintf(b, "    # %s\n", yamlComment(r.HostVMID))

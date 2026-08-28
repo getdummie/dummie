@@ -123,26 +123,12 @@ func runServe(ctx context.Context, cfg Config) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// The companions are their own systemd units, so a failure to install one is
-	// logged rather than fatal: it must not take local VM management down, and the
-	// next start retries it anyway.
-	for _, svc := range []struct {
-		name string
-		cfg  ServiceConfig
-	}{
-		{proxyService, cfg.Proxy},
-		{dpipeService, cfg.Dpipe},
-	} {
-		if err := ensureManagedService(ctx, cfg.DataDir, svc.name, svc.cfg); err != nil {
-			log.Printf("WARNING: %s: %v", svc.name, err)
-		} else if svc.cfg.Enable {
-			log.Printf("%s is installed and running as %s.service", svc.name, svc.name)
-		}
-	}
-	// vector is not in that loop because there is nothing to install from here:
-	// its version and its clickhouse come from the control server, so all a start
-	// can do is restart what a previous push already put down.
-	ensureVectorRunning(ctx, cfg.Vector)
+	// None of the companions is installed from here any more: which build each one
+	// runs comes from the control server, so all a start can do is bring back what
+	// a previous push already put down. A host that has never connected gets them
+	// on its first connect instead.
+	ensureManagedServicesRunning(ctx)
+	ensureVectorRunning(ctx)
 
 	errs := make(chan error, 4)
 

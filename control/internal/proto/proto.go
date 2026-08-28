@@ -70,6 +70,24 @@ type Hello struct {
 	// treats that as "cannot compile a config for this host" rather than
 	// substituting a default.
 	Pool string `json:"pool,omitempty"`
+
+	// Services is what the host actually has installed, which is not the same
+	// question as what it was told to install. dclient's own build is Version
+	// above; this is the two companions, which report nothing anywhere else.
+	Services *ServicesState `json:"services,omitempty"`
+}
+
+// ServicesState is the version of each companion binary as it is on disk right
+// now, read from the binary itself rather than from what dclient last installed
+// -- a host provisioned by hand, or one whose upgrade half worked, should say what
+// it has rather than what the control plane hoped.
+//
+// A field is "" when the binary is not there, or is there and could not be asked.
+// Both mean the control plane does not know, which is the honest answer and is
+// what the screen shows as a dash.
+type ServicesState struct {
+	Dpipe string `json:"dpipe,omitempty"`
+	Proxy string `json:"dproxy,omitempty"`
 }
 
 type HelloAck struct {
@@ -142,6 +160,16 @@ const (
 	// connection that hangs; a name the ruleset would pass but the resolver
 	// refuses is an allowance the user was told they had.
 	KindCoreDNSConfig JobKind = "coredns.config"
+
+	// KindServicesConfig names the build of dclient, dpipe and dproxy the host
+	// should be running. All three in one job because they are one decision: the
+	// three binaries are cut from the same release, and a host part-way through a
+	// move between two of them is a combination nobody tested.
+	//
+	// It carries no enable flag. All three are the host's reason for existing --
+	// dclient is what runs the guests, and dpipe and dproxy are how anyone reaches
+	// them -- so there is nothing to turn off, only a version to point at.
+	KindServicesConfig JobKind = "services.config"
 )
 
 // Job is the payload of a TypeJob envelope. Which fields are set is chosen by
@@ -171,6 +199,53 @@ type Job struct {
 	// runs each in its own goroutine. A dpipe.yaml with tls on that reaches a host
 	// before the files it names is a dpipe that will not start.
 	DpipeCerts *DpipeCerts `json:"dpipe_certs,omitempty"`
+	// Services is set when Kind is KindServicesConfig.
+	Services *ServicesConfig `json:"services,omitempty"`
+}
+
+// ServicesConfig says which build of each managed binary the host should run.
+//
+// One struct rather than three jobs so the three land together: dclient replaces
+// itself last, and a host that restarted into a new dclient before dpipe and
+// dproxy had been told anything would be a host whose companions move on the next
+// connect instead of this one.
+type ServicesConfig struct {
+	// Dclient is the client's own binary. Acting on it means replacing the running
+	// process, so a client that does not recognise this field simply keeps running
+	// -- which is the correct outcome for a downgrade it cannot perform.
+	Dclient ServiceRelease `json:"dclient"`
+	Dpipe   ServiceRelease `json:"dpipe"`
+	Proxy   ServiceRelease `json:"dproxy"`
+
+	// Force is what allows a binary that is already installed to be replaced, and
+	// it is set only when an operator asked for exactly that.
+	//
+	// Without it this job fills in what is missing and changes nothing else, which
+	// is what makes it safe to send on every connect. That matters more than it
+	// looks: a version left empty means "whatever the control server's own version
+	// is", so an unforced job that upgraded would turn deploying the control server
+	// into replacing every binary on every host the moment they reconnected --
+	// dropping every ssh session in the fleet, with nobody having asked for it.
+	Force bool `json:"force,omitempty"`
+}
+
+// ServiceRelease is one binary's build, named the same way vector's is: a bare
+// release number the client turns into a URL itself.
+type ServiceRelease struct {
+	// Version is a bare release number, e.g. "0.0.15". The client builds the
+	// download URL from it, so the server validates the shape before storing it --
+	// this ends up in a URL whose contents are installed and run as root, and the
+	// client checks it again rather than trusting that.
+	//
+	// Empty means the control server has no version to name, which is what a
+	// development build of it reports. The client installs nothing in that case
+	// rather than guessing at a release.
+	Version string `json:"version,omitempty"`
+
+	// DownloadURL overrides Version when set, and is how a custom build gets onto
+	// one host without cutting a release for it. Either the binary itself or a
+	// .tar.gz holding it, decided by the suffix.
+	DownloadURL string `json:"download_url,omitempty"`
 }
 
 // FileConfig is a complete config file for a service on the host. The client
@@ -306,6 +381,14 @@ type JobResult struct {
 	OK    bool    `json:"ok"`
 	Error string  `json:"error,omitempty"`
 	VM    *VMInfo `json:"vm,omitempty"` // set when Kind is KindVMCreate and OK
+	// Services is set when Kind is KindServicesConfig, and is what the host ended
+	// up with -- sent on a failure too, since a job that installed one of the two
+	// and not the other still moved something.
+	//
+	// Reported here as well as in the hello because an upgrade does not reconnect:
+	// replacing dpipe hands its sessions over in place, so without this the control
+	// plane would keep showing the old version until the host next dialled in.
+	Services *ServicesState `json:"services,omitempty"`
 }
 
 // VMInfo is what the client actually built. The id and the address are allocated
