@@ -806,6 +806,7 @@ async function saveDomain() {
   try {
     const res = await authFetch(`/vms/${id.value}/domain`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ domain: wanted }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
