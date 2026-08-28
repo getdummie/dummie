@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 
@@ -53,7 +54,7 @@ var checks = []check{
 	{"cgroup v2 is available", checkCgroup2},
 	{"vms can run as their own uid", checkVMUID},
 	{"rootfs images can be built from tars", checkRootfsTools},
-	{"sshd is off port 22", checkSSHPort},
+	{"port 22 is the proxy's", checkSSHPort},
 	{"tap devices can be created", checkTun},
 	{"nftables is usable", checkNftables},
 	{"ip forwarding is enabled", checkForwarding},
@@ -240,10 +241,31 @@ func checkRootfsTools() (result, string) {
 // checkSSHPort is a hard failure: proxy binds 0.0.0.0:22 to front VM ssh, so a
 // host sshd on the same port means one of the two will not start. Which one
 // loses depends on boot order, which is the worst way to find out.
+//
+// Whoever actually holds the port is the authority. The sshd configuration only
+// answers the question while nobody has it: once proxy is up and listening, an
+// sshd config that still reads like 22 -- moved by a drop-in or a socket unit
+// `sshd -T` does not reflect, or left at the default on a daemon that is not
+// running -- is not a conflict, and reporting it as one fails a healthy host.
 func checkSSHPort() (result, string) {
+	switch owner, held, err := listenerOn(22); {
+	case err != nil:
+		return warn, "cannot tell what is listening on :22 (" + err.Error() + "); make sure sshd is not"
+	case held && owner.pid == 0:
+		return warn, "something is listening on :22 but its owner is not visible to this user; re-run as root"
+	case held && (owner.name == proxyService || owner.name == dpipeService):
+		return pass, fmt.Sprintf("%s holds :22 (pid %d)", owner.name, owner.pid)
+	case held && strings.HasPrefix(owner.name, "sshd"):
+		return fail, fmt.Sprintf("sshd is listening on :22 (pid %d)"+
+			"; move it to another port and restart it -- proxy needs :22 for vm ssh", owner.pid)
+	case held:
+		return fail, fmt.Sprintf("%s (pid %d) is listening on :22, which proxy needs for vm ssh",
+			owner.name, owner.pid)
+	}
+
 	bin, err := lookSSHD()
 	if err != nil {
-		return pass, "no sshd on this host; proxy can have :22"
+		return pass, "nothing on :22 and no sshd on this host; proxy can have it"
 	}
 
 	ports, source, err := sshdPorts(bin)
@@ -256,10 +278,10 @@ func checkSSHPort() (result, string) {
 		source += " (no Port directive; sshd defaults to 22)"
 	}
 	if slices.Contains(ports, "22") {
-		return fail, "sshd listens on 22 per " + source +
-			"; move it to another port and restart it -- proxy needs :22 for vm ssh"
+		return fail, "nothing holds :22 yet, but sshd is configured for it per " + source +
+			"; move it to another port -- whichever of sshd and proxy starts second will not start"
 	}
-	return pass, "sshd on " + strings.Join(ports, ", ") + " per " + source
+	return pass, ":22 is free; sshd on " + strings.Join(ports, ", ") + " per " + source
 }
 
 // sshdConfigPath is a variable so tests can point it elsewhere.
@@ -354,6 +376,110 @@ func parseSSHDPorts(path string, depth int) ([]string, error) {
 		return nil, err
 	}
 	return ports, nil
+}
+
+// listener is the process holding a listening socket. pid 0 means the socket
+// exists but its owner could not be resolved, which is what a non-root doctor
+// sees for anybody else's process.
+type listener struct {
+	pid  int
+	name string
+}
+
+// procRoot is a variable so tests can point it elsewhere.
+var procRoot = "/proc"
+
+// listenerOn reports what is listening on port, over IPv4 or IPv6. An error
+// means the question could not be asked at all; held=false means it was asked
+// and nothing is there.
+func listenerOn(port int) (listener, bool, error) {
+	var inodes []string
+	var readable bool
+	var lastErr error
+	for _, name := range []string{"net/tcp", "net/tcp6"} {
+		found, err := listeningInodes(filepath.Join(procRoot, name), port)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		readable = true
+		inodes = append(inodes, found...)
+	}
+	switch {
+	case !readable:
+		return listener{}, false, lastErr
+	case len(inodes) == 0:
+		return listener{}, false, nil
+	}
+	pid, name := socketOwner(inodes)
+	return listener{pid: pid, name: name}, true, nil
+}
+
+// listeningInodes collects the socket inodes of listening sockets bound to port
+// in one /proc/net/tcp-format table.
+func listeningInodes(path string, port int) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// "sl local_address rem_address st ... uid timeout inode"; 0A is TCP_LISTEN.
+	const stListen = "0A"
+	var inodes []string
+	sc := bufio.NewScanner(f)
+	sc.Scan() // header
+	for sc.Scan() {
+		fields := strings.Fields(sc.Text())
+		if len(fields) < 10 || fields[3] != stListen {
+			continue
+		}
+		_, hexPort, ok := strings.Cut(fields[1], ":")
+		if !ok {
+			continue
+		}
+		bound, err := strconv.ParseUint(hexPort, 16, 32)
+		if err != nil || int(bound) != port {
+			continue
+		}
+		inodes = append(inodes, fields[9])
+	}
+	return inodes, sc.Err()
+}
+
+// socketOwner walks /proc looking for the process holding one of these socket
+// inodes. Unreadable fd directories are skipped rather than reported: without
+// root most of them are, and the caller has a weaker answer for that case.
+func socketOwner(inodes []string) (int, string) {
+	want := make(map[string]bool, len(inodes))
+	for _, ino := range inodes {
+		want["socket:["+ino+"]"] = true
+	}
+
+	entries, err := os.ReadDir(procRoot)
+	if err != nil {
+		return 0, ""
+	}
+	for _, e := range entries {
+		pid, err := strconv.Atoi(e.Name())
+		if err != nil {
+			continue
+		}
+		fdDir := filepath.Join(procRoot, e.Name(), "fd")
+		fds, err := os.ReadDir(fdDir)
+		if err != nil {
+			continue
+		}
+		for _, fd := range fds {
+			target, err := os.Readlink(filepath.Join(fdDir, fd.Name()))
+			if err != nil || !want[target] {
+				continue
+			}
+			comm, _ := os.ReadFile(filepath.Join(procRoot, e.Name(), "comm"))
+			return pid, strings.TrimSpace(string(comm))
+		}
+	}
+	return 0, ""
 }
 
 // checkTun is a hard failure: without /dev/net/tun no VM can have a network
