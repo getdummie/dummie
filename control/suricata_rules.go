@@ -74,7 +74,25 @@ drop tcp $HOME_NET any -> any ![80,443] (msg:"dclient: deny tcp to a non-web por
 # On the web ports the destination is only knowable once the request is parsed,
 # so these fire on the clienthello or the request line -- one packet in, before
 # any payload has left the host.
-drop tls $HOME_NET any -> any any (msg:"dclient: deny tls to another host"; sid:1000012; rev:1;)
+#
+# ssl_state is what makes the tls one wait for that parse instead of firing the
+# moment detection decides a flow is tls. A modern clienthello is bigger than one
+# segment -- openssl 3.5 offers a post-quantum key share and lands around 1600
+# bytes against a 1460 byte mss -- so it arrives in two packets, and tls.sni does
+# not exist until both have been reassembled. Without the state check this drop
+# takes the first of those two packets, the pass rule never gets a name to match,
+# the clienthello is never completed, and an allowed host hangs until the client
+# gives up. ssl_state:client_hello is set by the parser, which runs before
+# detection on the packet that completes the record -- so the pass rule and this
+# rule are evaluated together on that packet, and pass wins.
+#
+# The cost is a flow whose clienthello never parses at all: detection calls it
+# tls from the record header, no state is ever reached, and neither this rule nor
+# the protocol allowlist below matches it. That is a narrow covert channel to any
+# address on 443, and it is the same one the split floor already leaves open by
+# letting the handshake complete. Closing it properly is the resolver-writes-an-
+# nftables-set design, not another rule.
+drop tls $HOME_NET any -> any any (msg:"dclient: deny tls to another host"; flow:to_server; ssl_state:client_hello; sid:1000012; rev:2;)
 drop http $HOME_NET any -> any any (msg:"dclient: deny http to another host"; sid:1000013; rev:1;)
 
 # Anything on 80 or 443 that is not http or tls. A positive allowlist, not a

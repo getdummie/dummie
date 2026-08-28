@@ -37,6 +37,10 @@ func TestGenerateSuricataRulesAlwaysDenies(t *testing.T) {
 				"drop ip $HOME_NET any -> any any",
 				"drop tcp $HOME_NET any -> any ![80,443]",
 				"drop tls $HOME_NET any -> any any",
+				// It has to wait for the parsed clienthello. A post-quantum one spans two
+				// segments, and firing on the first of them kills the flow before tls.sni
+				// exists for the pass rule above to match.
+				"ssl_state:client_hello;",
 				"drop http $HOME_NET any -> any any",
 				// The positive protocol allowlist. Without the two negations this rule
 				// would only catch traffic detection gave up on, and anything suricata
