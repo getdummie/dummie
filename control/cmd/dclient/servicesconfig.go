@@ -79,7 +79,7 @@ func stageSelfUpgrade(ctx context.Context, data string, rel proto.ServiceRelease
 
 	stage := filepath.Join(filepath.Dir(installedBinary), ".dclient.upgrade")
 	defer func() { _ = os.Remove(stage) }()
-	if err := downloadBinary(ctx, src, stage); err != nil {
+	if err := downloadBinary(ctx, src, stage, "dclient"); err != nil {
 		return false, err
 	}
 	if out, err := exec.CommandContext(ctx, stage, "--version").CombinedOutput(); err != nil {

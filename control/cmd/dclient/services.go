@@ -288,7 +288,7 @@ func ensureBinary(ctx context.Context, data, name, src string, force bool) error
 		}
 	}
 
-	if err := downloadBinary(ctx, src, serviceBinary(name)); err != nil {
+	if err := downloadBinary(ctx, src, serviceBinary(name), name); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
@@ -297,7 +297,9 @@ func ensureBinary(ctx context.Context, data, name, src string, force bool) error
 	return os.WriteFile(marker, []byte(src), 0o600)
 }
 
-func downloadBinary(ctx context.Context, src, dst string) error {
+// want is the file name to pull out of the tarball; it is not always the base of
+// dst, which can be a staging path.
+func downloadBinary(ctx context.Context, src, dst, want string) error {
 	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 
@@ -319,7 +321,7 @@ func downloadBinary(ctx context.Context, src, dst string) error {
 	}
 
 	if isTarball(src) {
-		return installFromTarball(src, resp.Body, dst)
+		return installFromTarball(src, resp.Body, dst, want)
 	}
 	return installFromReader(resp.Body, dst)
 }
@@ -333,14 +335,13 @@ func isTarball(src string) bool {
 	return strings.HasSuffix(p, ".tar.gz") || strings.HasSuffix(p, ".tgz")
 }
 
-func installFromTarball(src string, body io.Reader, dst string) error {
+func installFromTarball(src string, body io.Reader, dst, want string) error {
 	gz, err := gzip.NewReader(body)
 	if err != nil {
 		return fmt.Errorf("%s is not a gzip archive: %w", src, err)
 	}
 	defer gz.Close()
 
-	want := filepath.Base(dst)
 	tr := tar.NewReader(gz)
 	for {
 		hdr, err := tr.Next()
