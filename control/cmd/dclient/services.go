@@ -186,7 +186,12 @@ func ensureManagedService(ctx context.Context, data, name string, rel proto.Serv
 		return err
 	}
 
-	if err := ensureBinary(ctx, data, name, src, force); err != nil {
+	// Whether it was already up decides if swapping the binary needs a handover:
+	// enable --now below starts a stopped unit on the new build anyway.
+	wasActive := serviceActive(ctx, name)
+
+	replaced, err := ensureBinary(ctx, data, name, src, force)
+	if err != nil {
 		return err
 	}
 
@@ -202,7 +207,21 @@ func ensureManagedService(ctx context.Context, data, name string, rel proto.Serv
 			return err
 		}
 	}
-	return systemctl(ctx, "enable", "--now", name+".service")
+	if err := systemctl(ctx, "enable", "--now", name+".service"); err != nil {
+		return err
+	}
+
+	// A rename over the binary leaves the running process on the old inode, so
+	// without this it serves the previous build until something else restarts it.
+	if replaced && wasActive && !changed {
+		log.Printf("%s was replaced by a new build; moving the running process onto it", name)
+		return reloadService(ctx, name)
+	}
+	return nil
+}
+
+func serviceActive(ctx context.Context, name string) bool {
+	return systemctl(ctx, "is-active", "--quiet", name+".service") == nil
 }
 
 func installedServiceVersion(ctx context.Context, name string) string {
@@ -270,31 +289,31 @@ func checkDownloadURL(raw string) error {
 	return nil
 }
 
-func ensureBinary(ctx context.Context, data, name, src string, force bool) error {
+func ensureBinary(ctx context.Context, data, name, src string, force bool) (bool, error) {
 	marker := sourceMarker(data, name)
 	installed, err := os.ReadFile(marker)
 	if err != nil && !os.IsNotExist(err) {
-		return err
+		return false, err
 	}
 	_, statErr := os.Stat(serviceBinary(name))
 	if statErr == nil {
 		if strings.TrimSpace(string(installed)) == src {
-			return nil
+			return false, nil
 		}
 		if !force {
 			log.Printf("%s is installed from a different build than %s; upgrade it from the control server to move it",
 				name, src)
-			return nil
+			return false, nil
 		}
 	}
 
 	if err := downloadBinary(ctx, src, serviceBinary(name), name); err != nil {
-		return err
+		return false, err
 	}
 	if err := os.MkdirAll(filepath.Dir(marker), 0o700); err != nil {
-		return err
+		return false, err
 	}
-	return os.WriteFile(marker, []byte(src), 0o600)
+	return true, os.WriteFile(marker, []byte(src), 0o600)
 }
 
 // want is the file name to pull out of the tarball; it is not always the base of
