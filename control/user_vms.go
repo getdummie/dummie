@@ -1146,6 +1146,79 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	return c.JSON(http.StatusCreated, dto)
 }
 
+// @Summary     Edit an allowed destination
+// @Description Replaces the entry with the one in the body, validated exactly as a create is. Any pending expiry on the old entry is cancelled and ttl_seconds starts a fresh one, so an edit that leaves the ttl alone still restarts the clock.
+// @Description
+// @Description The entry is rewritten rather than patched, so the id in the response is a new one.
+// @Tags        egress
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id        path string true "vm id" format(uuid)
+// @Param       target_id path string true "destination id" format(uuid)
+// @Param       body body createTargetReq true "destination is required"
+// @Success     200 {object} vmTargetDTO
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "another entry already covers that destination"
+// @Router      /vms/{id}/targets/{target_id} [put]
+func (h *UserHandler) UpdateTarget(c *echo.Context) error {
+	vm, err := h.ownedVM(c)
+	if err != nil {
+		return err
+	}
+	targetID, err := parseUUID(c.Param("target_id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid destination id")
+	}
+
+	var req createTargetReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	nt, err := normalizeTarget(req)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	ctx := c.Request().Context()
+	existing, err := h.q.GetVMNetworkTargetForExpiry(ctx, targetID)
+	if err != nil || existing.VMID != vm.ID {
+		return echo.NewHTTPError(http.StatusNotFound, "no such destination")
+	}
+
+	var t db.VmNetworkTarget
+	var expiry db.ScheduledTask
+	err = inTx(ctx, h.pool, h.q, func(q *db.Queries) error {
+		if err := q.DeleteVMNetworkTarget(ctx, db.DeleteVMNetworkTargetParams{
+			ID: targetID, VMID: vm.ID,
+		}); err != nil {
+			return err
+		}
+		var err error
+		t, expiry, err = insertTarget(ctx, q, vm, nt)
+		return err
+	})
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			return echo.NewHTTPError(http.StatusConflict, "that destination is already on the list")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the destination")
+	}
+	cancelTasksForSubject(ctx, h.q, subjectVMTarget, targetID,
+		"the destination was edited")
+	pushSuricataRules(ctx, h.q, h.hub, vm.ClientID)
+	pushCoreDNSConfig(ctx, h.q, h.hub, vm.ClientID)
+
+	dto := toVMTargetDTO(t)
+	if expiry.RunAt.Valid {
+		dto.ExpiresAt = expiry.RunAt.Time.Format(time.RFC3339)
+	}
+	return c.JSON(http.StatusOK, dto)
+}
+
 const (
 	resolveTimeout = 3 * time.Second
 

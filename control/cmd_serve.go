@@ -278,6 +278,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.GET("/:id/denied", userH.ListDeniedEgress)
 	vms.POST("/:id/targets", userH.CreateTarget)
 	vms.POST("/:id/targets/resolve", userH.ResolveTargetHost)
+	vms.PUT("/:id/targets/:target_id", userH.UpdateTarget)
 	vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 
 	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg, blobs: blobs}

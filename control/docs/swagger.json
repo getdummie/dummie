@@ -213,6 +213,9 @@
                     },
                     "recording": {
                         "$ref": "#/components/schemas/main.deniedSources"
+                    },
+                    "window_seconds": {
+                        "type": "integer"
                     }
                 },
                 "type": "object"
@@ -1872,7 +1875,7 @@
         },
         "/vms/{id}/denied": {
             "get": {
-                "description": "What this guest tried to reach and was refused. kind is \"lookup\" (a name the resolver would not answer) or \"packet\" (a flow the ruleset dropped); a refused lookup has no address to offer.\n\nRead available before reading items: an empty list means either nothing was denied or nothing is collecting, and those are very different facts. recording names which of the two sources answered.\n\nOnly events since this VM was created are shown -- a destroyed VM's address goes back to the pool, so without that bound a new VM would inherit the history of whatever held its address before it.",
+                "description": "What this guest tried to reach and was refused. kind is \"lookup\" (a name the resolver would not answer) or \"packet\" (a flow the ruleset dropped); a refused lookup has no address to offer.\n\nRead available before reading items: an empty list means either nothing was denied or nothing is collecting, and those are very different facts. recording names which of the two sources answered.\n\nOnly events since this VM was created are shown -- a destroyed VM's address goes back to the pool, so without that bound a new VM would inherit the history of whatever held its address before it.\n\nseconds narrows the window to the last n seconds, for watching what a run you just started is being denied. It can only narrow: the VM's creation and the 7 day ceiling still bound it, and window_seconds reports the window actually read.",
                 "parameters": [
                     {
                         "description": "vm id",
@@ -1882,6 +1885,15 @@
                         "schema": {
                             "format": "uuid",
                             "type": "string"
+                        }
+                    },
+                    {
+                        "description": "look back only this many seconds",
+                        "in": "query",
+                        "name": "seconds",
+                        "schema": {
+                            "minimum": 1,
+                            "type": "integer"
                         }
                     }
                 ],
@@ -2578,6 +2590,112 @@
                     }
                 ],
                 "summary": "Remove an allowed destination",
+                "tags": [
+                    "egress"
+                ]
+            },
+            "put": {
+                "description": "Replaces the entry with the one in the body, validated exactly as a create is. Any pending expiry on the old entry is cancelled and ttl_seconds starts a fresh one, so an edit that leaves the ttl alone still restarts the clock.\n\nThe entry is rewritten rather than patched, so the id in the response is a new one.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "destination id",
+                        "in": "path",
+                        "name": "target_id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.createTargetReq",
+                                        "summary": "body",
+                                        "description": "destination is required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "destination is required",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.vmTargetDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "another entry already covers that destination"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Edit an allowed destination",
                 "tags": [
                     "egress"
                 ]

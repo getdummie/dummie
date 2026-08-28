@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -92,10 +93,13 @@ type deniedAttemptDTO struct {
 // @Description Read available before reading items: an empty list means either nothing was denied or nothing is collecting, and those are very different facts. recording names which of the two sources answered.
 // @Description
 // @Description Only events since this VM was created are shown -- a destroyed VM's address goes back to the pool, so without that bound a new VM would inherit the history of whatever held its address before it.
+// @Description
+// @Description seconds narrows the window to the last n seconds, for watching what a run you just started is being denied. It can only narrow: the VM's creation and the 7 day ceiling still bound it, and window_seconds reports the window actually read.
 // @Tags        egress
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id path string true "vm id" format(uuid)
+// @Param       seconds query int false "look back only this many seconds" minimum(1)
 // @Success     200 {object} deniedEgressList
 // @Failure     400 {object} apiError
 // @Failure     401 {object} apiError
@@ -120,20 +124,43 @@ func (h *UserHandler) ListDeniedEgress(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
 	}
 
+	seconds, err := deniedWindowSeconds(c.QueryParam("seconds"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	since := deniedSince(v, seconds)
 	if h.ch == nil || v.IP == "" {
 		return c.JSON(http.StatusOK, map[string]any{
-			"items":     []deniedAttemptDTO{},
-			"available": false,
-			"recording": deniedSources{},
+			"items":          []deniedAttemptDTO{},
+			"available":      false,
+			"recording":      deniedSources{},
+			"window_seconds": int64(time.Since(since).Seconds()),
 		})
 	}
 
-	items, sources := queryDeniedEgress(c.Request().Context(), h, v.IP, deniedSince(v))
+	items, sources := queryDeniedEgress(c.Request().Context(), h, v.IP, since)
 	return c.JSON(http.StatusOK, map[string]any{
 		"items": items,
 		"available": sources.Packets || sources.Lookups,
-		"recording": sources,
+		"recording":      sources,
+		"window_seconds": int64(time.Since(since).Seconds()),
 	})
+}
+
+func deniedWindowSeconds(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || n < 1 {
+		return 0, errors.New("seconds must be a whole number of seconds, at least 1")
+	}
+	if n > int64(deniedWindow/time.Second) {
+		return deniedWindow, nil
+	}
+	return time.Duration(n) * time.Second, nil
 }
 
 type deniedSources struct {
@@ -141,8 +168,11 @@ type deniedSources struct {
 	Lookups bool `json:"lookups"`
 }
 
-func deniedSince(v db.Vm) time.Time {
-	since := time.Now().Add(-deniedWindow)
+func deniedSince(v db.Vm, window time.Duration) time.Time {
+	if window <= 0 || window > deniedWindow {
+		window = deniedWindow
+	}
+	since := time.Now().Add(-window)
 	if v.CreatedAt.Valid && v.CreatedAt.Time.After(since) {
 		return v.CreatedAt.Time
 	}

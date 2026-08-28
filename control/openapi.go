@@ -65,6 +65,8 @@ type deniedEgressList struct {
 	Items []deniedAttemptDTO `json:"items"`
 	Available bool          `json:"available"`
 	Recording deniedSources `json:"recording"`
+
+	WindowSeconds int64 `json:"window_seconds"`
 }
 
 type resolvedHost struct {

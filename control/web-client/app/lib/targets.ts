@@ -20,6 +20,29 @@ export const portPresets = [
   { key: 'custom', label: 'Custom…', transport: '', ports: '' },
 ]
 
+export interface TargetRecord {
+  id: string
+  destination: string
+  kind: 'domain' | 'ip'
+  transport: '' | 'tcp' | 'udp' | 'icmp' | 'any'
+  ports: string
+  note: string
+  created_at: string
+  expires_at: string
+}
+
+export interface DeniedAttempt {
+  kind: 'lookup' | 'packet'
+  domain: string
+  address: string
+  proto: string
+  port: number
+  app_proto: string
+  attempts: number
+  last_seen: string
+  signature: string
+}
+
 export interface TargetForm {
   kind: string
   destination: string
@@ -83,6 +106,87 @@ export function toTargetPayload(form: TargetForm) {
     note: form.note,
     ttl_seconds: Number(form.ttl_seconds),
   }
+}
+
+export function targetToForm(t: TargetRecord, ttlSeconds: number): TargetForm {
+  const form = blankTarget()
+  form.kind = t.kind
+  form.destination = t.destination
+  form.note = t.note
+  form.ttl_seconds = String(ttlSeconds)
+  if (t.kind === 'domain') {
+    form.domainPorts = t.ports || '80,443'
+    return form
+  }
+  form.transport = t.transport || 'tcp'
+  form.ports = t.ports
+  form.preset = portPresets.find(p => p.transport === form.transport && p.ports === form.ports)?.key ?? 'custom'
+  return form
+}
+
+function normalizeName(s: string) {
+  return s.trim().toLowerCase().replace(/\.$/, '')
+}
+
+function portsCover(spec: string, port: number) {
+  if (spec === '') return true
+  if (spec === 'none') return false
+  return spec.split(',').some((part) => {
+    const [lo, hi] = part.split(':')
+    const from = Number(lo)
+    const to = hi === undefined ? from : Number(hi)
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return false
+    return port >= from && port <= to
+  })
+}
+
+function ipToInt(ip: string) {
+  const parts = ip.split('.')
+  if (parts.length !== 4) return null
+  let n = 0
+  for (const p of parts) {
+    const v = Number(p)
+    if (!Number.isInteger(v) || v < 0 || v > 255) return null
+    n = n * 256 + v
+  }
+  return n
+}
+
+function addressCovered(destination: string, address: string) {
+  if (destination === address) return true
+  const slash = destination.indexOf('/')
+  if (slash < 0) return false
+  const bits = Number(destination.slice(slash + 1))
+  const base = ipToInt(destination.slice(0, slash))
+  const addr = ipToInt(address)
+  if (base === null || addr === null || !Number.isInteger(bits) || bits < 0 || bits > 32) return false
+  if (bits === 0) return true
+  const mask = (0xFFFFFFFF << (32 - bits)) >>> 0
+  return ((base & mask) >>> 0) === ((addr & mask) >>> 0)
+}
+
+function transportCovers(spec: string, proto: string) {
+  const transport = spec || 'tcp'
+  if (transport === proto) return true
+  return transport === 'any' && (proto === 'tcp' || proto === 'udp')
+}
+
+// A denied attempt matched against the current allowlist: a name resolves if it
+// is listed at all, everything else has to match address, transport and port.
+export function deniedCovered(d: DeniedAttempt, targets: TargetRecord[]) {
+  const name = normalizeName(d.domain)
+  if (d.kind === 'lookup') {
+    return targets.some(t => t.kind === 'domain' && normalizeName(t.destination) === name)
+  }
+  const byName = name && targets.some(t => t.kind === 'domain'
+    && normalizeName(t.destination) === name
+    && portsCover(t.ports || '80,443', d.port))
+  if (byName) return true
+  if (!d.address) return false
+  return targets.some(t => t.kind === 'ip'
+    && addressCovered(t.destination, d.address)
+    && transportCovers(t.transport, d.proto)
+    && (d.proto === 'icmp' || portsCover(t.ports, d.port)))
 }
 
 export function describeTarget(form: TargetForm) {

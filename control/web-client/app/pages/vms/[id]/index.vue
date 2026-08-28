@@ -31,14 +31,17 @@ import { Input } from '@/components/ui/input'
 import {
   applyPreset,
   blankTarget,
+  deniedCovered,
   destinationPlaceholder as destinationPlaceholderFor,
   domainPortChoices,
   matchSummary as matchSummaryFor,
   portPresets,
   presetWarning as presetWarningFor,
   resetForKind,
+  targetToForm,
   toTargetPayload,
 } from '@/lib/targets'
+import type { DeniedAttempt, TargetRecord } from '@/lib/targets'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -70,33 +73,9 @@ interface VM {
   expires_at: string
 }
 
-interface Target {
-  id: string
-  destination: string
-  kind: 'domain' | 'ip'
-  transport: '' | 'tcp' | 'udp' | 'any'
-  ports: string
-  note: string
-  created_at: string
-  expires_at: string
-}
-
-interface DeniedAttempt {
-  kind: 'lookup' | 'packet'
-  domain: string
-  address: string
-  proto: string
-  port: number
-  app_proto: string
-  attempts: number
-  last_seen: string
-  signature: string
-}
-
 const deniedColumns: DataTableColumn[] = [
   { key: 'destination', label: 'Destination' },
   { key: 'what', label: 'What it tried' },
-  { key: 'signature', label: 'Denied by' },
   { key: 'attempts', label: 'Attempts', align: 'right' },
   { key: 'last_seen', label: 'Last attempt', align: 'right' },
   { key: 'actions', label: '', align: 'right' },
@@ -117,7 +96,7 @@ const { authFetch } = useAuth()
 const id = computed(() => String(route.params.id))
 
 const vm = ref<VM | null>(null)
-const targets = ref<Target[]>([])
+const targets = ref<TargetRecord[]>([])
 const denied = ref<DeniedAttempt[]>([])
 const deniedAvailable = ref(true)
 const deniedRecording = ref({ packets: false, lookups: false })
@@ -167,6 +146,14 @@ function fmtDate(s: string) {
   return `${date}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
 }
 
+function fmtShortDate(s: string) {
+  if (!s) return '—'
+  const d = new Date(s)
+  if (Number.isNaN(d.getTime())) return s
+  const date = `${d.getDate()} ${d.toLocaleString(undefined, { month: 'short' })}`
+  return `${date}, ${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })}`
+}
+
 async function load(quiet = false) {
   if (!quiet) loading.value = true
   error.value = null
@@ -202,10 +189,22 @@ async function loadTargets() {
 const deniedLoading = ref(true)
 const deniedFirstLoad = ref(true)
 
+const deniedSeconds = ref('')
+
+const deniedWindowLabel = computed(() => {
+  const n = Number(deniedSeconds.value)
+  if (!deniedSeconds.value || !Number.isFinite(n) || n < 1) return 'since this VM was created, 7 days at most'
+  return `the last ${n} second${n === 1 ? '' : 's'}`
+})
+
 async function loadDenied() {
   deniedLoading.value = true
   try {
-    const res = await authFetch(`/vms/${id.value}/denied`)
+    const seconds = Number(deniedSeconds.value)
+    const query = deniedSeconds.value && Number.isFinite(seconds) && seconds >= 1
+      ? `?seconds=${Math.floor(seconds)}`
+      : ''
+    const res = await authFetch(`/vms/${id.value}/denied${query}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const data = await res.json()
     denied.value = data.items ?? []
@@ -436,11 +435,27 @@ async function savePorts() {
 const addOpen = ref(false)
 const adding = ref(false)
 const addError = ref<string | null>(null)
+const editingId = ref<string | null>(null)
 const form = reactive(blankTarget())
 
 function resetTargetForm() {
   Object.assign(form, blankTarget())
+  editingId.value = null
   addError.value = null
+}
+
+function remainingSeconds(expiresAt: string) {
+  if (!expiresAt) return 0
+  const at = new Date(expiresAt).getTime()
+  if (Number.isNaN(at)) return 0
+  return Math.max(0, Math.round((at - Date.now()) / 1000))
+}
+
+function openEditTarget(t: TargetRecord) {
+  Object.assign(form, targetToForm(t, remainingSeconds(t.expires_at)))
+  editingId.value = t.id
+  addError.value = null
+  addOpen.value = true
 }
 
 function onKindChange() {
@@ -455,7 +470,7 @@ const destinationPlaceholder = computed(() => destinationPlaceholderFor(form.kin
 const matchSummary = computed(() => matchSummaryFor(form.kind))
 const presetWarning = computed(() => presetWarningFor(form.preset))
 
-async function addTarget() {
+async function saveTarget() {
   const problem = ttlProblem(form.ttl_seconds)
   if (problem) {
     addError.value = problem
@@ -463,19 +478,25 @@ async function addTarget() {
   }
   adding.value = true
   addError.value = null
+  const target = editingId.value
   try {
-    const res = await authFetch(`/vms/${id.value}/targets`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(toTargetPayload(form)),
-    })
+    const res = await authFetch(
+      target ? `/vms/${id.value}/targets/${target}` : `/vms/${id.value}/targets`,
+      {
+        method: target ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(toTargetPayload(form)),
+      },
+    )
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     addOpen.value = false
     resetTargetForm()
     await loadTargets()
   }
   catch (e) {
-    addError.value = e instanceof Error ? e.message : 'Could not add the destination'
+    addError.value = e instanceof Error
+      ? e.message
+      : `Could not ${target ? 'save' : 'add'} the destination`
   }
   finally {
     adding.value = false
@@ -499,6 +520,14 @@ function deniedWhat(d: DeniedAttempt) {
   return label ? `${label} — ${where}` : where
 }
 
+const alreadyAllowed = computed(() => {
+  const covered = new Set<DeniedAttempt>()
+  for (const d of denied.value) {
+    if (deniedCovered(d, targets.value)) covered.add(d)
+  }
+  return covered
+})
+
 function allowDenied(d: DeniedAttempt) {
   resetTargetForm()
   const byName = d.kind === 'lookup' || (!!d.domain && (d.port === 443 || d.port === 80))
@@ -519,12 +548,12 @@ function allowDenied(d: DeniedAttempt) {
   addOpen.value = true
 }
 
-function matchedOn(t: Target) {
+function matchedOn(t: TargetRecord) {
   if (t.kind !== 'domain') return 'address'
   return t.ports === 'none' ? 'name — resolves only' : 'tls sni · http host'
 }
 
-function portsLabel(t: Target) {
+function portsLabel(t: TargetRecord) {
   if (t.kind !== 'domain') return t.ports || 'any'
   return t.ports === 'none' ? 'none' : (t.ports || '443, 80')
 }
@@ -686,7 +715,7 @@ async function addResolved() {
   }
 }
 
-const toRemove = ref<Target | null>(null)
+const toRemove = ref<TargetRecord | null>(null)
 const removing = ref(false)
 
 async function confirmRemove() {
@@ -709,7 +738,7 @@ async function confirmRemove() {
 </script>
 
 <template>
-  <div class="mx-auto max-w-6xl px-4 py-12 sm:px-6">
+  <div class="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
     <NuxtLink
       to="/vms"
       class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -718,12 +747,12 @@ async function confirmRemove() {
       All VMs
     </NuxtLink>
 
-    <Alert v-if="error" variant="destructive" class="mt-6">
+    <Alert v-if="error" variant="destructive" class="mt-4">
       <AlertTitle>Could not load this VM</AlertTitle>
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <div v-else-if="loading" class="mt-4 space-y-6" aria-busy="true">
+    <div v-else-if="loading" class="mt-3 space-y-4" aria-busy="true">
       <p class="sr-only">Loading this VM…</p>
       <Skeleton class="h-9 w-64" aria-hidden="true" />
       <Skeleton class="h-56 w-full rounded-lg" aria-hidden="true" />
@@ -731,11 +760,11 @@ async function confirmRemove() {
     </div>
 
     <template v-else-if="vm">
-      <div class="mt-4 flex flex-wrap items-end justify-between gap-4">
+      <div class="mt-3 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <p class="eyebrow mb-2 text-primary-text">// vms</p>
+          <p class="eyebrow mb-1 text-primary-text">// vms</p>
           <div class="flex flex-wrap items-center gap-3">
-            <h1 class="font-mono text-2xl font-semibold tracking-tight sm:text-3xl">
+            <h1 class="font-mono text-xl font-semibold tracking-tight sm:text-2xl">
               {{ vm.name || vm.vm_id || 'unnamed' }}
             </h1>
             <Badge :variant="statusVariant[vm.status]" class="font-mono">{{ vm.status }}</Badge>
@@ -770,19 +799,19 @@ async function confirmRemove() {
         </div>
       </div>
 
-      <Alert v-if="actionError" variant="destructive" class="mt-4">
+      <Alert v-if="actionError" variant="destructive" class="mt-3">
         <AlertTitle>Action failed</AlertTitle>
         <AlertDescription>{{ actionError }}</AlertDescription>
       </Alert>
 
-      <Alert v-if="vm.status === 'failed' && vm.last_error" variant="destructive" class="mt-4">
+      <Alert v-if="vm.status === 'failed' && vm.last_error" variant="destructive" class="mt-3">
         <AlertTitle>This VM failed</AlertTitle>
         <AlertDescription>{{ vm.last_error }}</AlertDescription>
       </Alert>
 
-      <section aria-labelledby="details-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
+      <section aria-labelledby="details-heading" class="mt-4 rounded-lg border border-border p-4">
         <h2 id="details-heading" class="text-sm font-semibold">Details</h2>
-        <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+        <dl class="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
           <div>
             <dt class="eyebrow text-muted-foreground">Size</dt>
             <dd class="mt-1 font-mono text-sm">{{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }}</dd>
@@ -817,11 +846,11 @@ async function confirmRemove() {
         </dl>
       </section>
 
-      <section aria-labelledby="ports-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
-        <div class="flex flex-wrap items-start justify-between gap-4">
+      <section aria-labelledby="ports-heading" class="mt-4 rounded-lg border border-border p-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 id="ports-heading" class="text-sm font-semibold">Ports</h2>
-            <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
               Which ports inside this VM are reachable, and where a request goes when it does not pick
               one. Changes reach the host straight away.
             </p>
@@ -887,7 +916,7 @@ async function confirmRemove() {
           </div>
         </div>
 
-        <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
+        <dl class="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
           <div>
             <dt class="eyebrow text-muted-foreground">Default port</dt>
             <dd class="mt-1 flex items-center gap-2 font-mono text-sm">
@@ -913,7 +942,7 @@ async function confirmRemove() {
           </div>
         </dl>
 
-        <div class="mt-6 flex flex-wrap items-center justify-between gap-2">
+        <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
           <div class="flex min-w-0 items-center gap-2">
             <div
               v-if="sshHost"
@@ -1053,11 +1082,11 @@ async function confirmRemove() {
         </div>
       </section>
 
-      <section aria-labelledby="targets-heading" class="mt-6 rounded-lg border border-border">
-        <div class="flex flex-wrap items-start justify-between gap-4 p-4 sm:p-6">
+      <section aria-labelledby="targets-heading" class="mt-4 rounded-lg border border-border">
+        <div class="flex flex-wrap items-start justify-between gap-3 p-4">
           <div>
             <h2 id="targets-heading" class="text-sm font-semibold">Allowed destinations</h2>
-            <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
               This list is the whole of what this VM can reach. Nothing else leaves it, and a
               domain that is not here will not even resolve.
             </p>
@@ -1181,19 +1210,22 @@ async function confirmRemove() {
           </Dialog>
 
           <Dialog v-model:open="addOpen" @update:open="(v: boolean) => !v && resetTargetForm()">
-            <Button size="sm" class="font-mono text-xs" @click="addOpen = true">
+            <Button size="sm" class="font-mono text-xs" @click="resetTargetForm(); addOpen = true">
               <Plus class="size-4" aria-hidden="true" />
               Add
             </Button>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Add a destination</DialogTitle>
+                <DialogTitle>{{ editingId ? 'Edit destination' : 'Add a destination' }}</DialogTitle>
                 <DialogDescription>
                   A domain, an IP address, or a CIDR range this VM should be able to reach.
+                  <template v-if="editingId">
+                    Saving rewrites the entry and restarts any TTL on it.
+                  </template>
                 </DialogDescription>
               </DialogHeader>
 
-              <form class="space-y-4" :aria-busy="adding" @submit.prevent="addTarget">
+              <form class="space-y-4" :aria-busy="adding" @submit.prevent="saveTarget">
                 <div class="space-y-2">
                   <Label for="t-kind">Type</Label>
                   <Select v-model="form.kind" @update:model-value="onKindChange">
@@ -1307,7 +1339,8 @@ async function confirmRemove() {
                     <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
                   </DialogClose>
                   <Button type="submit" class="font-mono text-xs" :disabled="adding">
-                    {{ adding ? 'Adding…' : 'Add' }}
+                    <template v-if="editingId">{{ adding ? 'Saving…' : 'Save' }}</template>
+                    <template v-else>{{ adding ? 'Adding…' : 'Add' }}</template>
                   </Button>
                 </DialogFooter>
               </form>
@@ -1335,60 +1368,88 @@ async function confirmRemove() {
               </span>
             </TableCell>
             <TableCell class="text-right">
-              <Button
-                variant="ghost"
-                size="icon"
-                class="text-destructive hover:text-destructive"
-                :aria-label="`Remove destination ${t.destination}`"
-                @click="toRemove = t"
-              >
-                <Trash2 class="size-4" aria-hidden="true" />
-              </Button>
+              <div class="flex items-center justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  :aria-label="`Edit destination ${t.destination}`"
+                  @click="openEditTarget(t)"
+                >
+                  <Pencil class="size-4" aria-hidden="true" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="text-destructive hover:text-destructive"
+                  :aria-label="`Remove destination ${t.destination}`"
+                  @click="toRemove = t"
+                >
+                  <Trash2 class="size-4" aria-hidden="true" />
+                </Button>
+              </div>
             </TableCell>
           </TableRow>
         </DataTable>
       </section>
 
-      <section aria-labelledby="denied-heading" class="mt-6 rounded-lg border border-border">
-        <div class="flex flex-wrap items-start justify-between gap-4 p-4 sm:p-6">
+      <section aria-labelledby="denied-heading" class="mt-4 rounded-lg border border-border">
+        <div class="flex flex-wrap items-start justify-between gap-3 p-4">
           <div>
             <h2 id="denied-heading" class="text-sm font-semibold">Denied</h2>
-            <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Everything this VM tried to do that policy stopped, since it was created and at most
-              7 days back — lookups the resolver refused and connections the ruleset dropped, whatever
-              protocol or port they used. Each one is either a destination worth allowing above, or
-              something the guest should not have been reaching at all.
+            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
+              Lookups the resolver refused and connections the ruleset dropped, over
+              {{ deniedWindowLabel }}. A row in green is already covered by the list above — it was
+              denied before that allowance existed.
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            class="font-mono text-xs"
-            :disabled="deniedRefreshing"
-            aria-label="Refresh denied attempts"
-            @click="refreshDenied"
-          >
-            <RefreshCw :class="['size-4', deniedRefreshing && 'animate-spin']" aria-hidden="true" />
-            <span class="sr-only sm:not-sr-only">Refresh</span>
-          </Button>
+          <div class="flex items-center gap-2">
+            <Label for="denied-seconds" class="font-mono text-xs whitespace-nowrap text-muted-foreground">
+              Last
+            </Label>
+            <Input
+              id="denied-seconds"
+              v-model="deniedSeconds"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+              placeholder="all"
+              class="h-8 w-24 font-mono text-xs"
+              aria-label="Show denied attempts from the last n seconds"
+              @change="refreshDenied"
+              @keydown.enter.prevent="refreshDenied"
+            />
+            <span class="font-mono text-xs text-muted-foreground">s</span>
+            <Button
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :disabled="deniedRefreshing"
+              aria-label="Refresh denied attempts"
+              @click="refreshDenied"
+            >
+              <RefreshCw :class="['size-4', deniedRefreshing && 'animate-spin']" aria-hidden="true" />
+              <span class="sr-only sm:not-sr-only">Refresh</span>
+            </Button>
+          </div>
         </div>
 
-        <p v-if="!deniedFirstLoad && !deniedAvailable" class="px-4 pb-6 text-sm text-muted-foreground sm:px-6">
+        <p v-if="!deniedFirstLoad && !deniedAvailable" class="px-4 pb-4 text-xs text-muted-foreground">
           Neither record could be read, so nothing is being reported here. This says nothing about
           whether this VM has been blocked.
         </p>
 
-        <div v-else-if="deniedLoading && deniedFirstLoad" class="space-y-2 px-4 pb-6 sm:px-6" aria-busy="true">
+        <div v-else-if="deniedLoading && deniedFirstLoad" class="space-y-2 px-4 pb-4" aria-busy="true">
           <p class="sr-only">Loading denied attempts…</p>
           <Skeleton v-for="n in 3" :key="n" class="h-8 w-full" aria-hidden="true" />
         </div>
 
         <template v-else>
-          <p v-if="!deniedRecording.lookups" class="px-4 pb-4 text-sm text-muted-foreground sm:px-6">
+          <p v-if="!deniedRecording.lookups" class="px-4 pb-3 text-xs text-muted-foreground">
             Refused lookups are not being recorded, so names this VM could not resolve are missing
             from this list. Everything the ruleset dropped is still shown.
           </p>
-          <p v-if="!deniedRecording.packets" class="px-4 pb-4 text-sm text-muted-foreground sm:px-6">
+          <p v-if="!deniedRecording.packets" class="px-4 pb-3 text-xs text-muted-foreground">
             Dropped connections are not being recorded, so only names the resolver refused are shown.
           </p>
 
@@ -1396,19 +1457,37 @@ async function confirmRemove() {
             <template #empty>
               Nothing has been denied.
             </template>
-            <TableRow v-for="d in denied" :key="`${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`">
+            <TableRow
+              v-for="d in denied"
+              :key="`${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`"
+              :class="alreadyAllowed.has(d) && 'bg-primary/10 hover:bg-primary/15'"
+            >
               <TableCell class="font-mono break-all">
                 {{ deniedDestination(d) }}
                 <span v-if="d.domain && d.address" class="block text-xs text-muted-foreground">
                   {{ d.address }}
                 </span>
               </TableCell>
-              <TableCell class="font-mono text-xs text-muted-foreground">{{ deniedWhat(d) }}</TableCell>
-              <TableCell class="text-xs text-muted-foreground">{{ d.signature || '—' }}</TableCell>
+              <TableCell class="text-xs">
+                <span class="font-mono whitespace-nowrap">{{ deniedWhat(d) }}</span>
+                <span
+                  v-if="d.signature"
+                  class="block max-w-[22rem] truncate text-muted-foreground"
+                  :title="d.signature"
+                >
+                  {{ d.signature }}
+                </span>
+              </TableCell>
               <TableCell class="text-right font-mono tabular-nums">{{ d.attempts }}</TableCell>
-              <TableCell class="text-right text-sm text-muted-foreground">{{ fmtDate(d.last_seen) }}</TableCell>
-              <TableCell class="text-right">
+              <TableCell class="text-right text-xs whitespace-nowrap text-muted-foreground">
+                {{ fmtShortDate(d.last_seen) }}
+              </TableCell>
+              <TableCell class="text-right whitespace-nowrap">
+                <span v-if="alreadyAllowed.has(d)" class="font-mono text-xs text-primary-text">
+                  allowed
+                </span>
                 <Button
+                  v-else
                   variant="outline"
                   size="sm"
                   class="font-mono text-xs"
