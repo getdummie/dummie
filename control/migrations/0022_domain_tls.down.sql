@@ -1,6 +1,3 @@
--- Dropping these leaves the certificates themselves orphaned in object storage:
--- the keys that name them are in the columns being removed. Down from here means
--- emptying the certs/ prefix of the bucket by hand afterwards.
 
 DROP INDEX IF EXISTS idx_domains_renewal;
 

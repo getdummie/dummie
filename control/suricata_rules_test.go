@@ -14,15 +14,10 @@ func row(ip, name, kind, dest, transport, ports string) db.ListVMNetworkTargetsB
 	}
 }
 
-// noTargets is what the LEFT JOIN returns for a VM that has no allowances: the
-// VM's own columns and nothing else.
 func noTargets(ip, name string) db.ListVMNetworkTargetsByClientRow {
 	return db.ListVMNetworkTargetsByClientRow{VMIP: ip, VMName: name, HostVMID: "vm-" + name}
 }
 
-// The floor has to be there whatever else is, including when nothing is: a host
-// with no allowances at all must still get a file that denies, not an empty one
-// that permits by having no opinion.
 func TestGenerateSuricataRulesAlwaysDenies(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -37,18 +32,10 @@ func TestGenerateSuricataRulesAlwaysDenies(t *testing.T) {
 				"drop ip $HOME_NET any -> any any",
 				"drop tcp $HOME_NET any -> any ![80,443]",
 				"drop tls $HOME_NET any -> any any",
-				// It has to wait for the parsed clienthello. A post-quantum one spans two
-				// segments, and firing on the first of them kills the flow before tls.sni
-				// exists for the pass rule above to match.
 				"ssl_state:client_hello;",
 				"drop http $HOME_NET any -> any any",
-				// The positive protocol allowlist. Without the two negations this rule
-				// would only catch traffic detection gave up on, and anything suricata
-				// could actually name -- ssh on 443 -- would pass.
 				"drop tcp $HOME_NET any -> any [80,443]",
 				"app-layer-protocol:!http; app-layer-protocol:!tls;",
-				// It must not be able to fire on the handshake, or every legitimate
-				// request dies at the syn.
 				"dsize:>0;",
 			} {
 				if !strings.Contains(out, want) {
@@ -59,8 +46,6 @@ func TestGenerateSuricataRulesAlwaysDenies(t *testing.T) {
 	}
 }
 
-// The whole point of the source address in each header: one VM's allowance must
-// not be usable by the VM next to it.
 func TestGenerateSuricataRulesScopesToTheVM(t *testing.T) {
 	out := generateSuricataRules([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
@@ -81,9 +66,6 @@ func TestGenerateSuricataRulesScopesToTheVM(t *testing.T) {
 	}
 }
 
-// Guest dns is answered by the resolver on the gateway and never reaches the
-// forward chain. A pass dns rule here would be a way to talk dns to any server
-// on the internet, with an allowed name as the password.
 func TestGenerateSuricataRulesNeverPassesDNS(t *testing.T) {
 	out := generateSuricataRules([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
@@ -93,9 +75,6 @@ func TestGenerateSuricataRulesNeverPassesDNS(t *testing.T) {
 	}
 }
 
-// The blanket deny is what closes the completed-handshake hole, and which VMs get
-// it is the whole subtlety: one that has a rule needing to read a hostname cannot
-// have it, and one that does not, must.
 func TestGenerateSuricataRulesBlanketDeniesWithoutANameRule(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -105,15 +84,12 @@ func TestGenerateSuricataRulesBlanketDeniesWithoutANameRule(t *testing.T) {
 		{"no targets at all", []db.ListVMNetworkTargetsByClientRow{noTargets("10.0.0.2", "alpha")}, true},
 		{"addresses only",
 			[]db.ListVMNetworkTargetsByClientRow{row("10.0.0.2", "alpha", "ip", "1.2.3.4", "tcp", "22")}, true},
-		// Lookup-only grants no web access, so nothing it compiles to needs to see a
-		// handshake either.
 		{"lookup-only domain",
 			[]db.ListVMNetworkTargetsByClientRow{row("10.0.0.2", "alpha", "domain", "example.com", "", "none")}, true},
 		{"a domain on both web ports",
 			[]db.ListVMNetworkTargetsByClientRow{row("10.0.0.2", "alpha", "domain", "example.com", "", "")}, false},
 		{"a domain on one web port",
 			[]db.ListVMNetworkTargetsByClientRow{row("10.0.0.2", "alpha", "domain", "example.com", "", "443")}, false},
-		// One name-based allowance is enough to need the syn, whatever else is there.
 		{"addresses and a domain", []db.ListVMNetworkTargetsByClientRow{
 			row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
 			row("10.0.0.2", "alpha", "ip", "1.2.3.4", "tcp", "22"),
@@ -129,9 +105,6 @@ func TestGenerateSuricataRulesBlanketDeniesWithoutANameRule(t *testing.T) {
 	}
 }
 
-// A VM that is denied everything still has to reach the generator, and the one
-// thing that could silently stop it is the join: an inner one drops it, and the
-// VM keeps the syn on the web ports with nobody able to see why.
 func TestGenerateSuricataRulesCoversEveryVMOnTheHost(t *testing.T) {
 	out := generateSuricataRules([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
@@ -145,16 +118,12 @@ func TestGenerateSuricataRulesCoversEveryVMOnTheHost(t *testing.T) {
 	}
 }
 
-// A duplicated sid makes Suricata drop one of the two rules, silently revoking
-// an allowance somebody was told they had.
 func TestGenerateSuricataRulesSidsAreUnique(t *testing.T) {
 	out := generateSuricataRules([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
 		row("10.0.0.2", "alpha", "domain", "other.com", "", ""),
 		row("10.0.0.3", "beta", "ip", "1.2.3.4", "any", "80,443"),
 		row("10.0.0.3", "beta", "ip", "10.0.0.0/8", "any", ""),
-		// Two VMs whose only rule is a blanket deny: those consume sids from the
-		// same counter as the pass rules do.
 		noTargets("10.0.0.4", "gamma"),
 		noTargets("10.0.0.5", "delta"),
 	})
@@ -179,27 +148,21 @@ func TestTargetRulesTransportAndPorts(t *testing.T) {
 		row   db.ListVMNetworkTargetsByClientRow
 		wants []string
 	}{
-		// "either transport" is `ip` in a rule header, but a header cannot carry a
-		// port on `ip` -- so a ported allowance becomes one rule per transport.
 		{"any transport, no port",
 			row("10.0.0.2", "a", "ip", "1.2.3.4", "any", ""),
 			[]string{`pass ip 10.0.0.2 any -> 1.2.3.4 any`}},
 		{"any transport with ports",
 			row("10.0.0.2", "a", "ip", "1.2.3.4", "any", "8080"),
 			[]string{`pass tcp 10.0.0.2 any -> 1.2.3.4 8080`, `pass udp 10.0.0.2 any -> 1.2.3.4 8080`}},
-		// A bare `80,443` is a parse error that would take the whole file down.
 		{"port list is bracketed",
 			row("10.0.0.2", "a", "ip", "1.2.3.4", "tcp", "80,443"),
 			[]string{`pass tcp 10.0.0.2 any -> 1.2.3.4 [80,443]`}},
 		{"port range is not",
 			row("10.0.0.2", "a", "ip", "1.2.3.4", "udp", "1000:2000"),
 			[]string{`pass udp 10.0.0.2 any -> 1.2.3.4 1000:2000`}},
-		// icmp takes the port slot as `any` and means it, and must not be widened to
-		// `ip` -- which would open every tcp and udp port to the same address.
 		{"icmp",
 			row("10.0.0.2", "a", "ip", "8.8.8.8", "icmp", ""),
 			[]string{`pass icmp 10.0.0.2 any -> 8.8.8.8 any`}},
-		// dotprefix is what stops example.com from also allowing notexample.com.
 		{"domain matches subdomains only",
 			row("10.0.0.2", "a", "domain", "example.com", "", ""),
 			[]string{`tls.sni; dotprefix; content:".example.com"; nocase; endswith;`,
@@ -217,12 +180,6 @@ func TestTargetRulesTransportAndPorts(t *testing.T) {
 	}
 }
 
-// Which web ports a domain is allowed on. 'none' is the interesting one: it has
-// to compile to no rule at all, because its whole purpose is to let the resolver
-// answer a name without granting anything on the wire.
-// An icmp allowance must not become an `ip` one. `pass ip` would let the guest
-// reach every tcp and udp port on that address, which is not what a row saying
-// "icmp" says, and the difference is invisible in a rule that loads either way.
 func TestTargetRulesICMPDoesNotWiden(t *testing.T) {
 	sid := suricataPassSidBase
 	got := strings.Join(targetRules(row("10.0.0.2", "a", "ip", "8.8.8.8", "icmp", ""), &sid), "\n")
@@ -252,8 +209,6 @@ func TestTargetRulesDomainPorts(t *testing.T) {
 					t.Errorf("rule %d is %q, want it to contain %q", i, got[i], want)
 				}
 			}
-			// A rule that consumed a sid it never emitted would eventually collide
-			// with one that did.
 			if want := suricataPassSidBase + len(tc.want); sid != want {
 				t.Errorf("sid counter is at %d after %d rules, want %d", sid, len(got), want)
 			}
@@ -261,9 +216,6 @@ func TestTargetRulesDomainPorts(t *testing.T) {
 	}
 }
 
-// A note is the one field a user types freely, and it lands inside a rule
-// option. An unescaped quote or semicolon there is a ruleset Suricata refuses to
-// load -- taking every other VM on the host with it.
 func TestRuleTextCannotBreakOutOfAnOption(t *testing.T) {
 	r := row("10.0.0.2", "a", "ip", "1.2.3.4", "tcp", "443")
 	r.Note = `bad"; drop ip any any -> any any (sid:1;)`
@@ -271,12 +223,9 @@ func TestRuleTextCannotBreakOutOfAnOption(t *testing.T) {
 	sid := suricataPassSidBase
 	got := strings.Join(targetRules(r, &sid), "\n")
 
-	// Exactly the two that open and close msg: any more and the note closed it
-	// early and started writing rule syntax of its own.
 	if n := strings.Count(got, `"`); n != 2 {
 		t.Errorf("expected 2 quotes, got %d -- the note escaped its option:\n%s", n, got)
 	}
-	// The options after msg are fixed, so the only semicolons left are theirs.
 	if n := strings.Count(got, ";"); n != 3 {
 		t.Errorf("expected 3 semicolons (msg, sid, rev), got %d:\n%s", n, got)
 	}

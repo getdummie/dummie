@@ -3,20 +3,17 @@ import { PanelLeftClose } from '@lucide/vue'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
-/** Sheet open state for the mobile drawer; the header owns the trigger. */
 const open = defineModel<boolean>('open', { default: false })
 
 const { expanded, toggle } = useSidebar()
 const route = useRoute()
 
-// Close the drawer whenever navigation happens.
 watch(() => route.fullPath, () => {
   open.value = false
 })
 </script>
 
 <template>
-  <!-- Desktop: icon rail, expandable via the logo -->
   <aside
     aria-label="Sidebar"
     class="fixed inset-y-0 left-0 z-50 hidden flex-col border-r border-border/80 bg-sidebar transition-[width] duration-200 md:flex"
@@ -26,7 +23,6 @@ watch(() => route.fullPath, () => {
       class="flex h-14 shrink-0 items-center border-b border-border/80"
       :class="expanded ? 'gap-2.5 pl-3 pr-1.5' : 'justify-center'"
     >
-      <!-- Collapsed, the mark expands the rail; expanded, it links home. -->
       <button
         v-if="!expanded"
         type="button"
@@ -68,7 +64,6 @@ watch(() => route.fullPath, () => {
     <AppSidebarNav :expanded="expanded" />
   </aside>
 
-  <!-- Mobile: same nav as a drawer, always labelled -->
   <Sheet v-model:open="open">
     <SheetContent side="left" class="w-64 gap-0 p-0">
       <SheetHeader class="h-14 shrink-0 flex-row items-center gap-2.5 border-b border-border/80 px-4">

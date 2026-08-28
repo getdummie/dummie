@@ -26,41 +26,16 @@ import (
 	"control/internal/proto"
 )
 
-// UserHandler serves the self-service endpoints under /api/v1/vms. Everything
-// here is scoped to the caller: the JWT middleware proves who is asking, and
-// each query filters on created_by so one user's id is never enough to reach
-// another user's row.
 type UserHandler struct {
 	q *db.Queries
-	// pool is here for the one thing q cannot do: write a row and the scheduled
-	// task that expires it in a single transaction. nil when no database is
-	// configured, which the routes that need it report rather than panic on.
 	pool *pgxpool.Pool
 	hub  *Hub
-	// prod picks the scheme for the links this hands out: a dev control plane is
-	// served over http, and a link to https it does not answer on is worse than
-	// no link at all.
 	prod bool
-	// proxy is carried only to be handed to pushProxyConfig.
 	proxy proxyAuthConfig
-	// blobs mints the download link a host fetches a chosen kernel from. nil when
-	// no bucket is configured, which is what makes a create impossible to serve.
 	blobs *blobStore
-	// ch reads the suricata events clients ship. nil when no clickhouse is
-	// configured, which the routes that use it report as "unavailable" rather
-	// than as an empty result.
 	ch driver.Conn
 }
 
-// vmURL is where a VM answers http: its name under the domain of the host it
-// runs on, which is exactly the hostname the generated proxy config publishes
-// it under. Worked out here rather than in the browser because both halves are
-// server-side facts -- the client's domain is not on the VM row, and whether
-// this deployment serves https is not something the client can see.
-//
-// "" when the host has no domain. That is the honest answer rather than a gap:
-// without one there is no name to route on, and inventing a suffix would hand
-// the user a link nothing resolves.
 func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
 	tld := h.vmDomainTLD(ctx, v)
 	if tld == "" {
@@ -73,9 +48,6 @@ func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
 	return fmt.Sprintf("%s://%s.%s", scheme, v.Name, tld)
 }
 
-// vmDomainTLD is the domain of the host a VM runs on, or "" when it has none or
-// the VM has no name to sit under one. Split out of vmURL because the console
-// hostname is built from the same two halves under a different shape.
 func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
 	if v.Name == "" {
 		return ""
@@ -84,8 +56,6 @@ func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
 	if err != nil || !client.DomainID.Valid {
 		return ""
 	}
-	// No query reads a single domain by id, and an installation holds a handful,
-	// so scanning them beats adding one for this lookup.
 	domains, err := h.q.ListDomains(ctx)
 	if err != nil {
 		return ""
@@ -98,8 +68,6 @@ func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
 	return ""
 }
 
-// callerID reads the uid the JWT middleware put on the context. A route behind
-// userJWT always has one, so a miss is a wiring bug rather than a bad request.
 func callerID(c *echo.Context) (pgtype.UUID, error) {
 	uid, _ := c.Get("uid").(string)
 	if uid == "" {
@@ -108,8 +76,6 @@ func callerID(c *echo.Context) (pgtype.UUID, error) {
 	return parseUUID(uid)
 }
 
-// ListVMs returns the caller's own VMs.
-//
 // @Summary     List your VMs
 // @Description Scoped to you by the query itself. url and console_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.
 // @Tags        vms
@@ -145,8 +111,6 @@ func (h *UserHandler) ListVMs(c *echo.Context) error {
 	return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }
 
-// GetVM returns one of the caller's VMs.
-//
 // @Summary     Read one of your VMs
 // @Description Someone else's VM and a VM that does not exist are the same 404, so this cannot be used to discover which ids are real. status is the host's claim as of reported_at, not a live observation.
 // @Tags        vms
@@ -172,8 +136,6 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// Someone else's VM and a VM that does not exist are the same answer, so
-			// this cannot be used to discover which ids are real.
 			return echo.NewHTTPError(http.StatusNotFound, "no such vm")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
@@ -186,8 +148,6 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 	return c.JSON(http.StatusOK, items[0])
 }
 
-// quotaDTO is what the create form needs to show a user where they stand before
-// they fill anything in.
 type quotaDTO struct {
 	VCPULimit      int32 `json:"vcpu_limit"`
 	MemoryLimitMiB int32 `json:"memory_limit_mib"`
@@ -197,8 +157,6 @@ type quotaDTO struct {
 	DiskUsedMiB    int32 `json:"disk_used_mib"`
 }
 
-// GetQuota reports the caller's allowance and how much of it is spent.
-//
 // @Summary     Read your quota
 // @Description What you may hold across every VM at once, and what your active VMs already use. Check this before a create rather than discovering the refusal.
 // @Tags        vms
@@ -231,19 +189,11 @@ func (h *UserHandler) GetQuota(c *echo.Context) error {
 	})
 }
 
-// hostDTO is a host a self-service caller may target. Only the hostname is
-// exposed -- the fleet's addresses, versions and metrics are not a user's
-// business, and the id is needed only to name the choice on the way back.
 type hostDTO struct {
 	ID       string `json:"id"`
 	Hostname string `json:"hostname"`
 }
 
-// ListHosts offers only clients with a live socket. An client whose row still
-// says 'online' but whose connection dropped would fail the create, so listing
-// it is offering a choice that cannot work.
-// ListHosts offers the hosts a create may target.
-//
 // @Summary     List available hosts
 // @Description Only hosts with a live socket to this server. One whose row still says 'online' but whose connection dropped would fail the create, so it is left out. The id is what you pass as client_id.
 // @Tags        vms
@@ -268,10 +218,6 @@ func (h *UserHandler) ListHosts(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
-// userArtifactDTO is one catalogue entry -- a kernel or an OS image -- as the
-// create form shows it. No object key and no download link: a user picks an
-// entry, and the link a host fetches it from is minted server-side when the job
-// is built.
 type userArtifactDTO struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -280,14 +226,8 @@ type userArtifactDTO struct {
 	CreatedAt   string `json:"created_at"`
 }
 
-// maxArtifactChoices bounds the list handed to the picker. Well above any real
-// catalogue; it exists so the form is not asked to render an unbounded list.
 const maxArtifactChoices = 100
 
-// ListKernels offers the catalogue, newest first, to any signed-in caller.
-// Withdrawn kernels are not in it: the query leaves them out, which is what
-// stops a user choosing one the create would then refuse.
-//
 // @Summary     List available kernels
 // @Description The catalogue an admin uploaded, newest first, withdrawn entries left out. No object key and no download link: you pick an entry, and the link the host fetches it from is minted server-side when the job is built. The id is what you pass as kernel_id.
 // @Tags        vms
@@ -314,9 +254,6 @@ func (h *UserHandler) ListKernels(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
-// ListOSImages offers the OS image catalogue on the same terms as the kernel
-// one: newest first, withdrawn entries left out, no keys or links.
-//
 // @Summary     List available OS images
 // @Description The root-filesystem catalogue, on the same terms as the kernel one. The id is what you pass as osimage_id.
 // @Tags        vms
@@ -343,77 +280,29 @@ func (h *UserHandler) ListOSImages(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
-// createVMReq is deliberately narrower than proto.VMSpec. A self-service caller
-// gets the size, the two artifacts and their checksums; boot mode, addressing
-// and egress policy are decided here, not by the request.
 type createVMReq struct {
 	ClientID  string `json:"client_id"`
 	Name      string `json:"name"`
 	CPUs      int32  `json:"cpus"`
 	MemoryMiB int32  `json:"memory_mib"`
-	// DiskSize sizes the per-VM overlay. Deliberately not rootfs_size: that sizes
-	// the base image, which is cached by the tar's digest alone and shared by
-	// every VM built from that tar -- so a per-user value there would be silently
-	// ignored for everyone after the first.
 	DiskSize string `json:"disk_size"`
-	// KernelID names a row in the kernels catalogue. A caller picks from what an
-	// admin uploaded rather than supplying a url: the artifact a guest boots is
-	// the installation's decision, and an arbitrary url would make every VM's
-	// kernel a fetch from wherever its creator pointed.
 	KernelID string `json:"kernel_id"`
-	// OSImageID names a row in the OS images catalogue, and is the root
-	// filesystem half of the same arrangement as KernelID.
 	OSImageID string `json:"osimage_id"`
 
-	// DefaultPort is where a request goes when nothing picks a port. 0 means
-	// unset, and becomes defaultVMPort.
 	DefaultPort int32 `json:"default_port"`
-	// PublicPorts is every port the VM publishes. Empty publishes nothing.
 	PublicPorts []int32 `json:"public_ports"`
 
-	// TTLSeconds makes this a temporary sandbox: the control plane destroys the VM
-	// this many seconds after the row is written. 0 is the ordinary case -- a VM
-	// that lives until somebody destroys it.
-	//
-	// Measured from the create, and it keeps running while the VM is stopped. A
-	// clock that paused on stop would make the TTL evadable by exactly the trick
-	// the quota already refuses to reward, and what a temporary sandbox is
-	// bounding is wall-clock exposure rather than uptime.
 	TTLSeconds int64 `json:"ttl_seconds"`
 
-	// Targets is the egress allowlist to give the VM at birth, in exactly the
-	// shape POST /vms/{id}/targets takes one at a time. Empty is a VM that may
-	// reach nothing until somebody allows something.
-	//
-	// Here rather than left to follow-up calls because the guest boots and starts
-	// trying to reach things immediately: an allowlist applied a moment later is a
-	// window in which the sandbox is already running and already denied, which
-	// reads as a broken VM rather than as policy arriving.
 	Targets []createTargetReq `json:"targets"`
 }
 
-// maxCreateTargets bounds the allowlist one create may carry. Well above any
-// real starting policy; it is here because these rows are written in a single
-// transaction, and an unbounded list would make one request hold it open for as
-// long as it liked.
 const maxCreateTargets = 32
 
-// defaultVMPort is what a VM gets when the request does not name one. It is the
-// column default too; repeated here so that a request that omits the field and
-// one that sends 0 reach the same row.
 const defaultVMPort = 8000
 
-// maxPublicPorts bounds a list that goes into a generated file on every host.
-// Well above any real use; it exists so one request cannot make every client's
-// proxy config arbitrarily large.
 const maxPublicPorts = 32
 
-// normalizePorts settles the two port fields together: they are validated the
-// same way, and the default is only meaningful next to the list.
-//
-// The list is de-duplicated but not sorted -- the order is the caller's, and it
-// is the order the generated file lists them in, so reordering it would be a
-// change the caller did not ask for that shows up in a diff on every host.
 func normalizePorts(defaultPort int32, public []int32) (int32, []int32, error) {
 	if defaultPort == 0 {
 		defaultPort = defaultVMPort
@@ -439,23 +328,10 @@ func normalizePorts(defaultPort int32, public []int32) (int32, []int32, error) {
 	return defaultPort, ports, nil
 }
 
-// sizePattern matches what the client's parseSize accepts: plain bytes or a
-// single K/M/G/T suffix. Checked here so a typo is an immediate 400 rather than
-// a failed row a minute later.
 var sizePattern = regexp.MustCompile(`^[0-9]+[KkMmGgTt]?$`)
 
-// sha256Pattern is a bare 64-character hex digest, which is the form the client
-// compares against.
 var sha256Pattern = regexp.MustCompile(`^[0-9a-fA-F]{64}$`)
 
-// parseSizeMiB converts the client's size syntax to MiB, so a disk size given as
-// "2G" can be totalled against a limit stored as a number. Mirrors the client's
-// own parseSize (cmd/dclient/vm.go) -- same units, same suffixes.
-//
-// Rounds up: a 1.5 GiB disk that counted as 1 GiB would let a user hold more
-// than their limit, and rounding a limit check in the user's favour is the
-// wrong direction to be imprecise in. An empty string is 0, matching the client,
-// where an unset size means "no explicit size".
 func parseSizeMiB(s string) (int32, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -488,8 +364,6 @@ func parseSizeMiB(s string) (int32, error) {
 	return int32((bytes + mib - 1) / mib), nil
 }
 
-// CreateVM builds one VM for the caller on a host of their choosing.
-//
 // @Summary     Create a VM
 // @Description Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. Your SSH public key has to be on your account first -- it is built into the image at boot, so it cannot be added afterwards. The size is charged against your quota; disk_size takes the client's syntax ("2G", "512M", or plain bytes).
 // @Description
@@ -522,8 +396,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
-	// Empty is allowed and means "generate one": the name has to be unique across
-	// the fleet, and that is not something to make a person guess at.
 	name, err := validateVMName(req.Name)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
@@ -571,17 +443,11 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
 	}
 
-	// The allowlist is settled before anything is written, so a typo in the tenth
-	// destination is a 400 rather than a VM that exists with nine of the ten
-	// allowances its owner asked for.
 	if len(req.Targets) > maxCreateTargets {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf(
 			"a vm can be created with at most %d destinations; add the rest afterwards", maxCreateTargets))
 	}
 	targets := make([]normalizedTarget, 0, len(req.Targets))
-	// The unique index would catch a repeat, but only by aborting the transaction
-	// that is also writing the VM -- so the same request asking for a destination
-	// twice would lose the VM too. Caught here, where it is still just a typo.
 	seenTargets := make(map[string]bool, len(req.Targets))
 	for i, t := range req.Targets {
 		nt, err := normalizeTarget(t)
@@ -600,25 +466,11 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 
 	ctx := c.Request().Context()
 
-	// --- allowance -----------------------------------------------------------
-	//
-	// The limit is on the total a user holds at once, not on the size of any one
-	// VM: a per-VM check would let someone create an unbounded number of
-	// just-under-the-line VMs, which is not a limit.
-	//
-	// This is a read-then-write, so two creates racing can both see room for the
-	// last slot. Closing that means taking a lock on the user row for the whole
-	// create, which costs more than the overshoot is worth while nothing enforces
-	// these numbers on the host anyway. Revisit alongside real enforcement.
 	u, err := h.q.GetUserByID(ctx, owner)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read your account")
 	}
 
-	// A VM is only useful to someone who can get into it, and in these images the
-	// key has to be in the root filesystem before it is turned into a disk -- there
-	// is no cloud-init and no guest client, so adding one afterwards means a rebuild.
-	// Refusing the create is the last point at which a missing key is cheap to fix.
 	if u.PublicKey == "" {
 		return echo.NewHTTPError(http.StatusForbidden,
 			"add an SSH public key to your profile in Settings before creating a VM")
@@ -644,11 +496,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			used.DiskMiB+diskMiB, u.DiskLimitMiB, used.DiskMiB))
 	}
 
-	// --- host ----------------------------------------------------------------
-	//
-	// Re-checked rather than trusted: the list the form was built from is a
-	// snapshot, and the caller could name any client id regardless of what was
-	// offered.
 	clientID := strings.TrimSpace(req.ClientID)
 	pgClientID, err := parseUUID(clientID)
 	if err != nil {
@@ -668,9 +515,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, "that host is not connected")
 	}
 
-	// Both chosen artifacts become links the host can fetch. Minted here, at the
-	// moment the job is built, because they expire: a link stored earlier and used
-	// later is a create that fails for no reason the user can see.
 	if h.blobs == nil {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
 	}
@@ -694,8 +538,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	if osImage.SoftDeletedAt.Valid {
 		return echo.NewHTTPError(http.StatusConflict, "that os image has been withdrawn; choose another")
 	}
-	// Signed for the public endpoint, since the host doing the download sits
-	// outside this server's network -- the same reason a browser needs that name.
 	kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
 	if err != nil {
 		log.Printf("could not presign kernel %s for a create: %v", req.KernelID, err)
@@ -707,9 +549,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the os image download")
 	}
 
-	// Boot mode and egress are fixed for self-service creates: direct boot from a
-	// kernel plus a tar-built rootfs, with unrestricted outbound. A user chooses
-	// the artifacts and the size, not the policy.
 	spec := proto.VMSpec{
 		Boot:      "direct",
 		Kernel:    kernelURL,
@@ -719,14 +558,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		Memory:    int(req.MemoryMiB),
 		EgressAny: true,
 	}
-	// Written before the job is pushed, same as the admin path: a row with no job
-	// is a visible failure, a job with no row is a VM nobody knows about.
-	//
-	// The name is settled by the insert rather than before it, because uniqueness
-	// is the database's answer to give: a generated name that loses the race is
-	// redrawn, and only a name the caller chose comes back as a conflict. The spec
-	// is built inside the loop so the host names the guest whatever the row ended
-	// up holding.
 	var row db.Vm
 	insert := func(ctx context.Context, q *db.Queries, name string) error {
 		spec.Name = name
@@ -749,10 +580,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		if err != nil {
 			return err
 		}
-		// The allowlist rides the same transaction as the row it hangs off. A VM
-		// that came up with a partial allowlist would be worse than one that failed
-		// outright: it would look created, and be denied things its owner watched
-		// themselves ask for.
 		for _, nt := range targets {
 			if _, _, err := insertTarget(ctx, q, row, nt); err != nil {
 				return err
@@ -761,10 +588,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		if ttl == 0 {
 			return nil
 		}
-		// The deadline is written here and nowhere else -- there is no expires_at on
-		// vms -- so this insert failing has to take the VM row with it. A sandbox
-		// whose expiry was never recorded is one nothing will ever destroy, and
-		// nothing would notice either.
 		_, err = scheduleTask(ctx, q, scheduleTaskParams{
 			Kind:        taskVMExpire,
 			SubjectKind: subjectVM,
@@ -773,18 +596,11 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			Reason:      fmt.Sprintf("temporary sandbox: created with a %s ttl", formatTTL(ttl)),
 			CreatedBy:   owner,
 			After:       ttl,
-			// A host that is down must not turn into a VM that outlives its TTL
-			// silently, but it must not exhaust the budget in ten minutes either.
 			MaxAttempts: taskExpireAttempts,
 		})
 		return err
 	}
-	// One transaction per name attempt rather than one around the loop: a unique
-	// violation aborts the transaction it happens in, so a redrawn name needs a
-	// fresh one to insert under.
 	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
-		// A transaction whenever the create writes more than the one row: the TTL
-		// task and the allowlist both have to land with the VM or not at all.
 		if ttl == 0 && len(targets) == 0 {
 			return insert(ctx, h.q, name)
 		}
@@ -815,8 +631,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	return c.JSON(http.StatusAccepted, toVMDTO(row))
 }
 
-// StartVM boots a VM that exists but is not running.
-//
 // @Summary     Start a VM
 // @Description Pushes the job to the host and returns immediately: 202 means the frame was delivered, not that the guest is up. Poll GET /vms/{id} for the outcome.
 // @Tags        vms
@@ -833,11 +647,6 @@ func (h *UserHandler) StartVM(c *echo.Context) error {
 	return h.actOnVM(c, proto.KindVMStart)
 }
 
-// StopVM shuts the guest down but leaves its disk on the host, so StartVM can
-// boot it again from the same state. The allowance it holds is NOT freed: a
-// stopped VM still owns its disk and its slot, and letting a stop free the quota
-// would make the limit trivially evadable by stopping and creating in a loop.
-//
 // @Summary     Stop a VM
 // @Description Shuts the guest down but leaves its disk on the host, so a start boots it again from the same state. This does NOT free the quota the VM holds -- only a destroy does. A TTL keeps running while a VM is stopped.
 // @Tags        vms
@@ -854,9 +663,6 @@ func (h *UserHandler) StopVM(c *echo.Context) error {
 	return h.actOnVM(c, proto.KindVMStop)
 }
 
-// DestroyVM stops the guest and deletes its disk on the host. This is the one
-// action that frees the allowance the VM is holding.
-//
 // @Summary     Destroy a VM
 // @Description Stops the guest and deletes its disk on the host. This is the one action that frees the quota the VM was holding, and it cannot be undone.
 // @Tags        vms
@@ -873,10 +679,6 @@ func (h *UserHandler) DestroyVM(c *echo.Context) error {
 	return h.actOnVM(c, proto.KindVMDestroy)
 }
 
-// actOnVM pushes a job naming an existing VM the caller owns. All three actions
-// need the same checks -- the row is theirs, the host assigned it an id, the
-// client is live, the frame was delivered -- so they share one implementation
-// rather than three that drift.
 func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 	owner, err := callerID(c)
 	if err != nil {
@@ -901,8 +703,6 @@ func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 	if row.Status == "gone" {
 		return echo.NewHTTPError(http.StatusConflict, "this vm no longer exists on its host")
 	}
-	// The client treats every action as idempotent, so these guards are about
-	// telling the caller its request made no sense rather than about safety.
 	switch {
 	case kind == proto.KindVMStart && row.Status == "running":
 		return echo.NewHTTPError(http.StatusConflict, "this vm is already running")
@@ -925,29 +725,14 @@ func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 		return echo.NewHTTPError(http.StatusConflict, "could not deliver the job to the host")
 	}
 
-	// A destroy makes any pending expiry moot. The task would work that out for
-	// itself on its next run -- it checks the VM's status first -- so this is about
-	// the audit view: a queue of expiries for VMs that no longer exist is one an
-	// operator learns to scroll past.
 	if kind == proto.KindVMDestroy {
 		cancelTasksForSubject(ctx, h.q, subjectVM, row.ID,
 			"the vm was destroyed before its ttl ran out")
 	}
 
-	// 202: the row settles when the client reports back, not by the time this
-	// returns.
 	return c.JSON(http.StatusAccepted, toVMDTO(row))
 }
 
-// DeleteVM destroys the guest and takes the record with it. This is the
-// difference from /destroy, which leaves the row behind as 'gone': somebody
-// deleting their own VM is not asking for a tombstone in their list.
-//
-// A create still in flight is refused rather than raced. Its row is what the
-// result frame settles and the guest may already exist on the host, so deleting
-// the record now would leave a VM nobody owns until the host's next inventory
-// report adopts it.
-//
 // @Summary     Delete a VM
 // @Description Destroys the guest on its host and deletes the record. Unlike /destroy, nothing is left behind to look up afterwards. 202 means the destroy was delivered and the record will go when the host confirms; 204 means there was nothing on any host and the record is already gone. Frees the quota the VM was holding.
 // @Tags        vms
@@ -972,9 +757,6 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, "this vm is still being created; try again once it has settled")
 	}
 
-	// Nothing on any host to destroy: a create that failed before the host got
-	// that far, or a VM already gone. The record is all there is left to delete,
-	// and the generated policies already exclude it, so nothing has to be pushed.
 	if row.VMID == "" || row.Status == "failed" || row.Status == "gone" {
 		if err := h.q.DeleteVM(ctx, row.ID); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "could not delete vm")
@@ -995,9 +777,6 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not build the job")
 	}
-	// Marked before the frame goes out, not after: the result can come back on the
-	// client's socket while this handler is still running, and a mark written after
-	// that would arrive too late to stop the row settling as 'gone'.
 	h.hub.MarkPurge(rowID)
 	if err := h.hub.Send(clientID, env); err != nil {
 		h.hub.TakePurge(rowID)
@@ -1005,26 +784,17 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 	}
 	cancelTasksForSubject(ctx, h.q, subjectVM, row.ID, "the vm was deleted before its ttl ran out")
 
-	// 202: the record goes when the host confirms the guest is destroyed, so a
-	// destroy that fails leaves the VM -- and its record -- where they were. The row
-	// as it stands is the body, like every other action, so a caller polling for it
-	// to disappear has something to compare against.
 	return c.JSON(http.StatusAccepted, toVMDTO(row))
 }
-
-// --- network targets --------------------------------------------------------
 
 type vmTargetDTO struct {
 	ID          string `json:"id"`
 	Destination string `json:"destination"`
-	Kind        string `json:"kind"`      // domain | ip
-	Transport   string `json:"transport"` // ip rows only: tcp | udp | any
-	Ports       string `json:"ports"`     // ip rows only; "" = any
+	Kind        string `json:"kind"`
+	Transport   string `json:"transport"`
+	Ports       string `json:"ports"`
 	Note        string `json:"note"`
 	CreatedAt   string `json:"created_at"`
-	// ExpiresAt is when a temporary allowance is due to be withdrawn, and "" for a
-	// permanent one. Read from the pending scheduled task rather than from a column
-	// on the row: the deadline is written in one place, and this is a view of it.
 	ExpiresAt string `json:"expires_at"`
 }
 
@@ -1040,8 +810,6 @@ func toVMTargetDTO(t db.VmNetworkTarget) vmTargetDTO {
 	}
 }
 
-// fillTargetExpiries is fillVMExpiries for allowances: one query for the whole
-// list, resolving which of them are temporary and when they end.
 func fillTargetExpiries(ctx context.Context, q *db.Queries, items []vmTargetDTO) {
 	if len(items) == 0 {
 		return
@@ -1060,8 +828,6 @@ func fillTargetExpiries(ctx context.Context, q *db.Queries, items []vmTargetDTO)
 	}
 }
 
-// ownedVM resolves the VM in the path and proves the caller owns it. Every
-// target route starts here, so none of them can operate on a VM by id alone.
 func (h *UserHandler) ownedVM(c *echo.Context) (db.Vm, error) {
 	owner, err := callerID(c)
 	if err != nil {
@@ -1088,16 +854,6 @@ type updateVMPortsReq struct {
 	PublicPorts []int32 `json:"public_ports"`
 }
 
-// UpdatePorts changes what an owner's VM publishes. Ports are the one part of a
-// VM's routing that is safe to change after the fact: the name is a fleet-wide
-// identifier that other people's links point at, and the address belongs to the
-// host, but which port a request lands on is the owner's business and changes
-// whenever they move what they are running.
-//
-// Takes effect on the host as soon as it is written -- the proxy config is
-// regenerated and pushed, the same as a create does.
-// UpdatePorts rewrites the routing the host's proxy config is generated from.
-//
 // @Summary     Set a VM's published ports
 // @Description default_port is where a request goes when nothing picks a port; omit it or send 0 for 8000. public_ports is every port the VM publishes -- send an empty list to publish nothing. The list is de-duplicated but not reordered, since its order is the order the generated config lists them in. At most 32 ports.
 // @Tags        vms
@@ -1144,20 +900,13 @@ func (h *UserHandler) UpdatePorts(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the ports")
 	}
 
-	// Whole-host, like every other write that changes routing: the file covers
-	// every guest on the machine and is regenerated from the database rather than
-	// patched with this row.
 	pushProxyConfig(ctx, h.q, h.hub, h.proxy, vm.ClientID)
-	// Carries the urls like GetVM does: the detail page shows the saved row
-	// straight back, so leaving them out would make the links vanish on save.
 	d := toVMDTO(row)
 	d.URL = h.vmURL(ctx, row)
 	d.ConsoleURL = h.consoleURL(ctx, row)
 	return c.JSON(http.StatusOK, d)
 }
 
-// ListTargets returns one VM's egress allowlist.
-//
 // @Summary     List a VM's allowed destinations
 // @Description Everything this guest is permitted to reach. expires_at is set on temporary allowances and empty on permanent ones.
 // @Tags        egress
@@ -1188,42 +937,19 @@ func (h *UserHandler) ListTargets(c *echo.Context) error {
 }
 
 type createTargetReq struct {
-	// Kind is what the caller says this is. Optional: omitted, the destination is
-	// classified for them. Supplied and disagreeing with the destination, the
-	// request is rejected -- a form that asked for an address and got a hostname
-	// has a mistake in it, and quietly storing the other kind hides it.
 	Kind        string `json:"kind"`
 	Destination string `json:"destination"`
-	// Transport is ignored when the destination is a domain: both rules a domain
-	// compiles to are tcp by construction, so there is nothing to choose.
 	Transport string `json:"transport"`
-	// Ports means different things to the two kinds. For an address it is
-	// Suricata's port syntax and goes straight into a rule header. For a domain it
-	// is which of the two web ports the name is allowed on -- see domainPorts in
-	// suricata_rules.go, and domainTargetPorts below for what is accepted.
 	Ports string `json:"ports"`
 	Note  string `json:"note"`
 
-	// TTLSeconds makes this a temporary allowance: the control plane removes it
-	// this many seconds from now and regenerates the host's policy. 0 is a
-	// permanent one, which is what an omitted field means.
 	TTLSeconds int64 `json:"ttl_seconds"`
 }
 
-// portsPattern is Suricata's port syntax, restricted to the forms worth
-// offering: a single port, a comma-separated list, or a colon range. Validated
-// rather than passed through, because this string ends up inside a generated
-// rule and a malformed one breaks the whole ruleset, not just this line.
 var portsPattern = regexp.MustCompile(`^[0-9]+(:[0-9]+)?(,[0-9]+(:[0-9]+)?)*$`)
 
-// hostPattern is a conservative hostname: labels of alphanumerics and hyphens,
-// at least two of them. Wildcards are not accepted -- a leading '*' means
-// something specific in a rule generator and is worth adding deliberately.
 var hostPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)+$`)
 
-// classifyDestination decides whether a destination is an address or a name,
-// and rejects anything that is neither. Stored rather than re-derived so the
-// rule generator does not have to repeat this and reach a different answer.
 func classifyDestination(s string) (string, error) {
 	if _, _, err := net.ParseCIDR(s); err == nil {
 		return "ip", nil
@@ -1237,20 +963,9 @@ func classifyDestination(s string) (string, error) {
 	return "", errors.New("destination must be a domain, an IP address, or a CIDR")
 }
 
-// domainTargetPorts normalises the ports field of a domain allowance to one of
-// the four values the schema's shape constraint accepts, or explains why it
-// cannot.
-//
-// The choice is narrow on purpose, and the reason is not the rule generator: the
-// ports Suricata looks for http and tls on come from suricata.yaml, which is
-// compiled per host from its VM pool and pushed when the client connects. A domain
-// allowed on 8443 would compile to a rule that parses, loads, and never matches
-// anything -- so it is rejected here rather than granted in name only.
 func domainTargetPorts(ports string) (string, error) {
 	switch ports {
 	case "", "80,443", "443,80":
-		// Both web ports, which is also what every row written before this field
-		// existed means.
 		return "", nil
 	case "80", "443", domainPortsNone:
 		return ports, nil
@@ -1260,25 +975,12 @@ func domainTargetPorts(ports string) (string, error) {
 			"for any other port allow the address instead")
 }
 
-// normalizedTarget is one requested destination after validation: the columns it
-// becomes, and how long it lives.
 type normalizedTarget struct {
 	params db.CreateVMNetworkTargetParams
 	ttl    time.Duration
-	// ttlSeconds is what was asked for, carried through to the expiry task's
-	// payload -- that records the request, not the deadline computed from it.
 	ttlSeconds int64
 }
 
-// normalizeTarget settles one requested destination into the row it becomes, or
-// explains why it cannot be one.
-//
-// Split out of CreateTarget so that naming destinations while creating a VM
-// applies exactly these rules. Two copies of this would drift, and the half that
-// drifted would be the one handing out access nobody checked.
-//
-// VMID is left unset: the create path does not know it until the row the
-// allowance hangs off has been written.
 func normalizeTarget(req createTargetReq) (normalizedTarget, error) {
 	req.Destination = strings.TrimSpace(req.Destination)
 	req.Ports = strings.ReplaceAll(strings.TrimSpace(req.Ports), " ", "")
@@ -1308,12 +1010,6 @@ func normalizeTarget(req createTargetReq) (normalizedTarget, error) {
 		}
 	}
 
-	// The kind decides which of the remaining fields mean anything. Transport is
-	// cleared rather than rejected for a domain: the form hides it, so a stale
-	// value arriving is this server's problem to normalise, not the caller's to
-	// fix. Ports is not cleared -- for a domain it carries which web ports the
-	// name is allowed on, so a wrong value there is a real disagreement about what
-	// is being granted and is reported instead.
 	if kind == "domain" {
 		req.Transport = ""
 		ports, err := domainTargetPorts(req.Ports)
@@ -1321,9 +1017,6 @@ func normalizeTarget(req createTargetReq) (normalizedTarget, error) {
 			return normalizedTarget{}, err
 		}
 		req.Ports = ports
-		// A hostname is matched case-insensitively against buffers Suricata
-		// normalises to lowercase, so storing it lowercased keeps the unique index
-		// from treating Example.com and example.com as two allowances.
 		req.Destination = strings.ToLower(req.Destination)
 	} else {
 		if req.Transport == "" {
@@ -1332,9 +1025,6 @@ func normalizeTarget(req createTargetReq) (normalizedTarget, error) {
 		switch req.Transport {
 		case "tcp", "udp", "any":
 		case "icmp":
-			// Cleared rather than rejected: icmp has no ports, the form hides the field
-			// when it is chosen, and a value arriving anyway is a stale form rather than
-			// something the user is asking for.
 			req.Ports = ""
 		default:
 			return normalizedTarget{}, errors.New("transport must be tcp, udp, icmp or any")
@@ -1366,13 +1056,6 @@ func normalizeTarget(req createTargetReq) (normalizedTarget, error) {
 	}, nil
 }
 
-// insertTarget writes one allowance and, when it is temporary, the task that
-// withdraws it -- inside whatever transaction the caller is running.
-//
-// Shared by the add-a-destination route and the create-a-VM path so that a
-// temporary allowance is recorded identically by both. The destination comes off
-// the normalized params rather than the request: for a domain those differ, and
-// the audit record has to name the row that was actually written.
 func insertTarget(ctx context.Context, q *db.Queries, vm db.Vm, nt normalizedTarget) (db.VmNetworkTarget, db.ScheduledTask, error) {
 	params := nt.params
 	params.VMID = vm.ID
@@ -1393,15 +1076,10 @@ func insertTarget(ctx context.Context, q *db.Queries, vm db.Vm, nt normalizedTar
 		Reason:    fmt.Sprintf("temporary access to %s for %s", params.Destination, formatTTL(nt.ttl)),
 		CreatedBy: vm.CreatedBy,
 		After:     nt.ttl,
-		// Removing an allowance only needs the database; the push that follows is
-		// best-effort and self-heals when the host reconnects. So the default budget
-		// is plenty -- unlike a VM expiry, this does not wait on a machine.
 	})
 	return t, expiry, err
 }
 
-// CreateTarget adds one destination to a VM's egress allowlist.
-//
 // @Summary     Allow a destination
 // @Description destination is a domain, an IP address, or a CIDR. Omit kind to have it classified for you; supply it and it must agree, since a form that asked for an address and got a hostname has a mistake in it.
 // @Description
@@ -1439,10 +1117,6 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	ttl := nt.ttl
 
 	ctx := c.Request().Context()
-	// With a TTL the row and its expiry are written together, for the same reason
-	// as a VM's: the deadline exists only as a task, so an allowance recorded
-	// without one is a temporary grant that turns out to be permanent -- the exact
-	// failure this feature is meant to prevent.
 	var t db.VmNetworkTarget
 	var expiry db.ScheduledTask
 	create := func(q *db.Queries) error {
@@ -1462,34 +1136,19 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not add the destination")
 	}
-	// Whole-host, not whole-VM: both files cover every guest on the host, so they
-	// are regenerated from the database rather than patched with this row. The
-	// Corefile is what lets the guest resolve the name at all, so a ruleset sent
-	// without it is an allowance that cannot be used.
 	pushSuricataRules(ctx, h.q, h.hub, vm.ClientID)
 	pushCoreDNSConfig(ctx, h.q, h.hub, vm.ClientID)
 
 	dto := toVMTargetDTO(t)
 	if expiry.RunAt.Valid {
-		// The deadline the database computed, not now()+ttl worked out here: those
-		// differ by however far this process's clock is off, and the row is the one
-		// that decides when the allowance ends.
 		dto.ExpiresAt = expiry.RunAt.Time.Format(time.RFC3339)
 	}
 	return c.JSON(http.StatusCreated, dto)
 }
 
-// Resolving a name for the user is a convenience with a sharp edge, so both are
-// bounded here.
 const (
-	// resolveTimeout is short: this is a form waiting on it, and a name that takes
-	// longer than this to answer is one the guest would have trouble with too.
 	resolveTimeout = 3 * time.Second
 
-	// resolveMaxAddresses caps what one name can turn into. A CDN answers with a
-	// handful of addresses out of a pool of thousands, and recording twenty of them
-	// is neither an allowlist nor an explanation -- it is a suggestion that the user
-	// has allowed something they have not.
 	resolveMaxAddresses = 8
 )
 
@@ -1497,20 +1156,6 @@ type resolveHostReq struct {
 	Host string `json:"host"`
 }
 
-// ResolveTargetHost answers what a hostname currently resolves to, so the UI can
-// offer to record those addresses as allowances.
-//
-// This exists because of a limit that cannot be designed away: only tls and http
-// carry the destination name in the traffic suricata sees, so an allowance for ssh
-// or postgres to a hostname is not expressible -- there is nothing in the packets
-// to check a name against. Such access has to be granted by address, and a user
-// who thinks in names needs help turning one into the other.
-//
-// Deliberately not a background job that keeps the two in step. Addresses move,
-// and something re-resolving on a timer would silently widen an allowlist nobody
-// re-read. This returns what it found, the caller records it, and what the page
-// lists afterwards is exactly what is enforced.
-//
 // @Summary     Resolve a hostname
 // @Description What a name currently resolves to, so you can record those addresses as allowances. IPv4 only -- every rule and nftables element downstream is IPv4, so an AAAA record would be an address nothing can express. At most 8 addresses; truncated says when there were more.
 // @Description
@@ -1529,9 +1174,6 @@ type resolveHostReq struct {
 // @Failure     404 {object} apiError
 // @Router      /vms/{id}/targets/resolve [post]
 func (h *UserHandler) ResolveTargetHost(c *echo.Context) error {
-	// Scoped to a VM the caller owns even though the answer is not VM-specific: it
-	// is a lookup this server makes on request, and an unauthenticated one would be
-	// a name-resolution service for anything that can reach the API.
 	if _, err := h.ownedVM(c); err != nil {
 		return err
 	}
@@ -1544,9 +1186,6 @@ func (h *UserHandler) ResolveTargetHost(c *echo.Context) error {
 	if host == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "a hostname is required")
 	}
-	// The same pattern CreateTarget classifies with, so a name that resolves here is
-	// one that can be recorded there -- and it is what keeps this from being handed
-	// anything but a hostname.
 	if !hostPattern.MatchString(host) {
 		return echo.NewHTTPError(http.StatusBadRequest, "that is not a hostname")
 	}
@@ -1556,16 +1195,11 @@ func (h *UserHandler) ResolveTargetHost(c *echo.Context) error {
 
 	addrs, err := h.resolver(ctx).LookupIP(ctx, "ip4", host)
 	if err != nil {
-		// Not a 500: a name that does not resolve is an answer about the name, not a
-		// failure of this server, and the form needs to say so rather than break.
 		return c.JSON(http.StatusOK, map[string]any{
 			"host": host, "addresses": []string{}, "error": "that name did not resolve",
 		})
 	}
 
-	// IPv4 only, and not an oversight: every rule header and every nftables element
-	// in this system is IPv4, so an AAAA record would be an address recorded here
-	// that nothing downstream can express.
 	out := make([]string, 0, len(addrs))
 	for _, a := range addrs {
 		if v4 := a.To4(); v4 != nil {
@@ -1582,10 +1216,6 @@ func (h *UserHandler) ResolveTargetHost(c *echo.Context) error {
 	})
 }
 
-// resolver dials the same upstream the hosts' resolvers forward to, so what this
-// tells a user matches what their guest will be told. Falling back to the system
-// resolver when the setting is unreadable would answer from somewhere else
-// entirely, which for a split-horizon name is a different set of addresses.
 func (h *UserHandler) resolver(ctx context.Context) *net.Resolver {
 	upstream := setting(ctx, h.q, settingResolverUpstream)
 	if upstream == "" {
@@ -1603,8 +1233,6 @@ func (h *UserHandler) resolver(ctx context.Context) *net.Resolver {
 	}
 }
 
-// DeleteTarget withdraws one destination from a VM's egress allowlist.
-//
 // @Summary     Remove an allowed destination
 // @Description Cancels any pending expiry on it and pushes the new policy to the host. Until that push lands the guest still has the access, so treat the 204 as "recorded", not "already enforced".
 // @Tags        egress
@@ -1632,15 +1260,8 @@ func (h *UserHandler) DeleteTarget(c *echo.Context) error {
 	}); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not remove the destination")
 	}
-	// The row is gone, so its expiry has nothing to expire. Withdrawn here rather
-	// than left for the task to discover, so the pending queue stays a list of
-	// things that are actually going to happen.
 	cancelTasksForSubject(ctx, h.q, subjectVMTarget, targetID,
 		"the destination was removed before its ttl ran out")
-	// A removal has to reach the host even more urgently than an addition: until
-	// it does, the guest still has the access the user just revoked. The Corefile
-	// withdraws the name and the ruleset withdraws the access; whichever arrives
-	// second is the one that finishes the revocation.
 	pushSuricataRules(ctx, h.q, h.hub, vm.ClientID)
 	pushCoreDNSConfig(ctx, h.q, h.hub, vm.ClientID)
 	return c.NoContent(http.StatusNoContent)

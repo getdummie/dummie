@@ -51,15 +51,12 @@ func TestSiteHostsRouteToTheSiteListener(t *testing.T) {
 	if !ok || got != "127.0.0.1:8079" {
 		t.Fatalf("site route = (%q, %v), want (127.0.0.1:8079, true)", got, ok)
 	}
-	// The page is the one thing on the fleet nobody has to sign in for.
 	entry, ok := r.HostEntry("www.vm.local")
 	if !ok || entry.NeedsAuth(entry.DefaultPort) {
 		t.Fatalf("site entry = (%+v, %v), want an unauthenticated one", entry, ok)
 	}
 }
 
-// A guest keeps its name even if it is also named as a site host: the VM is
-// what someone published, and the page is only ever a fallback name.
 func TestSiteHostsNeverOverrideAVM(t *testing.T) {
 	cfg := &Config{
 		HTTP: &HTTPConfig{Hosts: map[string]HTTPHost{"www.vm.local": {Host: "10.0.0.2", DefaultPort: 8001}}},

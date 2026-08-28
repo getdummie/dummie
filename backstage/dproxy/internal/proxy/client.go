@@ -16,9 +16,6 @@ const (
 	reconnectMax = 5 * time.Second
 )
 
-// Client is the proxy's single duplex control connection to dpipe. The proxy
-// sends copy/ssh_accept/tls_accept/listen_forward/stop/status; dpipe sends
-// resolve, which is answered from the resolver on the same connection.
 type Client struct {
 	path     string
 	log      *slog.Logger
@@ -34,7 +31,6 @@ type Client struct {
 	closed    chan struct{}
 }
 
-// NewClient returns a client for the dpipe control socket.
 func NewClient(path string, resolver *Resolver, log *slog.Logger) *Client {
 	return &Client{
 		path:     path,
@@ -45,9 +41,6 @@ func NewClient(path string, resolver *Resolver, log *slog.Logger) *Client {
 	}
 }
 
-// Run keeps the control connection up until ctx is done or Close is called. A
-// drop usually means dpipe upgraded itself: reconnecting lands on the new
-// instance.
 func (c *Client) Run(ctx context.Context) {
 	backoff := reconnectMin
 	for {
@@ -112,7 +105,6 @@ func (c *Client) sleep(ctx context.Context, d time.Duration) bool {
 	}
 }
 
-// Close stops the reconnect loop and drops the current connection.
 func (c *Client) Close() {
 	c.closeOnce.Do(func() { close(c.closed) })
 	if p := c.current(); p != nil {
@@ -120,7 +112,6 @@ func (c *Client) Close() {
 	}
 }
 
-// WaitReady blocks until the first successful connection.
 func (c *Client) WaitReady(ctx context.Context) error {
 	select {
 	case <-c.ready:
@@ -152,7 +143,6 @@ func (c *Client) peerOrErr() (*control.Peer, error) {
 	return p, nil
 }
 
-// handleInbound answers requests initiated by dpipe.
 func (c *Client) handleInbound(p *control.Peer, m control.Msg, fds []int) {
 	control.CloseFDs(fds)
 	if m.Type != control.TypeResolve {
@@ -164,8 +154,6 @@ func (c *Client) handleInbound(p *control.Peer, m control.Msg, fds []int) {
 	}
 }
 
-// Copy hands a client/backend pair to dpipe. Fire-and-forget: a successful
-// sendmsg means dpipe owns duplicates of both descriptors.
 func (c *Client) Copy(_ context.Context, id, protocol string, clientFD, backendFD int) error {
 	p, err := c.peerOrErr()
 	if err != nil {
@@ -176,7 +164,6 @@ func (c *Client) Copy(_ context.Context, id, protocol string, clientFD, backendF
 	}, []int{clientFD, backendFD})
 }
 
-// SSHAccept hands a raw (pre-SSH) socket to dpipe, which terminates SSH.
 func (c *Client) SSHAccept(_ context.Context, id string, clientFD int) error {
 	p, err := c.peerOrErr()
 	if err != nil {
@@ -187,7 +174,6 @@ func (c *Client) SSHAccept(_ context.Context, id string, clientFD int) error {
 	}, []int{clientFD})
 }
 
-// TLSAccept hands a raw (pre-TLS) socket to dpipe, which terminates TLS.
 func (c *Client) TLSAccept(_ context.Context, id string, clientFD int) error {
 	p, err := c.peerOrErr()
 	if err != nil {
@@ -198,10 +184,6 @@ func (c *Client) TLSAccept(_ context.Context, id string, clientFD int) error {
 	}, []int{clientFD})
 }
 
-// ConsoleAccept hands the browser's socket to dpipe together with the verdict
-// the proxy reached on it. Fire-and-forget for the same reason Copy is: a
-// successful sendmsg means dpipe owns a duplicate, and waiting for a verdict
-// here would hold a connection open on a decision the proxy cannot change.
 func (c *Client) ConsoleAccept(_ context.Context, m control.Msg, clientFD int) error {
 	p, err := c.peerOrErr()
 	if err != nil {
@@ -210,7 +192,6 @@ func (c *Client) ConsoleAccept(_ context.Context, m control.Msg, clientFD int) e
 	return p.Send(m, []int{clientFD})
 }
 
-// ListenForward programs a forwarding listener in dpipe and returns its id.
 func (c *Client) ListenForward(ctx context.Context, listen, target string) (string, error) {
 	p, err := c.peerOrErr()
 	if err != nil {
@@ -230,8 +211,6 @@ func (c *Client) ListenForward(ctx context.Context, listen, target string) (stri
 	return id, nil
 }
 
-// Stop stops a listen_forward. The message id doubles as the forward id, as in
-// the wire protocol table.
 func (c *Client) Stop(ctx context.Context, id string) error {
 	p, err := c.peerOrErr()
 	if err != nil {
@@ -241,7 +220,6 @@ func (c *Client) Stop(ctx context.Context, id string) error {
 	return err
 }
 
-// Status queries dpipe.
 func (c *Client) Status(ctx context.Context) (conns, forwards int, draining bool, err error) {
 	p, perr := c.peerOrErr()
 	if perr != nil {

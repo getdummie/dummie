@@ -7,8 +7,6 @@ import (
 	"testing"
 )
 
-// fakeRoot builds a directory that looks enough like an extracted rootfs.
-// homes are guest-absolute paths to create.
 func fakeRoot(t *testing.T, passwd string, homes ...string) string {
 	t.Helper()
 	root := t.TempDir()
@@ -33,27 +31,19 @@ func TestAuthKeyTargets(t *testing.T) {
 		name    string
 		passwd  string
 		homes   []string
-		symlink string         // a guest-absolute home to make a symlink instead
-		want    map[string]int // account -> uid
+		symlink string
+		want    map[string]int
 	}{
 		{"both when the image has both", ubuntuPasswd,
 			[]string{"root", "home/ubuntu"}, "", map[string]int{"ubuntu": 1000, "root": 0}},
 		{"root alone when there is no ubuntu", "root:x:0:0:root:/root:/bin/bash\n",
 			[]string{"root"}, "", map[string]int{"root": 0}},
-		// A passwd entry whose home was never created is an account that looks
-		// usable and is not.
 		{"ubuntu is skipped when it has no home", ubuntuPasswd,
 			[]string{"root"}, "", map[string]int{"root": 0}},
-		// uid 0 owns whatever is made for it, so a missing /root is created rather
-		// than skipped.
 		{"root survives a missing home", ubuntuPasswd,
 			[]string{"home/ubuntu"}, "", map[string]int{"ubuntu": 1000, "root": 0}},
-		// A home that is odd rather than absent is skipped: the tar is operator
-		// supplied and this runs as root on the host.
 		{"a symlinked home is not followed", ubuntuPasswd,
 			[]string{"home/ubuntu"}, "root", map[string]int{"ubuntu": 1000}},
-		// Not every image gives ubuntu 1000; assuming it would chown to the wrong
-		// user, which sshd answers by ignoring the key.
 		{"uid is read from the image", "root:x:0:0:root:/root:/bin/sh\nubuntu:x:1500:1600:U:/home/ubuntu:/bin/sh\n",
 			[]string{"root", "home/ubuntu"}, "", map[string]int{"ubuntu": 1500, "root": 0}},
 	} {
@@ -91,8 +81,6 @@ func TestAuthKeyTargetsNeedAPasswd(t *testing.T) {
 	}
 }
 
-// The tar is an operator-supplied artifact unpacked as root. A home directory
-// that climbs out of the image would have this writing to the host.
 func TestImagePathCannotEscape(t *testing.T) {
 	root := t.TempDir()
 	for _, bad := range []string{"/../../etc", "../etc", "/home/../../.."} {
@@ -109,9 +97,6 @@ func TestImagePathCannotEscape(t *testing.T) {
 	}
 }
 
-// The same tar and the same key must land on the same cache entry, or every
-// create rebuilds; a different key must not, or a rotated key never reaches a
-// guest.
 func TestKeyedDigest(t *testing.T) {
 	a := keyedDigest("abc123", "ssh-ed25519 AAAA one")
 	if a != keyedDigest("abc123", "ssh-ed25519 AAAA one") {
@@ -128,8 +113,6 @@ func TestKeyedDigest(t *testing.T) {
 	}
 }
 
-// The accounts the key lands in are part of what an image contains, and the tar
-// and the key alone cannot tell two such images apart.
 func TestAuthKeyRecipeIsInTheCacheIdentity(t *testing.T) {
 	const key = "ssh-ed25519 AAAA one"
 	before := keyedDigest("abc123", imageRecipe(key))
@@ -151,7 +134,6 @@ func TestInjectAuthorizedKeyAppends(t *testing.T) {
 	authKeys := filepath.Join(root, "home", "ubuntu", ".ssh", "authorized_keys")
 	rootKeys := filepath.Join(root, "root", ".ssh", "authorized_keys")
 
-	// An image that ships its own keys put them there on purpose.
 	if err := os.MkdirAll(filepath.Dir(authKeys), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +145,6 @@ func TestInjectAuthorizedKeyAppends(t *testing.T) {
 	if err := injectAuthorizedKey(root, key); err != nil {
 		t.Fatal(err)
 	}
-	// Twice, because a rebuild must not accumulate duplicates.
 	if err := injectAuthorizedKey(root, key); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +169,6 @@ func TestInjectAuthorizedKeyAppends(t *testing.T) {
 		t.Errorf("authorized_keys is %v, want 0600 -- sshd refuses anything looser", fi.Mode().Perm())
 	}
 
-	// Root gets it too, so an image whose ubuntu cannot sudo is still reachable.
 	rb, err := os.ReadFile(rootKeys)
 	if err != nil {
 		t.Fatalf("root did not get the key: %v", err)

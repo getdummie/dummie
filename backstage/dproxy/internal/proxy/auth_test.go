@@ -7,7 +7,6 @@ import (
 	"time"
 )
 
-// writeSecret writes a usable cookie secret to a temp file and returns its path.
 func writeSecret(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "secret")
@@ -43,7 +42,6 @@ func TestVerifyRejects(t *testing.T) {
 	a := newTestAuth(t)
 	tok := a.Mint("cc@example.com", "one.vm.local")
 
-	// A token minted for one host must not work on another.
 	if _, ok := a.Verify(tok, "two.vm.local"); ok {
 		t.Error("token replayed across hosts")
 	}
@@ -89,8 +87,6 @@ func TestProtectedHostWithoutAuthConfigIsRejected(t *testing.T) {
 	}
 }
 
-// The https ingress applies the auth policy through resolve{kind:"http"}, so a
-// protected host and an https listener are a valid combination.
 func TestProtectedHostWithHTTPSIsAccepted(t *testing.T) {
 	cfg := &Config{
 		ControlSocket: "/run/dpipe/control.sock",

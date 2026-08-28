@@ -14,13 +14,8 @@ import (
 	"time"
 )
 
-// startupGrace is how long a freshly started qemu is watched. Bad arguments and
-// missing firmware surface within milliseconds, so a process still alive after
-// this has, for our purposes, started.
 const startupGrace = 1500 * time.Millisecond
 
-// tapChildFD is where the tap lands in the child. Go's exec dups ExtraFiles
-// starting at 3, and the tap is the only file we pass.
 const tapChildFD = 3
 
 func qemuBinary() string {
@@ -30,8 +25,6 @@ func qemuBinary() string {
 	return "qemu-system-x86_64"
 }
 
-// kvmAvailable reports whether this machine can run guests natively. Without it
-// qemu still works via TCG emulation, just slowly, so this is not fatal.
 func kvmAvailable() bool {
 	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
 	if err != nil {
@@ -41,9 +34,6 @@ func kvmAvailable() bool {
 	return true
 }
 
-// defaultAppend is the kernel command line used when the operator gives none.
-// The console must be named explicitly: with -nodefaults the guest has no other
-// way to find the serial port we attached.
 func defaultAppend() string {
 	console := "ttyS0"
 	if runtime.GOARCH == "arm64" {
@@ -52,10 +42,6 @@ func defaultAppend() string {
 	return fmt.Sprintf("console=%s root=/dev/vda rw reboot=k panic=1", console)
 }
 
-// guestHostname is a VM's name in the form a guest can carry: one DNS label,
-// which is what the fleet's names already are. Anything else comes back empty
-// and the guest keeps whatever hostname its image had -- a name is not worth
-// mangling into something that no longer matches what the VM is called.
 func guestHostname(name string) string {
 	if name == "" || len(name) > 63 {
 		return ""
@@ -72,13 +58,6 @@ func guestHostname(name string) string {
 	return name
 }
 
-// withHostname names the guest on the kernel command line. systemd reads
-// systemd.hostname= before /etc/hostname, so this lands at PID 1 -- before sshd
-// or anything else that reports a hostname has started.
-//
-// The image cannot carry it: the built rootfs is content-addressed and shared by
-// every VM built from the same tar, so the command line is where anything per-VM
-// has to go. An operator who named a hostname in their own --append keeps it.
 func withHostname(line, name string) string {
 	h := guestHostname(name)
 	if h == "" {
@@ -95,9 +74,6 @@ func withHostname(line, name string) string {
 	return line + " systemd.hostname=" + h
 }
 
-// qemuArgs builds the whole command line. Everything the VM can touch is named
-// here explicitly -- -nodefaults plus -no-user-config means qemu adds nothing of
-// its own, so this list is the complete hardware inventory of the guest.
 func qemuArgs(data string, v vm, kvm bool) []string {
 	machine, mmio := machineType(v.Boot)
 
@@ -118,16 +94,11 @@ func qemuArgs(data string, v vm, kvm bool) []string {
 		args = append(args, "-cpu", "max")
 	}
 
-	// Seccomp: qemu confines itself to the syscalls it needs. spawn=deny in
-	// particular means a compromised qemu cannot exec anything.
 	args = append(args, "-sandbox", "on,obsolete=deny,elevateprivileges=deny,spawn=deny,resourcecontrol=deny")
 
 	if v.Net == nil {
 		args = append(args, "-nic", "none")
 	} else {
-		// The tap arrives as an already-open fd, inherited across exec. QEMU never
-		// opens /dev/net/tun, never names an interface, and so needs no
-		// CAP_NET_ADMIN -- it cannot reconfigure the network even if compromised.
 		args = append(args,
 			"-netdev", fmt.Sprintf("tap,id=net0,fd=%d,vhost=off", tapChildFD),
 			"-device", device("virtio-net", mmio)+",netdev=net0,mac="+v.Net.MAC,
@@ -162,8 +133,6 @@ func qemuArgs(data string, v vm, kvm bool) []string {
 	return args
 }
 
-// machineType also reports whether virtio devices sit on an mmio bus (microvm,
-// virt) or on PCI (q35) -- the device names differ between the two.
 func machineType(boot bootMode) (machine string, mmio bool) {
 	if runtime.GOARCH == "arm64" {
 		return "virt", true
@@ -181,13 +150,6 @@ func device(base string, mmio bool) string {
 	return base + "-pci"
 }
 
-// launchVM starts qemu detached and returns its pid. The caller's exit must not
-// take the guest with it, so the process gets its own session and its output
-// goes to a file rather than to our stdio.
-//
-// This is also where the VM stops being privileged: the credential is applied
-// between fork and exec, so the qemu that comes out the other side has never run
-// as anything but its own uid.
 func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error) {
 	logFile, err := os.OpenFile(vmPath(data, v.ID, vmQEMULog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
@@ -197,8 +159,6 @@ func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error
 
 	cred, kvm := vmCredential(*v)
 	if cred != nil && !kvm && kvmAvailable() {
-		// Worth a line: the guest is about to be an order of magnitude slower, and
-		// the reason is a device permission rather than anything about the VM.
 		log.Printf("vm %s: /dev/kvm is not reachable by uid %d; falling back to software emulation",
 			v.ID, v.UID)
 	}
@@ -231,9 +191,6 @@ func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error
 
 	cmd, err := start(cgFD >= 0)
 	if err != nil && cgFD >= 0 {
-		// Spawning straight into a cgroup needs clone3 (Linux 5.7+). Falling back
-		// means the limits are applied a moment late, which is worth having over
-		// refusing to boot.
 		log.Printf("could not start inside the cgroup (%v); starting without it", err)
 		v.Cgroup = ""
 		cmd, err = start(false)
@@ -248,9 +205,6 @@ func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error
 		return 0, err
 	}
 
-	// Reaped in the background so an immediate failure is observed rather than
-	// left as a zombie; if it survives the grace period we exit and init adopts
-	// it.
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 
@@ -267,8 +221,6 @@ func launchVM(ctx context.Context, data string, v *vm, tap *os.File) (int, error
 	return pid, nil
 }
 
-// stopVM asks the guest to power down, then insists. A guest that ignores ACPI
-// -- or has not booted far enough to see it -- must not leave a VM wedged.
 func stopVM(ctx context.Context, data, id string, timeout time.Duration) error {
 	pid := vmPID(data, id)
 	if pid == 0 {
@@ -296,8 +248,6 @@ func stopVM(ctx context.Context, data, id string, timeout time.Duration) error {
 	return os.Remove(vmPath(data, id, vmPIDFile))
 }
 
-// tailFile returns the last n bytes, for putting a failure in front of the
-// operator instead of a path to go and read.
 func tailFile(p string, n int64) string {
 	f, err := os.Open(p)
 	if err != nil {

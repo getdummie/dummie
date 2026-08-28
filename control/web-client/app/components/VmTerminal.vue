@@ -3,9 +3,6 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
-// Extracted from the console page so the workspace view can put a live shell in a
-// pane without a second copy of the websocket protocol. The component owns the
-// connection and reports its phase; whoever mounts it draws the chrome.
 const props = defineProps<{
   vmId: string
   fontSize?: number
@@ -17,8 +14,6 @@ interface VM {
   name: string
   vm_id: string
   status: string
-  // The websocket endpoint for this VM's terminal. "" when the host it runs on
-  // has no domain, which is the same condition that leaves `url` empty.
   console_url: string
 }
 
@@ -38,9 +33,6 @@ const emit = defineEmits<{
 const { authFetch } = useAuth()
 const colorMode = useColorMode()
 
-// The guest owns the palette; these are only what it draws on. The dark set is
-// xterm's own defaults; the light set darkens the ANSI colours that are
-// unreadable on white.
 const themes = {
   dark: {
     background: '#09090b',
@@ -103,7 +95,6 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
-/** Sends the current geometry so the guest's pty matches what is on screen. */
 function sendResize() {
   if (!term || ws?.readyState !== WebSocket.OPEN) return
   ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
@@ -114,17 +105,11 @@ function fitAndResize() {
     fit?.fit()
   }
   catch {
-    // fit throws while the element is detached or has no size yet; the next
-    // observation covers it.
     return
   }
   sendResize()
 }
 
-// The token is minted per connection and expires in minutes, so it is fetched
-// at connect time rather than held: a tab left open overnight gets a fresh one
-// when the user reconnects instead of failing the handshake with a dead
-// credential.
 async function connect() {
   if (!term) return
   phase.value = 'connecting'
@@ -142,9 +127,6 @@ async function connect() {
     return
   }
 
-  // The token rides the query string because a websocket handshake has no way
-  // to carry a header the browser did not put there itself. It is single-use in
-  // practice and short-lived, and the proxy never logs the query.
   const url = new URL(creds.url)
   url.searchParams.set('token', creds.token)
   emit('host', url.host)
@@ -160,12 +142,10 @@ async function connect() {
     term?.focus()
   }
   sock.onmessage = (ev) => {
-    if (typeof ev.data === 'string') return // control frames are ours to send, not to read
+    if (typeof ev.data === 'string') return
     term?.write(new Uint8Array(ev.data as ArrayBuffer))
   }
   sock.onerror = () => {
-    // A failed handshake surfaces here with no detail the browser will share,
-    // and onclose follows; say what is actionable rather than guessing.
     message.value = 'The connection failed. The VM may be stopped, or the console may not be reachable from here.'
   }
   sock.onclose = (ev) => {
@@ -220,9 +200,6 @@ onMounted(async () => {
   })
   term.onResize(() => sendResize())
 
-  // ResizeObserver rather than a window listener: the terminal also changes
-  // size when the banner above it appears or goes away, and in the workspace view
-  // whenever its pane is dragged.
   resizeObserver = new ResizeObserver(() => fitAndResize())
   resizeObserver.observe(termEl.value!)
 
@@ -242,8 +219,6 @@ defineExpose({ phase, message, connect, disconnect })
 </script>
 
 <template>
-  <!-- aria-label rather than a visible one: the terminal is its own live
-       region and xterm manages the screen-reader text inside it. -->
   <div
     ref="termEl"
     class="min-h-0 flex-1 overflow-hidden bg-white p-2 dark:bg-[#09090b]"

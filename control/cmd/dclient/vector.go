@@ -18,36 +18,15 @@ import (
 	"control/internal/proto"
 )
 
-// vector tails the eve.json Suricata writes and ships it to clickhouse. Unlike
-// proxy and dpipe it is not in the data path: if it stops, VMs keep running and
-// policy keeps being enforced, and the only thing lost is the record of what
-// happened. So a failure to install it is logged and the daemon carries on.
-//
-// vector.yaml arrives from the control server whole, like dproxy.yaml and for
-// the same kind of reason: the transform in it writes exactly the columns the
-// control plane's clickhouse migrations create, so the file and the schema have
-// to ship together. Rendered here, adding a column would mean rolling a new
-// client to every host before anything could write to it.
-//
-// What is left on this side is the part that is genuinely the host's: fetching
-// the release, putting the file down, and keeping the unit up.
 const (
 	vectorService = "vector"
 
 	vectorConfigDir  = "/etc/vector"
 	vectorConfigPath = "/etc/vector/vector.yaml"
 
-	// vectorDataDir is where vector checkpoints how far it has read and buffers
-	// batches clickhouse has not accepted yet. It refuses to start without it.
 	vectorDataDir = "/var/lib/vector"
 )
 
-// vectorUnitTemplate is separate from managedUnitTemplate: vector takes
-// --config rather than -config, needs no runtime directory, and must not be
-// tied to dpipe's.
-//
-// It runs as root because eve.json is written by the Suricata container as root
-// and is not group-readable.
 const vectorUnitTemplate = `[Unit]
 Description=vector (managed by dclient)
 After=network-online.target
@@ -67,38 +46,20 @@ WantedBy=multi-user.target
 func vectorBinary() string   { return filepath.Join(binDir, vectorService) }
 func vectorUnitPath() string { return serviceUnitPath(vectorService) }
 
-// vectorVersionMarker records the release the installed binary came from, so a
-// version that has not moved does not re-download on every push. In the data
-// directory for the same reason the other services' markers are: clearing
-// dclient's state forces a clean re-install.
 func vectorVersionMarker(data string) string {
 	return filepath.Join(data, "services", vectorService+".version")
 }
 
-// vectorDownloadURL is the github release artifact. musl rather than gnu: the
-// static build runs on any host in the fleet regardless of its libc, which
-// matters because these are not all the same distribution.
 func vectorDownloadURL(version string) string {
 	return fmt.Sprintf(
 		"https://github.com/vectordotdev/vector/releases/download/v%s/vector-%s-x86_64-unknown-linux-musl.tar.gz",
 		version, version)
 }
 
-// applyVectorConfig installs the release the control server named, writes the
-// config it sent, and makes sure the unit is up. It reports whether anything
-// changed so the caller can say so, and restarts vector only when something did
-// -- the server pushes one of these on every connect, and restarting each time
-// would drop the read checkpoint's benefit for no reason.
-// Whether a host takes part is no longer its own decision: the empty config the
-// server sends when it has no clickhouse endpoint is the only "off" there is.
 func applyVectorConfig(ctx context.Context, data string, want proto.VectorConfig) (bool, error) {
 	if want.Config == "" {
 		return false, errors.New("no clickhouse url is set in the control server settings, so vector was not installed")
 	}
-	// releaseVersionRe mirrors the control server's validation, and is checked
-	// again here because this is where the value becomes a URL whose contents are
-	// installed and executed as root -- a client should not depend on the server
-	// having been careful.
 	if !releaseVersionRe.MatchString(want.Version) {
 		return false, fmt.Errorf("%q is not a vector release number", want.Version)
 	}
@@ -108,8 +69,6 @@ func applyVectorConfig(ctx context.Context, data string, want proto.VectorConfig
 		config += "\n"
 	}
 
-	// Before the unit: vector exits at startup if its data directory is missing,
-	// which would look like a crash loop rather than a missing directory.
 	for _, dir := range []string{vectorConfigDir, vectorDataDir} {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return false, fmt.Errorf("could not create %s: %w", dir, err)
@@ -132,9 +91,6 @@ func applyVectorConfig(ctx context.Context, data string, want proto.VectorConfig
 		}
 	}
 
-	// 0600: this file holds the clickhouse password, and vector is started by
-	// systemd as root. The error below deliberately does not carry the content,
-	// and neither does any log line on this path.
 	existing, err := os.ReadFile(vectorConfigPath)
 	if err != nil && !os.IsNotExist(err) {
 		return false, fmt.Errorf("could not read %s: %w", vectorConfigPath, err)
@@ -146,15 +102,11 @@ func applyVectorConfig(ctx context.Context, data string, want proto.VectorConfig
 		}
 	}
 
-	// enable --now is idempotent, and it is also the repair for a unit an
-	// operator stopped or disabled by hand.
 	if err := systemctl(ctx, "enable", "--now", vectorService+".service"); err != nil {
 		return false, err
 	}
 	changed := binaryChanged || unitChanged || configChanged
 	if changed {
-		// restart, not reload: vector re-reads its config on SIGHUP only if it was
-		// started with --watch-config, and a new binary needs an exec either way.
 		if err := systemctl(ctx, "restart", vectorService+".service"); err != nil {
 			return true, fmt.Errorf("installed the vector config but could not restart it: %w", err)
 		}
@@ -162,8 +114,6 @@ func applyVectorConfig(ctx context.Context, data string, want proto.VectorConfig
 	return changed, nil
 }
 
-// ensureVectorBinary downloads and installs the release if the version moved or
-// the binary is missing. Reports whether it installed anything.
 func ensureVectorBinary(ctx context.Context, data, version string) (bool, error) {
 	marker := vectorVersionMarker(data)
 	installed, err := os.ReadFile(marker)
@@ -188,10 +138,6 @@ func ensureVectorBinary(ctx context.Context, data, version string) (bool, error)
 	return true, nil
 }
 
-// downloadVector fetches the release tarball and installs the one file inside
-// it that matters. Streamed through the gzip and tar readers rather than
-// staged whole: the archive is an order of magnitude larger than the binary,
-// and there is no reason for either to touch the disk twice.
 func downloadVector(ctx context.Context, src, dst string) error {
 	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
@@ -206,8 +152,6 @@ func downloadVector(ctx context.Context, src, dst string) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		// A version that does not exist arrives here as a 404, which is the most
-		// likely way this ever fails: someone typed a release that was never cut.
 		return fmt.Errorf("fetching %s: %s", src, resp.Status)
 	}
 
@@ -229,9 +173,6 @@ func downloadVector(ctx context.Context, src, dst string) error {
 		if err != nil {
 			return err
 		}
-		// The archive lays out as vector-<triple>/bin/vector, but the prefix has
-		// changed shape across releases, so match the tail rather than the whole
-		// path. Type checked so a symlink or a directory named this cannot match.
 		if hdr.Typeflag != tar.TypeReg || path.Base(hdr.Name) != "vector" ||
 			path.Base(path.Dir(hdr.Name)) != "bin" {
 			continue
@@ -240,10 +181,6 @@ func downloadVector(ctx context.Context, src, dst string) error {
 	}
 }
 
-// installFromReader writes r to a temporary file beside dst and renames over
-// it, for two reasons: overwriting a running binary in place fails with
-// ETXTBSY, and a half-written file systemd then execs is worse than no file at
-// all. Every binary dclient installs -- vector, proxy, dpipe -- lands here.
 func installFromReader(r io.Reader, dst string) error {
 	tmp, err := os.CreateTemp(filepath.Dir(dst), ".dclient-*")
 	if err != nil {
@@ -265,17 +202,8 @@ func installFromReader(r io.Reader, dst string) error {
 	return os.Rename(tmpName, dst)
 }
 
-// ensureVectorRunning is the startup half: it re-enables and starts a vector
-// that is already installed, so an operator's `systemctl stop` does not outlive
-// a dclient restart.
-//
-// It deliberately installs nothing. The config and the version come from the
-// control server, and a host that has never heard from one has nothing to write
-// -- it gets vector on its first connect instead.
 func ensureVectorRunning(ctx context.Context) {
 	if _, err := os.Stat(vectorConfigPath); err != nil {
-		// Not a warning: a host with no control server, or one whose fleet has no
-		// clickhouse configured, is expected to reach here forever.
 		return
 	}
 	if _, err := os.Stat(vectorBinary()); err != nil {
@@ -289,12 +217,6 @@ func ensureVectorRunning(ctx context.Context) {
 	log.Printf("%s is installed and running as %s.service", vectorService, vectorService)
 }
 
-// checkVector is the doctor's read of the shipper. A stopped vector is a
-// warning rather than a failure: nothing about running VMs depends on it, and
-// the only casualty is the record of what their traffic did.
-// A host with no config is a pass rather than a warning: the fleet's clickhouse
-// endpoint is what decides whether vector is installed anywhere, and a host that
-// was never sent one has nothing wrong with it.
 func checkVector() (result, string) {
 	if _, err := os.Stat(vectorConfigPath); err != nil {
 		return pass, "vector is not configured on this host; suricata events are not being shipped"

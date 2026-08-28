@@ -11,20 +11,10 @@ import (
 	"control/internal/proto"
 )
 
-// Host metrics come straight from /proc and statfs rather than from a
-// dependency: everything here is a handful of lines, and dclient is already
-// Linux-only by virtue of nftables, tap devices and cgroups.
-//
-// CPU utilisation is a rate, so it needs two samples. cpuSampler keeps the
-// previous one; the first call after start has nothing to compare against and
-// reports zero, which is the honest answer rather than a fabricated one.
 type cpuSampler struct {
 	prevBusy, prevTotal uint64
 }
 
-// collect reads one snapshot. Any field that cannot be read stays zero rather
-// than failing the whole frame -- a host with an unusual /proc should still
-// report its memory.
 func (s *cpuSampler) collect(dataDir string) proto.Metrics {
 	m := proto.Metrics{CPUCount: runtime.NumCPU()}
 	m.CPUPercent = s.cpuPercent()
@@ -35,8 +25,6 @@ func (s *cpuSampler) collect(dataDir string) proto.Metrics {
 	return m
 }
 
-// cpuPercent is aggregate busy time over the interval since the previous call,
-// as a percentage of one wall-clock interval across all cpus.
 func (s *cpuSampler) cpuPercent() float64 {
 	f, err := os.Open("/proc/stat")
 	if err != nil {
@@ -53,7 +41,6 @@ func (s *cpuSampler) cpuPercent() float64 {
 		return 0
 	}
 
-	// user nice system idle iowait irq softirq steal ...
 	var total, idle uint64
 	for i, v := range fields[1:] {
 		n, err := strconv.ParseUint(v, 10, 64)
@@ -61,7 +48,7 @@ func (s *cpuSampler) cpuPercent() float64 {
 			continue
 		}
 		total += n
-		if i == 3 || i == 4 { // idle and iowait are both "not doing work"
+		if i == 3 || i == 4 {
 			idle += n
 		}
 	}
@@ -91,8 +78,6 @@ func loadAvg() (float64, float64, float64) {
 	return parse(f[0]), parse(f[1]), parse(f[2])
 }
 
-// memInfo reports used as total minus MemAvailable. MemFree would count the
-// page cache as used and make every busy host look like it is out of memory.
 func memInfo() (total, used int64) {
 	f, err := os.Open("/proc/meminfo")
 	if err != nil {
@@ -110,7 +95,7 @@ func memInfo() (total, used int64) {
 		if key != "MemTotal" && key != "MemAvailable" {
 			continue
 		}
-		fields := strings.Fields(value) // "  16316372 kB"
+		fields := strings.Fields(value)
 		if len(fields) == 0 {
 			continue
 		}
@@ -130,8 +115,6 @@ func memInfo() (total, used int64) {
 	return total, used
 }
 
-// diskUsage reports the filesystem holding the data directory: images and
-// per-VM overlays are what actually fill a host up.
 func diskUsage(dir string) (total, used int64) {
 	var st syscall.Statfs_t
 	if err := syscall.Statfs(dir, &st); err != nil {
@@ -139,8 +122,6 @@ func diskUsage(dir string) (total, used int64) {
 	}
 	bsize := int64(st.Bsize)
 	total = int64(st.Blocks) * bsize
-	// Blocks - Bfree is what is really consumed; Bavail excludes the reserve, so
-	// using it here would report a full disk as slightly over-full.
 	used = int64(st.Blocks-st.Bfree) * bsize
 	return total, used
 }

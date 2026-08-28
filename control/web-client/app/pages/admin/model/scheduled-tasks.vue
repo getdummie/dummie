@@ -40,9 +40,6 @@ interface TaskRow {
   reason: string
   detail: string
   run_at: string
-  // How late a pending task is, in seconds, and 0 when it is not. Computed by the
-  // server: a browser clock that is wrong would either invent a fleet-wide
-  // problem or hide a real one.
   overdue_seconds: number
   attempts: number
   max_attempts: number
@@ -53,9 +50,6 @@ interface TaskRow {
   finished_at: string
 }
 
-// The kinds the runner knows. Listed here only to label and filter -- the server
-// does not constrain the column, so an unknown kind still renders as itself
-// rather than disappearing from the table.
 const kindLabels: Record<string, string> = {
   'vm.expire': 'Destroy expired VM',
   'vm_target.expire': 'Withdraw temporary access',
@@ -80,15 +74,9 @@ const error = ref<string | null>(null)
 const status = ref('active')
 const kind = ref('')
 
-// A ticking clock so countdowns move on their own. Same reasoning as the VM
-// table's staleness clock: how soon a task is due is a fact about the passage of
-// time, and a page that only updates on fetch would freeze exactly when the
-// control server is the thing that is unreachable.
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 
-// Slow enough not to fight with an admin reading the page, quick enough that an
-// expiry firing while it is open is visible without a manual refresh.
 const pollMs = 10_000
 let poll: ReturnType<typeof setInterval> | undefined
 
@@ -112,9 +100,6 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
-// 'active' is not a server status: it is the default question this page answers
-// -- what has not settled, plus what needs a human. Sent as the statuses the API
-// understands rather than as a word of its own.
 const statusParam = computed(() => (status.value === 'active' ? '' : status.value))
 
 async function load(quiet = false) {
@@ -164,8 +149,6 @@ function prev() {
   }
 }
 
-// The runner ticks once a second, so anything past half a minute means it is not
-// running -- the process is down, or it was started without a database.
 const runnerStalled = computed(() => {
   if (!lastTickAt.value) return true
   const at = new Date(lastTickAt.value).getTime()
@@ -187,8 +170,6 @@ function relative(ms: number) {
   return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`
 }
 
-// When the task runs, as a sentence. A settled task says when it finished
-// instead: "due in 3h" for something that already ran is noise.
 function runsLabel(t: TaskRow) {
   if (t.status === 'done' || t.status === 'cancelled' || t.status === 'failed') {
     return t.finished_at ? `${relative(now.value - new Date(t.finished_at).getTime())} ago` : '—'
@@ -210,9 +191,6 @@ function statusVariant(s: string): BadgeVariant {
   }
 }
 
-// What the task acts on, named from the payload rather than the subject id: the
-// row it points at may be deleted by the time anyone reads this, which is the
-// whole reason the payload carries a snapshot.
 function subjectLabel(t: TaskRow) {
   const p = t.payload ?? {}
   const vm = typeof p.vm_name === 'string' ? p.vm_name : ''
@@ -221,15 +199,12 @@ function subjectLabel(t: TaskRow) {
   return dest || vm || (t.subject_id ? `${t.subject_id.slice(0, 8)}…` : 'the fleet')
 }
 
-// A link to the subject when there is still one to link to. A vm_target task
-// carries the VM it belonged to in its payload, so both kinds resolve to a VM.
 function subjectLink(t: TaskRow) {
   if (t.subject_kind === 'vm' && t.subject_id) return `/admin/model/vms/${t.subject_id}`
   const p = t.payload ?? {}
   return typeof p.vm_id === 'string' && p.vm_id ? `/admin/model/vms/${p.vm_id}` : ''
 }
 
-// --- actions ---
 const detail = ref<TaskRow | null>(null)
 const toCancel = ref<TaskRow | null>(null)
 const acting = ref(false)
@@ -289,8 +264,6 @@ async function runNow(t: TaskRow) {
       </Button>
     </div>
 
-    <!-- Runner health. Two facts, and both are about this process rather than the
-         table: is the poller alive, and is it keeping up. -->
     <div class="mt-6 grid gap-3 sm:grid-cols-2">
       <div class="rounded-lg border border-border p-4">
         <p class="eyebrow text-muted-foreground">Runner</p>
@@ -422,7 +395,6 @@ async function runNow(t: TaskRow) {
       </div>
     </nav>
 
-    <!-- detail: the debugging half of this page, payload included as sent -->
     <Dialog :open="!!detail" @update:open="(v: boolean) => { if (!v) detail = null }">
       <DialogContent>
         <DialogHeader>
@@ -459,7 +431,6 @@ async function runNow(t: TaskRow) {
       </DialogContent>
     </Dialog>
 
-    <!-- cancel confirm: what cancelling means depends on the kind, so it says so -->
     <Dialog :open="!!toCancel" @update:open="(v: boolean) => { if (!v) toCancel = null }">
       <DialogContent>
         <DialogHeader>

@@ -3,7 +3,7 @@ package dpipe
 import (
 	"bufio"
 	"bytes"
-	"crypto/sha1" // the handshake hash is fixed by RFC 6455; not a security use
+	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -14,9 +14,6 @@ import (
 	"time"
 )
 
-// A minimal RFC 6455 server endpoint: enough for the console (binary data plus
-// small text control messages), no extensions, no compression, no dependency.
-
 const (
 	opContinuation = 0x0
 	opText         = 0x1
@@ -26,7 +23,6 @@ const (
 	opPong         = 0xA
 )
 
-// Close codes used by the console.
 const (
 	wsCloseNormal        = 1000
 	wsCloseProtocolError = 1002
@@ -34,21 +30,14 @@ const (
 	wsCloseInternalError = 1011
 )
 
-// wsGUID is the RFC 6455 handshake constant.
 const wsGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-// maxWSMessage caps one inbound message. Terminal input is tiny; a large paste
-// is the only thing that comes close.
 const maxWSMessage = 1 << 20
 
-// wsCloseTimeout bounds the goodbye frame, and unblocks a writer stuck on a peer
-// that stopped reading.
 const wsCloseTimeout = 2 * time.Second
 
-// errWSClosed reports an orderly close frame from the peer.
 var errWSClosed = errors.New("ws: peer closed")
 
-// wsConn is a websocket connection whose handshake is already done.
 type wsConn struct {
 	c  net.Conn
 	br *bufio.Reader
@@ -57,16 +46,12 @@ type wsConn struct {
 	closeOnce sync.Once
 }
 
-// wsAcceptKey computes the Sec-WebSocket-Accept value for a client key.
 func wsAcceptKey(key string) string {
 	h := sha1.New()
 	_, _ = io.WriteString(h, key+wsGUID)
 	return base64.StdEncoding.EncodeToString(h.Sum(nil))
 }
 
-// wsUpgrade answers a validated upgrade request (the proxy checked the request
-// and passed on the client's key) and returns the framed connection. Any bytes
-// the client pipelined behind the request are pushed in front of the reader.
 func wsUpgrade(c net.Conn, key string, pipelined []byte) (*wsConn, error) {
 	resp := "HTTP/1.1 101 Switching Protocols\r\n" +
 		"Upgrade: websocket\r\n" +
@@ -82,8 +67,6 @@ func wsUpgrade(c net.Conn, key string, pipelined []byte) (*wsConn, error) {
 	return &wsConn{c: c, br: bufio.NewReader(r)}, nil
 }
 
-// ReadMessage returns the next data message, reassembling fragments and
-// answering pings on the way. A close frame from the peer returns errWSClosed.
 func (w *wsConn) ReadMessage() (opcode byte, payload []byte, err error) {
 	var msgOp byte
 	var buf []byte
@@ -128,8 +111,6 @@ func (w *wsConn) ReadMessage() (opcode byte, payload []byte, err error) {
 	}
 }
 
-// readFrame reads one frame and unmasks it. Client frames must be masked
-// (RFC 6455 §5.1) and control frames must be short and unfragmented.
 func (w *wsConn) readFrame() (fin bool, opcode byte, payload []byte, err error) {
 	var head [2]byte
 	if _, err := io.ReadFull(w.br, head[:]); err != nil {
@@ -187,8 +168,6 @@ func (w *wsConn) readFrame() (fin bool, opcode byte, payload []byte, err error) 
 	return fin, opcode, payload, nil
 }
 
-// WriteMessage writes one unfragmented, unmasked frame (server frames are never
-// masked). It is safe for concurrent use.
 func (w *wsConn) WriteMessage(opcode byte, payload []byte) error {
 	head := make([]byte, 0, 10)
 	head = append(head, 0x80|opcode)
@@ -210,20 +189,14 @@ func (w *wsConn) WriteMessage(opcode byte, payload []byte) error {
 	return nil
 }
 
-// WriteClose sends a close frame with a code and a short reason.
 func (w *wsConn) WriteClose(code uint16, reason string) error {
-	if len(reason) > 123 { // 125-byte control payload minus the 2-byte code
+	if len(reason) > 123 {
 		reason = reason[:123]
 	}
 	body := binary.BigEndian.AppendUint16(nil, code)
 	return w.WriteMessage(opClose, append(body, reason...))
 }
 
-// Close sends a close frame (best effort) and closes the socket once.
-//
-// The write deadline comes first: a browser that stopped reading can leave a data
-// write blocked while holding the write mutex, and the close must not wait for it
-// — that is exactly the case the idle timeout exists to end.
 func (w *wsConn) Close(code uint16, reason string) {
 	w.closeOnce.Do(func() {
 		_ = w.c.SetWriteDeadline(time.Now().Add(wsCloseTimeout))
@@ -232,5 +205,4 @@ func (w *wsConn) Close(code uint16, reason string) {
 	})
 }
 
-// fail closes the connection after a protocol violation.
 func (w *wsConn) fail(code uint16, reason string) { w.Close(code, reason) }

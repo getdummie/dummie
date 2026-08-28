@@ -3,11 +3,6 @@ import type { OIDCProvider } from '@/composables/useAuth'
 import { Button } from '@/components/ui/button'
 import { safeRedirect } from '@/lib/redirect'
 
-// Rendered above the password form on both sign-in and sign-up. Nothing at all
-// when no provider is configured, which is the common case -- an empty divider
-// over an empty row is worse than the absence of the section.
-// divider is off where there is no password form underneath for the "or" to
-// separate this from.
 const props = withDefaults(defineProps<{ label?: string, divider?: boolean }>(), { divider: true })
 
 const route = useRoute()
@@ -20,10 +15,6 @@ onMounted(async () => {
   providers.value = await oidcProviders()
 })
 
-// A ?redirect= that survived the sign-in page has to survive the provider too:
-// someone bounced here mid proxy hand-off wants the guest they were opening, not
-// the dashboard. Narrowed to a same-origin path first, because it comes out of
-// the address bar and the server would otherwise be asked to trust it.
 function start(p: OIDCProvider) {
   going.value = p.slug
   window.location.href = oidcStartURL(p.slug, safeRedirect(route.query.redirect))

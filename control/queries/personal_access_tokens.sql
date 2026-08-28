@@ -4,11 +4,6 @@ VALUES ($1, $2, $3, $4, $5)
 RETURNING *;
 
 -- name: AuthenticatePersonalAccessToken :one
--- AuthenticatePersonalAccessToken is the whole auth check for a token, done as
--- the same statement that stamps last_used_at: validity and the stamp in one
--- round trip, so authenticating costs one query rather than a read plus a
--- write. Zero rows means unknown, revoked or expired -- the caller must not
--- distinguish, since telling them which would confirm the token exists.
 UPDATE personal_access_tokens
 SET last_used_at = now()
 WHERE token_hash = $1

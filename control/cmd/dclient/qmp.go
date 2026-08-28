@@ -9,16 +9,8 @@ import (
 	"time"
 )
 
-// qmpTimeout bounds the whole exchange. QMP is a local unix socket; anything
-// slower than this means qemu is wedged, and waiting longer will not help.
 const qmpTimeout = 5 * time.Second
 
-// qmpCommand runs one command and discards the result. That covers everything
-// needed today (system_powerdown); returning the payload is a change to make
-// when something actually reads it.
-//
-// The protocol is line-delimited JSON: a greeting on connect, then a mandatory
-// capabilities negotiation before any command is accepted.
 func qmpCommand(ctx context.Context, socket, command string) error {
 	d := net.Dialer{}
 	cctx, cancel := context.WithTimeout(ctx, qmpTimeout)
@@ -35,7 +27,7 @@ func qmpCommand(ctx context.Context, socket, command string) error {
 	}
 
 	r := bufio.NewReader(conn)
-	if _, err := readQMP(r); err != nil { // greeting
+	if _, err := readQMP(r); err != nil {
 		return err
 	}
 	if err := execQMP(conn, r, "qmp_capabilities"); err != nil {
@@ -53,7 +45,6 @@ func execQMP(conn net.Conn, r *bufio.Reader, command string) error {
 		return err
 	}
 
-	// Events are interleaved with replies, so read until something that is one.
 	for {
 		msg, err := readQMP(r)
 		if err != nil {

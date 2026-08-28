@@ -81,7 +81,6 @@ func TestOversize(t *testing.T) {
 }
 
 func TestTerminatorSplitAcrossReads(t *testing.T) {
-	// A reader that hands over one byte at a time exercises the boundary search.
 	req := "GET / HTTP/1.1\r\nHost: vm1.local\r\n\r\nbody"
 	_, host, err := httpsniff.ReadHeaderBlock(&oneByteReader{s: req}, 65536)
 	if err != nil {

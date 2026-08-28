@@ -25,10 +25,7 @@ interface OSImage {
   file_name: string
   size_bytes: number
   created_at: string
-  // "" while the image is offered; when it was withdrawn otherwise.
   soft_deleted_at: string
-  // Short-lived, minted for this response. Absent on a withdrawn image and
-  // when the server could not reach object storage.
   download_url?: string
 }
 
@@ -67,7 +64,6 @@ function fmtBytes(n: number) {
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
@@ -101,9 +97,6 @@ async function load() {
 }
 onMounted(load)
 
-// The link the server hands back expires within minutes, so the page fetches a
-// fresh one at the moment of the click rather than handing out the stale one it
-// loaded with.
 const downloading = ref(false)
 
 async function download() {
@@ -125,10 +118,6 @@ async function download() {
   }
 }
 
-// --- description ---
-//
-// The one thing about a saved image that can change: a note about the file, not
-// part of what the name means.
 const descOpen = ref(false)
 const savingDesc = ref(false)
 const descError = ref<string | null>(null)
@@ -150,7 +139,6 @@ async function saveDesc() {
       body: JSON.stringify({ description: descDraft.value }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    // The response is the saved row, so the page shows what was stored.
     image.value = await res.json()
     descOpen.value = false
   }
@@ -162,7 +150,6 @@ async function saveDesc() {
   }
 }
 
-// --- withdraw ---
 const deleteOpen = ref(false)
 const deleting = ref(false)
 
@@ -247,8 +234,6 @@ async function confirmDelete() {
         <AlertDescription>{{ actionError }}</AlertDescription>
       </Alert>
 
-      <!-- Said plainly rather than left for someone to discover by looking for
-           an edit button that is not there. -->
       <p class="mt-6 flex items-start gap-2 text-sm text-muted-foreground">
         <Lock class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         <span>
@@ -284,8 +269,6 @@ async function confirmDelete() {
           <div class="sm:col-span-2 lg:col-span-3">
             <dt class="eyebrow flex items-center gap-2 text-muted-foreground">
               Description
-              <!-- Withdrawn rows are closed to every change, this one included:
-                   they record what a name used to mean. -->
               <Button
                 v-if="!withdrawn"
                 variant="ghost"
@@ -305,7 +288,6 @@ async function confirmDelete() {
       </section>
     </template>
 
-    <!-- description -->
     <Dialog v-model:open="descOpen">
       <DialogContent>
         <DialogHeader>
@@ -335,7 +317,6 @@ async function confirmDelete() {
       </DialogContent>
     </Dialog>
 
-    <!-- withdraw confirm -->
     <Dialog v-model:open="deleteOpen">
       <DialogContent>
         <DialogHeader>

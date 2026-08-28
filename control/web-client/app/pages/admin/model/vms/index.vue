@@ -39,8 +39,6 @@ interface VMRow {
   id: string
   client_id: string
   vm_id: string
-  // Unique across the fleet, and the key its http route is published under.
-  // Generated when the create request leaves it empty.
   name: string
   default_port: number
   public_ports: number[]
@@ -52,33 +50,16 @@ interface VMRow {
   last_error: string
   created_at: string
   started_at: string
-  // When the host last confirmed this VM; "" if it never has.
   reported_at: string
 }
 
-// Anything a host reported is only true as of when it reported it, and a host
-// that has stopped answering keeps its last claim on the record. Four missed
-// 30s reports is a generous margin for a slow tick or a brief reconnect, and
-// still catches a host that went down.
 const staleAfterMs = 2 * 60_000
 
 const hostReported = new Set(['running', 'stopped'])
 
-// A ticking clock, because staleness depends on the passage of time rather than
-// on new data. Deriving it from the fetch would be exactly backwards: when the
-// control server is unreachable the table stops updating, which is when a stale
-// 'running' most needs to stop being believed.
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 
-// An action is acknowledged with 202 and settles when the client's result frame
-// gets back, which is a second or two -- far quicker than the ordinary poll but
-// not instant. So a row with an action in flight is tracked here: the table
-// shows where it is going, and a fast poll runs until it arrives.
-//
-// `from` is the status at the moment the action was sent, which is how we
-// recognise that the row has moved. `until` bounds the wait, so an client that
-// never answers leaves the row telling the truth rather than spinning forever.
 interface Settling {
   verb: string
   from: string
@@ -94,9 +75,6 @@ function isSettling(v: VMRow) {
   return settling.value[v.id]
 }
 
-// displayStatus is what the badge shows. Neither 'starting'/'stopping' nor
-// 'stale' is a status the server stores: the first is this client's own in-flight
-// action, and the second cannot be stored because it would go stale itself.
 function displayStatus(v: VMRow) {
   const pending = settling.value[v.id]
   if (pending) return pending.verb
@@ -106,9 +84,6 @@ function displayStatus(v: VMRow) {
   return v.status
 }
 
-// The switch shows the underlying status rather than displayStatus: a stale row
-// was last known to be running, and flipping the control off would claim we know
-// it stopped. The badge is where the doubt belongs.
 function switchOn(v: VMRow) {
   return settling.value[v.id]?.running ?? v.status === 'running'
 }
@@ -129,7 +104,6 @@ function watchSettle(v: VMRow, verb: string, running: boolean) {
     }, settlePollMs)
   }
 }
-
 
 function since(s: string) {
   if (!s) return 'never'
@@ -160,16 +134,10 @@ interface ClientOption {
   status: string
 }
 
-// A VM row carries only its client's id. Rather than widen the API with a join,
-// the client list is fetched alongside and resolved here -- an admin fleet is
-// small enough that one extra page of clients is cheaper than a new endpoint.
-// The same list is the create form's host picker.
 const clients = ref<ClientOption[]>([])
 const hostnames = computed<Record<string, string>>(() =>
   Object.fromEntries(clients.value.filter(a => a.hostname).map(a => [a.id, a.hostname])))
 
-// Only a connected client can be sent a job -- the server rejects the rest with a
-// 409 -- so an offline host is shown but not selectable.
 const targetable = computed(() => clients.value.filter(a => a.connected && a.status !== 'revoked'))
 
 async function readMessage(res: Response): Promise<string | null> {
@@ -203,20 +171,14 @@ const statusVariant: Record<string, BadgeVariant> = {
   running: 'default',
   pending: 'secondary',
   stopped: 'secondary',
-  // 'gone' is not an error the way a failed create is -- the VM was removed on
-  // its host, which is usually deliberate -- so it reads as muted, not alarming.
   gone: 'outline',
   failed: 'destructive',
-  // 'stale' is loud on purpose: the row is making a claim nobody can currently
-  // stand behind, and reading it as 'running' is the mistake worth preventing.
   stale: 'destructive',
-  // In-flight actions: a transition, not a state to worry about.
   starting: 'secondary',
   stopping: 'secondary',
   destroying: 'secondary',
 }
 
-// silent skips the skeletons so the background poll doesn't make the table flash.
 async function load(silent = false) {
   if (!silent) loading.value = true
   error.value = null
@@ -235,8 +197,6 @@ async function load(silent = false) {
   }
 }
 
-// Best-effort: an unresolved hostname falls back to a short id, so a failure
-// here must not surface as an error on a table that otherwise loaded fine.
 async function loadClients() {
   try {
     const res = await authFetch('/admin/clients?limit=100')
@@ -251,13 +211,9 @@ async function loadClients() {
     }))
   }
   catch {
-    // keep whatever we already resolved
   }
 }
 
-// A row is done settling when the server has moved it off the status it had, or
-// when the wait runs out. Watching the fetched rows rather than resolving inside
-// each action keeps this true for a row someone else changed too.
 watch(items, (rows) => {
   const entries = Object.entries(settling.value)
   if (!entries.length) return
@@ -270,9 +226,6 @@ watch(items, (rows) => {
   if (Object.keys(next).length !== entries.length) settling.value = next
 })
 
-// A pending row becomes running or failed without any action from this page, so
-// it has to poll to stay honest. A minute is a long time to watch a create you
-// just started, which is what the refresh button is for.
 const pollInterval = 60_000
 
 let poll: ReturnType<typeof setInterval> | undefined
@@ -280,8 +233,6 @@ onMounted(() => {
   load()
   loadClients()
   poll = setInterval(() => load(true), pollInterval)
-  // Well under staleAfterMs, so a row turns stale within a few seconds of
-  // actually being stale rather than on the next poll.
   clock = setInterval(() => (now.value = Date.now()), 10_000)
 })
 onUnmounted(() => {
@@ -290,12 +241,8 @@ onUnmounted(() => {
   clearInterval(settlePoll)
 })
 
-// syncing drives the button's own spinner. It is separate from `loading` so a
-// manual refresh spins the icon without also blanking the table into skeletons.
 const syncing = ref(false)
 
-// The timer is restarted so a manual refresh doesn't leave a scheduled poll
-// firing a moment later.
 async function syncNow() {
   if (syncing.value) return
   syncing.value = true
@@ -324,12 +271,6 @@ function prev() {
   }
 }
 
-// --- create ---
-//
-// The form mirrors the two boot modes dclient actually has, which take disjoint
-// inputs. Rather than accept everything and let the client reject the wrong
-// combination minutes later, only the fields belonging to the chosen mode are
-// rendered — the shape of the form is the validation.
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref<string | null>(null)
@@ -340,8 +281,6 @@ const blankForm = {
   default_port: '8000',
   public_ports: '',
   boot: 'direct',
-  // 'image' is a ready-made ext4 rootfs; 'tar' is a `docker export` the client
-  // builds one from. Direct boot needs exactly one of them.
   source: 'image',
   kernel: '',
   kernel_sha256: '',
@@ -371,16 +310,11 @@ const form = reactive({ ...blankForm })
 function openCreate() {
   Object.assign(form, blankForm)
   createError.value = null
-  // Preselect the only sensible default; with several hosts the choice is real
-  // and is left to the operator.
   form.client_id = targetable.value.length === 1 ? targetable.value[0]!.id : ''
   createOpen.value = true
-  // A host that enrolled since the last poll should be pickable now.
   loadClients()
 }
 
-// Mirrors the checks in the client's createVM so a mistake is caught here rather
-// than becoming a failed row a minute later.
 function validate(): string | null {
   if (!form.client_id) return 'Choose a host to run this VM on.'
   const cpus = Number(form.cpus)
@@ -398,8 +332,6 @@ function validate(): string | null {
   return null
 }
 
-// Every field on the wire is omitempty, so an empty one is simply left out --
-// sending "" would otherwise override an client-side default with nothing.
 function buildSpec() {
   const spec: Record<string, unknown> = { boot: form.boot }
   const put = (key: string, value: string) => {
@@ -412,8 +344,6 @@ function buildSpec() {
   }
 
   put('name', form.name)
-  // Not part of the client's spec: these are the control plane's routing, and the
-  // endpoint reads them off the same body.
   spec.default_port = Number(form.default_port)
   spec.public_ports = form.public_ports.split(',').map(p => p.trim()).filter(Boolean).map(Number)
   spec.cpus = Number(form.cpus)
@@ -472,8 +402,6 @@ async function create() {
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     createOpen.value = false
-    // The row lands as 'pending' and settles when the client reports back, so the
-    // newest page is where the operator wants to be looking.
     offset.value = 0
     await load()
   }
@@ -485,20 +413,9 @@ async function create() {
   }
 }
 
-// --- stop / destroy / forget ---
-//
-// Three different things, deliberately not collapsed into one button:
-//   stop     shuts the guest down, keeps its disk
-//   destroy  deletes the guest and its disk on the host
-//   forget   removes only this row, leaving whatever is on the host alone
-//
-// A row that has no guest to act on -- a failed create, or one already gone --
-// gets 'forget' on the same trash affordance, since that is the only removal
-// that means anything for it.
 const actionError = ref<string | null>(null)
 const working = ref(false)
 
-// A guest only exists to act on once a host has assigned it an id.
 function hasGuest(v: VMRow) {
   return !!v.vm_id && v.status !== 'gone'
 }
@@ -507,15 +424,11 @@ const toStop = ref<VMRow | null>(null)
 const toDestroy = ref<VMRow | null>(null)
 const toForget = ref<VMRow | null>(null)
 
-// The trash button is one affordance with two meanings, chosen by whether there
-// is still a guest behind the row.
 function askRemove(v: VMRow) {
   if (hasGuest(v)) toDestroy.value = v
   else toForget.value = v
 }
 
-// settle is the verb to show while the action is in flight, or null for one that
-// takes effect the moment the server answers (deleting a row).
 async function act(v: VMRow, path: string, method: string, failure: string, settle: { verb: string, running: boolean } | null) {
   working.value = true
   actionError.value = null
@@ -536,8 +449,6 @@ async function act(v: VMRow, path: string, method: string, failure: string, sett
   }
 }
 
-// Starting asks for no confirmation: it is cheap, reversible by the same switch,
-// and destroys nothing. Stopping kills whatever the guest was doing, so it does.
 function start(v: VMRow) {
   act(v, `/admin/vms/${v.id}/start`, 'POST', 'Could not start this VM', { verb: 'starting', running: true })
 }
@@ -554,14 +465,11 @@ function confirmForget() {
   if (v) act(v, `/admin/vms/${v.id}`, 'DELETE', 'Could not delete this VM record', null)
 }
 
-// The switch is one control for two actions; which one depends on the direction.
 function togglePower(v: VMRow, on: boolean) {
   if (on) start(v)
   else toStop.value = v
 }
 
-// Dismissing any dialog clears the error, so a failure does not follow the
-// operator into the next thing they open.
 function closeDialogs() {
   toStop.value = null
   toDestroy.value = null
@@ -596,8 +504,6 @@ function closeDialogs() {
             <Plus class="size-4" aria-hidden="true" />
             New VM
           </Button>
-          <!-- Scrolling content: the direct-boot form is taller than a short
-               viewport, and a modal that clips its own submit button is unusable. -->
           <DialogScrollContent class="sm:max-w-xl">
             <DialogHeader>
               <DialogTitle>New VM</DialogTitle>
@@ -694,7 +600,6 @@ function closeDialogs() {
                 </div>
               </div>
 
-              <!-- direct boot -->
               <div v-if="form.boot === 'direct'" class="space-y-4 rounded-lg border border-border p-4">
                 <div class="space-y-2">
                   <Label for="vm-kernel">Kernel</Label>
@@ -725,7 +630,6 @@ function closeDialogs() {
                 </template>
               </div>
 
-              <!-- disk boot -->
               <div v-else class="space-y-4 rounded-lg border border-border p-4">
                 <div class="space-y-2">
                   <Label for="vm-disk">Disk image</Label>
@@ -737,7 +641,6 @@ function closeDialogs() {
                 </div>
               </div>
 
-              <!-- network -->
               <div class="space-y-4 rounded-lg border border-border p-4">
                 <div class="flex items-center gap-2">
                   <Checkbox id="vm-nonet" v-model="form.no_network" />
@@ -762,8 +665,6 @@ function closeDialogs() {
                 </template>
               </div>
 
-              <!-- Everything below is a refinement of a working VM, so it starts
-                   folded rather than making the common case look complicated. -->
               <details class="rounded-lg border border-border">
                 <summary class="cursor-pointer px-4 py-3 text-sm font-medium">Advanced</summary>
                 <div class="space-y-4 border-t border-border p-4">
@@ -836,8 +737,6 @@ function closeDialogs() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <!-- Self-refreshing, so `aria-live="polite"` lets a screen-reader user hear a
-         pending VM turn into a running one without re-reading the table. -->
     <DataTable
       label="VMs"
       :columns="columns"
@@ -854,9 +753,6 @@ function closeDialogs() {
       </template>
       <TableRow v-for="v in items" :key="v.id">
         <TableCell>
-          <!-- Underlined at rest, not just on hover: in a table of plain text
-               cells an underline-on-hover link is undiscoverable, and colour
-               alone would not carry it either. (WCAG 1.4.1) -->
           <NuxtLink
             :to="`/admin/model/vms/${v.id}`"
             class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -874,16 +770,9 @@ function closeDialogs() {
           <Badge :variant="statusVariant[displayStatus(v)]" class="font-mono">
             {{ displayStatus(v) }}
           </Badge>
-          <!-- A stale badge without the age is just as unhelpful as the wrong
-               status was: the age is what says whether the host missed one
-               report or went down an hour ago. -->
           <div v-if="displayStatus(v) === 'stale'" class="mt-1 text-xs text-muted-foreground">
             was <span class="font-mono">{{ v.status }}</span>, last seen {{ since(v.reported_at) }}
           </div>
-          <!-- Any recorded failure, not just a failed create: a stop that the
-               host refused leaves the status alone and only sets this, which
-               would otherwise be invisible. title= keeps the full text
-               reachable when truncated. -->
           <div
             v-else-if="v.last_error"
             class="mt-1 max-w-56 truncate text-xs text-destructive"
@@ -900,9 +789,6 @@ function closeDialogs() {
         <TableCell class="text-muted-foreground whitespace-nowrap">{{ fmtDate(v.created_at) }}</TableCell>
         <TableCell class="text-right">
           <div class="flex items-center justify-end gap-1">
-            <!-- One control for the VM's power state: on starts it, off
-                 stops it. Disabled while an action is in flight, so a
-                 double-click cannot queue a stop behind a start. -->
             <Switch
               :model-value="switchOn(v)"
               :disabled="!hasGuest(v) || !!isSettling(v) || working"
@@ -935,7 +821,6 @@ function closeDialogs() {
       </div>
     </nav>
 
-    <!-- stop confirm -->
     <Dialog :open="!!toStop" @update:open="(v: boolean) => { if (!v) closeDialogs() }">
       <DialogContent>
         <DialogHeader>
@@ -959,7 +844,6 @@ function closeDialogs() {
       </DialogContent>
     </Dialog>
 
-    <!-- destroy confirm -->
     <Dialog :open="!!toDestroy" @update:open="(v: boolean) => { if (!v) closeDialogs() }">
       <DialogContent>
         <DialogHeader>
@@ -983,7 +867,6 @@ function closeDialogs() {
       </DialogContent>
     </Dialog>
 
-    <!-- forget confirm: only offered when there is no guest left to destroy -->
     <Dialog :open="!!toForget" @update:open="(v: boolean) => { if (!v) closeDialogs() }">
       <DialogContent>
         <DialogHeader>

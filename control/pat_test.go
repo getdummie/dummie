@@ -9,10 +9,6 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// TestPersonalAccessTokenCannotReachAdminRoutes is the one property the whole
-// design rests on, checked at the wiring rather than in a handler: adminJWT
-// gets a nil *db.Queries, so a dpat_ bearer is never even looked up. A nil
-// dereference here would be the bug that granted a token admin.
 func TestPersonalAccessTokenCannotReachAdminRoutes(t *testing.T) {
 	e := echo.New()
 	admin := e.Group("/admin", adminJWT(authConfig{jwtSecret: "test-secret"}))
@@ -28,8 +24,6 @@ func TestPersonalAccessTokenCannotReachAdminRoutes(t *testing.T) {
 	}
 }
 
-// TestDenyPATBlocksTokenAuthenticatedCallers covers the other half: a token can
-// reach the self-service API, but not the routes that mint and revoke tokens.
 func TestDenyPATBlocksTokenAuthenticatedCallers(t *testing.T) {
 	asPAT := func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
@@ -57,7 +51,6 @@ func TestNewPersonalAccessTokenIsPrefixedAndUnique(t *testing.T) {
 	if !strings.HasPrefix(a, patPrefix) {
 		t.Errorf("token %q does not carry the %q prefix the middleware routes on", a, patPrefix)
 	}
-	// The stored prefix is a slice of the raw token, so it has to be in range.
 	if len(a) <= len(patPrefix)+8 {
 		t.Errorf("token %q is too short to take a display prefix from", a)
 	}

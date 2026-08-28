@@ -14,16 +14,11 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// The metadata service answers "who am I?" for a guest. Identity comes from the
-// source address and nothing else: a VM cannot ask about another VM, because
-// the only VM it can describe is the one the packet came from, and the
-// anti-spoof rule guarantees that address really is the sender's.
 type metadataServer struct {
 	data string
 	cfg  netConfig
 }
 
-// identity is the public shape of a VM, as seen from inside it.
 type identity struct {
 	ID       string   `json:"id"`
 	Name     string   `json:"name"`
@@ -37,7 +32,6 @@ type identity struct {
 func (s *metadataServer) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/identity", s.identity)
-	// Plain text, because the first thing a guest does with it is run it.
 	mux.HandleFunc("GET /v1/network", s.network)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintln(w, "ok")
@@ -45,7 +39,6 @@ func (s *metadataServer) routes() *http.ServeMux {
 	return mux
 }
 
-// caller resolves the requesting VM by source address.
 func (s *metadataServer) caller(r *http.Request) (vm, bool) {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -91,9 +84,6 @@ func (s *metadataServer) network(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintln(w, guestConfig(v.Net))
 }
 
-// serve binds to the gateway address only. FREEBIND is required because the
-// gateway lives on the taps: with no VMs running the address does not exist
-// yet, and the service still has to be up when the first one starts.
 func (s *metadataServer) serve(ctx context.Context) error {
 	lc := net.ListenConfig{
 		Control: func(_, _ string, c syscall.RawConn) error {

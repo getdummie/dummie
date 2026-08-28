@@ -6,8 +6,6 @@ const { consoleUrl } = useRuntimeConfig().public
 
 <template>
   <div class="min-h-svh flex flex-col bg-background text-foreground antialiased">
-    <!-- First thing in the tab order: lets keyboard and screen-reader users
-         jump the header instead of tabbing through it on every page. -->
     <a href="#main-content" class="skip-link">Skip to main content</a>
 
     <header class="sticky top-0 z-40 border-b border-border/80 bg-background/80 backdrop-blur">
@@ -37,8 +35,6 @@ const { consoleUrl } = useRuntimeConfig().public
       </div>
     </header>
 
-    <!-- Page. `tabindex="-1"` makes this a programmatic focus target for the
-         skip link without adding a tab stop. -->
     <main id="main-content" tabindex="-1" class="flex-1 focus-visible:outline-none">
       <slot />
     </main>

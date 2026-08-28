@@ -15,9 +15,6 @@ import (
 	"control/internal/db"
 )
 
-// kernelDTO is one catalogue entry. Everything here except the description is
-// written once: the database refuses to change the rest even if something else
-// tries (see 0015_kernels and 0016_kernel_description_editable).
 type kernelDTO struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -25,11 +22,7 @@ type kernelDTO struct {
 	FileName    string `json:"file_name"`
 	SizeBytes   int64  `json:"size_bytes"`
 	CreatedAt   string `json:"created_at"`
-	// "" while the kernel is offered; the time it was withdrawn otherwise.
 	SoftDeletedAt string `json:"soft_deleted_at"`
-	// A presigned link, minted for this response and good for a few minutes.
-	// Empty on the list, which does not mint one per row, and on a withdrawn
-	// kernel, which is no longer handed out.
 	DownloadURL string `json:"download_url,omitempty"`
 }
 
@@ -81,13 +74,9 @@ func (h *AdminHandler) GetKernel(c *echo.Context) error {
 	}
 
 	dto := toKernelDTO(k)
-	// A withdrawn kernel keeps its object but stops being handed out; a link is
-	// the one thing the page should not still offer.
 	if h.blobs != nil && !k.SoftDeletedAt.Valid {
 		url, err := h.blobs.PresignGet(ctx, k.ObjectKey, k.FileName)
 		if err != nil {
-			// The row is real and worth showing even when the link cannot be minted,
-			// so this degrades to a page without a download rather than a 500.
 			log.Printf("could not presign kernel %s: %v", dto.ID, err)
 		} else {
 			dto.DownloadURL = url
@@ -96,10 +85,6 @@ func (h *AdminHandler) GetKernel(c *echo.Context) error {
 	return c.JSON(http.StatusOK, dto)
 }
 
-// CreateKernel takes a multipart form: "name", optional "description", and the
-// image as "file". The blob goes to S3 first and the row second, so a saved row
-// always has an object behind it; a row that fails to save takes its orphan
-// object with it.
 func (h *AdminHandler) CreateKernel(c *echo.Context) error {
 	ctx := c.Request().Context()
 	if h.blobs == nil {
@@ -119,8 +104,6 @@ func (h *AdminHandler) CreateKernel(c *echo.Context) error {
 		SizeBytes:   up.size,
 	})
 	if err != nil {
-		// Best effort: an object with no row is invisible to everything here, and
-		// the alternative is failing the request twice over.
 		if delErr := h.blobs.Delete(ctx, up.key); delErr != nil {
 			log.Printf("orphaned kernel object %q after a failed insert: %v", up.key, delErr)
 		}
@@ -137,8 +120,6 @@ type updateKernelDescriptionReq struct {
 	Description string `json:"description"`
 }
 
-// UpdateKernelDescription changes the note on a kernel. Nothing else about a
-// saved kernel can be changed, here or anywhere else.
 func (h *AdminHandler) UpdateKernelDescription(c *echo.Context) error {
 	pgID, err := parseUUID(c.Param("id"))
 	if err != nil {
@@ -161,8 +142,6 @@ func (h *AdminHandler) UpdateKernelDescription(c *echo.Context) error {
 	return c.JSON(http.StatusOK, toKernelDTO(k))
 }
 
-// DeleteKernel withdraws a kernel: the row is marked and stops being listed,
-// but neither it nor the object in the bucket is removed.
 func (h *AdminHandler) DeleteKernel(c *echo.Context) error {
 	pgID, err := parseUUID(c.Param("id"))
 	if err != nil {

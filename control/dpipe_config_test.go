@@ -7,9 +7,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// parsedDpipeConfig is the part of the generated file these tests assert on.
-// Parsed rather than string-matched, for the same reason the proxy tests are:
-// what matters is what dpipe reads.
 type parsedDpipeConfig struct {
 	SSH struct {
 		Enabled bool `yaml:"enabled"`
@@ -46,7 +43,6 @@ func TestGenerateDpipeConfigWithoutACertificate(t *testing.T) {
 	if got.TLS.DefaultCert != "" || got.TLS.DefaultKey != "" {
 		t.Errorf("the config names certificate files that were never sent: %+v", got.TLS)
 	}
-	// The rest of the file must be unaffected by the tls decision.
 	if !got.SSH.Enabled || !got.Console.Enabled {
 		t.Errorf("ssh or the console was turned off along with tls: %+v", got)
 	}
@@ -70,9 +66,6 @@ func TestGenerateDpipeConfigWithACertificate(t *testing.T) {
 	}
 }
 
-// A wildcard in the certs[] table would never be selected: dpipe matches that
-// map by exact SNI, so "*.example.com" is a key no client ever sends. The
-// wildcard has to be the default certificate, and this is what says so.
 func TestGenerateDpipeConfigUsesTheDefaultCertificateNotTheSNITable(t *testing.T) {
 	out := generateDpipeConfig(true)
 
@@ -84,9 +77,6 @@ func TestGenerateDpipeConfigUsesTheDefaultCertificateNotTheSNITable(t *testing.T
 	}
 }
 
-// The client skips a handover when the file is byte-identical, and the server
-// sends one on every connect -- so an unchanged fleet must compile to the same
-// bytes twice.
 func TestGenerateDpipeConfigIsStable(t *testing.T) {
 	for _, tls := range []bool{false, true} {
 		if generateDpipeConfig(tls) != generateDpipeConfig(tls) {

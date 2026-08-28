@@ -8,9 +8,6 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// testKey builds a real ed25519 authorized_keys line from a fixed seed, so the
-// tests exercise the actual parser rather than a hand-copied blob that could be
-// subtly wrong for reasons unrelated to what is being tested.
 func testKey(t *testing.T, seedByte byte) string {
 	t.Helper()
 	seed := make([]byte, ed25519.SeedSize)
@@ -24,8 +21,6 @@ func testKey(t *testing.T, seedByte byte) string {
 	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(pub)))
 }
 
-// The comment is dropped, not kept: users.public_key is unique, and the same key
-// under two comments has to be one value.
 func TestNormalizePublicKeyDropsTheComment(t *testing.T) {
 	key := testKey(t, 1)
 
@@ -56,8 +51,6 @@ func TestNormalizePublicKeyEmptyIsNotAnError(t *testing.T) {
 	}
 }
 
-// Options are instructions to sshd. Dropping them is the point: a stored
-// command="..." would change what happens when the key is used.
 func TestNormalizePublicKeyDropsOptions(t *testing.T) {
 	key := testKey(t, 2)
 
@@ -70,8 +63,6 @@ func TestNormalizePublicKeyDropsOptions(t *testing.T) {
 	}
 }
 
-// A pasted authorized_keys file must not be accepted as its first line, which is
-// what the parser alone would do.
 func TestNormalizePublicKeyRejectsASecondKey(t *testing.T) {
 	two := testKey(t, 3) + " one\n" + testKey(t, 4) + " two\n"
 

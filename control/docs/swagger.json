@@ -25,7 +25,6 @@
                         "type": "integer"
                     },
                     "public_key": {
-                        "description": "'' when the account has no key on file, which is what blocks it from\ncreating a VM.",
                         "type": "string"
                     },
                     "updated_at": {
@@ -38,7 +37,6 @@
                         "type": "string"
                     },
                     "vcpu_limit": {
-                        "description": "Recorded allowances. Nothing enforces these yet; see 0008_user_quotas.",
                         "type": "integer"
                     }
                 },
@@ -67,7 +65,6 @@
             "main.consoleTokenDTO": {
                 "properties": {
                     "expires_in": {
-                        "description": "ExpiresIn lets the page mint a fresh token before reconnecting rather than\ndiscovering the old one died in the middle of a handshake.",
                         "type": "integer"
                     },
                     "token": {
@@ -82,7 +79,6 @@
             "main.createPATReq": {
                 "properties": {
                     "expires_in_days": {
-                        "description": "null/omitted = never expires.",
                         "type": "integer"
                     },
                     "label": {
@@ -97,22 +93,18 @@
                         "type": "string"
                     },
                     "kind": {
-                        "description": "Kind is what the caller says this is. Optional: omitted, the destination is\nclassified for them. Supplied and disagreeing with the destination, the\nrequest is rejected -- a form that asked for an address and got a hostname\nhas a mistake in it, and quietly storing the other kind hides it.",
                         "type": "string"
                     },
                     "note": {
                         "type": "string"
                     },
                     "ports": {
-                        "description": "Ports means different things to the two kinds. For an address it is\nSuricata's port syntax and goes straight into a rule header. For a domain it\nis which of the two web ports the name is allowed on -- see domainPorts in\nsuricata_rules.go, and domainTargetPorts below for what is accepted.",
                         "type": "string"
                     },
                     "transport": {
-                        "description": "Transport is ignored when the destination is a domain: both rules a domain\ncompiles to are tcp by construction, so there is nothing to choose.",
                         "type": "string"
                     },
                     "ttl_seconds": {
-                        "description": "TTLSeconds makes this a temporary allowance: the control plane removes it\nthis many seconds from now and regenerates the host's policy. 0 is a\npermanent one, which is what an omitted field means.",
                         "type": "integer"
                     }
                 },
@@ -127,15 +119,12 @@
                         "type": "integer"
                     },
                     "default_port": {
-                        "description": "DefaultPort is where a request goes when nothing picks a port. 0 means\nunset, and becomes defaultVMPort.",
                         "type": "integer"
                     },
                     "disk_size": {
-                        "description": "DiskSize sizes the per-VM overlay. Deliberately not rootfs_size: that sizes\nthe base image, which is cached by the tar's digest alone and shared by\nevery VM built from that tar -- so a per-user value there would be silently\nignored for everyone after the first.",
                         "type": "string"
                     },
                     "kernel_id": {
-                        "description": "KernelID names a row in the kernels catalogue. A caller picks from what an\nadmin uploaded rather than supplying a url: the artifact a guest boots is\nthe installation's decision, and an arbitrary url would make every VM's\nkernel a fetch from wherever its creator pointed.",
                         "type": "string"
                     },
                     "memory_mib": {
@@ -145,11 +134,9 @@
                         "type": "string"
                     },
                     "osimage_id": {
-                        "description": "OSImageID names a row in the OS images catalogue, and is the root\nfilesystem half of the same arrangement as KernelID.",
                         "type": "string"
                     },
                     "public_ports": {
-                        "description": "PublicPorts is every port the VM publishes. Empty publishes nothing.",
                         "items": {
                             "type": "integer"
                         },
@@ -157,7 +144,6 @@
                         "uniqueItems": false
                     },
                     "targets": {
-                        "description": "Targets is the egress allowlist to give the VM at birth, in exactly the\nshape POST /vms/{id}/targets takes one at a time. Empty is a VM that may\nreach nothing until somebody allows something.\n\nHere rather than left to follow-up calls because the guest boots and starts\ntrying to reach things immediately: an allowlist applied a moment later is a\nwindow in which the sandbox is already running and already denied, which\nreads as a broken VM rather than as policy arriving.",
                         "items": {
                             "$ref": "#/components/schemas/main.createTargetReq"
                         },
@@ -165,7 +151,6 @@
                         "uniqueItems": false
                     },
                     "ttl_seconds": {
-                        "description": "TTLSeconds makes this a temporary sandbox: the control plane destroys the VM\nthis many seconds after the row is written. 0 is the ordinary case -- a VM\nthat lives until somebody destroys it.\n\nMeasured from the create, and it keeps running while the VM is stopped. A\nclock that paused on stop would make the TTL evadable by exactly the trick\nthe quota already refuses to reward, and what a temporary sandbox is\nbounding is wall-clock exposure rather than uptime.",
                         "type": "integer"
                     }
                 },
@@ -188,7 +173,6 @@
                         "type": "string"
                     },
                     "app_proto": {
-                        "description": "AppProto is what suricata identified the traffic as, when it got far enough to\nsay -- \"ssh\", \"ftp\", \"failed\" when detection ran and found nothing. Empty for a\nflow dropped at the syn, which is most of them.",
                         "type": "string"
                     },
                     "attempts": {
@@ -198,7 +182,6 @@
                         "type": "string"
                     },
                     "kind": {
-                        "description": "Kind is \"lookup\" or \"packet\" -- which of the two things above happened. The UI\nswitches on it, because a refused lookup has no address to offer.",
                         "type": "string"
                     },
                     "last_seen": {
@@ -208,7 +191,6 @@
                         "type": "integer"
                     },
                     "proto": {
-                        "description": "Proto is lowercased for display: suricata writes TCP, and every other place a\ntransport appears in this system is lowercase.",
                         "type": "string"
                     },
                     "signature": {
@@ -220,7 +202,6 @@
             "main.deniedEgressList": {
                 "properties": {
                     "available": {
-                        "description": "Available is false when nothing is collecting, which is a different fact\nfrom an empty list and has to be readable as one.",
                         "type": "boolean"
                     },
                     "items": {
@@ -311,7 +292,6 @@
                         "type": "string"
                     },
                     "expires_at": {
-                        "description": "\"\" for the two that have not happened: a token that never expires, and one\nthat has never been used.",
                         "type": "string"
                     },
                     "id": {
@@ -324,7 +304,6 @@
                         "type": "string"
                     },
                     "status": {
-                        "description": "active | revoked | expired",
                         "type": "string"
                     },
                     "token_prefix": {
@@ -374,14 +353,12 @@
                         "uniqueItems": false
                     },
                     "error": {
-                        "description": "Error is set, with a 200, when the name did not resolve. That is an answer\nabout the name rather than a failure of this server.",
                         "type": "string"
                     },
                     "host": {
                         "type": "string"
                     },
                     "truncated": {
-                        "description": "Truncated is true when the name answered with more addresses than are\nworth recording; see resolveMaxAddresses.",
                         "type": "boolean"
                     }
                 },
@@ -542,7 +519,6 @@
                         "type": "string"
                     },
                     "console_url": {
-                        "description": "ConsoleURL is the websocket endpoint the browser terminal talks to, filled\nin on the same views that fill in URL and empty under the same conditions.\nIt is not a credential: opening it needs a token from POST\n/vms/:id/console-token, which is minted per user and expires.",
                         "type": "string"
                     },
                     "cpus": {
@@ -552,18 +528,15 @@
                         "type": "string"
                     },
                     "created_by": {
-                        "description": "CreatedBy is \"\" for a VM nobody here asked for -- one adopted from an\nclient's inventory report, or created before ownership was recorded.",
                         "type": "string"
                     },
                     "default_port": {
-                        "description": "The routing the proxy config is generated from: where a request goes when\nnothing picks a port, and every port the VM publishes.",
                         "type": "integer"
                     },
                     "disk_mib": {
                         "type": "integer"
                     },
                     "expires_at": {
-                        "description": "ExpiresAt is when a TTL'd VM is due to be destroyed, and \"\" for one with no\nTTL. It comes from the pending scheduled task, which is the only place the\ndeadline is written -- there is no expires_at column, so that the answer to\n\"when does this die\" cannot be two different things.\n\nA deadline in the past means the runner has not got to it yet. That is worth\nshowing as-is rather than hiding: the VM really is still there.",
                         "type": "string"
                     },
                     "id": {
@@ -589,22 +562,18 @@
                         "uniqueItems": false
                     },
                     "reported_at": {
-                        "description": "ReportedAt is when the host last confirmed this VM; \"\" means it never has.\n'running' is the host's claim as of that moment, not a live observation, so\na reader has to weigh the status against this timestamp -- a status of\n'running' with a stale ReportedAt means \"was running when last seen\".",
                         "type": "string"
                     },
                     "spec": {
-                        "description": "swaggertype is for the spec generator only: the stored spec is returned\nverbatim and has no fixed shape, and swag cannot follow a RawMessage into\nthe standard library on its own.",
                         "type": "object"
                     },
                     "started_at": {
                         "type": "string"
                     },
                     "status": {
-                        "description": "pending | running | failed",
                         "type": "string"
                     },
                     "url": {
-                        "description": "URL is where the VM answers http, when a caller asked for a view that\nresolves it. \"\" when the host has no domain, or when the endpoint does not\nwork it out -- the list endpoints do not, since resolving it per row would\nbe a query per VM.",
                         "type": "string"
                     },
                     "vm_id": {
@@ -622,25 +591,21 @@
                         "type": "string"
                     },
                     "expires_at": {
-                        "description": "ExpiresAt is when a temporary allowance is due to be withdrawn, and \"\" for a\npermanent one. Read from the pending scheduled task rather than from a column\non the row: the deadline is written in one place, and this is a view of it.",
                         "type": "string"
                     },
                     "id": {
                         "type": "string"
                     },
                     "kind": {
-                        "description": "domain | ip",
                         "type": "string"
                     },
                     "note": {
                         "type": "string"
                     },
                     "ports": {
-                        "description": "ip rows only; \"\" = any",
                         "type": "string"
                     },
                     "transport": {
-                        "description": "ip rows only: tcp | udp | any",
                         "type": "string"
                     }
                 },
@@ -649,7 +614,6 @@
             "main.webSessionDTO": {
                 "properties": {
                     "expires_in": {
-                        "description": "ExpiresIn is the token's life, not the session's. The page mints a fresh one\nper load rather than reusing this, so it only matters as the window in which\na load has to happen.",
                         "type": "integer"
                     },
                     "url": {

@@ -11,16 +11,11 @@ import (
 	"control/internal/db"
 )
 
-// Keys of the settings rows. Every key an admin may write is listed in
-// settingDefs below; a key that is not there cannot be written through the API,
-// so a bug in the handler cannot turn into an arbitrary row insert.
 const (
 	settingClientOpenEnrollment = "client_open_enrollment"
 
 	settingSignupsEnabled = "signups_enabled"
 
-	// The fleet's default source for each managed binary. A client row that names
-	// a version or a URL of its own overrides these -- see serviceRelease.
 	settingDclientDownloadURL = "dclient_download_url"
 	settingDpipeDownloadURL   = "dpipe_download_url"
 	settingProxyDownloadURL   = "dproxy_download_url"
@@ -35,37 +30,22 @@ const (
 	settingReservedVMNames = "reserved_vm_names"
 )
 
-// settingKind says how a value is stored and rendered. The column is TEXT
-// either way; this is what the API validates against and what the UI switches
-// its control on.
 type settingKind string
 
 const (
 	settingBool   settingKind = "bool"
 	settingString settingKind = "string"
-	// settingSecret is a string that is never read back. The value is writable
-	// and usable server-side, but ListSettings returns it empty: an admin screen
-	// that displays a credential turns every session with the tab open into a
-	// place it can leak from.
 	settingSecret settingKind = "secret"
 )
 
-// settingDef describes one operator-editable setting: what it is called in the
-// UI, what setting it means, and what the server assumes when the row is
-// missing.
 type settingDef struct {
 	Key         string      `json:"key"`
 	Kind        settingKind `json:"kind"`
 	Label       string      `json:"label"`
 	Description string      `json:"description"`
-	// Placeholder is shown in an empty text field, for settings whose format is
-	// not obvious from the label.
 	Placeholder string `json:"placeholder,omitempty"`
-	// Warn marks a setting whose "on" state weakens security, so the UI can say
-	// so rather than presenting every toggle as equivalent.
 	Warn    bool   `json:"warn"`
 	Default string `json:"-"`
-	// validate rejects a value before it is stored. Nil means anything goes.
 	validate func(string) error `json:"-"`
 }
 
@@ -181,9 +161,6 @@ var settingDefs = []settingDef{
 	},
 }
 
-// validateReservedVMNames accepts an empty list -- the names the control plane
-// needs are reserved in code regardless -- but every entry has to be shaped like
-// a name someone could actually ask for, or it reserves nothing.
 func validateReservedVMNames(v string) error {
 	for _, name := range parseReservedVMNames(v) {
 		if !vmNamePattern.MatchString(name) {
@@ -193,9 +170,6 @@ func validateReservedVMNames(v string) error {
 	return nil
 }
 
-// parseReservedVMNames splits the stored list. Entries are lowercased and
-// trimmed so they compare against a validated name, which has been through the
-// same treatment.
 func parseReservedVMNames(v string) []string {
 	var out []string
 	for _, part := range strings.Split(v, ",") {
@@ -206,9 +180,6 @@ func parseReservedVMNames(v string) []string {
 	return out
 }
 
-// validateResolverUpstream takes an address, optionally with a port, and nothing
-// else. It is written into a Corefile `forward` line on every host, where a
-// hostname would need resolving by the resolver being configured.
 func validateResolverUpstream(v string) error {
 	if v == "" {
 		return errors.New("a resolver upstream is required; guests cannot resolve anything without one")
@@ -223,10 +194,6 @@ func validateResolverUpstream(v string) error {
 	return nil
 }
 
-// The version is interpolated into a github release URL that the client
-// downloads and installs as root, so anything that is not a plain release number
-// has no business being accepted here. Same shape and same reasoning as the
-// per-client versions, so it is the same pattern -- see releaseVersionRe.
 func validateVectorVersion(v string) error {
 	if !releaseVersionRe.MatchString(v) {
 		return errors.New("must be a release number like 0.57.0")
@@ -234,8 +201,6 @@ func validateVectorVersion(v string) error {
 	return nil
 }
 
-// validateClickHouseURL accepts an empty value -- that is how an operator turns
-// event shipping off -- but anything else has to be a URL vector can dial.
 func validateClickHouseURL(v string) error {
 	if v == "" {
 		return nil
@@ -262,8 +227,6 @@ func settingDefByKey(key string) (settingDef, bool) {
 	return settingDef{}, false
 }
 
-// parseSettingBool reads the stored TEXT. Unrecognised values are false rather
-// than an error: a hand-edited row must not be able to fail a request.
 func parseSettingBool(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "1", "true", "yes", "on":
@@ -279,14 +242,6 @@ func formatSettingBool(v bool) string {
 	return "false"
 }
 
-// setting reads a setting's raw value from the database on every call -- these
-// are single-row primary-key lookups, and caching them would mean an operator
-// changing one has to wait for a restart, which is the whole reason these moved
-// out of the environment.
-//
-// A missing row or a failed read falls back to the declared default. For
-// settings that loosen a restriction, that default is the restrictive value, so
-// a database the server cannot read never widens access.
 func setting(ctx context.Context, q *db.Queries, key string) string {
 	def, ok := settingDefByKey(key)
 	if !ok {

@@ -11,15 +11,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// A guest on a /32 cannot install a default route on its own: the gateway is
-// not inside its own subnet, so every conventional "address plus netmask plus
-// router" configuration fails. DHCP option 121 (RFC 3442, classless static
-// routes) is the way out -- it hands the client an explicit list of routes,
-// including an on-link one for the gateway, so no inference is needed.
-//
-// That is why this exists rather than a kernel `ip=` command line: it needs no
-// changes to the guest image beyond a stock DHCP client, and it works for
-// images dclient did not build.
 const (
 	dhcpServerPort = 67
 	dhcpClientPort = 68
@@ -30,7 +21,6 @@ const (
 	bootRequest = 1
 	bootReply   = 2
 
-	// Message types (option 53).
 	dhcpDiscover = 1
 	dhcpOffer    = 2
 	dhcpRequest  = 3
@@ -38,7 +28,6 @@ const (
 	dhcpAck      = 5
 	dhcpNak      = 6
 
-	// Options used here.
 	optSubnetMask     = 1
 	optRouter         = 3
 	optDNS            = 6
@@ -54,17 +43,11 @@ const (
 
 var dhcpMagic = [4]byte{99, 130, 83, 99}
 
-// dhcpServer answers only for VMs it can identify. There is no address pool and
-// no lease database: the address is already decided by the allocator and
-// recorded in the VM's state, and the MAC is derived from it. An unknown MAC
-// gets no reply at all.
 type dhcpServer struct {
 	data string
 	cfg  netConfig
 }
 
-// packet is a parsed BOOTP/DHCP message. Only the fields that matter here are
-// kept; the fixed header is 236 bytes followed by the magic cookie and options.
 type packet struct {
 	op      byte
 	xid     uint32
@@ -95,7 +78,7 @@ func parsePacket(b []byte) (*packet, error) {
 		if code == optEnd {
 			break
 		}
-		if code == 0 { // pad
+		if code == 0 {
 			i++
 			continue
 		}
@@ -112,20 +95,17 @@ func parsePacket(b []byte) (*packet, error) {
 	return p, nil
 }
 
-// reply builds an OFFER or an ACK. yiaddr is what the client is being given;
-// everything else describes how to use it. name is the VM's own name, offered as
-// its hostname.
 func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP, name string) []byte {
 	b := make([]byte, 240, 400)
 	b[0] = bootReply
-	b[1] = 1 // ethernet
-	b[2] = 6 // mac length
+	b[1] = 1
+	b[2] = 6
 	binary.BigEndian.PutUint32(b[4:8], req.xid)
 	binary.BigEndian.PutUint16(b[10:12], req.flags)
-	copy(b[16:20], yiaddr.To4())                     // yiaddr
-	copy(b[20:24], net.ParseIP(s.cfg.Gateway).To4()) // siaddr
-	copy(b[24:28], req.giaddr.To4())                 // giaddr
-	copy(b[28:44], req.chaddr)                       // chaddr
+	copy(b[16:20], yiaddr.To4())
+	copy(b[20:24], net.ParseIP(s.cfg.Gateway).To4())
+	copy(b[24:28], req.giaddr.To4())
+	copy(b[28:44], req.chaddr)
 	copy(b[236:240], dhcpMagic[:])
 
 	gw := net.ParseIP(s.cfg.Gateway).To4()
@@ -137,35 +117,19 @@ func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP, name string) [
 	add(optMessageType, []byte{kind})
 	add(optServerID, gw)
 	add(optLeaseTime, be32(dhcpLeaseSeconds))
-	// A /32: the guest owns exactly one address and nothing else is on its wire.
 	add(optSubnetMask, []byte{255, 255, 255, 255})
 	add(optMTU, be16(guestMTU))
 
-	// The guest's own name. Direct boot already carries it on the kernel command
-	// line, which is earlier and does not depend on the client; this is what names
-	// a disk-boot guest, where there is no command line to put it on.
 	if h := guestHostname(name); h != "" {
 		add(optHostname, []byte(h))
 	}
 
-	// The important one. Two routes: the gateway itself, on-link on this
-	// interface, and then everything else through it. Without the first, the
-	// second is unusable -- which is the whole problem being solved here.
 	routes := append(classlessRoute(gw, 32, net.IPv4zero.To4()),
 		classlessRoute(net.IPv4zero.To4(), 0, gw)...)
 	add(optClasslessRoute, routes)
 
-	// RFC 3442 says a client that understands option 121 must ignore option 3.
-	// Sent anyway for the ones that do not, where it is better than nothing.
 	add(optRouter, gw)
 
-	// With suricata mode on this is the gateway, where the filtering resolver
-	// answers only the names the guest is allowed to reach and refuses the rest --
-	// and that refusal is the earliest point this policy can act, because it stops
-	// the connection from being attempted at all rather than dropping it in flight.
-	//
-	// With the mode off it is an upstream address, which a guest can only reach if
-	// its egress allowlist says so or the queue is accepting everything.
 	if dns := net.ParseIP(s.cfg.resolver()).To4(); dns != nil {
 		add(optDNS, dns)
 	}
@@ -174,8 +138,6 @@ func (s *dhcpServer) reply(req *packet, kind byte, yiaddr net.IP, name string) [
 	return b
 }
 
-// classlessRoute encodes one route in option 121's compact form: a prefix
-// length, only the significant octets of the destination, then the gateway.
 func classlessRoute(dst net.IP, prefix int, via net.IP) []byte {
 	significant := (prefix + 7) / 8
 	out := make([]byte, 0, 1+significant+4)
@@ -196,10 +158,6 @@ func be16(v uint16) []byte {
 	return b
 }
 
-// vmForMAC identifies the caller. The MAC is derived from the address at
-// allocation time, so this is a lookup rather than a decision -- and a guest
-// that lies about its MAC gets an address its tap will not accept, because the
-// anti-spoof rule pins the pairing.
 func (s *dhcpServer) vmForMAC(mac net.HardwareAddr) (vm, bool) {
 	vms, err := listVMs(s.data)
 	if err != nil {
@@ -213,12 +171,6 @@ func (s *dhcpServer) vmForMAC(mac net.HardwareAddr) (vm, bool) {
 	return vm{}, false
 }
 
-// serve runs the server until the context is cancelled.
-//
-// A raw socket is used rather than net.UDPConn because the reply has to be
-// pinned to one interface: the client has no address yet, so the answer goes to
-// the broadcast address, and without IP_PKTINFO the kernel would pick an
-// interface by routing table rather than the tap the request arrived on.
 func (s *dhcpServer) serve(ctx context.Context) error {
 	fd, err := unix.Socket(unix.AF_INET, unix.SOCK_DGRAM, unix.IPPROTO_UDP)
 	if err != nil {
@@ -237,7 +189,6 @@ func (s *dhcpServer) serve(ctx context.Context) error {
 		return fmt.Errorf("could not bind udp/%d: %w", dhcpServerPort, err)
 	}
 
-	// Closing the socket is what unblocks the read below.
 	go func() {
 		<-ctx.Done()
 		_ = unix.Close(fd)
@@ -272,13 +223,11 @@ func (s *dhcpServer) handle(fd int, raw []byte) error {
 		msgType = v[0]
 	}
 	if msgType != dhcpDiscover && msgType != dhcpRequest {
-		return nil // renewals of a lease we always grant, declines, releases
+		return nil
 	}
 
 	v, ok := s.vmForMAC(req.chaddr)
 	if !ok {
-		// Not one of ours. Silence is the right answer: this socket sees every
-		// broadcast on every interface the host has.
 		return nil
 	}
 	yiaddr := net.ParseIP(v.Net.IP).To4()
@@ -288,8 +237,6 @@ func (s *dhcpServer) handle(fd int, raw []byte) error {
 
 	kind := byte(dhcpOffer)
 	if msgType == dhcpRequest {
-		// A client asking for an address other than the one it was allocated is
-		// told no, rather than being quietly given the right one.
 		if want, present := req.options[optRequestedIP]; present && !net.IP(want).Equal(yiaddr) {
 			kind = dhcpNak
 		} else {
@@ -304,8 +251,6 @@ func (s *dhcpServer) handle(fd int, raw []byte) error {
 	return sendBroadcast(fd, iface.Index, s.reply(req, kind, yiaddr, v.Name))
 }
 
-// sendBroadcast writes one packet to 255.255.255.255:68 out of exactly one
-// interface, chosen by index rather than by routing.
 func sendBroadcast(fd, ifindex int, payload []byte) error {
 	info := unix.Inet4Pktinfo{Ifindex: int32(ifindex)}
 	oob := make([]byte, unix.CmsgSpace(unix.SizeofInet4Pktinfo))

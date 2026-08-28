@@ -12,14 +12,11 @@ import (
 	"dpipe/internal/xnet"
 )
 
-// 5. self-upgrade: the new instance adopts the listeners, the old one keeps its
-// active connections until they finish and then exits; the socket files survive.
 func TestSelfUpgrade(t *testing.T) {
 	cfg := baseConfig(t)
 	old := startServer(t, cfg)
 	oldPeer := dialControl(t, cfg.ControlSocket, nil)
 
-	// A copy in flight in the old instance.
 	echo := echoServer(t)
 	clientNear := startCopy(t, oldPeer, echo)
 
@@ -34,7 +31,6 @@ func TestSelfUpgrade(t *testing.T) {
 
 	waitFor(t, "old instance to start draining", func() bool { return old.reg.Draining() })
 
-	// The old instance still carries its connection to completion.
 	if _, err := clientNear.Write([]byte("still here")); err != nil {
 		t.Fatalf("write on pre-upgrade conn: %v", err)
 	}
@@ -50,14 +46,12 @@ func TestSelfUpgrade(t *testing.T) {
 		t.Fatalf("old active = %d, want 1", old.reg.Active())
 	}
 
-	// Socket files must remain in place for the new instance.
 	for _, p := range []string{cfg.ControlSocket, cfg.UpgradeSocket} {
 		if _, err := os.Stat(p); err != nil {
 			t.Fatalf("socket %s missing after handover: %v", p, err)
 		}
 	}
 
-	// New work is served by the new instance.
 	newPeer := dialControl(t, cfg.ControlSocket, nil)
 	newClient := startCopy(t, newPeer, echo)
 	if _, err := newClient.Write([]byte("new")); err != nil {
@@ -72,7 +66,6 @@ func TestSelfUpgrade(t *testing.T) {
 		t.Fatalf("new active = %d, want 1", newSrv.reg.Active())
 	}
 
-	// Finishing the old connection lets the old instance exit.
 	_ = clientNear.Close()
 	select {
 	case <-old.Exit():
@@ -81,8 +74,6 @@ func TestSelfUpgrade(t *testing.T) {
 	}
 }
 
-// startCopy hands a fresh client socket plus a connection to target to dpipe
-// and returns the client end the test keeps.
 func startCopy(t *testing.T, p *control.Peer, target string) net.Conn {
 	t.Helper()
 	clientNear, clientFar := connPair(t)

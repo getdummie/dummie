@@ -93,10 +93,6 @@ func TestCoalescedMessages(t *testing.T) {
 	}
 }
 
-// A control connection closed while a read is in flight must fail that read, not
-// panic: a failed recvmsg(2) reports its raw -1 return through n/oobn, and using
-// either as a slice bound crashed the whole process — taking every live
-// connection with it.
 func TestRecvMsgDuringConcurrentClose(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		a, b := socketPair(t)
@@ -112,7 +108,6 @@ func TestRecvMsgDuringConcurrentClose(t *testing.T) {
 			}
 		}()
 
-		// A partial message, so the reader is blocked mid-message when we close.
 		_, _ = b.Write([]byte(`{"v":1,"type":"stat`))
 		_ = a.Close()
 
@@ -125,7 +120,6 @@ func TestRecvMsgDuringConcurrentClose(t *testing.T) {
 	}
 }
 
-// The same for a Peer: it must report the failure, and its Serve must return.
 func TestPeerSurvivesCloseUnderRead(t *testing.T) {
 	a, b := socketPair(t)
 	p := control.NewPeer(control.NewConn(a), nil)
@@ -150,7 +144,6 @@ func TestFDRoundTrip(t *testing.T) {
 	a, b := socketPair(t)
 	ka, kb := control.NewConn(a), control.NewConn(b)
 
-	// The payload is one end of another socketpair; we keep the other end.
 	payloadFDs, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
 	if err != nil {
 		t.Fatalf("socketpair: %v", err)
@@ -178,7 +171,6 @@ func TestFDRoundTrip(t *testing.T) {
 	}
 	defer control.CloseFDs(fds)
 
-	// Writing on the received descriptor must land on the end we kept.
 	if _, err := unix.Write(fds[0], []byte("hello")); err != nil {
 		t.Fatalf("write to received fd: %v", err)
 	}

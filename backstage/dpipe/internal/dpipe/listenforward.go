@@ -10,8 +10,6 @@ import (
 	"dpipe/internal/xnet"
 )
 
-// Forward is a listener owned by dpipe that dials a fixed target for every
-// accepted connection.
 type Forward struct {
 	ID     string
 	Listen string
@@ -20,7 +18,6 @@ type Forward struct {
 	ln net.Listener
 }
 
-// ForwardManager owns all listen_forward jobs.
 type ForwardManager struct {
 	log *slog.Logger
 	reg *Registry
@@ -29,19 +26,16 @@ type ForwardManager struct {
 	m  map[string]*Forward
 }
 
-// NewForwardManager returns an empty manager.
 func NewForwardManager(log *slog.Logger, reg *Registry) *ForwardManager {
 	return &ForwardManager{log: log, reg: reg, m: map[string]*Forward{}}
 }
 
-// Count returns the number of active forwards.
 func (fm *ForwardManager) Count() int {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
 	return len(fm.m)
 }
 
-// Start binds listen and serves it until Stop or process exit.
 func (fm *ForwardManager) Start(id, listen, target string) (*Forward, error) {
 	if listen == "" || target == "" {
 		return nil, errors.New("listen_forward requires listen and target")
@@ -53,7 +47,6 @@ func (fm *ForwardManager) Start(id, listen, target string) (*Forward, error) {
 	return fm.adopt(id, listen, target, ln), nil
 }
 
-// Adopt takes over a listener received during a handover.
 func (fm *ForwardManager) Adopt(id, listen, target string, ln net.Listener) *Forward {
 	return fm.adopt(id, listen, target, ln)
 }
@@ -96,7 +89,6 @@ func (fm *ForwardManager) handle(f *Forward, client net.Conn, log *slog.Logger) 
 	log.Debug("listen_forward conn end", "id", id)
 }
 
-// Stop closes a forward's listener. Connections already in flight keep running.
 func (fm *ForwardManager) Stop(id string) error {
 	fm.mu.Lock()
 	f := fm.m[id]
@@ -109,8 +101,6 @@ func (fm *ForwardManager) Stop(id string) error {
 	return f.ln.Close()
 }
 
-// Descriptors returns one SockDesc plus one listener fd per forward, in matching
-// order, for the handover handshake.
 func (fm *ForwardManager) Descriptors() ([]control.SockDesc, []int, error) {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()
@@ -134,7 +124,6 @@ func (fm *ForwardManager) Descriptors() ([]control.SockDesc, []int, error) {
 	return descs, fds, nil
 }
 
-// CloseListeners closes every forward listener without dropping live conns.
 func (fm *ForwardManager) CloseListeners() {
 	fm.mu.Lock()
 	defer fm.mu.Unlock()

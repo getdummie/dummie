@@ -4,9 +4,6 @@ export interface ViewportPreset {
   height: number
 }
 
-// Sizes rather than device names: what matters when checking a layout is the
-// width it breaks at, and a name would date faster than the number does. The
-// first entry of each list is the default the pane opens at.
 export const desktopPresets: ViewportPreset[] = [
   { label: 'laptop · 1280×800', width: 1280, height: 800 },
   { label: 'desktop · 1440×900', width: 1440, height: 900 },

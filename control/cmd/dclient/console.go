@@ -9,12 +9,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// detachKey is ctrl-] , the same escape telnet and docker attach use.
 const detachKey = 0x1d
 
-// attachConsole proxies the terminal to the guest's serial port. Everything the
-// guest writes is already being recorded to console.log by qemu, so detaching
-// loses nothing.
 func attachConsole(socket string) error {
 	conn, err := net.Dial("unix", socket)
 	if err != nil {
@@ -24,16 +20,12 @@ func attachConsole(socket string) error {
 	return proxyConsole(conn, conn)
 }
 
-// proxyConsole is the terminal half, shared by the direct path and the daemon
-// client -- the transport differs, the terminal handling does not.
 func proxyConsole(out io.Writer, in io.Reader) error {
 	restore, err := makeRaw(int(os.Stdin.Fd()))
 	if err == nil {
 		defer restore()
 		fmt.Fprint(os.Stderr, "attached; ctrl-] to detach\r\n")
 	} else {
-		// Not a terminal (a pipe, or output being captured). Still useful, just
-		// line-buffered and without the escape.
 		fmt.Fprintln(os.Stderr, "attached; stdin is not a terminal")
 	}
 
@@ -49,9 +41,6 @@ func proxyConsole(out io.Writer, in io.Reader) error {
 	return <-done
 }
 
-// copyUntilDetach forwards bytes to the guest and returns when the detach key
-// is seen. It is byte-at-a-time on purpose: in raw mode the terminal is
-// unbuffered, and interactive typing is not a throughput problem.
 func copyUntilDetach(dst io.Writer, src io.Reader) error {
 	var b [1]byte
 	for {
@@ -73,9 +62,6 @@ func copyUntilDetach(dst io.Writer, src io.Reader) error {
 	}
 }
 
-// makeRaw puts the terminal in raw mode so keystrokes reach the guest as typed:
-// no local echo, no line buffering, and ctrl-c goes to the guest rather than
-// killing us.
 func makeRaw(fd int) (func(), error) {
 	prev, err := unix.IoctlGetTermios(fd, unix.TCGETS)
 	if err != nil {

@@ -10,9 +10,6 @@ import { Textarea } from '@/components/ui/textarea'
 definePageMeta({ middleware: ['auth'] })
 useHead({ title: 'dummie — settings' })
 
-// The same shape /admin/users/:id returns, because it is the same endpoint's DTO.
-// Only two of these fields are writable here; the rest are an admin's to set and
-// are shown so a user can read what they have been given.
 interface Profile {
   id: string
   username: string
@@ -50,13 +47,11 @@ function fmtMiB(mib: number) {
   return Number.isInteger(gib) ? `${gib} GiB` : `${gib.toFixed(1)} GiB`
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 }
 
-/** "8th August 2026, 12:07 AM" */
 function fmtDate(s: string) {
   if (!s) return '—'
   const d = new Date(s)
@@ -125,11 +120,7 @@ async function save() {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const data: Profile = await res.json()
     profile.value = data
-    // From the response, not from what was typed: the server trims the name and
-    // canonicalises the key, so echoing the input back leaves the form dirty.
     resetForm(data)
-    // The session copy feeds the sidebar's name and initials, and it was minted
-    // at sign-in — nothing else would refresh it until the next token refresh.
     if (sessionUser.value) {
       sessionUser.value = { ...sessionUser.value, first_name: data.first_name, last_name: data.last_name }
     }
@@ -163,7 +154,6 @@ async function save() {
     </div>
 
     <template v-else-if="profile">
-      <!-- account: read-only -->
       <section aria-labelledby="account-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="account-heading" class="text-sm font-semibold">Account</h2>
         <p class="mt-1 text-sm text-muted-foreground">
@@ -218,7 +208,6 @@ async function save() {
         </p>
       </section>
 
-      <!-- editable -->
       <form class="mt-6 space-y-6" :aria-busy="saving" @submit.prevent="save">
         <section aria-labelledby="name-heading" class="rounded-lg border border-border p-4 sm:p-6">
           <h2 id="name-heading" class="text-sm font-semibold">Name</h2>
@@ -244,8 +233,6 @@ async function save() {
             boots — changing it here does not reach VMs you already have.
           </p>
 
-          <!-- Stated up front: this is the one setting whose absence blocks the
-               thing the user came to the app to do. -->
           <Alert v-if="!profile.public_key" class="mt-4">
             <AlertTitle>You cannot create VMs yet</AlertTitle>
             <AlertDescription>Add your public key below to create your first VM.</AlertDescription>
@@ -263,8 +250,6 @@ async function save() {
               placeholder="ssh-ed25519 AAAA… you@laptop"
               aria-describedby="p-key-hint"
             />
-            <!-- Names the file, because "paste your public key" is the step where
-                 the private one gets pasted instead. -->
             <p id="p-key-hint" class="text-xs text-muted-foreground">
               The contents of your <span class="font-mono">.pub</span> file — usually
               <span class="font-mono">~/.ssh/id_ed25519.pub</span>. Never paste the matching private
@@ -289,16 +274,12 @@ async function save() {
           >
             Discard
           </Button>
-          <!-- The button label alone doesn't announce success, so the outcome
-               gets its own live region. (WCAG 4.1.3) -->
           <p role="status" aria-live="polite" class="font-mono text-xs text-muted-foreground">
             {{ saved && !dirty ? 'Saved' : '' }}
           </p>
         </div>
       </form>
 
-      <!-- Outside the profile form: these save themselves, and nesting them
-           would put their buttons inside a form that submits the profile. -->
       <PersonalAccessTokens class="mt-6" />
     </template>
   </div>

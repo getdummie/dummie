@@ -13,10 +13,6 @@ import (
 
 const testProxySecret = "0123456789abcdef0123456789abcdef"
 
-// TestMintProxyTokenIsVerifiableTheWayTheProxyVerifiesIt rebuilds the check from
-// the other side rather than comparing against a recorded string: the contract
-// is "hmac over the base64 text", and a token that only matches a golden value
-// would still pass if both this test and the code drifted the same way.
 func TestMintProxyTokenIsVerifiableTheWayTheProxyVerifiesIt(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 
@@ -59,8 +55,6 @@ func TestMintProxyTokenIsVerifiableTheWayTheProxyVerifiesIt(t *testing.T) {
 	}
 }
 
-// The signature covers the encoded payload, so a token whose payload is edited
-// in flight -- to a longer exp, or to another host -- must not verify.
 func TestMintProxyTokenSignatureCoversThePayload(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	tok, err := mintProxyToken(testProxySecret, "user@example.com", "vm.example.com", now)
@@ -84,8 +78,6 @@ func TestMintProxyTokenSignatureCoversThePayload(t *testing.T) {
 	}
 }
 
-// CONTROL_URL is an origin an operator types, so it may or may not end in a
-// slash; the path it gets is this server's, not theirs.
 func TestProxyAuthConfigLoginURL(t *testing.T) {
 	for _, in := range []string{"http://control.example.com:1323", "http://control.example.com:1323/"} {
 		got := proxyAuthConfig{controlURL: in}.loginURL()
@@ -146,9 +138,6 @@ func TestSafeNextPath(t *testing.T) {
 	}
 }
 
-// The sign-in bounce has to carry all three params, and carry them as one
-// encoded value -- an unescaped nested query would arrive at /signin as its own
-// params and the hand-off would resume with none of them.
 func TestSigninReturnURLRoundTrips(t *testing.T) {
 	got := signinReturnURL("http://vm.example.com/__auth/callback", "vm.example.com", "/dashboard")
 

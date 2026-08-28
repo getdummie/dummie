@@ -1,12 +1,4 @@
 #!/usr/bin/env bash
-# End-to-end demo of the dproxy + dpipe pair.
-#
-# Shows: HTTP host routing, TCP echo, a listen_forward, HTTPS terminated in
-# dpipe, session auth on both ingresses, an SSH shell terminated in dpipe (when a
-# local sshd can be started), a dproxy redeploy that preserves live sessions, and a
-# dpipe self-upgrade absorbed by dproxy's reconnect.
-#
-# This script is identical in the dproxy and dpipe repositories.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
@@ -80,13 +72,11 @@ wait_for_port 127.0.0.1 "$BACKEND1"
 wait_for_port 127.0.0.1 "$BACKEND2"
 wait_for_port 127.0.0.1 "$ECHO_PORT"
 
-# An unprivileged sshd for the SSH part of the demo, if the host has one.
 SSHD_BIN=${SSHD_BIN:-$(command -v sshd || echo /usr/sbin/sshd)}
 SSH_READY=0
 if [[ -x "$SSHD_BIN" ]]; then
   mkdir -p "$RUN/sshd"
   cat "$KEYS/alice.pub" "$KEYS/bob.pub" >"$RUN/sshd/authorized_keys"
-  # dpipe authenticates to the backend with its own client key.
   cat "$KEYS/dpipe_client_ed25519.pub" >>"$RUN/sshd/authorized_keys"
   chmod 600 "$RUN/sshd/authorized_keys"
   cat >"$RUN/sshd/sshd_config" <<EOF
@@ -117,8 +107,6 @@ COOKIE_SECRET="$RUN/cookie_secret"
 chmod 600 "$COOKIE_SECRET"
 export COOKIE_SECRET
 
-# mint <sub> <audience> — the same signed value the control server would hand
-# back from a login, and the same value dproxy puts in the session cookie.
 mint() {
   python3 - "$1" "$2" <<'PY'
 import base64, hashlib, hmac, json, os, sys, time
@@ -317,7 +305,6 @@ fi
 
 echo
 echo "=== 7. dproxy redeploy (SO_REUSEPORT) with traffic in flight"
-# A slow HTTPS transfer plus a long-lived TCP connection, both handed off already.
 (curl -sS --cacert "$KEYS/ca.crt" --resolve "vm1.local:$HTTPS_PORT:127.0.0.1" \
   "https://vm1.local:$HTTPS_PORT/slow" >"$LOGS/inflight-https.log" 2>&1) &
 INFLIGHT=$!

@@ -7,9 +7,6 @@ import (
 	"control/internal/db"
 )
 
-// Whatever else it contains, the file has to end in a block that refuses. Every
-// guest with no allowances falls through to it, so an empty or absent one is a
-// host that resolves the whole internet for them.
 func TestGenerateCoreDNSConfigAlwaysRefuses(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -26,8 +23,6 @@ func TestGenerateCoreDNSConfigAlwaysRefuses(t *testing.T) {
 			if !strings.Contains(out, corednsRefuseAll) {
 				t.Errorf("the fleet-wide refusal is missing:\n%s", out)
 			}
-			// NXDOMAIN would assert the name does not exist, which is a lie a stub
-			// resolver caches and a user goes looking for a typo over.
 			if strings.Contains(out, "NXDOMAIN") {
 				t.Errorf("a refusal was written as NXDOMAIN:\n%s", out)
 			}
@@ -35,10 +30,6 @@ func TestGenerateCoreDNSConfigAlwaysRefuses(t *testing.T) {
 	}
 }
 
-// No block binds an address. The gateway only exists on a tap, so a bind pins the
-// resolver to an address that is absent on a host with no VMs -- coredns exits at
-// startup and the reconciler restarts it forever. Isolation does not depend on the
-// bind: it is the per-VM views, which match on source address.
 func TestGenerateCoreDNSConfigBindsNothing(t *testing.T) {
 	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
@@ -49,9 +40,6 @@ func TestGenerateCoreDNSConfigBindsNothing(t *testing.T) {
 	}
 }
 
-// A VM gets a zone for each name it was granted and a view pinning that zone to
-// its address. The view is the whole isolation story in this file: without it one
-// guest's allowance answers every guest's lookup.
 func TestGenerateCoreDNSConfigScopesToTheVM(t *testing.T) {
 	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
@@ -69,17 +57,12 @@ func TestGenerateCoreDNSConfigScopesToTheVM(t *testing.T) {
 			t.Errorf("missing %q:\n%s", want, out)
 		}
 	}
-	// Views share one namespace across the file, so two VMs must not land on one
-	// name -- the second would silently inherit the first's policy.
 	if strings.Count(out, "view vm_10_0_0_2_allow") != 1 ||
 		strings.Count(out, "view vm_10_0_0_3_allow") != 1 {
 		t.Errorf("view names are not one per vm:\n%s", out)
 	}
 }
 
-// A VM with no domain allowances gets no block, and specifically must not get an
-// empty allow block: a zone list that is empty would turn `example.com:53 {` into
-// `:53 {`, which is a syntax error at best and a catch-all that forwards at worst.
 func TestGenerateCoreDNSConfigWritesNoBlockForAVMWithNoDomains(t *testing.T) {
 	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
 		noTargets("10.0.0.2", "alpha"),
@@ -99,10 +82,6 @@ func TestGenerateCoreDNSConfigWritesNoBlockForAVMWithNoDomains(t *testing.T) {
 	}
 }
 
-// Lookup-only is the case the two generated files disagree about on purpose: the
-// resolver answers the name and the ruleset grants nothing. It is what makes an
-// allowance like ssh to a hostname work, so the name has to be in this file even
-// though it is in no pass rule.
 func TestGenerateCoreDNSConfigAnswersLookupOnlyDomains(t *testing.T) {
 	rows := []db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "github.com", "", domainPortsNone),
@@ -116,9 +95,6 @@ func TestGenerateCoreDNSConfigAnswersLookupOnlyDomains(t *testing.T) {
 	}
 }
 
-// One VM, several names: they belong in one block, deduplicated, in a stable
-// order. Two blocks for the same view and zone would be a conflict coredns
-// resolves by ignoring one of them.
 func TestGenerateCoreDNSConfigGroupsAndSortsZones(t *testing.T) {
 	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", "443"),

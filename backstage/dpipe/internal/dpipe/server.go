@@ -18,8 +18,6 @@ const (
 	defaultSniffTimeout   = 5 * time.Second
 )
 
-// Server is the dpipe data plane: it owns the control/upgrade listeners, the
-// adopted connections and the listen_forward jobs.
 type Server struct {
 	cfg *Config
 	log *slog.Logger
@@ -33,18 +31,15 @@ type Server struct {
 
 	mu    sync.Mutex
 	peers map[*control.Peer]struct{}
-	// consoles counts live terminal sessions per console hostname. Entries are
-	// deleted at zero, so this does not grow one key per VM that ever opened one.
 	consoles map[string]int
 
 	stopOnce sync.Once
-	stopped  chan struct{} // accepting has stopped
+	stopped  chan struct{}
 
 	exitOnce sync.Once
-	exitCh   chan struct{} // the process should exit (handover drain finished)
+	exitCh   chan struct{}
 }
 
-// New builds a server and loads all key/certificate material.
 func New(cfg *Config, log *slog.Logger) (*Server, error) {
 	mat, err := loadMaterial(cfg, log)
 	if err != nil {
@@ -65,10 +60,8 @@ func New(cfg *Config, log *slog.Logger) (*Server, error) {
 	return s, nil
 }
 
-// Registry exposes the connection registry (tests, status).
 func (s *Server) Registry() *Registry { return s.reg }
 
-// Bind creates fresh control and upgrade listeners.
 func (s *Server) Bind() error {
 	ctrl, err := xnet.ListenUnix(s.cfg.ControlSocket)
 	if err != nil {
@@ -84,20 +77,13 @@ func (s *Server) Bind() error {
 	return nil
 }
 
-// Start begins accepting on both listeners.
 func (s *Server) Start() {
 	go s.acceptControl()
 	go s.acceptUpgrade()
 }
 
-// Exit is closed when the server has finished a post-handover drain and the
-// process should terminate.
 func (s *Server) Exit() <-chan struct{} { return s.exitCh }
 
-// Draining reports whether this process has already handed its listeners over
-// and is only finishing the sessions it still holds. An upgrade request arriving
-// now would start a second replacement to race the first for listeners that are
-// no longer ours to give.
 func (s *Server) Draining() bool { return s.reg.Draining() }
 
 func (s *Server) acceptControl() {
@@ -135,7 +121,6 @@ func (s *Server) serveControl(c *net.UnixConn) {
 	s.log.Debug("control connection closed", "err", err)
 }
 
-// handle dispatches one inbound control request.
 func (s *Server) handle(p *control.Peer, m control.Msg, fds []int) {
 	switch m.Type {
 	case control.TypeCopy:
@@ -272,8 +257,6 @@ func msgID(m control.Msg) string {
 	return control.NewID()
 }
 
-// stopAccepting closes the control and upgrade listeners without touching live
-// connections. The socket files are left in place (SetUnlinkOnClose(false)).
 func (s *Server) stopAccepting() {
 	s.stopOnce.Do(func() {
 		close(s.stopped)
@@ -287,8 +270,6 @@ func (s *Server) stopAccepting() {
 	})
 }
 
-// closePeers drops all proxy control connections so proxies reconnect (to the
-// new instance, after a handover).
 func (s *Server) closePeers() {
 	s.mu.Lock()
 	peers := make([]*control.Peer, 0, len(s.peers))
@@ -301,8 +282,6 @@ func (s *Server) closePeers() {
 	}
 }
 
-// Shutdown stops accepting and drains active connections, honouring
-// drain_timeout (0 = wait forever).
 func (s *Server) Shutdown() {
 	s.log.Info("shutting down: stop accepting, drain", "active", s.reg.Active())
 	s.stopAccepting()

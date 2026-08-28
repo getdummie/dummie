@@ -56,8 +56,6 @@ func startServer(t *testing.T, cfg *Config) *Server {
 	return s
 }
 
-// dialControl connects a fake proxy to the control socket. resolve, if non-nil,
-// answers resolve requests.
 func dialControl(t *testing.T, path string, resolve func(control.Msg) control.Msg) *control.Peer {
 	t.Helper()
 	c, err := net.Dial("unix", path)
@@ -104,7 +102,6 @@ func ctx5(t *testing.T) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 5*time.Second)
 }
 
-// 1. copy: an echo backend, bytes flowing both ways.
 func TestCopyEcho(t *testing.T) {
 	cfg := baseConfig(t)
 	s := startServer(t, cfg)
@@ -164,7 +161,6 @@ func TestCopyEcho(t *testing.T) {
 	}
 }
 
-// 2. listen_forward + stop.
 func TestListenForwardAndStop(t *testing.T) {
 	cfg := baseConfig(t)
 	startServer(t, cfg)
@@ -214,7 +210,6 @@ func TestListenForwardAndStop(t *testing.T) {
 	}
 }
 
-// freePort returns a 127.0.0.1 address that was free a moment ago.
 func freePort(t *testing.T) string {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -226,7 +221,6 @@ func freePort(t *testing.T) string {
 	return addr
 }
 
-// 4. TLS termination: handshake, Host sniff, resolve, backend copy.
 func TestTLSTermination(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -274,8 +268,6 @@ func TestTLSTermination(t *testing.T) {
 	})
 }
 
-// 4b. The proxy owns the auth policy: dpipe forwards the request details it asks
-// for and writes back whatever response it decides on.
 func TestTLSAuthPolicyIsTheProxys(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, "served")
@@ -375,8 +367,6 @@ func TestTLSAuthPolicyIsTheProxys(t *testing.T) {
 	})
 }
 
-// 4c. A console resolve on the https ingress is served on the TLS connection
-// dpipe already holds, never forwarded to a guest.
 func TestTLSConsoleIsNotForwarded(t *testing.T) {
 	dir := t.TempDir()
 	certPath, keyPath, pool := writeSelfSignedCert(t, dir, "vm1.local")
@@ -389,8 +379,6 @@ func TestTLSConsoleIsNotForwarded(t *testing.T) {
 	}
 	startServer(t, cfg)
 
-	// The proxy authorized a console; this dpipe has consoles turned off, so the
-	// only correct answer is a refusal — and never a connection to rep.Target.
 	p := dialControl(t, cfg.ControlSocket, func(m control.Msg) control.Msg {
 		return control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID,
 			Authorized: true, Protocol: control.ProtoConsole,
@@ -406,8 +394,6 @@ func TestTLSConsoleIsNotForwarded(t *testing.T) {
 	}
 }
 
-// tlsRoundTrip hands a raw socket to dpipe via tls_accept, then speaks TLS on
-// the other end of that socket and returns the HTTP response.
 func tlsRoundTrip(t *testing.T, p *control.Peer, cfg *Config, pool *x509.CertPool, sni, request string) *http.Response {
 	t.Helper()
 	clientNear, clientFar := connPair(t)
@@ -453,8 +439,6 @@ func tlsRoundTrip(t *testing.T, p *control.Peer, cfg *Config, pool *x509.CertPoo
 	return resp
 }
 
-// writeSelfSignedCert writes a self-signed certificate usable both as the server
-// certificate and as the client's trust root.
 func writeSelfSignedCert(t *testing.T, dir, dnsName string) (certPath, keyPath string, pool *x509.CertPool) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)

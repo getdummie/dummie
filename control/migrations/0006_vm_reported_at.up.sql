@@ -1,14 +1,1 @@
--- 0006_vm_reported_at: when the host last confirmed this VM.
---
--- 'running' is a fact the host reported, not one this server observed, and it
--- keeps saying 'running' after the host stops answering -- which is precisely
--- when it is most likely to be wrong. reported_at is what lets a reader tell a
--- VM that is running from one that was running the last time anyone could tell.
---
--- Deliberately separate from updated_at: that column moves for any write to the
--- row, so a future mutation would refresh it and mask the staleness. This one is
--- written by the inventory upsert and by nothing else.
---
--- NULL for rows that predate this column, and for a pending create the host has
--- never confirmed. A reader must treat NULL as "never reported", not as "now".
 ALTER TABLE vms ADD COLUMN reported_at TIMESTAMPTZ;

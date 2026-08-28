@@ -17,18 +17,13 @@ import (
 	"strings"
 )
 
-// artifact is one input image: a URL to fetch, or a path that already exists on
-// this machine. A local path is not copied into the cache -- it is used where it
-// lies, which keeps development iteration cheap.
 type artifact struct {
-	ref    string // URL or local path
-	sha256 string // optional; verified after download
+	ref    string
+	sha256 string
 }
 
 func (a artifact) empty() bool { return strings.TrimSpace(a.ref) == "" }
 
-// resolve returns an absolute path to the artifact, downloading it into the
-// shared cache if needed.
 func (a artifact) resolve(ctx context.Context, cache string) (string, error) {
 	ref := strings.TrimSpace(a.ref)
 	u, err := url.Parse(ref)
@@ -45,11 +40,6 @@ func (a artifact) resolve(ctx context.Context, cache string) (string, error) {
 	return download(ctx, cache, u, a.sha256)
 }
 
-// download is content-addressed when a digest is known, so the same image
-// requested by two different URLs is stored once. Without a digest the URL is
-// the identity, minus its query -- which is the best that can be done.
-//
-// A cache hit is not re-hashed: verification happens once, at download time.
 func download(ctx context.Context, cache string, u *url.URL, want string) (string, error) {
 	if err := os.MkdirAll(cache, 0o755); err != nil {
 		return "", err
@@ -117,18 +107,6 @@ func download(ctx context.Context, cache string, u *url.URL, want string) (strin
 	return dst, nil
 }
 
-// cacheURL is the part of a URL that says which bytes it serves: everything
-// except the query and the fragment.
-//
-// The links the control plane hands out are presigned, so the credential and the
-// expiry ride along as query params and are different on every create. Keyed on
-// the whole URL, one kernel and one rootfs are downloaded again for every single
-// VM -- the same object, under a name nothing will ever hit again.
-//
-// The trade is that two different objects served from one path, told apart only
-// by a query param, would share an entry. That is not how object storage
-// addresses anything, and a create that knows its digest is content-addressed
-// above and never reaches this.
 func cacheURL(u *url.URL) string {
 	trimmed := *u
 	trimmed.RawQuery = ""
@@ -138,39 +116,14 @@ func cacheURL(u *url.URL) string {
 	return trimmed.String()
 }
 
-// --- tar root filesystems ---------------------------------------------------
-
-// tarSlack is added on top of one and a half times the tar's own size: a tar is
-// a packed stream, so the filesystem that unpacks it needs room for block
-// rounding, metadata, and whatever the guest writes once it boots.
 const tarSlack = 256 << 20
 
-// ext4FromTar turns a tar of a root filesystem -- what `docker export` produces
-// -- into a mountable ext4 image, and caches the result. A tar is a stream of
-// files, not a block device; handing one straight to virtio-blk gets the guest
-// as far as a root-mount panic and no further.
-//
-// The image is built with mkfs.ext4 -d, which populates from a directory
-// without a loop mount, so nothing here needs to mount anything. That window --
-// the rootfs as a plain directory -- is also where the container markers are
-// stripped, where resolv.conf is pointed at the gateway resolver, and where
-// pubKey, when there is one, is installed into the guest's authorized_keys.
-//
-// The result is shared by every VM built from the same tar, so pubKey and
-// resolver must both be host-wide rather than anything per VM.
 func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, sizeBytes int64) (string, error) {
 	digest, err := fileDigest(tarPath)
 	if err != nil {
 		return "", err
 	}
-	// Keyed on everything that goes into the image, not just the tar: keying on
-	// the tar alone would mean a host that gained or rotated a key, or a dclient
-	// that changed what it does to the rootfs, kept serving the image built before
-	// it -- forever and silently, because the filename would still match and the
-	// build that fixes it would never run.
 	digest = keyedDigest(digest, imageRecipe(pubKey, resolver))
-	// Rebuilding a 400 MiB image on every create, for inputs that have not
-	// changed, is a minute of nothing.
 	dst := filepath.Join(cache, digest[:32]+"-rootfs.ext4")
 	if _, err := os.Stat(dst); err == nil {
 		return dst, nil
@@ -185,9 +138,6 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, s
 	}
 
 	if os.Geteuid() != 0 {
-		// Extraction as a normal user cannot restore file ownership or device
-		// nodes, so the guest would boot with a root filesystem owned by nobody in
-		// particular. Better to say so than to produce a subtly broken image.
 		log.Print("WARNING: not running as root; file ownership and device nodes in the rootfs will not be preserved")
 	}
 
@@ -199,29 +149,19 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, s
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	// GNU tar rather than archive/tar: hardlinks, sparse members, pax headers and
-	// xattrs are all things it already gets right.
 	out, err := exec.CommandContext(ctx, "tar", "-xpf", tarPath, "-C", work, "--numeric-owner").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("could not extract %s: %v: %s", tarPath, err, strings.TrimSpace(string(out)))
 	}
 
-	// Between the extraction and the mkfs is the only moment the root filesystem
-	// is an ordinary directory this process can write to.
 	if err := stripContainerMarkers(work); err != nil {
 		return "", fmt.Errorf("could not strip the container markers from the rootfs: %w", err)
 	}
 
-	// Fatal for the same reason as the key below: the cache key says this image
-	// was built for this resolver, so an image built without it would be served to
-	// every later create on this host.
 	if err := ensureResolvConf(work, resolver); err != nil {
 		return "", fmt.Errorf("could not point the rootfs at the resolver: %w", err)
 	}
 
-	// Fatal rather than a warning: the cache key says this image has the key in
-	// it, so building one without it would poison the cache with an image no
-	// later create can fix.
 	if pubKey != "" {
 		if err := injectAuthorizedKey(work, pubKey); err != nil {
 			return "", fmt.Errorf("could not install the dpipe key into the rootfs: %w", err)
@@ -236,7 +176,6 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, s
 	_ = tmp.Close()
 	defer func() { _ = os.Remove(tmpName) }()
 
-	// Sparse: only the blocks mkfs and the payload actually touch are allocated.
 	if err := os.Truncate(tmpName, sizeBytes); err != nil {
 		return "", err
 	}
@@ -255,12 +194,6 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, s
 	return dst, nil
 }
 
-// imageRecipe is everything the build does to the tar beyond unpacking it. It
-// goes into the cache key so that changing any of it is a different image rather
-// than a stale hit, which the tar's own digest cannot tell apart.
-//
-// The version leads it and is bumped whenever the steps change; doing so
-// invalidates every image on every host, which is the point.
 func imageRecipe(pubKey, resolver string) string {
 	r := "recipe=3;strip=" + strings.Join(containerMarkers, ",") + ";" +
 		authKeyRecipe() + ";" + resolvConfRecipe(resolver)
@@ -270,19 +203,8 @@ func imageRecipe(pubKey, resolver string) string {
 	return r
 }
 
-// containerMarkers are the files docker leaves at the root of an exported
-// filesystem to tell whatever runs inside that it is containerized.
-//
-// They have to go. systemd finds them, concludes it is running in a container,
-// and a containerized systemd ignores /proc/cmdline entirely -- it reads pid 1's
-// argv instead, on the reasoning that the kernel command line belongs to the
-// host and not to it. These images *are* the whole machine, and the lie costs
-// every systemd.* option we pass, the guest's hostname included.
 var containerMarkers = []string{".dockerenv", "run/.containerenv"}
 
-// stripContainerMarkers removes them from the extracted rootfs. Absent is the
-// normal case for an image that was not built from a container, so only a
-// removal that actually fails is an error.
 func stripContainerMarkers(root string) error {
 	for _, m := range containerMarkers {
 		p, err := imagePath(root, m)
@@ -296,19 +218,11 @@ func stripContainerMarkers(root string) error {
 	return nil
 }
 
-// keyedDigest folds a second input into a digest. Used to make the cache
-// identity of a built rootfs cover the injected key as well as the tar, so
-// changing either one is a different image rather than a stale hit.
-//
-// The two are separated by a byte that cannot appear in a hex digest, so no pair
-// of inputs can concatenate into the same string as another pair.
 func keyedDigest(digest, extra string) string {
 	sum := sha256.Sum256([]byte(digest + "\x00" + extra))
 	return hex.EncodeToString(sum[:])
 }
 
-// fileDigest is the cache identity for a built image: the same tar always
-// yields the same ext4, so the tar's own hash is the right key.
 func fileDigest(p string) (string, error) {
 	f, err := os.Open(p)
 	if err != nil {
@@ -322,14 +236,6 @@ func fileDigest(p string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// --- overlays ---------------------------------------------------------------
-
-// newOverlay creates the per-VM writable layer. The cached base image is shared
-// by every VM created from it and is never written to, so a VM costs only its
-// own dirty blocks.
-//
-// sizeBytes grows the virtual disk beyond the base image when non-zero; the
-// guest still has to grow its filesystem to use the space.
 func newOverlay(ctx context.Context, base, dst string, sizeBytes int64) error {
 	format, err := imageFormat(ctx, base)
 	if err != nil {
@@ -346,8 +252,6 @@ func newOverlay(ctx context.Context, base, dst string, sizeBytes int64) error {
 	return nil
 }
 
-// imageFormat asks qemu-img rather than guessing from the extension: passing
-// the wrong backing format makes qemu refuse to open the chain.
 func imageFormat(ctx context.Context, p string) (string, error) {
 	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", p).Output()
 	if err != nil {

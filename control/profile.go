@@ -11,20 +11,12 @@ import (
 	"control/internal/db"
 )
 
-// ProfileHandler serves the two /me routes: a signed-in account reading and
-// editing its own row. There is no id in either path -- the only row reachable
-// here is the one the JWT names, so "may I edit this user" is not a question
-// these handlers can be asked.
 type ProfileHandler struct {
 	q *db.Queries
 }
 
-// maxNameLen bounds the two free-text fields. A display name longer than this is
-// not a name, and the column is unbounded TEXT.
 const maxNameLen = 100
 
-// GetMe returns the caller's own account.
-//
 // @Summary     Read your account
 // @Description The same shape the admin section shows for a user. Nothing secret is in it: no password hash, and a public key is public.
 // @Tags        me
@@ -41,7 +33,6 @@ func (h *ProfileHandler) GetMe(c *echo.Context) error {
 	u, err := h.q.GetUserByID(c.Request().Context(), id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			// The token names an account that no longer exists -- deleted mid-session.
 			return echo.NewHTTPError(http.StatusUnauthorized, "your account no longer exists")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read your account")
@@ -49,18 +40,12 @@ func (h *ProfileHandler) GetMe(c *echo.Context) error {
 	return c.JSON(http.StatusOK, toAdminUserDTO(u))
 }
 
-// updateProfileReq is the whole editable surface of an account: the display name
-// and the public key. Username, email, role and every allowance are deliberately
-// absent -- a field a user could send is a field a user could change, and those
-// are an admin's to set.
 type updateProfileReq struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	PublicKey string `json:"public_key"`
 }
 
-// UpdateMe edits the caller's own account.
-//
 // @Summary     Update your account
 // @Description Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it, which blocks creating new VMs.
 // @Tags        me
@@ -87,8 +72,6 @@ func (h *ProfileHandler) UpdateMe(c *echo.Context) error {
 	if len(req.FirstName) > maxNameLen || len(req.LastName) > maxNameLen {
 		return echo.NewHTTPError(http.StatusBadRequest, "a name cannot be longer than 100 characters")
 	}
-	// Empty is allowed: removing your key is a real thing to want, and the VM
-	// create path is where the absence is answered for.
 	key, err := normalizePublicKey(req.PublicKey)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())

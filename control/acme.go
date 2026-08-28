@@ -29,31 +29,9 @@ import (
 	"control/internal/db"
 )
 
-// Issuance runs here rather than on the qemu hosts, and the reason is the
-// challenge type. A fleet needs "*.<domain>" and "*.shell.<domain>" on one
-// certificate, two wildcards can only be proved over dns-01, and dns-01 involves
-// no inbound http at all -- so nothing about it wants to happen on the machine
-// that serves the traffic.
-//
-// Doing it here also keeps the dns credential in one place instead of on every
-// host, gives the ca one account and one rate-limit budget per domain instead of
-// one per machine, and removes the race that several hosts writing the same
-// _acme-challenge TXT record would otherwise be.
-
-// certModes are the ways a domain's certificate can be obtained. Validated in Go
-// rather than by a CHECK constraint, so adding one is not a migration.
 const (
-	// certModeUpload is an operator-supplied certificate. The only option for a
-	// tld no public ca will sign -- an internal suffix like "lab.internal" -- and
-	// the way to use a corporate ca.
 	certModeUpload = "upload"
-	// certModeACMEManual is dns-01 with a person in the middle: the server asks
-	// for the order, shows the TXT records, and waits for someone to say they are
-	// in place. Real certificates without handing over a zone credential, at the
-	// cost of not being able to renew unattended.
 	certModeACMEManual = "acme_manual"
-	// certModeACMECloudflare is dns-01 driven by the api. The only mode that
-	// renews without anyone present.
 	certModeACMECloudflare = "acme_cloudflare"
 )
 
@@ -62,15 +40,8 @@ const (
 	acmeDirectoryProduction = "production"
 )
 
-// acmeChallengeTimeout bounds how long an order waits for a person to create the
-// TXT records. Generous because the wait is someone opening a registrar's
-// control panel, and short enough that a forgotten browser tab does not leave an
-// order open all week.
 const acmeChallengeTimeout = 30 * time.Minute
 
-// certRenewBefore is how close to expiry a certificate is replaced. Let's
-// Encrypt issues for 90 days and recommends renewing at 30 remaining, which
-// leaves room for a fortnight of failures before anything is visible.
 const certRenewBefore = 30 * 24 * time.Hour
 
 func validCertMode(s string) bool {
@@ -81,10 +52,6 @@ func validCertMode(s string) bool {
 	return false
 }
 
-// directoryURL maps the stored name onto a ca. Anything unrecognised is staging:
-// the failure mode of guessing wrong towards production is a spent rate limit,
-// and towards staging is a certificate no browser trusts -- which is noticed
-// immediately and costs nothing.
 func directoryURL(s string) string {
 	if s == acmeDirectoryProduction {
 		return lego.LEDirectoryProduction
@@ -92,26 +59,11 @@ func directoryURL(s string) string {
 	return lego.LEDirectoryStaging
 }
 
-// --- pending challenges ----------------------------------------------------
-
-// dnsRecord is one TXT record an operator has to create for a manual order.
 type dnsRecord struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
-// pendingOrder is a manual order that has published its challenges and is
-// waiting to be told they are live.
-//
-// It is in memory and nowhere else. An order is a live conversation with the ca
-// -- lego holds the http client, the nonces and the authorization urls -- and
-// none of that survives a restart, so writing the records to a table would only
-// make a dead order look resumable. A control server that restarts mid-flow
-// drops the order, and the admin starts another.
-// The stages an order moves through, shown against the domain. Without them a
-// guided order is a spinner: "nothing has happened yet", "your records are not
-// resolving", and "the ca is deciding" all look the same from the outside, and
-// they need completely different things done about them.
 const (
 	stageStarting   = "contacting the certificate authority"
 	stageWaiting    = "waiting for the dns records to be created"
@@ -120,21 +72,13 @@ const (
 )
 
 type pendingOrder struct {
-	// mu guards records and stage. It is the order's own rather than the issuer's
-	// because the writer is lego's goroutine, deep inside Obtain, and the reader
-	// is whatever request is polling the screen.
 	mu      sync.Mutex
 	records []dnsRecord
 	stage   string
 
-	// proceed is closed when the operator confirms. Every Present call blocks on
-	// it, so an order with several authorizations waits once, not once per name.
 	proceed chan struct{}
 	cancel  chan struct{}
 
-	// Both closes go through a Once. An admin double-clicking either button would
-	// otherwise close a closed channel, which is a panic that takes the server
-	// down rather than an error the screen can show.
 	confirmOnce sync.Once
 	cancelOnce  sync.Once
 }
@@ -154,8 +98,6 @@ func (p *pendingOrder) clearRecords() {
 	p.mu.Unlock()
 }
 
-// snapshot returns a copy of the records and the current stage, so a caller
-// reading them cannot be looking at what lego is writing.
 func (p *pendingOrder) snapshot() ([]dnsRecord, string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -168,13 +110,6 @@ func (p *pendingOrder) setStage(s string) {
 	p.mu.Unlock()
 }
 
-// certIssuer owns every in-flight issuance. One per process, constructed
-// alongside the task runner.
-//
-// Issuance cannot be a scheduled task: the runner's timeout is thirty seconds,
-// an automated dns-01 order takes minutes waiting for propagation, and a manual
-// one takes as long as a person does. Tasks start work here and return; the
-// result lands on the domain row, which is what the admin screen reads.
 type certIssuer struct {
 	q     *db.Queries
 	blobs *blobStore
@@ -182,8 +117,6 @@ type certIssuer struct {
 	proxy proxyAuthConfig
 
 	mu sync.Mutex
-	// inFlight is what stops a domain having two orders at once -- which would be
-	// two sets of TXT records on one name, and two accounts' worth of rate limit.
 	inFlight map[string]*pendingOrder
 }
 
@@ -191,8 +124,6 @@ func newCertIssuer(q *db.Queries, blobs *blobStore, hub *Hub, proxy proxyAuthCon
 	return &certIssuer{q: q, blobs: blobs, hub: hub, proxy: proxy, inFlight: map[string]*pendingOrder{}}
 }
 
-// Pending returns the TXT records a manual order is waiting on and what the
-// order is currently doing, if there is one running.
 func (ci *certIssuer) Pending(domainID pgtype.UUID) ([]dnsRecord, string, bool) {
 	ci.mu.Lock()
 	defer ci.mu.Unlock()
@@ -204,7 +135,6 @@ func (ci *certIssuer) Pending(domainID pgtype.UUID) ([]dnsRecord, string, bool) 
 	return records, stage, true
 }
 
-// Confirm tells a waiting manual order that its records are live.
 func (ci *certIssuer) Confirm(domainID pgtype.UUID) error {
 	ci.mu.Lock()
 	p, ok := ci.inFlight[uuid.UUID(domainID.Bytes).String()]
@@ -219,13 +149,6 @@ func (ci *certIssuer) Confirm(domainID pgtype.UUID) error {
 	return nil
 }
 
-// Cancel abandons an in-flight order.
-//
-// It releases a guided order that is blocked waiting for a person, which is the
-// case worth cancelling -- one that would otherwise sit there for half an hour.
-// An automated order is not interrupted: it is already talking to the ca and to
-// cloudflare, and there is no safe point to stop it at. It finishes on its own
-// and its entry clears then.
 func (ci *certIssuer) Cancel(domainID pgtype.UUID) error {
 	ci.mu.Lock()
 	p, ok := ci.inFlight[uuid.UUID(domainID.Bytes).String()]
@@ -237,10 +160,6 @@ func (ci *certIssuer) Cancel(domainID pgtype.UUID) error {
 	return nil
 }
 
-// Start begins an issuance in the background and returns immediately. The
-// caller's context is deliberately not carried into it: the order outlives the
-// request that asked for it, and a browser navigating away must not abandon a
-// conversation the ca has already started.
 func (ci *certIssuer) Start(domain db.Domain) error {
 	id := uuid.UUID(domain.ID.Bytes).String()
 
@@ -267,9 +186,6 @@ func (ci *certIssuer) Start(domain db.Domain) error {
 		ctx, cancel := context.WithTimeout(context.Background(), acmeChallengeTimeout+30*time.Minute)
 		defer cancel()
 
-		// The directory is in the line because it is the setting people forget: a
-		// certificate that installs cleanly and is trusted by nothing is a staging
-		// certificate, and this is where that shows.
 		log.Printf("certificate order for %s: mode=%s directory=%s names=%v",
 			domain.TLD, domain.CertMode, domain.AcmeDirectory, certificateNames(domain.TLD))
 
@@ -287,7 +203,6 @@ func (ci *certIssuer) Start(domain db.Domain) error {
 	return nil
 }
 
-// obtain runs one order end to end and stores the result.
 func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOrder) error {
 	if ci.blobs == nil {
 		return errNoBlobStore
@@ -303,8 +218,6 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 
 	cfg := lego.NewConfig(user)
 	cfg.CADirURL = directoryURL(domain.AcmeDirectory)
-	// EC256 rather than RSA: smaller handshakes, and every client that reaches
-	// these hosts is a current browser or ssh client.
 	cfg.Certificate.KeyType = certcrypto.EC256
 
 	client, err := lego.NewClient(cfg)
@@ -316,10 +229,6 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 	if err != nil {
 		return err
 	}
-	// The dns-01 solver's own propagation check is left on: it is the thing that
-	// stops an order being submitted to the ca before the record is actually
-	// visible, which is the difference between waiting a minute and spending an
-	// authorization failure.
 	if err := client.Challenge.SetDNS01Provider(provider, opts...); err != nil {
 		return fmt.Errorf("could not set up the dns challenge: %w", err)
 	}
@@ -334,7 +243,7 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 
 	res, err := client.Certificate.Obtain(certificate.ObtainRequest{
 		Domains: certificateNames(domain.TLD),
-		Bundle:  true, // the chain, not just the leaf -- a missing intermediate fails in browsers and passes in curl
+		Bundle:  true,
 	})
 	if err != nil {
 		return fmt.Errorf("the certificate authority did not issue: %w", err)
@@ -344,8 +253,6 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 	return ci.store(ctx, domain, string(res.Certificate), string(res.PrivateKey))
 }
 
-// dnsProvider builds the solver for a domain's mode, and any challenge options
-// that go with it.
 func (ci *certIssuer) dnsProvider(domain db.Domain, p *pendingOrder) (challenge.Provider, []dns01.ChallengeOption, error) {
 	switch domain.CertMode {
 	case certModeACMECloudflare:
@@ -373,13 +280,6 @@ func (ci *certIssuer) dnsProvider(domain db.Domain, p *pendingOrder) (challenge.
 	return nil, nil, fmt.Errorf("%q is not a mode that asks a ca for anything", domain.CertMode)
 }
 
-// store validates what came back, puts it in the bucket, records it, and pushes
-// it to every host on the domain.
-//
-// Validated even though this server just obtained it: the check is what
-// guarantees both wildcards are on the certificate, and a ca that quietly
-// dropped a name would otherwise produce a fleet whose consoles fail and whose
-// guests work.
 func (ci *certIssuer) store(ctx context.Context, domain db.Domain, certPEM, keyPEM string) error {
 	info, err := validateCertificate(certPEM, keyPEM, domain.TLD)
 	if err != nil {
@@ -392,8 +292,6 @@ func (ci *certIssuer) store(ctx context.Context, domain db.Domain, certPEM, keyP
 		return fmt.Errorf("could not store the certificate: %w", err)
 	}
 	if err := ci.blobs.Put(ctx, keyKey, "application/x-pem-file", strings.NewReader(keyPEM)); err != nil {
-		// The certificate half is already up and nothing points at it; remove it
-		// rather than leave an object no row will ever name.
 		_ = ci.blobs.Delete(ctx, certKey)
 		return errors.New("could not store the private key")
 	}
@@ -406,15 +304,11 @@ func (ci *certIssuer) store(ctx context.Context, domain db.Domain, certPEM, keyP
 		CertNotAfter:    pgtype.Timestamptz{Time: info.NotAfter, Valid: true},
 	})
 	if err != nil {
-		// New objects, old row: the fleet keeps serving what it has. The two orphans
-		// are the price of not pointing the row at something that might not be there.
 		_ = ci.blobs.Delete(ctx, certKey)
 		_ = ci.blobs.Delete(ctx, keyKey)
 		return fmt.Errorf("could not record the certificate: %w", err)
 	}
 
-	// After the row, so a host that connects during the push reads the same
-	// certificate the push is carrying.
 	if domain.CertObjectKey != "" && domain.CertObjectKey != certKey {
 		_ = ci.blobs.Delete(ctx, domain.CertObjectKey)
 		_ = ci.blobs.Delete(ctx, domain.KeyObjectKey)
@@ -424,9 +318,6 @@ func (ci *certIssuer) store(ctx context.Context, domain db.Domain, certPEM, keyP
 	return nil
 }
 
-// PushToClient sends one host both files that depend on which domain it belongs
-// to. Used when that changes, which is a different event from the certificate
-// changing but has the same two consequences.
 func (ci *certIssuer) PushToClient(ctx context.Context, clientID pgtype.UUID) {
 	if !ci.hub.Connected(uuid.UUID(clientID.Bytes).String()) {
 		return
@@ -435,13 +326,6 @@ func (ci *certIssuer) PushToClient(ctx context.Context, clientID pgtype.UUID) {
 	pushProxyConfig(ctx, ci.q, ci.hub, ci.proxy, clientID)
 }
 
-// PushToDomain sends every connected host on a domain both files that depend on
-// its certificate.
-//
-// Both, not just dpipe's: turning tls on also opens proxy's 443 ingress and
-// makes the session cookie Secure, and a host that got one without the other is
-// either terminating tls nobody can reach or serving https with a cookie the
-// browser drops.
 func (ci *certIssuer) PushToDomain(ctx context.Context, domain db.Domain) {
 	ids, err := ci.q.ListClientIDsByDomain(ctx, domain.ID)
 	if err != nil {
@@ -462,50 +346,23 @@ func (ci *certIssuer) PushToDomain(ctx context.Context, domain db.Domain) {
 	}
 }
 
-// --- the manual solver -----------------------------------------------------
-
-// manualProvider is the dns-01 solver for the guided mode: it publishes nothing
-// itself, it records what has to be published and waits for a person.
 type manualProvider struct {
 	order *pendingOrder
 }
 
-// Present records the TXT record for one authorization and returns immediately.
-//
-// It must not wait here, however natural that reads. lego solves an order in
-// phases: it calls Present for every authorization first, and only then starts
-// validating them. Blocking in the first call means the operator is shown one
-// record, and the moment they confirm it the remaining calls return at once --
-// publishing records nobody has been given the chance to create, which are then
-// submitted to the ca and fail.
-//
-// The wait belongs between the two phases, which is what the pre-check in
-// manualPreCheck is for.
 func (m *manualProvider) Present(domain, token, keyAuth string) error {
 	info := dns01.GetChallengeInfo(domain, keyAuth)
 	m.order.addRecord(dnsRecord{Name: info.FQDN, Value: info.Value})
 	m.order.setStage(stageWaiting)
-	// Logged as well as shown: a record the screen displays and dns does not
-	// return is the single most common way one of these orders fails, and having
-	// both halves in the log is what makes that comparison possible after the fact.
 	log.Printf("certificate order for %s: needs TXT %s = %q", domain, info.FQDN, info.Value)
 	return nil
 }
 
-// CleanUp forgets the record. There is nothing to remove at a registrar from
-// here -- the operator created it and the operator removes it -- so this only
-// stops the admin screen still showing it.
 func (m *manualProvider) CleanUp(domain, token, keyAuth string) error {
 	m.order.clearRecords()
 	return nil
 }
 
-// manualPreCheck is the wait, and it sits where lego checks propagation: after
-// every Present, before the first validation. By then the screen is showing the
-// complete set of records, so the operator creates them all and confirms once.
-//
-// It runs per authorization, but only the first call actually waits -- the
-// confirmation is for the order, not for one record.
 func (m *manualProvider) manualPreCheck(domain, fqdn, value string, check dns01.PreCheckFunc) (bool, error) {
 	select {
 	case <-m.order.proceed:
@@ -516,9 +373,6 @@ func (m *manualProvider) manualPreCheck(domain, fqdn, value string, check dns01.
 	}
 
 	m.order.setStage(stageValidating)
-	// lego's own propagation check still runs. It is what stops a record that was
-	// created a second ago from being submitted before it is visible, which would
-	// spend an authorization rather than wait for one.
 	ok, err := check(fqdn, value)
 	if err != nil {
 		return false, fmt.Errorf("%s is not resolving with the expected value yet: %w", fqdn, err)
@@ -526,11 +380,6 @@ func (m *manualProvider) manualPreCheck(domain, fqdn, value string, check dns01.
 	return ok, nil
 }
 
-// --- the acme account ------------------------------------------------------
-
-// acmeUser is lego's view of the account. The key is the domain's own, stored on
-// its row and generated once: a new key on every issuance would register a new
-// account with the ca each time, which is its own rate limit.
 type acmeUser struct {
 	email        string
 	key          crypto.PrivateKey
@@ -541,8 +390,6 @@ func (u *acmeUser) GetEmail() string                        { return u.email }
 func (u *acmeUser) GetRegistration() *registration.Resource { return u.Registration }
 func (u *acmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 
-// acmeUser loads the domain's account key, generating and storing one the first
-// time it is asked for.
 func (ci *certIssuer) acmeUser(ctx context.Context, domain db.Domain) (*acmeUser, error) {
 	if domain.AcmeAccountKey != "" {
 		key, err := parseECKey(domain.AcmeAccountKey)
@@ -560,9 +407,6 @@ func (ci *certIssuer) acmeUser(ctx context.Context, domain db.Domain) (*acmeUser
 	if err != nil {
 		return nil, err
 	}
-	// Stored before the account is registered. The other order would risk
-	// registering with a key this server then forgot, which leaves an account at
-	// the ca that nothing can ever use again.
 	if err := ci.q.SetDomainAccountKey(ctx, db.SetDomainAccountKeyParams{
 		ID: domain.ID, AcmeAccountKey: encoded,
 	}); err != nil {

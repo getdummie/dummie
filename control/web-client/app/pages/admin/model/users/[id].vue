@@ -47,13 +47,11 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 }
 
-/** "8th August 2026, 12:07 AM" */
 function fmtDate(s: string) {
   if (!s) return '—'
   const d = new Date(s)
@@ -68,9 +66,6 @@ const fullName = computed(() => {
   return [u.first_name, u.last_name].filter(Boolean).join(' ') || '—'
 })
 
-// --- quota ---
-// Strings, because a number input binds to '' while being cleared and coercing
-// that to 0 would silently rewrite what the admin is halfway through typing.
 const form = reactive({ vcpu_limit: '', memory_limit_mib: '', disk_limit_mib: '' })
 const saving = ref(false)
 const saveError = ref<string | null>(null)
@@ -82,13 +77,11 @@ function resetForm(u: AdminUser) {
   form.disk_limit_mib = String(u.disk_limit_mib)
 }
 
-/** Template-side reset: the loaded user is the source of truth for "unchanged". */
 function discardEdits() {
   if (user.value) resetForm(user.value)
   saveError.value = null
 }
 
-// Two decimals only when it isn't a whole number of GiB.
 function asGiB(mib: number) {
   if (!Number.isFinite(mib) || mib <= 0) return null
   const gib = mib / 1024
@@ -106,10 +99,6 @@ const dirty = computed(() => {
     || form.disk_limit_mib !== String(u.disk_limit_mib)
 })
 
-// --- public key ---
-// Its own form, saved separately: a key and an allowance are unrelated decisions,
-// and one PUT that carried both would make fixing a typo in the key also re-send
-// numbers the admin never looked at.
 const keyForm = reactive({ public_key: '' })
 const savingKey = ref(false)
 const keyError = ref<string | null>(null)
@@ -184,8 +173,6 @@ async function saveKey() {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const data: AdminUser = await res.json()
     user.value = data
-    // From the response, not from what was typed: the server canonicalises the
-    // key, so echoing the input back would leave the form looking dirty.
     keyForm.public_key = data.public_key
     keySaved.value = true
   }
@@ -232,7 +219,6 @@ async function saveKey() {
         </div>
       </div>
 
-      <!-- details -->
       <section aria-labelledby="details-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="details-heading" class="text-sm font-semibold">Account</h2>
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
@@ -263,7 +249,6 @@ async function saveKey() {
         </dl>
       </section>
 
-      <!-- public key -->
       <section aria-labelledby="key-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="key-heading" class="text-sm font-semibold">SSH public key</h2>
         <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
@@ -271,8 +256,6 @@ async function saveKey() {
           so setting it here unblocks an account without needing its owner to sign in.
         </p>
 
-        <!-- The blocked state is the reason an admin is on this page, so it is
-             stated rather than left to be inferred from an empty field. -->
         <Alert v-if="!user.public_key" class="mt-4">
           <AlertTitle>No key on file</AlertTitle>
           <AlertDescription>This user cannot create VMs until a key is added.</AlertDescription>
@@ -319,7 +302,6 @@ async function saveKey() {
         </form>
       </section>
 
-      <!-- quota -->
       <section aria-labelledby="quota-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="quota-heading" class="text-sm font-semibold">Resource allowance</h2>
         <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
@@ -366,8 +348,6 @@ async function saveKey() {
             >
               Reset
             </Button>
-            <!-- The button label alone doesn't announce success, so the
-                 outcome gets its own live region. (WCAG 4.1.3) -->
             <p role="status" aria-live="polite" class="font-mono text-xs text-muted-foreground">
               {{ saved && !dirty ? 'Saved' : '' }}
             </p>

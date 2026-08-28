@@ -16,8 +16,6 @@ func checkPassword(hash, pw string) bool {
 	return bcrypt.CompareHashAndPassword([]byte(hash), []byte(pw)) == nil
 }
 
-// validatePassword enforces strong rules only in prod. In dev any non-empty
-// password is accepted to keep local iteration friction-free.
 func validatePassword(pw string, prod bool) error {
 	if !prod {
 		if pw == "" {

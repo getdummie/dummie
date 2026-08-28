@@ -103,7 +103,6 @@ function prev() {
   }
 }
 
-// --- blacklist ---
 const toBlacklist = ref<TokenRow | null>(null)
 const working = ref(false)
 const actionError = ref<string | null>(null)
@@ -126,7 +125,6 @@ async function confirmBlacklist() {
   }
 }
 
-// --- delete one ---
 const toDelete = ref<TokenRow | null>(null)
 const deleting = ref(false)
 
@@ -148,7 +146,6 @@ async function confirmDelete() {
   }
 }
 
-// --- cleanup expired ---
 const cleanupOpen = ref(false)
 const cleaning = ref(false)
 async function confirmCleanup() {
@@ -191,8 +188,6 @@ async function confirmCleanup() {
       <AlertTitle>Could not load sessions</AlertTitle>
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
-    <!-- Success confirmations are status messages: announce them without
-         stealing focus. (WCAG 4.1.3) -->
     <div role="status" aria-live="polite">
       <p v-if="notice" class="mt-4 font-mono text-xs text-primary-text">{{ notice }}</p>
     </div>
@@ -258,7 +253,6 @@ async function confirmCleanup() {
       </div>
     </nav>
 
-    <!-- blacklist confirm -->
     <Dialog :open="!!toBlacklist" @update:open="(v: boolean) => { if (!v) toBlacklist = null }">
       <DialogContent>
         <DialogHeader>
@@ -280,7 +274,6 @@ async function confirmCleanup() {
       </DialogContent>
     </Dialog>
 
-    <!-- delete one confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>
@@ -304,7 +297,6 @@ async function confirmCleanup() {
       </DialogContent>
     </Dialog>
 
-    <!-- cleanup confirm -->
     <Dialog v-model:open="cleanupOpen">
       <DialogContent>
         <DialogHeader>

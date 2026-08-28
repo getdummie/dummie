@@ -71,7 +71,6 @@ function fmtBytes(n: number) {
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
@@ -107,14 +106,11 @@ watch(offset, load)
 const page = computed(() => Math.floor(offset.value / limit.value) + 1)
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / limit.value)))
 
-// --- upload ---
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref<string | null>(null)
 const form = reactive({ name: '', description: '' })
 const file = ref<File | null>(null)
-// Bumped to remount the file input: a file field's selection cannot be cleared
-// by assignment through the component wrapper, only by replacing the element.
 const fileKey = ref(0)
 
 function onFile(e: Event) {
@@ -137,8 +133,6 @@ async function create() {
   creating.value = true
   createError.value = null
   try {
-    // multipart, not JSON: the image goes to the server in the same request
-    // that creates the row, so a saved kernel always has a file behind it.
     const body = new FormData()
     body.set('name', form.name.trim())
     body.set('description', form.description.trim())
@@ -158,7 +152,6 @@ async function create() {
   }
 }
 
-// --- withdraw ---
 const toDelete = ref<KernelRow | null>(null)
 const deleting = ref(false)
 
@@ -323,7 +316,6 @@ async function confirmDelete() {
       </div>
     </nav>
 
-    <!-- withdraw confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>

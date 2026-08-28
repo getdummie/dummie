@@ -9,8 +9,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-// Provided by @nuxtjs/color-mode. `preference` is what the user picks
-// (light | dark | system); `value` is the resolved mode actually applied.
 const colorMode = useColorMode()
 
 const options = [
@@ -27,12 +25,7 @@ const currentLabel = computed(
 <template>
   <DropdownMenu>
     <DropdownMenuTrigger as-child>
-      <!-- The label names the control *and* reports its state. A bare "Toggle
-           theme" leaves a screen-reader user with no way to know which mode is
-           active. (WCAG 4.1.2) -->
       <Button variant="ghost" size="icon" :aria-label="`Theme: ${currentLabel}. Change theme`">
-        <!-- Icon reflects the resolved mode. ClientOnly avoids an SSR/first-paint
-             mismatch since the applied theme is only known on the client. -->
         <ClientOnly>
           <Moon v-if="colorMode.value === 'dark'" class="size-[1.15rem]" aria-hidden="true" />
           <Sun v-else class="size-[1.15rem]" aria-hidden="true" />
@@ -43,9 +36,6 @@ const currentLabel = computed(
       </Button>
     </DropdownMenuTrigger>
     <DropdownMenuContent align="end" class="w-40 font-mono">
-      <!-- A radio group rather than plain items with a tick icon: reka-ui then
-           emits role="menuitemradio" + aria-checked, so the current choice is
-           exposed to assistive tech instead of being a purely visual checkmark. -->
       <DropdownMenuRadioGroup
         :model-value="colorMode.preference"
         @update:model-value="(v: string) => colorMode.preference = v"

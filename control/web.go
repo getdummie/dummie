@@ -9,15 +9,9 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// webFS carries the generated SPA. `all:` because Nuxt writes its assets into a
-// directory whose name starts with an underscore, which a bare embed skips.
-//
 //go:embed all:web
 var webFS embed.FS
 
-// webRoot returns the embedded SPA, or false when this binary was built without
-// one -- a dev build, where placeholder.txt is the only thing in web/. Which of
-// the two it is decides whether serve runs the Nuxt dev server or serves itself.
 func webRoot() (fs.FS, bool) {
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
@@ -29,8 +23,6 @@ func webRoot() (fs.FS, bool) {
 	return sub, true
 }
 
-// serveSPA answers every request the API does not own out of the embedded
-// build. The bypass list is the same one proxyToNuxt uses, for the same reasons.
 func serveSPA(root fs.FS) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
@@ -44,10 +36,6 @@ func serveSPA(root fs.FS) echo.MiddlewareFunc {
 	}
 }
 
-// spaFile maps a request path to a file in the build. Anything with nothing
-// behind it resolves to index.html -- and so answers 200, not 404 -- because the
-// SPA owns its routes: /vms/123 is a page vue-router draws after the shell has
-// loaded, not a document this server has.
 func spaFile(root fs.FS, urlPath string) string {
 	name := strings.Trim(urlPath, "/")
 	if name == "" {
@@ -60,7 +48,6 @@ func spaFile(root fs.FS, urlPath string) string {
 	if !st.IsDir() {
 		return name
 	}
-	// `nuxt generate` emits one directory per route holding its own index.html.
 	if idx := name + "/index.html"; fileExists(root, idx) {
 		return idx
 	}

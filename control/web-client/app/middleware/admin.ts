@@ -2,7 +2,6 @@ export default defineNuxtRouteMiddleware(async () => {
   const auth = useAuth()
   await auth.ready()
 
-  // Anonymous → let them sign in. Logged-in but not an admin → hard 401.
   if (!auth.isAuthenticated.value) {
     return navigateTo('/signin')
   }

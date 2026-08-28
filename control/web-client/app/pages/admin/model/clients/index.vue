@@ -45,15 +45,11 @@ interface ClientRow {
   last_seen_at: string
   last_ip: string
   created_at: string
-  // "" when no domain was configured at enrollment, or several were and the
-  // choice was left to an operator.
   domain: string
   metrics: ClientMetrics
 }
 
 interface ClientMetrics {
-  // "" when the client has never reported. Every number below is zero either
-  // way, so this is the only thing that separates an idle host from a silent one.
   reported_at: string
   cpu_count: number
   cpu_percent: number
@@ -114,7 +110,6 @@ const statusVariant: Record<ClientRow['status'], 'default' | 'secondary' | 'dest
   revoked: 'destructive',
 }
 
-// silent skips the skeletons so the background poll doesn't make the table flash.
 async function load(silent = false) {
   if (!silent) loading.value = true
   error.value = null
@@ -133,8 +128,6 @@ async function load(silent = false) {
   }
 }
 
-// Liveness comes from the server's in-memory hub, so a short poll is enough to
-// keep the table honest without a second websocket in the browser.
 let poll: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   load()
@@ -157,7 +150,6 @@ function prev() {
   }
 }
 
-// --- revoke ---
 const toRevoke = ref<ClientRow | null>(null)
 const revoking = ref(false)
 const actionError = ref<string | null>(null)
@@ -180,7 +172,6 @@ async function confirmRevoke() {
   }
 }
 
-// --- delete ---
 const toDelete = ref<ClientRow | null>(null)
 const deleting = ref(false)
 
@@ -219,8 +210,6 @@ async function confirmDelete() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <!-- This table also self-refreshes every 10s. `aria-live="polite"` lets a
-         screen-reader user hear status changes without polling it manually. -->
     <DataTable
       label="Clients"
       :columns="columns"
@@ -235,9 +224,6 @@ async function confirmDelete() {
       </template>
       <TableRow v-for="a in items" :key="a.id">
         <TableCell>
-          <!-- Underlined at rest, not just on hover: in a table of plain text
-               cells an underline-on-hover link is undiscoverable, and colour
-               alone would not carry it either. (WCAG 1.4.1) -->
           <NuxtLink
             :to="`/admin/model/clients/${a.id}`"
             class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -251,8 +237,6 @@ async function confirmDelete() {
           <Badge :variant="statusVariant[a.status]" class="font-mono">{{ a.status }}</Badge>
         </TableCell>
         <TableCell class="font-mono text-muted-foreground">{{ a.domain || '—' }}</TableCell>
-        <!-- Every metric is zero until the client reports, so reported_at is
-             what decides between a real number and an em dash. -->
         <TableCell class="font-mono text-muted-foreground whitespace-nowrap">
           <template v-if="a.metrics?.reported_at">
             {{ a.metrics.cpu_percent.toFixed(0) }}%
@@ -321,7 +305,6 @@ async function confirmDelete() {
       </div>
     </nav>
 
-    <!-- revoke confirm -->
     <Dialog :open="!!toRevoke" @update:open="(v: boolean) => { if (!v) toRevoke = null }">
       <DialogContent>
         <DialogHeader>
@@ -343,7 +326,6 @@ async function confirmDelete() {
       </DialogContent>
     </Dialog>
 
-    <!-- delete confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>

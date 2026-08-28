@@ -76,17 +76,12 @@ onMounted(load)
         </Button>
       </CardHeader>
       <CardContent>
-        <!-- Persistent live region: the skeletons and the eventual result are
-             both swapped inside it, so pressing Refresh announces "Loading…"
-             and then the outcome instead of changing silently. (WCAG 4.1.3) -->
         <div aria-live="polite" :aria-busy="loading">
-          <!-- Loading -->
           <div v-if="loading" class="space-y-3">
             <p class="sr-only">Loading system health…</p>
             <Skeleton v-for="n in 3" :key="n" class="h-16 w-full rounded-md" aria-hidden="true" />
           </div>
 
-          <!-- Error -->
           <Alert v-else-if="error" variant="destructive">
             <AlertTriangle aria-hidden="true" />
             <AlertTitle>Could not reach the healthcheck</AlertTitle>
@@ -96,10 +91,6 @@ onMounted(load)
             </AlertDescription>
           </Alert>
 
-          <!-- Result. Status is carried by the "up"/"down" text; the icon and
-               the coloured dot are redundant reinforcement, so both are hidden
-               from assistive tech rather than read as unnamed graphics.
-               (WCAG 1.1.1, 1.4.1) -->
           <ul v-else class="divide-y divide-border">
             <li
               v-for="c in checks"

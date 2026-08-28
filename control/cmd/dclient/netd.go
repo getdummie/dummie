@@ -19,30 +19,16 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
-// reconcileInterval is how often kernel state is re-derived from desired state.
-// Nothing depends on it for correctness -- create and remove converge
-// immediately -- it is there to repair drift from crashes and outside meddling.
 const reconcileInterval = 30 * time.Second
 
 const (
 	netConfigFile = "net.json"
 
-	// defaultDNS is what guests are told to use when there is no resolver on the
-	// gateway to point them at -- which is to say when suricata mode is off. See
-	// netConfig.resolver: with the mode on, this value is not used at all.
 	defaultDNS = "1.1.1.1"
 
-	// defaultQueues has to match the number of -q flags Suricata is started with.
-	// Traffic hashed to a queue nobody is bound to is dropped, so a mismatch is
-	// an outage rather than a warning.
 	defaultQueues = 4
 )
 
-// --- configuration ----------------------------------------------------------
-
-// loadNetConfig reads the host's network settings, filling in defaults on first
-// use and persisting them. Both `netd` and `vm create` read this, so the two
-// cannot disagree about the pool or the gateway.
 func loadNetConfig(data string) (netConfig, error) {
 	var cfg netConfig
 	b, err := os.ReadFile(filepath.Join(data, netConfigFile))
@@ -86,11 +72,6 @@ func saveNetConfig(data string, cfg netConfig) error {
 	return os.WriteFile(filepath.Join(data, netConfigFile), b, 0o600)
 }
 
-// --- reconciliation ---------------------------------------------------------
-
-// ensureRuleset installs the base table if it is not already present. Cheap
-// enough to call on every VM create, which means a VM can never start against
-// an empty ruleset just because netd was not running.
 func ensureRuleset(cfg netConfig) error {
 	c, err := nftables.New()
 	if err != nil {
@@ -108,26 +89,14 @@ func ensureRuleset(cfg netConfig) error {
 	return applyBaseRuleset(cfg)
 }
 
-// reconcile drives kernel state to match what is on disk. It is a full
-// recomputation rather than a diff: the sets are flushed and refilled inside a
-// single netlink transaction, so there is no instant at which a running VM has
-// no policy, and no way for a stale element to survive.
 func reconcile(data string, cfg netConfig) error {
 	if err := ensureRuleset(cfg); err != nil {
 		return err
 	}
 	if !cfg.NoDockerCompat {
-		// Repaired every pass, because a docker restart or a reboot takes it out
-		// and the resulting failure looks like unrelated packet loss.
 		ensureDockerCompat()
 	}
-	// Suricata is in the path of all VM egress when it is on, so a container that
-	// died since the last pass is an outage; started here for the same reason the
-	// docker accepts are repaired here.
 	ensureSuricata(cfg)
-	// And the resolver, which is the same policy seen from the other end: with it
-	// down, a guest resolves nothing and every allowance written against a name is
-	// unusable.
 	ensureCoreDNS(cfg)
 
 	vms, err := listVMs(data)
@@ -141,7 +110,6 @@ func reconcile(data string, cfg netConfig) error {
 			continue
 		}
 		if vmPID(data, v.ID) == 0 {
-			// Stopped: its tap and shaping are garbage, and its policy must go.
 			_ = removeTap(v.Net.Tap)
 			_ = removeBandwidth(v.Net)
 			continue
@@ -175,9 +143,6 @@ func reconcile(data string, cfg netConfig) error {
 			log.Printf("vm %s has an invalid address %q; skipping", v.ID, v.Net.IP)
 			continue
 		}
-		// A running VM whose tap has gone is already off the network, so it gets no
-		// elements at all rather than a partial set: an address in vm_ips with no
-		// tap in vm_taps would be a NAT entry with nothing behind it.
 		idx, err := tapIndex(v.Net.Tap)
 		if err != nil {
 			log.Printf("vm %s is running but its tap is missing: %v; skipping", v.ID, err)
@@ -207,8 +172,6 @@ func reconcile(data string, cfg netConfig) error {
 	return c.Flush()
 }
 
-// --- the daemon -------------------------------------------------------------
-
 func netdCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "netd",
@@ -233,8 +196,6 @@ func netdCommand() *cli.Command {
 			if err != nil {
 				return err
 			}
-			// Flags override what is on disk, and the override is persisted so the
-			// vm subcommands see the same thing.
 			if v := cmd.String("pool"); v != "" {
 				cfg.Pool = v
 			}
@@ -263,8 +224,6 @@ func netdCommand() *cli.Command {
 	}
 }
 
-// --- teardown ---------------------------------------------------------------
-
 func netdTeardownCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "teardown",
@@ -284,9 +243,6 @@ func runTeardown(data string) error {
 		return errors.New("teardown needs root: it removes nftables rules and network interfaces")
 	}
 
-	// Tearing the policy out from under a live VM would leave it running with a
-	// tap and no rules -- briefly unpoliced, which is the one state this design
-	// exists to prevent.
 	vms, err := listVMs(data)
 	if err != nil {
 		return err
@@ -302,20 +258,14 @@ func runTeardown(data string) error {
 			strings.Join(running, "\n  "))
 	}
 
-	// Reverse of startup: policy first, then the interfaces it referred to.
 	if err := deleteRuleset(); err != nil {
 		return err
 	}
 	fmt.Println("removed nftables table inet " + nftTable)
 
-	// Nothing queues to Suricata once the table is gone, so the container is left
-	// inspecting nothing. Stopped rather than left behind, because dclient is what
-	// started it.
 	if msg := stopSuricata(); msg != "" {
 		fmt.Println(msg)
 	}
-	// The resolver has nothing to serve either, and the port it holds should go
-	// back with the rest of the network state.
 	if msg := stopCoreDNS(); msg != "" {
 		fmt.Println(msg)
 	}
@@ -328,21 +278,15 @@ func runTeardown(data string) error {
 		fmt.Println("removed tap " + name)
 	}
 
-	// removeTap is a no-op when the device is not there, which is the usual case
-	// unless bandwidth limits were ever applied.
 	if err := removeTap(ifbDevice); err != nil {
 		return fmt.Errorf("could not remove %s: %w", ifbDevice, err)
 	}
 	fmt.Println("removed " + ifbDevice + " if it existed")
 
-	// ip_forward is left on: it is a host-wide setting that other things may be
-	// relying on, and turning it off is not ours to decide.
 	fmt.Println("note: net.ipv4.ip_forward left enabled, and net.json is unchanged")
 	return nil
 }
 
-// deleteRuleset removes the whole table, which takes its chains, rules and sets
-// with it.
 func deleteRuleset() error {
 	c, err := nftables.New()
 	if err != nil {
@@ -360,9 +304,6 @@ func deleteRuleset() error {
 	return c.Flush()
 }
 
-// removeStrayTaps deletes any interface named like one of ours. Normally there
-// are none -- the kernel reaps a tap when QEMU's fd closes -- but a VM killed
-// with SIGKILL mid-start can leave one behind.
 func removeStrayTaps() ([]string, error) {
 	links, err := netlink.LinkList()
 	if err != nil {
@@ -390,8 +331,6 @@ func runNetd(ctx context.Context, data string, cfg netConfig) error {
 		return fmt.Errorf("could not enable ip forwarding: %w", err)
 	}
 
-	// Always start from a freshly built table rather than trusting whatever a
-	// previous run left behind.
 	if err := applyBaseRuleset(cfg); err != nil {
 		return err
 	}
@@ -403,8 +342,6 @@ func runNetd(ctx context.Context, data string, cfg netConfig) error {
 	errs := make(chan error, 2)
 	meta := &metadataServer{data: data, cfg: cfg}
 	go func() { errs <- meta.serve(ctx) }()
-	// DHCP is what actually configures the guests: a /32 guest cannot install a
-	// default route from an address and netmask alone.
 	dhcp := &dhcpServer{data: data, cfg: cfg}
 	go func() { errs <- dhcp.serve(ctx) }()
 

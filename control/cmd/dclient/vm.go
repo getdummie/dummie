@@ -38,9 +38,6 @@ func vmCommand() *cli.Command {
 	}
 }
 
-// dataDirFlag is repeated on every vm subcommand rather than declared once on
-// the parent: v3 does not inherit flags down the tree. It only applies to the
-// in-process path; with a daemon, the data directory is the daemon's.
 func dataDirFlag() cli.Flag {
 	return &cli.StringFlag{
 		Name:    "data-dir",
@@ -59,8 +56,6 @@ func dataDir(cmd *cli.Command) string {
 	return defaultDataDir()
 }
 
-// daemon returns the client to use, or nil to do the work here. The error
-// explains what to do when neither is possible.
 func daemon() (*client, error) {
 	cfg, err := loadConfig("")
 	if err != nil {
@@ -68,8 +63,6 @@ func daemon() (*client, error) {
 	}
 	return dispatch(cfg.Socket)
 }
-
-// --- create -----------------------------------------------------------------
 
 func vmCreateCommand() *cli.Command {
 	return &cli.Command{
@@ -165,8 +158,6 @@ func vmCreateCommand() *cli.Command {
 	}
 }
 
-// --- list -------------------------------------------------------------------
-
 func vmListCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "list",
@@ -225,8 +216,6 @@ func dashIfZero(n int) string {
 	return strconv.Itoa(n)
 }
 
-// --- console ----------------------------------------------------------------
-
 func vmConsoleCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "console",
@@ -260,11 +249,6 @@ func vmConsoleCommand() *cli.Command {
 	}
 }
 
-// --- start / stop / remove --------------------------------------------------
-
-// vmStartCommand boots a VM that already exists. There is no `--boot`, no images
-// and no sizes: everything about the machine was decided at create and is in its
-// vm.json, so a start takes nothing but which VM.
 func vmStartCommand() *cli.Command {
 	return &cli.Command{
 		Name:      "start",
@@ -375,7 +359,6 @@ func vmRemoveCommand() *cli.Command {
 	}
 }
 
-// resolveVM accepts an id, a name, or an unambiguous id prefix.
 func resolveVM(data, ref string) (vm, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
@@ -405,7 +388,6 @@ func resolveVM(data, ref string) (vm, error) {
 	}
 }
 
-// parseSize accepts plain bytes or a K/M/G/T suffix, as qemu-img does.
 func parseSize(flag, s string) (int64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -436,20 +418,14 @@ func parseSize(flag, s string) (int64, error) {
 	return n * mult, nil
 }
 
-// --- per-vm network setup ---------------------------------------------------
-
-// netOptions is the network half of a create request.
 type netOptions struct {
-	IP        string // empty means allocate
+	IP        string
 	Egress    []string
 	EgressAny bool
 	RateMbit  int
 	BurstKbit int
 }
 
-// setupVMNetwork allocates an address, creates and configures the tap, admits
-// the VM to the nftables policy and applies its bandwidth ceiling. It returns
-// the tap's fd for handing to QEMU.
 func setupVMNetwork(data string, v *vm, opts netOptions) (*os.File, error) {
 	if os.Geteuid() != 0 {
 		return nil, errors.New("networking needs root: creating taps and writing nftables rules is privileged (use --no-network to skip)")
@@ -471,8 +447,6 @@ func setupVMNetwork(data string, v *vm, opts netOptions) (*os.File, error) {
 
 	egress := opts.Egress
 	if opts.EgressAny {
-		// Recorded as an ordinary allowlist entry rather than a mode flag, so
-		// `vm.json` and `nft list` both say plainly what this VM may reach.
 		egress = append(egress, "0.0.0.0/0")
 	}
 
@@ -489,13 +463,6 @@ func setupVMNetwork(data string, v *vm, opts netOptions) (*os.File, error) {
 	return bringUpVMNetwork(cfg, v)
 }
 
-// restoreVMNetwork brings a stopped VM's network back up from the allocation
-// already recorded in vm.json.
-//
-// It must not re-allocate. The address in v.Net belongs to this VM, and
-// reserveIP would refuse it for exactly that reason -- it rejects any address
-// another vm.json holds, and this VM's own record is one of those. Teardown
-// never released it, so there is nothing to allocate.
 func restoreVMNetwork(data string, v *vm) (*os.File, error) {
 	if os.Geteuid() != 0 {
 		return nil, errors.New("networking needs root: creating taps and writing nftables rules is privileged")
@@ -507,8 +474,6 @@ func restoreVMNetwork(data string, v *vm) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The gateway is host-wide policy, not a property of the VM, so an operator
-	// who changed it since the VM was created gets the current one.
 	v.Net.Gateway = cfg.Gateway
 	if v.Net.Tap == "" {
 		v.Net.Tap = v.Net.tapName(v.ID)
@@ -516,15 +481,10 @@ func restoreVMNetwork(data string, v *vm) (*os.File, error) {
 	return bringUpVMNetwork(cfg, v)
 }
 
-// bringUpVMNetwork realises a decided v.Net in the kernel. Shared by the create
-// and restart paths so the one ordering that is safe -- interface, then policy,
-// then ceiling -- lives in a single place.
 func bringUpVMNetwork(cfg netConfig, v *vm) (*os.File, error) {
 	if err := enableForwarding(); err != nil {
 		return nil, err
 	}
-	// The ruleset has to exist before the VM is admitted to it; the daemon may
-	// not be running, and a VM must never start against an empty table.
 	if err := ensureRuleset(cfg); err != nil {
 		return nil, err
 	}
@@ -552,8 +512,6 @@ func bringUpVMNetwork(cfg netConfig, v *vm) (*os.File, error) {
 	return tap, nil
 }
 
-// teardownVMNetwork reverses setupVMNetwork exactly. Policy is withdrawn before
-// the interface goes, so there is no window where a tap exists unpoliced.
 func teardownVMNetwork(v vm) error {
 	if v.Net == nil {
 		return nil

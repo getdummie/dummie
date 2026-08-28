@@ -9,13 +9,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// exitStatusGrace bounds how long a relayed channel waits for trailing channel
-// requests (typically exit-status) after the far side has hit EOF.
 const exitStatusGrace = 30 * time.Second
 
-// relaySSH wires two established SSH connections together: global requests both
-// ways, and channels opened from either end (sessions, direct-tcpip for -L,
-// forwarded-tcpip for -R).
 func relaySSH(log *slog.Logger,
 	client ssh.Conn, clientChans <-chan ssh.NewChannel, clientReqs <-chan *ssh.Request,
 	vm ssh.Conn, vmChans <-chan ssh.NewChannel, vmReqs <-chan *ssh.Request,
@@ -72,12 +67,6 @@ func openAndRelay(log *slog.Logger, nch ssh.NewChannel, out ssh.Conn) {
 	log.Debug("ssh channel closed", "type", nch.ChannelType())
 }
 
-// relayChannel copies data, extended data (stderr) and channel requests between
-// two channels, honouring half-close and letting trailing requests such as
-// exit-status through before closing.
-// The far side (b) closing is what ends the channel. Waiting on both directions
-// would deadlock an interactive session: the client keeps its input side open
-// until it sees our close, and we would not close until it did.
 func relayChannel(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs <-chan *ssh.Request) {
 	go func() {
 		_, _ = io.Copy(b, a)
@@ -98,7 +87,6 @@ func relayChannel(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs
 
 	<-farDone
 
-	// exit-status arrives from b as a trailing request; let it through first.
 	timer := time.NewTimer(exitStatusGrace)
 	defer timer.Stop()
 	select {
@@ -106,7 +94,6 @@ func relayChannel(a ssh.Channel, aReqs <-chan *ssh.Request, b ssh.Channel, bReqs
 	case <-timer.C:
 	}
 
-	// Closing a unblocks the still-pending copy out of it.
 	_ = a.Close()
 	_ = b.Close()
 }

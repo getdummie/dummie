@@ -12,18 +12,10 @@ import (
 	"control/internal/db"
 )
 
-// patPrefix marks a raw personal access token. It is what lets one Bearer
-// header carry either credential without ambiguity, and it is why a leaked
-// token is greppable in a log or a repository scan.
 const patPrefix = "dpat_"
 
-// maxLabelLen bounds the one free-text field. The column is unbounded TEXT and
-// the label only ever has to say which machine holds the token.
 const maxLabelLen = 100
 
-// newPersonalAccessToken returns the raw token to hand to the caller. Same
-// entropy as a refresh token, with the prefix carried in the string so the
-// middleware can tell the two apart before it touches the database.
 func newPersonalAccessToken() (string, error) {
 	raw, err := newRefreshToken()
 	if err != nil {
@@ -32,11 +24,6 @@ func newPersonalAccessToken() (string, error) {
 	return patPrefix + raw, nil
 }
 
-// authenticatePAT resolves a raw token to a caller. It is only ever reached
-// from the non-admin gate: adminJWT passes a nil *db.Queries, so an admin route
-// has no code path that consults this table at all. That is the guarantee, not
-// a check somewhere further down -- a token cannot reach admin because nothing
-// admin-side knows how to read one.
 func authenticatePAT(c *echo.Context, q *db.Queries, raw string) error {
 	t, err := q.AuthenticatePersonalAccessToken(c.Request().Context(), hashRefresh(raw))
 	if err != nil {
@@ -47,10 +34,6 @@ func authenticatePAT(c *echo.Context, q *db.Queries, raw string) error {
 	return nil
 }
 
-// denyPAT closes the loop a token could otherwise walk round: minting a fresh
-// token with an old one, so a leak survives the revocation that was meant to
-// end it. Managing tokens takes the password-backed session that created the
-// first one.
 func denyPAT(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		if m, _ := c.Get("auth").(string); m == "pat" {
@@ -60,15 +43,11 @@ func denyPAT(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-// --- handlers ---------------------------------------------------------------
-
 type patDTO struct {
 	ID     string `json:"id"`
 	Label  string `json:"label"`
 	Prefix string `json:"token_prefix"`
-	Status string `json:"status"` // active | revoked | expired
-	// "" for the two that have not happened: a token that never expires, and one
-	// that has never been used.
+	Status string `json:"status"`
 	ExpiresAt  string `json:"expires_at"`
 	LastUsedAt string `json:"last_used_at"`
 	CreatedAt  string `json:"created_at"`
@@ -98,8 +77,6 @@ func toPATDTO(t db.PersonalAccessToken) patDTO {
 	return d
 }
 
-// ListTokens returns the caller's own tokens, never their raw values.
-//
 // @Summary     List your personal access tokens
 // @Description Only the prefix of each token is returned -- enough to recognise one you still hold, useless to anyone who only has this. Requires a signed-in session: a token cannot enumerate its siblings.
 // @Tags        tokens
@@ -127,12 +104,9 @@ func (h *ProfileHandler) ListTokens(c *echo.Context) error {
 
 type createPATReq struct {
 	Label string `json:"label"`
-	// null/omitted = never expires.
 	ExpiresInDays *int32 `json:"expires_in_days"`
 }
 
-// CreateToken mints a token and returns its raw value once.
-//
 // @Summary     Create a personal access token
 // @Description The response is the only place the raw token appears; it is stored hashed and cannot be shown again. Omit expires_in_days for a token that never expires. Requires a signed-in session, so a leaked token cannot mint its successor and outlive the revocation meant to end it.
 // @Tags        tokens
@@ -184,16 +158,12 @@ func (h *ProfileHandler) CreateToken(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not create the token")
 	}
-	// The only response that carries the raw token. Nothing stores it, so this
-	// body is the user's one chance to copy it.
 	return c.JSON(http.StatusCreated, map[string]any{
 		"token":                 raw,
 		"personal_access_token": toPATDTO(t),
 	})
 }
 
-// RevokeToken kills a token but keeps the row.
-//
 // @Summary     Revoke a personal access token
 // @Description Anything using it stops working immediately. The row stays in the list, marked revoked, so the credential's history is still readable.
 // @Tags        tokens
@@ -215,8 +185,6 @@ func (h *ProfileHandler) RevokeToken(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid token id")
 	}
-	// Scoped by owner in the statement itself, so another user's id reaches
-	// nothing and the miss is indistinguishable from a token that never existed.
 	n, err := h.q.RevokePersonalAccessToken(c.Request().Context(), db.RevokePersonalAccessTokenParams{
 		ID: pgID, UserID: owner,
 	})
@@ -229,8 +197,6 @@ func (h *ProfileHandler) RevokeToken(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// DeleteToken removes a token and its record.
-//
 // @Summary     Delete a personal access token
 // @Description Anything using it stops working and no record of it is kept. Revoke instead when you want the row to stay.
 // @Tags        tokens

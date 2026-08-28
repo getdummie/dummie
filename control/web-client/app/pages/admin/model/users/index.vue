@@ -98,7 +98,6 @@ function prev() {
   }
 }
 
-// --- create ---
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref<string | null>(null)
@@ -132,7 +131,6 @@ async function create() {
   }
 }
 
-// --- delete ---
 const toDelete = ref<AdminUser | null>(null)
 const deleting = ref(false)
 const deleteError = ref<string | null>(null)
@@ -227,8 +225,6 @@ async function confirmDelete() {
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
-    <!-- `aria-live` so a page change or a delete announces the new row count
-         rather than silently swapping the table out. (WCAG 4.1.3) -->
     <DataTable
       label="Users"
       :columns="columns"
@@ -242,9 +238,6 @@ async function confirmDelete() {
       </template>
       <TableRow v-for="u in items" :key="u.id">
         <TableCell>
-          <!-- Underlined at rest, not just on hover: in a table of plain
-               text cells an underline-on-hover link is undiscoverable, and
-               colour alone would not carry it either. (WCAG 1.4.1) -->
           <NuxtLink
             :to="`/admin/model/users/${u.id}`"
             class="font-mono text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
@@ -262,9 +255,6 @@ async function confirmDelete() {
         </TableCell>
         <TableCell class="text-muted-foreground">{{ fmtDate(u.created_at) }}</TableCell>
         <TableCell class="text-right">
-          <!-- Icon-only, and one per row — so the name has to include the
-               username, otherwise every button reads "Delete user" and a
-               screen-reader user can't tell them apart. (WCAG 2.4.6) -->
           <Button
             variant="ghost"
             size="icon"
@@ -289,7 +279,6 @@ async function confirmDelete() {
       </div>
     </nav>
 
-    <!-- delete confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>

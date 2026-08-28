@@ -10,7 +10,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// connPair returns the two ends of a connected unix socket pair as net.Conns.
 func connPair(t *testing.T) (net.Conn, net.Conn) {
 	t.Helper()
 	fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM, 0)
@@ -53,7 +52,6 @@ func TestPipeHalfClose(t *testing.T) {
 		t.Fatalf("backend got %q", buf)
 	}
 
-	// Client half-closes: the backend must see EOF but still be able to reply.
 	if err := clientNear.(*net.UnixConn).CloseWrite(); err != nil {
 		t.Fatalf("CloseWrite: %v", err)
 	}

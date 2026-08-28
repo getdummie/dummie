@@ -1,11 +1,1 @@
--- 0012_user_public_key: the SSH public key a user is identified by.
---
--- '' rather than NULL, matching how the rest of this schema records "no value":
--- every consumer reads a string, and "no key on file" is the only meaning an
--- empty one can have. Existing rows get '' by the same clause, which means every
--- account that predates this column has to add a key before it can create a VM.
---
--- One key per user, not a set. A second key would need its own table to say
--- anything useful (which key, added when, revoked when), and one column that
--- silently held a newline-separated list would be that table badly.
 ALTER TABLE users ADD COLUMN public_key TEXT NOT NULL DEFAULT '';

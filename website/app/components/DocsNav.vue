@@ -6,9 +6,6 @@ const { data: pages } = await useAsyncData('docs-nav', () =>
     .all(),
 )
 
-// Grouped in encounter order rather than against a hard-coded list of sections:
-// the pages are already sorted by `stem`, and the numeric filename prefixes make
-// that the order the directory reads. Adding a page never means editing this.
 const groups = computed(() => {
   const out: { section: string, pages: { path: string, title: string }[] }[] = []
   for (const p of pages.value ?? []) {

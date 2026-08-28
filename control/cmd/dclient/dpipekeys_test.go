@@ -11,8 +11,6 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// pubOf reads a .pub file and returns the wire bytes of the key in it, so two
-// files can be compared without caring about the comment.
 func pubOf(t *testing.T, path string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -33,8 +31,6 @@ func TestEnsureEd25519KeypairGenerates(t *testing.T) {
 		t.Fatalf("ensureEd25519Keypair: %v", err)
 	}
 
-	// The private key is only as good as its mode: sshd and dpipe both refuse a
-	// key anyone else on the box can read.
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
@@ -51,8 +47,6 @@ func TestEnsureEd25519KeypairGenerates(t *testing.T) {
 		t.Fatal("no private key was written")
 	}
 
-	// The .pub has to be the public half of that exact private key, or dpipe
-	// presents an identity guests were not built to accept.
 	want, err := ssh.NewPublicKey(priv.Public().(ed25519.PublicKey))
 	if err != nil {
 		t.Fatalf("could not derive the public key: %v", err)
@@ -62,8 +56,6 @@ func TestEnsureEd25519KeypairGenerates(t *testing.T) {
 	}
 }
 
-// Rotation is an operator's decision: the host key is pinned by clients and the
-// client key is already baked into built images.
 func TestEnsureEd25519KeypairLeavesAnExistingKeyAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dpipe_client_ed25519")
 
@@ -91,8 +83,6 @@ func TestEnsureEd25519KeypairLeavesAnExistingKeyAlone(t *testing.T) {
 	}
 }
 
-// Without the .pub, no guest image gets dpipe's key installed -- and it is
-// derivable, so refusing to start over it would be a self-inflicted outage.
 func TestEnsureEd25519KeypairRederivesAMissingPub(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dpipe_client_ed25519")
 
@@ -123,8 +113,6 @@ func TestEnsureEd25519KeypairRederivesAMissingPub(t *testing.T) {
 	}
 }
 
-// Overwriting a key an operator placed by hand is how a fleet loses access to
-// its own guests, so an unreadable one is a hard stop instead.
 func TestEnsureEd25519KeypairRefusesToClobberAnUnusableKey(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "dpipe_host_ed25519")
 	const junk = "this is not a private key\n"

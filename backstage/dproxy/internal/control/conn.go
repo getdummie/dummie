@@ -12,10 +12,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// ErrTooLarge is returned when a message exceeds MaxMsgSize.
 var ErrTooLarge = errors.New("control: message too large")
 
-// marshal encodes m and enforces the size limit.
 func marshal(m Msg) ([]byte, error) {
 	if m.V == 0 {
 		m.V = Version
@@ -30,9 +28,6 @@ func marshal(m Msg) ([]byte, error) {
 	return b, nil
 }
 
-// SendMsg writes one message (and optionally its file descriptors) with a single
-// sendmsg(2). A successful return means the kernel has duplicated the fds into
-// the peer process: the caller still owns its own copies and should close them.
 func SendMsg(c *net.UnixConn, m Msg, fds []int) error {
 	b, err := marshal(m)
 	if err != nil {
@@ -46,7 +41,7 @@ func SendMsg(c *net.UnixConn, m Msg, fds []int) error {
 	if err != nil {
 		return err
 	}
-	for n < len(b) { // stream socket: finish a short write (fds already sent)
+	for n < len(b) {
 		w, err := c.Write(b[n:])
 		if err != nil {
 			return err
@@ -56,20 +51,10 @@ func SendMsg(c *net.UnixConn, m Msg, fds []int) error {
 	return nil
 }
 
-// RecvMsg reads exactly one message from c. It is only safe on connections where
-// messages strictly alternate (the upgrade handshake); for duplex traffic use
-// Conn, which tolerates stream coalescing.
 func RecvMsg(c *net.UnixConn) (Msg, []int, error) {
 	return NewConn(c).RecvMsg()
 }
 
-// Conn is a framed, buffered view of a control connection.
-//
-// AF_UNIX stream sockets preserve the boundary of any segment that carries
-// SCM_RIGHTS, but two fd-less messages may coalesce into one recvmsg. Conn
-// therefore keeps a read buffer and decodes one JSON object at a time, which
-// keeps the wire format exactly as specified (bare JSON objects, no length
-// prefix) while remaining correct under coalescing.
 type Conn struct {
 	c *net.UnixConn
 
@@ -78,24 +63,18 @@ type Conn struct {
 	rbuf []byte
 }
 
-// NewConn wraps a unix connection.
 func NewConn(c *net.UnixConn) *Conn { return &Conn{c: c} }
 
-// Unix returns the underlying connection.
 func (k *Conn) Unix() *net.UnixConn { return k.c }
 
-// Close closes the underlying connection.
 func (k *Conn) Close() error { return k.c.Close() }
 
-// SendMsg is safe for concurrent use.
 func (k *Conn) SendMsg(m Msg, fds []int) error {
 	k.wmu.Lock()
 	defer k.wmu.Unlock()
 	return SendMsg(k.c, m, fds)
 }
 
-// RecvMsg returns the next message and any file descriptors that accompanied it.
-// It must be called from a single goroutine.
 func (k *Conn) RecvMsg() (Msg, []int, error) {
 	for {
 		if m, ok, err := k.decodeBuffered(); err != nil {
@@ -107,9 +86,6 @@ func (k *Conn) RecvMsg() (Msg, []int, error) {
 		data := make([]byte, MaxMsgSize)
 		oob := make([]byte, unix.CmsgSpace(4*MaxRecvFDs))
 		n, oobn, flags, _, err := k.c.ReadMsgUnix(data, oob)
-		// A failed recvmsg(2) reports its raw -1 return through n (and possibly
-		// oobn): internal/poll passes both through unchanged when the syscall
-		// errors. Clamp before either value is used as a slice bound.
 		if n < 0 {
 			n = 0
 		}
@@ -154,7 +130,6 @@ func (k *Conn) RecvMsg() (Msg, []int, error) {
 	}
 }
 
-// decodeBuffered pops the first complete JSON object from the read buffer.
 func (k *Conn) decodeBuffered() (Msg, bool, error) {
 	trimLeadingSpace(&k.rbuf)
 	if len(k.rbuf) == 0 {
@@ -221,7 +196,6 @@ func parseRights(oob []byte) ([]int, error) {
 	return out, nil
 }
 
-// CloseFDs closes a set of received descriptors.
 func CloseFDs(fds []int) { closeFDs(fds) }
 
 func closeFDs(fds []int) {

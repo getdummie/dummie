@@ -11,8 +11,6 @@ import (
 	"testing"
 )
 
-// wsPair returns a wsConn reading from what a client writes, plus the buffer the
-// server's own frames land in.
 func wsPair(t *testing.T, clientBytes []byte) (*wsConn, net.Conn) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -48,7 +46,6 @@ func wsPair(t *testing.T, clientBytes []byte) (*wsConn, net.Conn) {
 	return &wsConn{c: sc, br: bufio.NewReader(sc)}, cc
 }
 
-// nopConn is a net.Conn that only supports writing, for framing assertions.
 type nopConn struct {
 	net.Conn
 	w io.Writer
@@ -57,7 +54,6 @@ type nopConn struct {
 func (n nopConn) Write(p []byte) (int, error) { return n.w.Write(p) }
 func (nopConn) Close() error                  { return nil }
 
-// maskedFrame builds a client frame: FIN as given, masked, fixed mask key.
 func maskedFrame(fin bool, opcode byte, payload []byte) []byte {
 	var head byte
 	if fin {
@@ -81,7 +77,6 @@ func maskedFrame(fin bool, opcode byte, payload []byte) []byte {
 	return out
 }
 
-// RFC 6455 §1.3 worked example.
 func TestWSAcceptKey(t *testing.T) {
 	if got := wsAcceptKey("dGhlIHNhbXBsZSBub25jZQ=="); got != "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=" {
 		t.Fatalf("wsAcceptKey = %q", got)
@@ -119,7 +114,6 @@ func TestWSUpgradeResponseAndPipelinedBytes(t *testing.T) {
 	if r.err != nil {
 		t.Fatalf("wsUpgrade: %v", r.err)
 	}
-	// Bytes the client pipelined behind the request must not be lost.
 	op, payload, err := r.ws.ReadMessage()
 	if err != nil || op != opBinary || string(payload) != "early" {
 		t.Fatalf("ReadMessage = (%#x, %q, %v)", op, payload, err)
@@ -159,7 +153,6 @@ func TestWSAnswersPingBeforeData(t *testing.T) {
 }
 
 func TestWSReadRejectsUnmaskedClientFrame(t *testing.T) {
-	// Same frame as maskedFrame but with the mask bit and key removed.
 	ws, _ := wsPair(t, []byte{0x80 | opBinary, 2, 'h', 'i'})
 	if _, _, err := ws.ReadMessage(); err == nil {
 		t.Fatal("an unmasked client frame must be rejected")
@@ -181,7 +174,6 @@ func TestWSWriteMessageFraming(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 	out := buf.Bytes()
-	// FIN+binary, no mask bit, 126 + 16-bit length.
 	if out[0] != 0x80|opBinary || out[1] != 126 || binary.BigEndian.Uint16(out[2:4]) != 200 {
 		t.Fatalf("unexpected header %#v", out[:4])
 	}

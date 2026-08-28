@@ -19,8 +19,6 @@ func TestWriteProxyCookieSecret(t *testing.T) {
 		t.Error("a first write reported no change, so proxy would not be restarted")
 	}
 
-	// Verbatim: the control server signs with these bytes, so a newline this end
-	// adds is one every token was not signed with.
 	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("could not read it back: %v", err)
@@ -29,8 +27,6 @@ func TestWriteProxyCookieSecret(t *testing.T) {
 		t.Errorf("the file holds %d bytes, want the %d that were sent", len(b), len(testCookieSecret))
 	}
 
-	// The key forges a session on any guest of this host, so the file and the
-	// directory it is in are the client's to keep closed.
 	fi, err := os.Stat(path)
 	if err != nil {
 		t.Fatalf("stat: %v", err)
@@ -47,9 +43,6 @@ func TestWriteProxyCookieSecret(t *testing.T) {
 	}
 }
 
-// The server pushes a config on every connect and every inventory tick. If an
-// unchanged key reported a change, proxy would restart every few seconds and
-// drop every live session on the host.
 func TestWriteProxyCookieSecretUnchanged(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cookie_secret")
 
@@ -65,8 +58,6 @@ func TestWriteProxyCookieSecretUnchanged(t *testing.T) {
 	}
 }
 
-// A rotated key has to be reported as a change even though the config it
-// arrived with may be byte-identical: proxy reads the key once, at start.
 func TestWriteProxyCookieSecretRotates(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cookie_secret")
 
@@ -89,9 +80,6 @@ func TestWriteProxyCookieSecretRotates(t *testing.T) {
 	}
 }
 
-// No key means the server has auth turned off, and the config it sent carries no
-// auth block. Truncating the file would leave a host that later turns auth on
-// verifying against an empty key.
 func TestWriteProxyCookieSecretEmptyLeavesTheFileAlone(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cookie_secret")
 	if err := os.WriteFile(path, []byte(testCookieSecret), 0o600); err != nil {

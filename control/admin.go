@@ -19,28 +19,14 @@ import (
 	"control/internal/db"
 )
 
-// adminJWT gates a route group: it verifies the access-token JWT (from the
-// httpOnly cookie, or an Authorization: Bearer header for API clients) and
-// requires the "admin" role. 401 for missing/invalid tokens, 403 for non-admins.
-//
-// It passes a nil *db.Queries deliberately: that is what makes a personal
-// access token unable to reach an admin route, including one belonging to an
-// admin. There is no branch here that reads the token table, so there is no
-// flag to set wrong and no escalation to audit for.
 func adminJWT(cfg authConfig) echo.MiddlewareFunc {
 	return jwtAuth(cfg, nil, true)
 }
 
-// userJWT is the same gate without the role check: any signed-in account,
-// proven either by a session JWT or by a personal access token. Every route
-// behind it must scope its own reads and writes to the caller's "uid" -- the
-// middleware proves who is asking, not what they may touch.
 func userJWT(cfg authConfig, q *db.Queries) echo.MiddlewareFunc {
 	return jwtAuth(cfg, q, false)
 }
 
-// jwtAuth verifies the caller. pats is non-nil only on the non-admin gate; when
-// it is nil a dpat_ Bearer is simply not a JWT and fails as one.
 func jwtAuth(cfg authConfig, pats *db.Queries, requireAdmin bool) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
@@ -85,32 +71,16 @@ func jwtAuth(cfg authConfig, pats *db.Queries, requireAdmin bool) echo.Middlewar
 	}
 }
 
-// AdminHandler serves the admin-only user + session management endpoints.
 type AdminHandler struct {
 	q   *db.Queries
 	cfg authConfig
 	hub *Hub
-	// controlURL is the origin browsers reach this server on. Only the OIDC
-	// routes need it, to show an admin the redirect URI their provider has to
-	// have registered -- which is a fact about where users are, not about the
-	// address this process binds.
 	controlURL string
-	// nil when no bucket is configured; only the kernel routes need it, and they
-	// report it as an operator's omission rather than failing at startup.
 	blobs *blobStore
-	// pool is for the one write that needs a transaction: a VM row and the task
-	// that expires it have to land together, or a TTL'd sandbox never expires.
 	pool *pgxpool.Pool
-	// tasks is the background runner, carried for the scheduled-task routes: they
-	// report how far behind it is, which is a fact about the process rather than
-	// about the table.
 	tasks *taskRunner
-	// certs runs the acme orders. Carried here rather than reached through tasks
-	// because an order outlives the request that starts it and is not a task.
 	certs *certIssuer
 }
-
-// --- helpers ---------------------------------------------------------------
 
 func pageParams(c *echo.Context) (limit, offset int32) {
 	limit, offset = 20, 0
@@ -142,13 +112,6 @@ func parseUUID(s string) (pgtype.UUID, error) {
 	return pgtype.UUID{Bytes: u, Valid: true}, nil
 }
 
-// --- users -----------------------------------------------------------------
-
-// adminUserDTO is one account as the admin section shows it. /me returns the
-// same shape: a user reading their own row wants the same facts an admin sees
-// about it, and a second near-identical struct would be one more place for the
-// two views to disagree. Nothing secret is in here -- no hash, and a public key
-// is public.
 type adminUserDTO struct {
 	ID        string `json:"id"`
 	Username  string `json:"username"`
@@ -156,10 +119,7 @@ type adminUserDTO struct {
 	FirstName string `json:"first_name"`
 	LastName  string `json:"last_name"`
 	UserType  string `json:"user_type"`
-	// '' when the account has no key on file, which is what blocks it from
-	// creating a VM.
 	PublicKey string `json:"public_key"`
-	// Recorded allowances. Nothing enforces these yet; see 0008_user_quotas.
 	VCPULimit      int32  `json:"vcpu_limit"`
 	MemoryLimitMiB int32  `json:"memory_limit_mib"`
 	DiskLimitMiB   int32  `json:"disk_limit_mib"`
@@ -271,9 +231,6 @@ type updateUserQuotaReq struct {
 	DiskLimitMiB   int32 `json:"disk_limit_mib"`
 }
 
-// UpdateUserQuota records what a user is allowed. Nothing reads these values
-// when a VM is created yet -- the bounds here only keep the stored number
-// meaningful, they are not an admission-control decision.
 func (h *AdminHandler) UpdateUserQuota(c *echo.Context) error {
 	pgID, err := parseUUID(c.Param("id"))
 	if err != nil {
@@ -312,10 +269,6 @@ type updateUserPublicKeyReq struct {
 	PublicKey string `json:"public_key"`
 }
 
-// UpdateUserPublicKey sets the key on someone else's account. An admin gets this
-// so an account can be unblocked without asking its owner to sign in -- a user
-// with no key cannot create a VM, and that is otherwise a dead end only they can
-// leave. Empty clears it, which is a deliberate way to stop them creating more.
 func (h *AdminHandler) UpdateUserPublicKey(c *echo.Context) error {
 	pgID, err := parseUUID(c.Param("id"))
 	if err != nil {
@@ -360,13 +313,11 @@ func (h *AdminHandler) DeleteUser(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
-// --- tokens (refresh-token sessions) ---------------------------------------
-
 type tokenDTO struct {
 	ID        string `json:"id"`
 	Username  string `json:"username"`
 	Email     string `json:"email"`
-	Status    string `json:"status"` // active | revoked | expired
+	Status    string `json:"status"`
 	ExpiresAt string `json:"expires_at"`
 	CreatedAt string `json:"created_at"`
 	UserAgent string `json:"user_agent"`

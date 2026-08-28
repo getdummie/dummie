@@ -27,7 +27,6 @@ const toc = computed(() => page.value?.body?.toc?.links ?? [])
 
 <template>
   <article v-if="page">
-    <!-- Header -->
     <header class="relative overflow-hidden border-b border-border">
       <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-60" />
       <div class="relative mx-auto max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
@@ -62,7 +61,6 @@ const toc = computed(() => page.value?.body?.toc?.links ?? [])
       </div>
     </header>
 
-    <!-- Body -->
     <div class="mx-auto max-w-6xl gap-12 px-4 py-14 sm:px-6 lg:grid lg:grid-cols-[minmax(0,1fr)_14rem] lg:py-16">
       <div class="article-prose min-w-0">
         <ContentRenderer :value="page" />
@@ -83,7 +81,6 @@ const toc = computed(() => page.value?.body?.toc?.links ?? [])
       </nav>
     </div>
 
-    <!-- CTA -->
     <section aria-labelledby="cs-cta" class="border-t border-border">
       <div class="mx-auto flex max-w-6xl flex-col items-start justify-between gap-6 px-4 py-14 sm:flex-row sm:items-center sm:px-6">
         <div>

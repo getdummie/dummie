@@ -23,7 +23,6 @@ func TestConsoleSessionCapIsPerHost(t *testing.T) {
 	if s.acquireConsole("one.vm.local") {
 		t.Fatal("a third session for the same host must be refused")
 	}
-	// The cap is per host: another VM is unaffected.
 	if !s.acquireConsole("two.vm.local") {
 		t.Fatal("a different host must still be admitted")
 	}
@@ -82,7 +81,6 @@ func TestIdleClockFiresOnlyWhenIdle(t *testing.T) {
 	fired := make(chan bool, 1)
 	go func() { fired <- idle.watch(200*time.Millisecond, stop) }()
 
-	// Keep it busy for longer than the window; it must not fire.
 	for i := 0; i < 6; i++ {
 		time.Sleep(50 * time.Millisecond)
 		idle.touch()

@@ -20,9 +20,6 @@ const (
 	unitName        = "dclient.service"
 )
 
-// unitTemplate is deliberately plain. The daemon does its own signal handling,
-// creates its own runtime directory and drops nothing, so there is little for
-// systemd to arrange beyond ordering and restarts.
 const unitTemplate = `[Unit]
 Description=dclient (microvm host client)
 Documentation=https://github.com/
@@ -72,15 +69,12 @@ func runInstall(ctx context.Context, skipDoctor bool, cfgPath string) error {
 		return errors.New("install needs root")
 	}
 
-	// Before the checks rather than after, so the report describes the host as
-	// this install leaves it instead of warning about something install just fixed.
 	if msg, err := ensureKVMAccess(); err != nil {
 		fmt.Println("WARNING: " + err.Error() + "; vms will fall back to software emulation")
 	} else {
 		fmt.Println(msg)
 	}
 
-	// A host that cannot run a VM should not get a service that pretends it can.
 	if !skipDoctor {
 		fmt.Println("running preflight checks")
 		if err := runDoctor(); err != nil {
@@ -108,8 +102,6 @@ func runInstall(ctx context.Context, skipDoctor bool, cfgPath string) error {
 		return err
 	}
 	if _, err := os.Stat(cfgPath); os.IsNotExist(err) {
-		// 0600: this file is where the enrollment key goes, and the dclient group is
-		// deliberately given the socket rather than the credentials.
 		if err := os.WriteFile(cfgPath, []byte(exampleConfig), 0o600); err != nil {
 			return err
 		}
@@ -145,14 +137,6 @@ start a vm from any kernel and any rootfs. Only add people you would give root.
 	return nil
 }
 
-// addToGroup puts the operator who ran the install into the group, which is the
-// one step that used to be left as a command to copy. The name comes from
-// SUDO_USER: install runs as root, so the identity worth adding is the one that
-// invoked sudo rather than the one the process ended up as.
-//
-// It returns what happened instead of an error. An install driven by a
-// provisioning tool has no invoking user at all, and that is not a reason to fail
-// an otherwise complete install -- but it is a reason to say so.
 func addToGroup(ctx context.Context, group string) string {
 	name := os.Getenv("SUDO_USER")
 	if name == "" || name == "root" {
@@ -171,8 +155,6 @@ func addToGroup(ctx context.Context, group string) string {
 		return name + " is already in the " + group + " group"
 	}
 
-	// -a is what makes this append. Without it, -G replaces every other group the
-	// user is in, which on a single-admin host means locking them out of sudo.
 	out, err := exec.CommandContext(ctx, "usermod", "-aG", group, name).CombinedOutput()
 	if err != nil {
 		return fmt.Sprintf("could not add %s to the %s group (%v: %s); add them by hand",
@@ -191,8 +173,6 @@ func uninstallCommand() *cli.Command {
 			if os.Geteuid() != 0 {
 				return errors.New("uninstall needs root")
 			}
-			// dclient started the companions, so dclient takes them away; leaving them
-			// behind would mean units pointing at a config directory nobody maintains.
 			removeManagedServices(ctx)
 			for _, args := range [][]string{
 				{"disable", "--now", unitName},
@@ -212,9 +192,6 @@ func uninstallCommand() *cli.Command {
 	}
 }
 
-// exampleConfig is written on install and is entirely commented out: every key
-// has a default, and every feature's default is off, so the file an operator
-// finds is both a complete reference and a host that touches nothing.
 const exampleConfig = `# control_url: https://control.example.com
 # enrollment_key: paste-once-then-it-is-ignored
 # insecure: false
@@ -249,8 +226,6 @@ const exampleConfig = `# control_url: https://control.example.com
 # binary that is already running is the Upgrade button on that page, per host.
 `
 
-// ensureGroup creates the group if it is missing. groupadd rather than writing
-// /etc/group ourselves, so NSS and any directory service stay authoritative.
 func ensureGroup(name string) error {
 	if _, err := user.LookupGroup(name); err == nil {
 		return nil
@@ -263,8 +238,6 @@ func ensureGroup(name string) error {
 	return nil
 }
 
-// copyFile writes through a temporary file and renames, because overwriting a
-// running binary in place fails with ETXTBSY.
 func copyFile(src, dst string, mode os.FileMode) error {
 	in, err := os.Open(src)
 	if err != nil {

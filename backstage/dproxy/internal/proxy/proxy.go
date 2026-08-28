@@ -23,9 +23,6 @@ const (
 	defaultSniffTimeout = 5 * time.Second
 )
 
-// Proxy is the control plane: it owns the public ingress listeners, decides where
-// each connection goes and hands the connection to dpipe, so it holds no
-// long-lived connection state and can be redeployed at any time.
 type Proxy struct {
 	cfg      *Config
 	log      *slog.Logger
@@ -41,7 +38,6 @@ type Proxy struct {
 	stopped  chan struct{}
 }
 
-// New wires the router, resolver and control client.
 func New(cfg *Config, log *slog.Logger) (*Proxy, error) {
 	router := NewRouter(cfg)
 	auth, err := NewAuthenticator(cfg.Auth)
@@ -64,18 +60,13 @@ func New(cfg *Config, log *slog.Logger) (*Proxy, error) {
 	return p, nil
 }
 
-// Client exposes the control client (tests, status tooling).
 func (p *Proxy) Client() *Client { return p.ctrl }
 
-// Run connects to dpipe, programs the configured listen_forwards, binds every
-// ingress listener and serves until ctx is done.
 func (p *Proxy) Run(ctx context.Context) error {
 	if p.cfg.HTTPS != nil {
 		p.log.Info("https ingress enabled: dpipe.tls.enabled must be true, certificates live in dpipe")
 	}
 	if p.cfg.HTTP != nil {
-		// The auth verdict is derived from unauthenticated_ports, so log it
-		// rather than making operators compute it from the config.
 		for host, h := range p.cfg.HTTP.Hosts {
 			p.log.Info("http host", "host", host, "target", h.Target(),
 				"auth_required", h.NeedsAuth(h.DefaultPort))
@@ -113,7 +104,6 @@ func (p *Proxy) submitForwards(ctx context.Context) {
 	}
 }
 
-// bind binds every configured ingress listener and starts its accept loop.
 func (p *Proxy) bind() error {
 	if c := p.cfg.HTTP; c != nil {
 		ln, err := p.listen("http", c.Listen, c.Reuseport)
@@ -159,9 +149,6 @@ func (p *Proxy) bind() error {
 	return nil
 }
 
-// serveSite answers the static page on the loopback listener the site hostnames
-// route to. Every path gets the page: the listener serves one document, and a
-// landing page that 404s on /favicon.ico has nothing better to say there.
 func (p *Proxy) serveSite(ln net.Listener, page []byte) {
 	srv := &http.Server{
 		ReadHeaderTimeout: 10 * time.Second,
@@ -188,7 +175,6 @@ func (p *Proxy) listen(kind, addr string, reuseport bool) (net.Listener, error) 
 	return ln, nil
 }
 
-// Addrs returns the bound ingress addresses (tests).
 func (p *Proxy) Addrs() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -218,8 +204,6 @@ func (p *Proxy) acceptLoop(kind string, ln net.Listener, handle func(net.Conn)) 
 	}
 }
 
-// stop closes the ingress listeners. Connections already handed to dpipe live
-// there and are unaffected.
 func (p *Proxy) stop() {
 	p.stopOnce.Do(func() {
 		close(p.stopped)
@@ -231,7 +215,6 @@ func (p *Proxy) stop() {
 	})
 }
 
-// handleTCP: opaque TCP, routed by ingress listener.
 func (p *Proxy) handleTCP(route TCPRoute, client net.Conn) {
 	id := control.NewID()
 	log := p.log.With("id", id, "protocol", control.ProtoTCP, "client", client.RemoteAddr().String())
@@ -246,14 +229,6 @@ func (p *Proxy) handleTCP(route TCPRoute, client net.Conn) {
 	p.handoffCopy(id, client, backend, control.ProtoTCP)
 }
 
-// authorizeHTTP applies the auth policy for one connection. It reports whether
-// the connection may proceed to the backend; when it may not, the response has
-// already been written and the caller closes.
-//
-// The check is per connection, not per request: once the first request passes,
-// the rest of the keep-alive connection is relayed unexamined. Those requests
-// come from the client that just authenticated, so this is a revocation delay
-// rather than a bypass — bound it with the backend's idle timeout.
 func (p *Proxy) authorizeHTTP(log *slog.Logger, client net.Conn, host string, prefix []byte) bool {
 	entry, ok := p.router.HostEntry(host)
 	if !ok || !entry.NeedsAuth(entry.DefaultPort) {
@@ -279,7 +254,6 @@ func (p *Proxy) authorizeHTTP(log *slog.Logger, client net.Conn, host string, pr
 	return false
 }
 
-// handleHTTP: plaintext HTTP, routed per connection by the first request's Host.
 func (p *Proxy) handleHTTP(client net.Conn) {
 	id := control.NewID()
 	log := p.log.With("id", id, "protocol", control.ProtoHTTP, "client", client.RemoteAddr().String())
@@ -294,10 +268,6 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 		return
 	}
 
-	// A console hostname is the proxy's own and is answered here. The VM host
-	// table is consulted first, so a name that is genuinely a published VM always
-	// routes to that VM -- a domain whose own first label happens to be the
-	// console label can only cost someone a terminal, never open one by accident.
 	if _, published := p.router.HostEntry(host); !published {
 		if vmHost, ok := consoleVMHost(p.router, p.cfg.Console, host); ok {
 			log.Info("console route", "host", host, "vm_host", vmHost)
@@ -326,7 +296,6 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 		_ = client.Close()
 		return
 	}
-	// Replay the sniffed prefix (header block plus any body bytes read with it).
 	if _, err := backend.Write(prefix); err != nil {
 		log.Warn("http prefix replay failed", "target", target, "err", err)
 		_ = client.Close()
@@ -336,8 +305,6 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 	p.handoffCopy(id, client, backend, control.ProtoHTTP)
 }
 
-// handleHTTPS hands the raw pre-TLS socket to dpipe, which terminates TLS and
-// calls back with resolve{kind:"http"}. The proxy must not read or write it.
 func (p *Proxy) handleHTTPS(client net.Conn) {
 	id := control.NewID()
 	log := p.log.With("id", id, "protocol", control.ProtoTLS, "client", client.RemoteAddr().String())
@@ -350,8 +317,6 @@ func (p *Proxy) handleHTTPS(client net.Conn) {
 	}
 }
 
-// handleSSH hands the raw pre-SSH socket to dpipe, which terminates SSH and
-// calls back with resolve{kind:"ssh"}.
 func (p *Proxy) handleSSH(client net.Conn) {
 	id := control.NewID()
 	log := p.log.With("id", id, "protocol", control.ProtoSSH, "client", client.RemoteAddr().String())
@@ -364,7 +329,6 @@ func (p *Proxy) handleSSH(client net.Conn) {
 	}
 }
 
-// writeQuick writes a minimal HTTP/1.1 error response.
 func writeQuick(w io.Writer, code int) {
 	reason := "Bad Request"
 	switch code {

@@ -25,7 +25,6 @@ import (
 	"control/internal/db"
 )
 
-// nuxtTarget is the address the Nuxt dev server binds to.
 const nuxtTarget = "http://localhost:3000"
 
 func serveCommand() *cli.Command {
@@ -52,28 +51,18 @@ func serveCommand() *cli.Command {
 	}
 }
 
-// runServe runs the Echo server, and in a dev build also starts `bun run dev`
-// (in ./web-client) as a child process to serve the UI. air sits above this
-// process: on a Go rebuild it sends an interrupt, our handler kills the whole
-// Nuxt process group, and we exit so the port is free before air re-runs the
-// rebuilt binary. A release build has the SPA embedded and starts nothing, but
-// does apply its migrations first when APP_ENV=prod.
 func runServe(host string, port int) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	cfg := loadAuthConfig()
 
-	// Before anything opens a connection, and only in prod. See migrateAllUp.
 	if cfg.prod {
 		if err := migrateAllUp(); err != nil {
 			return err
 		}
 	}
 
-	// Build a lazy pgx pool from DATABASE_URL. pgxpool.New does not dial, so a
-	// missing/unreachable DB never blocks startup; the healthcheck pings on demand.
-	// A nil pool (no DATABASE_URL) makes the healthcheck report db:false.
 	var pool *pgxpool.Pool
 	if dsn := os.Getenv("DATABASE_URL"); dsn != "" {
 		p, err := pgxpool.New(context.Background(), dsn)
@@ -106,14 +95,10 @@ func runServe(host string, port int) error {
 	return runEchoServer(ctx, host, port, web, pool, ch, cfg, loadProxyAuthConfig(cfg.prod))
 }
 
-// startNuxtDevServer launches `bun run dev` and, on interrupt/SIGTERM (Ctrl-C or
-// air's rebuild signal), tears down the whole Nuxt process group before exiting.
-// SIGKILL as a backstop if it lingers.
 func startNuxtDevServer(ctx context.Context) error {
 	nuxt := exec.Command("bun", "run", "dev")
 	nuxt.Dir = "web-client"
 	nuxt.Stdout, nuxt.Stderr = os.Stdout, os.Stderr
-	// Own process group so we can signal Nuxt + its vite/node children together.
 	nuxt.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	if err := nuxt.Start(); err != nil {
@@ -137,9 +122,6 @@ func startNuxtDevServer(ctx context.Context) error {
 	return nil
 }
 
-// runEchoServer starts the Echo API server: /api/v1/* is handled here, every
-// other path is served from the embedded SPA, or reverse-proxied to the Nuxt dev
-// server when web is nil.
 func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *pgxpool.Pool, ch driver.Conn, cfg authConfig, proxyCfg proxyAuthConfig) error {
 	e := echo.New()
 
@@ -156,20 +138,13 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
 
-	// The document /docs renders. Public and outside every auth group: it names
-	// routes that each enforce their own auth, and docs you need an account to
-	// read are useless at the moment you are trying to get one.
 	api.GET("/openapi.json", openAPISpec(loadOpenAPISpec()))
 
-	// Auth: password signup/signin, refresh-token rotation, and session teardown.
 	q := db.New(pool)
 	ah := &AuthHandler{q: q, cfg: cfg}
 	api.GET("/signup_status", ah.SignupStatus)
 	api.POST("/signup", ah.Signup)
 
-	// Federated sign-in. Public like the rest of this group: these are the routes
-	// someone uses to *get* a session, and the flow authenticates itself with the
-	// state cookie and the provider's signature rather than with one.
 	oidcH := &OIDCHandler{q: q, auth: ah, controlURL: proxyCfg.controlURL}
 	api.GET("/oidc/providers", oidcH.ListPublicProviders)
 	api.GET("/oidc/:slug/start", oidcH.Start)
@@ -178,41 +153,20 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	api.POST("/token_refresh", ah.TokenRefresh)
 	api.POST("/signout", ah.Signout)
 
-	// The proxy's login hand-off. Not under /api/ because a browser is redirected
-	// here by another host's proxy, and the path is part of that contract.
 	e.GET(proxyLoginPath, (&ProxyLoginHandler{q: q, cfg: cfg, proxy: proxyCfg}).Login)
 
-	// The hub only knows about clients connected to *this* process, so any row
-	// left 'online' by a previous run is stale.
 	hub := NewHub()
 	if pool != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := q.SetAllClientsOffline(ctx); err != nil {
 			log.Printf("could not reset client statuses at startup: %v", err)
 		}
-		// Same reasoning for VMs: a pending row was waiting on a result frame that
-		// belonged to a socket this process never had.
 		if err := q.FailAllPendingVMs(ctx, "the control server restarted before the client reported the result"); err != nil {
 			log.Printf("could not fail pending vms at startup: %v", err)
 		}
 		cancel()
 	}
 
-	// Background work the control plane owes the future: TTL expiries, and the
-	// housekeeping that prunes their audit trail. In this process rather than a
-	// worker of its own because every handler ends in a push down a socket the hub
-	// holds, and only this process has those.
-	//
-	// Nil pool means no database, which is the one case there is nothing to poll;
-	// starting the runner then would be a log line every second saying so.
-	//
-	// Both are built before the runner starts: the renewal task calls into the
-	// issuer, so a runner polling before it exists would be a nil dereference on
-	// whichever tick came first.
-	//
-	// blobs is hoisted rather than built inline in the admin handler because the
-	// client link reads certificates out of it on every connect, and the issuer
-	// writes them.
 	blobs := loadBlobStore(context.Background())
 	certs := newCertIssuer(q, blobs, hub, proxyCfg)
 
@@ -225,7 +179,6 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 		log.Print("DATABASE_URL not set; scheduled tasks will not run")
 	}
 
-	// Admin: user management + refresh-token session management, JWT + admin gated.
 	adminH := &AdminHandler{
 		q: q, pool: pool, cfg: cfg, hub: hub,
 		blobs: blobs, tasks: tasks, certs: certs,
@@ -294,22 +247,17 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.POST("/tasks/:id/cancel", adminH.CancelScheduledTask)
 	admin.POST("/tasks/:id/run-now", adminH.RunScheduledTaskNow)
 
-	// Own profile: no id in the path, so the only account either route can reach
-	// is the one the JWT names.
 	profileH := &ProfileHandler{q: q}
 	me := api.Group("/me", userJWT(cfg, q))
 	me.GET("", profileH.GetMe)
 	me.PUT("", profileH.UpdateMe)
 
-	// Personal access tokens: the credential a script carries to reach the
-	// self-service API. Behind denyPAT so a token cannot mint its successor.
 	pats := me.Group("/tokens", denyPAT)
 	pats.GET("", profileH.ListTokens)
 	pats.POST("", profileH.CreateToken)
 	pats.POST("/:id/revoke", profileH.RevokeToken)
 	pats.DELETE("/:id", profileH.DeleteToken)
 
-	// Self-service VMs: any signed-in account. Every route scopes to the caller.
 	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
 	vms := api.Group("/vms", userJWT(cfg, q))
 	vms.GET("", userH.ListVMs)
@@ -332,14 +280,11 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.POST("/:id/targets/resolve", userH.ResolveTargetHost)
 	vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 
-	// Clients: enrollment + the persistent socket the server pushes jobs down.
-	// Authenticated by enrollment key / client token, not by the user JWT.
 	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg, blobs: blobs}
 	ag := api.Group("/client")
 	ag.POST("/enroll", clientH.Enroll)
 	ag.GET("/connect", clientH.Connect)
 
-	// /ht/ is a deeper healthcheck: it reports API liveness plus DB reachability.
 	api.GET("/ht/", func(c *echo.Context) error {
 		apiOK := true
 		dbOK := false
@@ -352,19 +297,12 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 		if ch != nil {
 			chOK = ch.Ping(ctx) == nil
 		}
-		// clickhouse is deliberately not in "all": it holds observability data, and
-		// a control plane that cannot reach it can still create and run vms.
 		body := map[string]any{
 			"all":        apiOK && dbOK,
 			"db":         dbOK,
 			"clickhouse": chOK,
 			"api":        apiOK,
 		}
-		// The task runner is reported but does not count towards "all", for the
-		// opposite reason clickhouse does not: a control plane whose poller has
-		// stalled serves every request correctly and quietly stops keeping the
-		// promise attached to a TTL. That needs to be visible, not to fail a
-		// liveness probe that would restart the process into the same state.
 		if last := tasks.lastTickAt(); !last.IsZero() {
 			body["tasks_last_tick_at"] = last.Format(time.RFC3339)
 			body["tasks_ticking"] = time.Since(last) < 30*time.Second
@@ -377,16 +315,6 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 		return c.JSON(http.StatusOK, body)
 	})
 
-	// Not e.Start: that builds a server with ReadTimeout at 30s, which is a
-	// deadline on reading the whole request rather than on a stalled one. An OS
-	// image is minutes of body, so every upload past the first half-gigabyte died
-	// mid-stream with an i/o timeout the handler could only report as a failed
-	// upload to object storage.
-	//
-	// ReadHeaderTimeout keeps what that default was there for -- a client that
-	// dribbles headers is still cut off -- and the body is bounded by size instead
-	// of by time (see readUploadedBlob). WriteTimeout stays unset: the console
-	// streams a VM's serial output over a long-lived response.
 	sc := echo.StartConfig{
 		Address: host + ":" + strconv.Itoa(port),
 		BeforeServeFunc: func(s *http.Server) error {
@@ -403,14 +331,6 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	return nil
 }
 
-// proxyToNuxt proxies every request whose path does NOT start with /api/v1 to
-// the Nuxt dev server. API requests fall through to the next handler, as does
-// /login: the SPA has no page there, and the proxy hand-off has to be answered
-// by this server because only it holds the signing key.
-//
-// The prefix is the API's own base rather than /api/, because Nuxt owns server
-// routes under /api/ too -- @nuxt/content serves its client-side database from
-// /api/content/*, and those have to reach the dev server.
 func proxyToNuxt(target string) echo.MiddlewareFunc {
 	u, err := url.Parse(target)
 	if err != nil {

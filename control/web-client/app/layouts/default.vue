@@ -14,8 +14,6 @@ import {
 const { user, isAuthenticated, signout } = useAuth()
 const route = useRoute()
 
-// The rail is for the signed-in app shell only; sign-in, sign-up and health keep
-// their full-bleed layout under the plain header below.
 const appRoutes = ['/dashboard', '/vms', '/settings', '/admin']
 const showSidebar = computed(() =>
   isAuthenticated.value && appRoutes.some(p => route.path === p || route.path.startsWith(`${p}/`)),
@@ -38,13 +36,10 @@ const initials = computed(() => {
     class="min-h-svh flex flex-col bg-background text-foreground antialiased transition-[padding] duration-200"
     :class="showSidebar && (expanded ? 'md:pl-56' : 'md:pl-12')"
   >
-    <!-- First thing in the tab order: lets keyboard and screen-reader users
-         jump the header/sidebar instead of tabbing through it on every page. -->
     <a href="#main-content" class="skip-link">Skip to main content</a>
 
     <AppSidebar v-if="showSidebar" v-model:open="navOpen" />
 
-    <!-- App shell: no top bar on desktop; mobile keeps a bar to reach the drawer -->
     <header
       v-if="showSidebar"
       class="sticky top-0 z-40 flex h-14 items-center gap-1 border-b border-border/80 bg-background/80 px-4 backdrop-blur md:hidden"
@@ -53,7 +48,6 @@ const initials = computed(() => {
         <Menu class="size-4" />
       </Button>
       <NuxtLink to="/dashboard" class="flex items-center gap-2.5">
-        <!-- Decorative logo mark: hidden so the link reads "dummie/" alone. -->
         <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
         <span class="font-mono text-sm font-semibold tracking-tight">
           dummie<span class="text-primary-text">/</span>
@@ -61,7 +55,6 @@ const initials = computed(() => {
       </NuxtLink>
     </header>
 
-    <!-- Public header -->
     <header v-else class="sticky top-0 z-40 border-b border-border/80 bg-background/80 backdrop-blur">
       <div class="mx-auto flex h-14 max-w-6xl items-center px-4 sm:px-6">
         <NuxtLink to="/" class="group flex items-center gap-2.5">
@@ -81,9 +74,6 @@ const initials = computed(() => {
           <ClientOnly>
             <DropdownMenu v-if="isAuthenticated">
               <DropdownMenuTrigger as-child>
-                <!-- The username span is `hidden` below `sm`, which drops it from
-                     the accessibility tree, and the avatar is decorative — so the
-                     button needs its own name or it is unlabelled on mobile. -->
                 <Button
                   variant="ghost"
                   size="sm"
@@ -139,8 +129,6 @@ const initials = computed(() => {
       </div>
     </header>
 
-    <!-- Page. `tabindex="-1"` makes this a programmatic focus target for the
-         skip link and the route-change handler without adding a tab stop. -->
     <main id="main-content" tabindex="-1" class="flex-1 focus-visible:outline-none">
       <slot />
     </main>

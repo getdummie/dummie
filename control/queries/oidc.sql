@@ -21,10 +21,6 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: UpdateOIDCProvider :one
--- An empty client_secret means "leave the stored one alone": the value is never
--- read back to the admin screen, so an untouched field arrives empty and must
--- not be mistaken for a request to clear it. Clearing is done by switching the
--- provider to a public client, which sends the sentinel below.
 UPDATE oidc_providers
 SET display_name  = sqlc.arg(display_name),
     issuer        = sqlc.arg(issuer),
@@ -78,8 +74,6 @@ SELECT * FROM users
 WHERE email = $1;
 
 -- name: CreateFederatedUser :one
--- password_hash is left at its default (empty), which is not a valid bcrypt
--- hash, so this account can only ever be signed into through its provider.
 INSERT INTO users (username, email, first_name, last_name, user_type)
 VALUES ($1, $2, $3, $4, $5)
 RETURNING *;

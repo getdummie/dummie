@@ -19,7 +19,6 @@ import (
 	"control/internal/db"
 )
 
-// authConfig holds the auth knobs, all sourced from the environment.
 type authConfig struct {
 	jwtSecret  string
 	accessTTL  time.Duration
@@ -53,7 +52,6 @@ func envInt(key string, def int) int {
 	return def
 }
 
-// AuthHandler carries the deps its handlers need.
 type AuthHandler struct {
 	q   *db.Queries
 	cfg authConfig
@@ -78,8 +76,6 @@ func toUserDTO(u db.User) userDTO {
 		UserType:  u.UserType,
 	}
 }
-
-// --- cookies ---------------------------------------------------------------
 
 func (h *AuthHandler) setAccessCookie(c *echo.Context, access string) {
 	http.SetCookie(c.Response(), &http.Cookie{
@@ -118,11 +114,6 @@ func clientIP(c *echo.Context) string {
 	return host
 }
 
-// startSession does the work of issueSession without writing a body: it mints
-// the tokens, records the session row, sets both cookies, and hands back the
-// access token. Split out for the federated sign-in callback, which ends in a
-// redirect rather than a JSON response and must not be a second, subtly
-// different way of establishing a session.
 func (h *AuthHandler) startSession(c *echo.Context, u db.User) (string, error) {
 	access, err := newAccessToken(u, h.cfg.jwtSecret, h.cfg.accessTTL)
 	if err != nil {
@@ -147,11 +138,6 @@ func (h *AuthHandler) startSession(c *echo.Context, u db.User) (string, error) {
 	return access, nil
 }
 
-// issueSession starts a NEW session: it mints an access JWT + a fresh refresh
-// token, persists the (hashed) refresh token as a session row, sets both
-// cookies, and returns the body the SPA reads into its in-memory state. Used by
-// sign-up and sign-in only — refreshing an access token does NOT call this, so
-// reloads don't create new sessions.
 func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
 	access, err := h.startSession(c, u)
 	if err != nil {
@@ -163,18 +149,10 @@ func (h *AuthHandler) issueSession(c *echo.Context, u db.User) error {
 	})
 }
 
-// --- handlers --------------------------------------------------------------
-
 type signupStatusResp struct {
 	Enabled bool `json:"enabled"`
 }
 
-// SignupStatus says whether the sign-up form should be offered at all.
-//
-// Public, and deliberately so: it says nothing an anonymous visitor cannot
-// learn by submitting the form once, and the page needs it before it can decide
-// what to render.
-//
 // @Summary     Whether sign-ups are open
 // @Tags        auth
 // @Produce     json
@@ -193,8 +171,6 @@ type signupReq struct {
 	LastName  string `json:"last_name"`
 }
 
-// Signup creates an account and starts a session.
-//
 // @Summary     Create an account
 // @Description The first account to sign up becomes the admin; every one after is a regular user. The client does not get to choose. Sets the httpOnly access and refresh cookies as well as returning the access token.
 // @Tags        auth
@@ -227,8 +203,6 @@ func (h *AuthHandler) Signup(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not hash password")
 	}
 	ctx := c.Request().Context()
-	// The very first account to sign up bootstraps the system as an admin;
-	// everyone after is a regular user. The client never gets to choose.
 	userType := "user"
 	if n, err := h.q.CountUsers(ctx); err == nil && n == 0 {
 		userType = "admin"
@@ -256,8 +230,6 @@ type signinReq struct {
 	Password   string `json:"password"`
 }
 
-// Signin exchanges credentials for a session.
-//
 // @Summary     Sign in
 // @Description The identifier is a username (case-sensitive) or an email. Sets the httpOnly access and refresh cookies as well as returning the access token.
 // @Tags        auth
@@ -278,7 +250,6 @@ func (h *AuthHandler) Signin(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "identifier and password are required")
 	}
 	ctx := c.Request().Context()
-	// Identifier may be a username (case-sensitive) or an email (stored lowercased).
 	u, err := h.q.GetUserByUsernameOrEmail(ctx, req.Identifier)
 	if errors.Is(err, pgx.ErrNoRows) {
 		u, err = h.q.GetUserByUsernameOrEmail(ctx, strings.ToLower(req.Identifier))
@@ -289,12 +260,6 @@ func (h *AuthHandler) Signin(c *echo.Context) error {
 	return h.issueSession(c, u)
 }
 
-// TokenRefresh exchanges a valid refresh token for a fresh access token. It does
-// NOT rotate/re-create the refresh token — the existing session (DB row +
-// cookie) is left intact, so a page reload just mints a new access token instead
-// of churning sessions. A new refresh token is only ever created at sign-in;
-// once the refresh token expires or is revoked, the user must sign in again.
-//
 // @Summary     Refresh the access token
 // @Description Reads the httpOnly refresh cookie and mints a new access token. The refresh token is not rotated, so a page reload does not churn sessions. Not needed when calling the API with a personal access token, which does not expire on this schedule.
 // @Tags        auth
@@ -327,8 +292,6 @@ func (h *AuthHandler) TokenRefresh(c *echo.Context) error {
 	})
 }
 
-// Signout revokes the session behind the refresh cookie and clears both cookies.
-//
 // @Summary     Sign out
 // @Description Ends this browser session. Personal access tokens are untouched: signing out of a laptop must not break a pipeline.
 // @Tags        auth

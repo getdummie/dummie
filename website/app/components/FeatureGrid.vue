@@ -48,8 +48,6 @@ const features = [
       :key="f.id"
       class="group relative border-b border-r border-border p-6 transition-colors hover:bg-secondary/40 sm:p-8"
     >
-      <!-- Icon and ordinal are both decorative: the heading below already names
-           the feature, so reading them adds noise, not information. -->
       <div class="mb-5 flex items-center justify-between" aria-hidden="true">
         <component :is="f.icon" class="size-5 text-primary-text" />
         <span class="eyebrow text-muted-foreground/60">{{ f.id }}</span>

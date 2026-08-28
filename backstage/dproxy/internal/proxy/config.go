@@ -18,7 +18,6 @@ import (
 	"dproxy/internal/httpsniff"
 )
 
-// Duration is a time.Duration that unmarshals from a YAML string like "5s".
 type Duration time.Duration
 
 func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
@@ -43,10 +42,8 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-// D returns the duration value.
 func (d Duration) D() time.Duration { return time.Duration(d) }
 
-// Or returns d, or def when d is zero.
 func (d Duration) Or(def time.Duration) time.Duration {
 	if d == 0 {
 		return def
@@ -54,7 +51,6 @@ func (d Duration) Or(def time.Duration) time.Duration {
 	return time.Duration(d)
 }
 
-// Config is the proxy configuration file.
 type Config struct {
 	ControlSocket string `yaml:"control_socket"`
 
@@ -74,7 +70,6 @@ type Config struct {
 	LogLevel          string   `yaml:"log_level"`
 }
 
-// HTTPConfig is the plaintext HTTP ingress.
 type HTTPConfig struct {
 	Listen    string              `yaml:"listen"`
 	Reuseport bool                `yaml:"reuseport"`
@@ -82,76 +77,40 @@ type HTTPConfig struct {
 	Default   string              `yaml:"default"`
 }
 
-// portSeparator marks an explicit port in a hostname: one--9922.vm.local routes
-// to port 9922 on the host configured as one.vm.local.
 const portSeparator = "--"
 
-// HTTPHost is one routed hostname: the backend machine, the port requests are
-// routed to, and which of its ports may be reached without authenticating.
 type HTTPHost struct {
 	Host                 string `yaml:"host"`
 	UnauthenticatedPorts []int  `yaml:"unauthenticated_ports"`
 	DefaultPort          int    `yaml:"default_port"`
 }
 
-// Target is the backend address requests for this hostname are sent to.
 func (h HTTPHost) Target() string {
 	return net.JoinHostPort(h.Host, strconv.Itoa(h.DefaultPort))
 }
 
-// NeedsAuth reports whether reaching port on this host requires an
-// authenticated user. Ports absent from unauthenticated_ports are protected, so
-// an empty or omitted list protects everything.
 func (h HTTPHost) NeedsAuth(port int) bool {
 	return !slices.Contains(h.UnauthenticatedPorts, port)
 }
 
-// AuthConfig points at the control server that authenticates users and holds
-// the secret it shares with the proxy. Required once any host protects a port.
 type AuthConfig struct {
 	ControlURL       string   `yaml:"control_url"`
 	CookieName       string   `yaml:"cookie_name"`
 	CookieSecretFile string   `yaml:"cookie_secret_file"`
 	CookieTTL        Duration `yaml:"cookie_ttl"`
 	CookieSecure     bool     `yaml:"cookie_secure"`
-	// CookieSameSite decides whether a guest can be reached from a page on
-	// another site -- which is what the control server's work view does when it
-	// frames a guest, since the control plane and the guests are deliberately on
-	// different domains.
-	//
-	// "lax" (the default) means the browser sends the cookie only when the guest
-	// and the top-level page are the same site, so a framed guest gets no cookie
-	// and every request looks unauthenticated. "none" lifts that, and the browser
-	// then requires Secure, so it is only usable where guests are served over
-	// https. Partitioned is set with it: the cookie a framed guest gets is keyed
-	// to the page framing it, so it is not the same session as a direct visit and
-	// cannot be reached from anywhere else that embeds the same guest.
 	CookieSameSite string `yaml:"cookie_samesite"`
 }
 
-// ConsoleConfig enables the browser terminal. Its presence is what claims the
-// console hostnames: with no console: block those names route nowhere, so the
-// endpoint cannot be reached on a host that was not meant to offer it.
 type ConsoleConfig struct {
-	// Label is the extra hostname label that marks a console host, so
-	// "<vm>.shell.<domain>" is the terminal for "<vm>.<domain>". Configurable
-	// only because it also has to match a DNS record and a certificate, which are
-	// cut outside this file.
 	Label string `yaml:"label"`
-	// RemoteUser is the account the shell runs as inside the guest.
 	RemoteUser string `yaml:"remote_user"`
 }
 
 const defaultConsoleLabel = "shell"
 
-// hostLabelPattern is one DNS label. The label is spliced out of a hostname to
-// find the VM behind a console name, so a value containing a dot would make one
-// console name mean two different things.
 var hostLabelPattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 
-// hostnamePattern is a whole DNS name: dotted lowercase labels. Site hostnames
-// become routing table keys, so one that is not a hostname would be a key no
-// request could ever match.
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 func (c *ConsoleConfig) label() string {
@@ -168,23 +127,9 @@ func (c *ConsoleConfig) remoteUser() string {
 	return defaultConsoleRemoteUser
 }
 
-// SiteConfig is the static page this host answers on hostnames of its own --
-// "www.<domain>" -- rather than forwarding to a guest.
-//
-// It is served from a loopback listener rather than written straight onto the
-// client socket because both ingresses have to reach it: the plaintext path
-// routes through the host table, and the TLS path is terminated by dpipe, which
-// only ever dials a target. A loopback backend is the one shape both understand.
 type SiteConfig struct {
-	// Listen is where the page is served, and is what the host entries below
-	// point at. Loopback: nothing outside the machine should reach it directly.
 	Listen string `yaml:"listen"`
-	// Hosts are the hostnames served the page. They are added to the routing
-	// table, but never over a published VM -- a real guest always wins.
 	Hosts []string `yaml:"hosts"`
-	// HTMLFile is the page itself, written by the control server alongside this
-	// config. Read once at startup, so a change to it needs a restart -- which is
-	// what the client does when the file it pushed changed.
 	HTMLFile string `yaml:"html_file"`
 }
 
@@ -197,8 +142,6 @@ func (s *SiteConfig) listen() string {
 	return defaultSiteListen
 }
 
-// entry is the routing table entry a site hostname gets: the loopback listener,
-// with its port unauthenticated -- a landing page nobody can read is not one.
 func (s *SiteConfig) entry() (HTTPHost, error) {
 	host, port, err := net.SplitHostPort(s.listen())
 	if err != nil {
@@ -211,14 +154,11 @@ func (s *SiteConfig) entry() (HTTPHost, error) {
 	return HTTPHost{Host: host, UnauthenticatedPorts: []int{p}, DefaultPort: p}, nil
 }
 
-// HTTPSConfig is the TLS ingress. Routing reuses http.hosts via
-// resolve{kind:"http"}; the certificates live in dpipe.
 type HTTPSConfig struct {
 	Listen    string `yaml:"listen"`
 	Reuseport bool   `yaml:"reuseport"`
 }
 
-// TCPRoute is one opaque TCP ingress listener.
 type TCPRoute struct {
 	Listen    string `yaml:"listen"`
 	Target    string `yaml:"target"`
@@ -226,15 +166,12 @@ type TCPRoute struct {
 	Reuseport bool   `yaml:"reuseport"`
 }
 
-// SSHConfig is the SSH ingress plus the pubkey policy answered over resolve.
 type SSHConfig struct {
 	Listen    string    `yaml:"listen"`
 	Reuseport bool      `yaml:"reuseport"`
 	Users     []SSHUser `yaml:"users"`
 }
 
-// SSHUser maps one authorized public key to a target and remote user. VMName is
-// the login name that selects this entry, so one key can own several VMs.
 type SSHUser struct {
 	PubKey     string `yaml:"pubkey"`
 	PubKeyFile string `yaml:"pubkey_file"`
@@ -243,13 +180,11 @@ type SSHUser struct {
 	RemoteUser string `yaml:"remote_user"`
 }
 
-// ForwardConfig is a listen_forward job programmed in dpipe at startup.
 type ForwardConfig struct {
 	Listen string `yaml:"listen"`
 	Target string `yaml:"target"`
 }
 
-// LoadConfig reads and validates a configuration file.
 func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -265,7 +200,6 @@ func LoadConfig(path string) (*Config, error) {
 	return &c, nil
 }
 
-// Validate checks the configuration for the invariants the proxy relies on.
 func (c *Config) Validate() error {
 	if c.ControlSocket == "" {
 		return errors.New("config: control_socket is required")
@@ -296,9 +230,6 @@ func (c *Config) Validate() error {
 			if host == "" || strings.Contains(host, "*") {
 				return fmt.Errorf("config: http.hosts key %q is invalid (no wildcards)", host)
 			}
-			// "--" is reserved for the name--port form, which is resolved
-			// against the base hostname's entry. A literal key containing it
-			// would be a second, ambiguous source for the same request.
 			if strings.Contains(host, portSeparator) {
 				return fmt.Errorf("config: http.hosts key %q must not contain %q (reserved for the name%sport form)",
 					host, portSeparator, portSeparator)
@@ -315,8 +246,6 @@ func (c *Config) Validate() error {
 					return err
 				}
 			}
-			// Fail closed: a host that wants auth but has nowhere to send the
-			// user would otherwise serve the site unauthenticated.
 			if h.NeedsAuth(h.DefaultPort) && c.Auth == nil {
 				return fmt.Errorf("config: %s requires auth (port %d is not in unauthenticated_ports) but auth: is not configured",
 					field, h.DefaultPort)
@@ -333,8 +262,6 @@ func (c *Config) Validate() error {
 			return err
 		}
 		ingress++
-		// A site block is enough on its own: a host with no VMs yet still has a
-		// landing page to serve, and it is routed through the same host map.
 		if c.HTTP == nil || (len(c.HTTP.Hosts) == 0 && c.Site == nil) {
 			return errors.New("config: https requires http.hosts or site (HTTPS routing reuses the host map)")
 		}
@@ -366,8 +293,6 @@ func (c *Config) Validate() error {
 			if u.RemoteUser == "" {
 				return fmt.Errorf("config: ssh.users[%d].remote_user is required", i)
 			}
-			// The login name a client types has to be able to be this exactly, or
-			// the entry is unreachable rather than merely unused.
 			if u.VMName == "" || strings.ContainsAny(u.VMName, " \t@:") {
 				return fmt.Errorf("config: ssh.users[%d].vm_name %q is not a usable ssh login name", i, u.VMName)
 			}
@@ -393,9 +318,6 @@ func (c *Config) Validate() error {
 		switch strings.ToLower(strings.TrimSpace(c.Auth.CookieSameSite)) {
 		case "", "lax":
 		case "none":
-			// Rejected rather than corrected: a browser silently drops a
-			// SameSite=None cookie that is not Secure, and the failure that
-			// follows looks like "login did nothing" on every request.
 			if !c.Auth.CookieSecure {
 				return errors.New("config: auth.cookie_samesite: none requires auth.cookie_secure: true (browsers drop such a cookie over plaintext)")
 			}
@@ -405,13 +327,9 @@ func (c *Config) Validate() error {
 	}
 
 	if c.Console != nil {
-		// The console is a shell. A signed token is the only thing between the
-		// internet and it, and without auth: there is no key to verify one with.
 		if c.Auth == nil {
 			return errors.New("config: console requires auth (the console token is verified with auth.cookie_secret_file)")
 		}
-		// Console hostnames are derived from the http host table, so without one
-		// there is nothing a console name could resolve to.
 		if c.HTTP == nil {
 			return errors.New("config: console requires http.hosts (a console host is derived from a VM's host entry)")
 		}
@@ -424,8 +342,6 @@ func (c *Config) Validate() error {
 		if err := claim("site", c.Site.listen()); err != nil {
 			return err
 		}
-		// Beyond claim's host:port check: the port is parsed into a routing table
-		// entry, where a named port would have nowhere to go.
 		if err := validHostPort("site.listen", c.Site.listen()); err != nil {
 			return err
 		}
@@ -456,8 +372,6 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-// validHostPort requires a concrete host:port with a numeric port and no
-// wildcards in the host.
 func validHostPort(field, addr string) error {
 	if addr == "" {
 		return fmt.Errorf("config: %s is required", field)
@@ -483,7 +397,6 @@ func validPort(field string, port int) error {
 	return nil
 }
 
-// ParseLogLevel maps a config log level to a slog level.
 func ParseLogLevel(s string) slog.Level {
 	switch s {
 	case "debug":

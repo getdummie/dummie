@@ -13,7 +13,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Duration is a time.Duration that unmarshals from a YAML string like "5s".
 type Duration time.Duration
 
 func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
@@ -38,10 +37,8 @@ func (d *Duration) UnmarshalYAML(n *yaml.Node) error {
 	return nil
 }
 
-// D returns the duration value.
 func (d Duration) D() time.Duration { return time.Duration(d) }
 
-// Or returns d, or def when d is zero.
 func (d Duration) Or(def time.Duration) time.Duration {
 	if d == 0 {
 		return def
@@ -49,7 +46,6 @@ func (d Duration) Or(def time.Duration) time.Duration {
 	return time.Duration(d)
 }
 
-// Config is the dpipe configuration file.
 type Config struct {
 	ControlSocket string   `yaml:"control_socket"`
 	UpgradeSocket string   `yaml:"upgrade_socket"`
@@ -61,17 +57,9 @@ type Config struct {
 	Console ConsoleConfig `yaml:"console"`
 }
 
-// ConsoleConfig configures the browser terminal. Who may open one is the proxy's
-// decision and is never revisited here; these are the resource limits dpipe puts
-// on what it is handed.
 type ConsoleConfig struct {
 	Enabled bool `yaml:"enabled"`
-	// IdleTimeout ends a session with no traffic in either direction. A terminal
-	// holds an SSH connection and a pty in the guest open for as long as the tab
-	// exists, which is otherwise forever.
 	IdleTimeout Duration `yaml:"idle_timeout"`
-	// MaxSessionsPerHost caps concurrent terminals per VM. Per VM rather than
-	// global so one guest's open tabs cannot lock every other guest out.
 	MaxSessionsPerHost int `yaml:"max_sessions_per_host"`
 }
 
@@ -91,7 +79,6 @@ func (c ConsoleConfig) maxPerHost() int {
 	return c.MaxSessionsPerHost
 }
 
-// SSHConfig configures SSH termination.
 type SSHConfig struct {
 	Enabled           bool     `yaml:"enabled"`
 	HostKey           string   `yaml:"host_key"`
@@ -101,14 +88,12 @@ type SSHConfig struct {
 	ResolveTimeout    Duration `yaml:"resolve_timeout"`
 }
 
-// CertConfig is one SNI-selected certificate.
 type CertConfig struct {
 	SNI  string `yaml:"sni"`
 	Cert string `yaml:"cert"`
 	Key  string `yaml:"key"`
 }
 
-// TLSConfig configures TLS termination.
 type TLSConfig struct {
 	Enabled     bool         `yaml:"enabled"`
 	Certs       []CertConfig `yaml:"certs"`
@@ -122,7 +107,6 @@ type TLSConfig struct {
 	SniffMaxBytes  int      `yaml:"sniff_max_bytes"`
 }
 
-// LoadConfig reads and validates a configuration file.
 func LoadConfig(path string) (*Config, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -153,9 +137,6 @@ func (c *Config) validate() error {
 			return errors.New("config: ssh.enabled requires host_key and client_key")
 		}
 	}
-	// The console opens an SSH session to the guest with dpipe's client key under
-	// the same host-key policy as the SSH ingress, so without ssh: there is no
-	// key to authenticate with and nothing to verify the guest against.
 	if c.Console.Enabled && !c.SSH.Enabled {
 		return errors.New("config: console.enabled requires ssh.enabled (the console opens its shell with dpipe's ssh client key)")
 	}
@@ -185,7 +166,6 @@ func tlsMinVersion(s string) (uint16, error) {
 	return 0, fmt.Errorf("config: tls.min_version must be 1.2 or 1.3, got %q", s)
 }
 
-// material holds everything loaded from disk at startup.
 type material struct {
 	hostSigner   ssh.Signer
 	clientSigner ssh.Signer
@@ -196,7 +176,6 @@ type material struct {
 	tlsMin     uint16
 }
 
-// loadMaterial loads SSH keys and TLS certificates according to the config.
 func loadMaterial(c *Config, log *slog.Logger) (*material, error) {
 	m := &material{certs: map[string]*tls.Certificate{}}
 
@@ -259,7 +238,6 @@ func loadSigner(path string) (ssh.Signer, error) {
 	return ssh.ParsePrivateKey(b)
 }
 
-// ParseLogLevel maps a config log level to a slog level.
 func ParseLogLevel(s string) slog.Level {
 	switch s {
 	case "debug":

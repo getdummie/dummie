@@ -11,7 +11,6 @@ import (
 func TestConsoleVMHost(t *testing.T) {
 	cfg := &Config{HTTP: &HTTPConfig{Hosts: map[string]HTTPHost{
 		"one.vm.local": {Host: "10.64.0.2", DefaultPort: 8000},
-		// A VM whose own published name collides with another VM's console name.
 		"two.shell.vm.local": {Host: "10.64.0.3", DefaultPort: 8000},
 	}}}
 	p := &Proxy{cfg: cfg, router: NewRouter(cfg)}
@@ -39,15 +38,12 @@ func TestConsoleVMHost(t *testing.T) {
 		}
 	}
 
-	// No console: block means the names are not the proxy's to claim at all.
 	p.cfg.Console = nil
 	if _, ok := p.consoleVMHost("one.shell.vm.local"); ok {
 		t.Error("a console name resolved with no console: configured")
 	}
 }
 
-// mintConsoleToken stands in for the control server: same key, same payload
-// shape as a session token, console audience.
 func mintConsoleToken(a *Authenticator, sub, host string) string {
 	payload, err := json.Marshal(claims{
 		Sub: sub,
@@ -61,8 +57,6 @@ func mintConsoleToken(a *Authenticator, sub, host string) string {
 	return b + "." + base64.RawURLEncoding.EncodeToString(a.sign([]byte(b)))
 }
 
-// The console token and the HTTP session token are signed with the same key and
-// have the same payload shape; only aud separates them.
 func TestConsoleAndSessionTokensAreNotInterchangeable(t *testing.T) {
 	a := newTestAuth(t)
 	session := a.Mint("cc@example.com", "one.vm.local")
@@ -98,7 +92,6 @@ func TestVerifyConsoleRejects(t *testing.T) {
 	if _, ok := a.VerifyConsole(tok, ""); ok {
 		t.Error("empty host accepted")
 	}
-	// The audience is compared whole: "console:" must not be usable as the host.
 	if _, ok := a.Verify(tok, "console:one.vm.local"); ok {
 		t.Error("a console audience was accepted as a session audience")
 	}
@@ -194,8 +187,6 @@ func TestConsoleConfigValidation(t *testing.T) {
 		t.Errorf("remoteUser = %q", cfg.Console.remoteUser())
 	}
 
-	// The console is claimed on both ingresses: the https path recognizes the
-	// hostname in resolve{kind:"http"}.
 	cfg = base()
 	cfg.Auth = &AuthConfig{ControlURL: "http://c/l", CookieSecretFile: "/etc/dpipe/secret"}
 	cfg.HTTPS = &HTTPSConfig{Listen: "0.0.0.0:443"}

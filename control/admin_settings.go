@@ -10,17 +10,11 @@ import (
 	"control/internal/db"
 )
 
-// settingDTO is one row of the settings screen: the definition an admin needs
-// to understand the setting, plus its current value and when it last changed.
-//
-// Value is always a string, whatever the kind -- the column is TEXT, and a
-// single shape keeps the client from having to switch on the type to read it.
-// For a secret it is always empty; IsSet is what the UI has instead.
 type settingDTO struct {
 	settingDef
 	Value     string `json:"value"`
 	IsSet     bool   `json:"is_set"`
-	UpdatedAt string `json:"updated_at"` // "" = never written since the seed
+	UpdatedAt string `json:"updated_at"`
 }
 
 func newSettingDTO(def settingDef, value string, updatedAt string) settingDTO {
@@ -31,9 +25,6 @@ func newSettingDTO(def settingDef, value string, updatedAt string) settingDTO {
 	return d
 }
 
-// ListSettings returns every known setting, whether or not it has a row. The
-// list is driven by settingDefs rather than by the table so a setting added in
-// code shows up (at its default) before anyone has written it.
 func (h *AdminHandler) ListSettings(c *echo.Context) error {
 	rows, err := h.q.ListSettings(c.Request().Context())
 	if err != nil {
@@ -58,17 +49,10 @@ func (h *AdminHandler) ListSettings(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
-// updateSettingReq takes the value as `any` because the kinds are stored in one
-// TEXT column but written as their natural JSON type: a toggle sends true, a
-// text field sends a string. Coerced against the declared kind below, so a
-// client that sends the wrong one is told rather than silently storing "%!s".
 type updateSettingReq struct {
 	Value any `json:"value"`
 }
 
-// UpdateSetting writes one setting. The key must be one the server declares:
-// an unknown key is a 404, not a new row, so this endpoint can never be used to
-// write arbitrary keys into the table.
 func (h *AdminHandler) UpdateSetting(c *echo.Context) error {
 	key := c.Param("key")
 	def, ok := settingDefByKey(key)
@@ -94,9 +78,6 @@ func (h *AdminHandler) UpdateSetting(c *echo.Context) error {
 		if !ok {
 			return echo.NewHTTPError(http.StatusBadRequest, "value must be a string")
 		}
-		// Trimmed because these are pasted: a trailing space in a URL or a version
-		// is never meant, and both are used to build something that would fail
-		// somewhere far less obvious than here.
 		value = strings.TrimSpace(s)
 	}
 	if def.validate != nil {
@@ -117,17 +98,9 @@ func (h *AdminHandler) UpdateSetting(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save setting")
 	}
 
-	// A vector setting that only took effect on the next connect would mean an
-	// admin changing the version sees nothing happen until every host happens to
-	// reconnect. Pushed to everyone that is online instead; the rest pick it up
-	// when they come back, because the connect path sends one unconditionally.
 	if isVectorSetting(def.Key) {
 		pushVectorConfigToAll(c.Request().Context(), h.q, h.hub)
 	}
-	// The resolver upstream is baked into every host's Corefile, so a change here is
-	// not a change until those are rewritten. More urgent than the vector settings:
-	// an admin moving the fleet off a resolver that is going away has to be able to
-	// rely on it having happened.
 	if def.Key == settingResolverUpstream {
 		pushCoreDNSConfigToAll(c.Request().Context(), h.q, h.hub)
 	}

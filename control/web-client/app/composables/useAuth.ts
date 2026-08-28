@@ -28,9 +28,6 @@ export interface SignupPayload {
   last_name: string
 }
 
-// Module-scope singletons: the access token lives ONLY in memory (never
-// persisted by JS). The httpOnly refresh cookie — set by the server — is what
-// survives reloads and lets us silently re-establish the session.
 const user = ref<AuthUser | null>(null)
 const accessToken = ref<string | null>(null)
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
@@ -59,8 +56,6 @@ export function useAuth() {
     }
   }
 
-  // Proactively refresh ~60s before the access token expires (min 30s), so the
-  // session never lapses while the tab is open.
   function scheduleRefresh() {
     clearTimer()
     const ms = Math.max(accessMins * 60 - 60, 30) * 1000
@@ -93,9 +88,6 @@ export function useAuth() {
     setSession(await res.json())
   }
 
-  // Unreachable or malformed answers are treated as "open": the server rejects a
-  // disabled sign-up anyway, and a form that hides itself whenever this call
-  // hiccups is worse than one that fails on submit.
   async function signupEnabled(): Promise<boolean> {
     try {
       const res = await fetch(`${base}/api/v1/signup_status`, { credentials: 'include' })
@@ -108,9 +100,6 @@ export function useAuth() {
     }
   }
 
-  // The providers on offer, for the buttons above the password form. Empty on
-  // any failure: a deployment with no federated sign-in is the common case, so
-  // "none" and "could not ask" render the same and neither is worth an error.
   async function oidcProviders(): Promise<OIDCProvider[]> {
     try {
       const res = await fetch(`${base}/api/v1/oidc/providers`, { credentials: 'include' })
@@ -122,9 +111,6 @@ export function useAuth() {
     }
   }
 
-  // Where to send the browser to begin a federated sign-in. A full navigation,
-  // not a fetch: the flow is a chain of redirects through the provider's own
-  // pages, which is the whole point of it.
   function oidcStartURL(slug: string, redirect?: string | null): string {
     const url = new URL(`${base}/api/v1/oidc/${encodeURIComponent(slug)}/start`, window.location.origin)
     if (redirect) url.searchParams.set('redirect', redirect)
@@ -147,9 +133,6 @@ export function useAuth() {
     }
   }
 
-  // authFetch is for authenticated (e.g. admin) endpoints. Auth rides the
-  // httpOnly access-token cookie (credentials: 'include'); on a 401 we refresh
-  // once and retry so an expired access cookie is handled transparently.
   async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
     const url = `${base}/api/v1${path}`
     const opts: RequestInit = { credentials: 'include', ...init }
@@ -165,14 +148,11 @@ export function useAuth() {
       await api('/signout')
     }
     catch {
-      // best-effort; clear local state regardless
     }
     clearSession()
     await navigateTo('/signin')
   }
 
-  // init runs once (guarded by readyPromise): attempt a silent refresh so a
-  // reload restores the session from the httpOnly cookie before guards run.
   function init(): Promise<void> {
     if (!readyPromise) {
       readyPromise = refresh().then(() => undefined)

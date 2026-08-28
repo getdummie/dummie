@@ -16,7 +16,6 @@ const { data: pages } = await useAsyncData('docs-index', () =>
     .all(),
 )
 
-// Same encounter-order grouping as DocsNav; see the note there.
 const groups = computed(() => {
   const out: { section: string, pages: { path: string, title: string, description?: string }[] }[] = []
   for (const p of pages.value ?? []) {
@@ -50,8 +49,6 @@ const groups = computed(() => {
           is built around.
         </p>
         <div class="mt-8">
-          <!-- The live API reference is served by the control plane itself, so
-               it always matches the version you are running. -->
           <a
             :href="`${consoleUrl}/docs`"
             class="inline-flex items-center gap-2 font-mono text-sm text-primary-text underline-offset-4 hover:underline"

@@ -5,9 +5,6 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import VmTerminal from '@/components/VmTerminal.vue'
 
-// layout: false because a terminal wants the whole viewport, and a new tab from
-// the VM page rather than an in-app link because the shell lives in this
-// component: navigating within the app would unmount it and drop the session.
 definePageMeta({ middleware: ['auth'], layout: false })
 
 interface VM {
@@ -56,8 +53,6 @@ const statusLabel = computed(() => ({
         {{ vm?.name || vm?.vm_id || 'console' }}
       </h1>
 
-      <!-- The hostname the shell is actually behind, so it is visible even
-           though the page itself is served from the control server. -->
       <span v-if="host" class="font-mono text-xs text-muted-foreground">{{ host }}</span>
 
       <div class="ml-auto flex items-center gap-2">

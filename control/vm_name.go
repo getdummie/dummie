@@ -14,43 +14,17 @@ import (
 	"control/internal/db"
 )
 
-// A VM's name is what proxy routes http by, so it is a fleet-wide identifier
-// rather than a label: unique, and shaped like the DNS label it becomes. A name
-// the caller leaves empty is generated -- two words in the style of a docker
-// container name -- because a VM with no name would have no route, and asking
-// someone to invent a globally unique string is asking them to fail.
-//
-// crypto/rand rather than math/rand: the name ends up in a URL that reaches a
-// guest, and a predictable sequence would let someone who has seen a few names
-// guess the ones that come next.
-
-// Bounds match the vms_name_shape constraint. Duplicated rather than derived
-// because the database rejects a bad name and the API explains one, and those
-// are different jobs -- but they must agree, so they are stated next to the
-// error text a caller sees.
 const (
 	vmNameMinLen = 3
 	vmNameMaxLen = 52
 )
 
-// vmNamePattern is lowercase alphanumeric words joined by single hyphens:
-// "hellokitty" and "hello-temporal-kitty" pass, "hello--kitty" does not.
 var vmNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
-// vmNameAttempts bounds the retry loop on a name that is already taken. With the
-// list sizes below there are over twenty thousand combinations, so a handful of
-// attempts covers a fleet far larger than one of these is likely to hold; the
-// bound exists so a genuinely exhausted list fails instead of spinning.
 const vmNameAttempts = 6
 
-// vmNameConstraint is the unique constraint on vms.name, matched by name so a
-// taken name is distinguished from every other unique violation -- notably the
-// (client_id, vm_id) index, which a retry under a different name would never
-// resolve.
 const vmNameConstraint = "vms_name_key"
 
-// validateVMName checks a caller-supplied name. Empty is not an error: it is the
-// request to generate one, and the caller decides what that means.
 func validateVMName(s string) (string, error) {
 	name := strings.ToLower(strings.TrimSpace(s))
 	if name == "" {
@@ -65,19 +39,8 @@ func validateVMName(s string) (string, error) {
 	return name, nil
 }
 
-// systemReservedVMNames are the control plane's own hostnames. A VM answering
-// on one of these would shadow it for everyone, so they are refused in code
-// rather than through the settings table: an admin who could edit this list
-// could take the console offline by clearing it.
-// Two of them are named by the constants that make them mean something: a VM
-// called "www" would collide with the page proxy serves, and one called "shell"
-// with the label a console hostname is spliced out of.
 var systemReservedVMNames = []string{proxySiteLabel, proxyConsoleLabel, "console", "int"}
 
-// vmNameAllowed reports whether a validated name is out of reach, either as one
-// of the system names above or by an operator's list. Generated names are always
-// an adjective-noun pair, so this only ever has anything to say about a name
-// someone chose.
 func vmNameAllowed(ctx context.Context, q *db.Queries, name string) error {
 	if name == "" {
 		return nil
@@ -92,7 +55,6 @@ func vmNameAllowed(ctx context.Context, q *db.Queries, name string) error {
 	return nil
 }
 
-// randomVMName returns a name like "interesting-hawking".
 func randomVMName() (string, error) {
 	adj, err := pickWord(vmNameAdjectives)
 	if err != nil {
@@ -113,23 +75,10 @@ func pickWord(list []string) (string, error) {
 	return list[n.Int64()], nil
 }
 
-// withVMName runs insert under a usable name for a VM someone asked for. An
-// empty preferred means "generate one", and each collision is redrawn; a
-// preferred name that is taken comes back as errVMNameTaken, because a caller
-// who chose a name has to be told they did not get it rather than quietly
-// handed a different one.
-//
-// The insert is handed the name rather than choosing its own so the retry lives
-// in one place: both create paths and the adopt path need it, and one that
-// forgot would fail for a reason unrelated to the request.
 func withVMName(ctx context.Context, preferred string, insert func(ctx context.Context, name string) error) error {
 	return nameLoop(ctx, preferred, true, insert)
 }
 
-// withAdoptedVMName is the same for a VM this server did not ask for: the
-// preferred name is the host's, and if it is taken there is nobody to report
-// that to, so a generated one is used instead. Refusing would mean a VM that is
-// really running never appears at all.
 func withAdoptedVMName(ctx context.Context, preferred string, insert func(ctx context.Context, name string) error) error {
 	return nameLoop(ctx, preferred, false, insert)
 }
@@ -155,17 +104,12 @@ func nameLoop(ctx context.Context, preferred string, reportTaken bool, insert fu
 	return errors.New("could not find an unused vm name")
 }
 
-// errVMNameTaken is the one failure a caller reports rather than retries.
 var errVMNameTaken = errors.New("that name is already taken")
 
 func isVMNameTaken(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == vmNameConstraint
 }
-
-// The lists are ASCII-only and hyphen-free on purpose: the two halves are joined
-// with a hyphen, and a word carrying one of its own would produce the doubled
-// hyphen the name constraint rejects.
 
 var vmNameAdjectives = []string{
 	"admiring", "adoring", "affectionate", "agitated", "amazing", "angry", "awesome",

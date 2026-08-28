@@ -1,8 +1,3 @@
-// Package xnet holds the socket plumbing shared by proxy and dpipe: adopting
-// descriptors received over SCM_RIGHTS, extracting a listener's descriptor, and
-// binding listeners with SO_REUSEPORT.
-//
-// This package is SHARED SOURCE with the proxy repository.
 package xnet
 
 import (
@@ -16,9 +11,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// FileConn adopts a connected socket descriptor and returns it as a net.Conn.
-// It takes ownership of fd: the descriptor is closed before returning (net's
-// FileConn works on its own dup), including on error.
 func FileConn(fd int) (net.Conn, error) {
 	f := os.NewFile(uintptr(fd), "adopted-conn")
 	if f == nil {
@@ -33,7 +25,6 @@ func FileConn(fd int) (net.Conn, error) {
 	return c, nil
 }
 
-// FileListener adopts a listening socket descriptor. It takes ownership of fd.
 func FileListener(fd int) (net.Listener, error) {
 	f := os.NewFile(uintptr(fd), "adopted-listener")
 	if f == nil {
@@ -48,9 +39,6 @@ func FileListener(fd int) (net.Listener, error) {
 	return ln, nil
 }
 
-// ListenerFD returns the raw descriptor of a listener. The descriptor is not
-// duplicated, so it is only valid while ln stays open — long enough to pass it
-// over SCM_RIGHTS.
 func ListenerFD(ln net.Listener) (int, error) {
 	sc, ok := ln.(syscall.Conn)
 	if !ok {
@@ -59,8 +47,6 @@ func ListenerFD(ln net.Listener) (int, error) {
 	return connFD(sc)
 }
 
-// ConnFD returns the raw descriptor of a connection, with the same caveat as
-// ListenerFD.
 func ConnFD(c net.Conn) (int, error) {
 	sc, ok := c.(syscall.Conn)
 	if !ok {
@@ -84,8 +70,6 @@ func connFD(sc syscall.Conn) (int, error) {
 	return fd, nil
 }
 
-// WithFD runs fn with the connection's raw descriptor held live for the duration
-// of the call, which is what makes an fd hand-off safe.
 func WithFD(c net.Conn, fn func(fd int) error) error {
 	sc, ok := c.(syscall.Conn)
 	if !ok {
@@ -102,15 +86,12 @@ func WithFD(c net.Conn, fn func(fd int) error) error {
 	return inner
 }
 
-// WithFD2 is WithFD for two connections at once (the copy hand-off).
 func WithFD2(a, b net.Conn, fn func(fdA, fdB int) error) error {
 	return WithFD(a, func(fa int) error {
 		return WithFD(b, func(fb int) error { return fn(fa, fb) })
 	})
 }
 
-// Listen binds a TCP listener, optionally with SO_REUSEPORT so that a
-// replacement process can bind the same port before the old one exits.
 func Listen(network, addr string, reuseport bool) (net.Listener, error) {
 	lc := net.ListenConfig{
 		Control: func(_, _ string, c syscall.RawConn) error {
@@ -135,8 +116,6 @@ func Listen(network, addr string, reuseport bool) (net.Listener, error) {
 	return lc.Listen(context.Background(), network, addr)
 }
 
-// ListenUnix binds a unix stream listener with mode 0600. A stale socket file
-// that nothing is listening on is removed first; a live one is an error.
 func ListenUnix(path string) (*net.UnixListener, error) {
 	if err := removeStaleSocket(path); err != nil {
 		return nil, err

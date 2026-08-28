@@ -10,7 +10,6 @@ import (
 	"dpipe/internal/xnet"
 )
 
-// acceptUpgrade serves the upgrade socket. Handovers are handled one at a time.
 func (s *Server) acceptUpgrade() {
 	for {
 		c, err := s.upLn.AcceptUnix()
@@ -30,8 +29,6 @@ func (s *Server) acceptUpgrade() {
 	}
 }
 
-// handleUpgradeConn is the old process' side of the handover: hand every
-// listening socket to the new process, then drain.
 func (s *Server) handleUpgradeConn(c *net.UnixConn) {
 	defer c.Close()
 	k := control.NewConn(c)
@@ -71,8 +68,6 @@ func (s *Server) handleUpgradeConn(c *net.UnixConn) {
 	s.log.Info("handover acknowledged: draining", "active", s.reg.Active())
 	s.reg.SetDraining()
 	s.stopAccepting()
-	// Drop proxy control connections so proxies reconnect to the new instance
-	// (and future resolves reach it).
 	s.closePeers()
 
 	go func() {
@@ -81,8 +76,6 @@ func (s *Server) handleUpgradeConn(c *net.UnixConn) {
 	}()
 }
 
-// collectSockets returns the socket descriptors and matching listener fds for a
-// handover: control, upgrade and every listen_forward.
 func (s *Server) collectSockets() ([]control.SockDesc, []int, error) {
 	cfd, err := xnet.ListenerFD(s.ctrlLn)
 	if err != nil {
@@ -111,8 +104,6 @@ func (s *Server) collectSockets() ([]control.SockDesc, []int, error) {
 	return descs, fds, nil
 }
 
-// AdoptRunning is the new process' side of the handover: take over the listening
-// sockets of the running instance, start serving, then acknowledge.
 func (s *Server) AdoptRunning() error {
 	c, err := net.Dial("unix", s.cfg.UpgradeSocket)
 	if err != nil {
@@ -180,14 +171,6 @@ func (s *Server) AdoptRunning() error {
 	s.log.Info("adopted listeners from running instance", "sockets", len(m.Sockets))
 	s.Start()
 
-	// Before the ack, not after: the ack is what starts the old process draining,
-	// and a drain with no active connections ends immediately. Notifying second
-	// would race a systemd that has already watched the unit's main process exit
-	// cleanly and given up on the unit.
-	//
-	// A failure here is logged rather than returned. The listeners are already
-	// ours, so there is no unwinding this -- and outside a Type=notify unit there
-	// is no socket to write to and this is a no-op.
 	if err := NotifyMainPID(os.Getpid()); err != nil {
 		s.log.Warn("could not tell systemd the main pid moved", "err", err)
 	}

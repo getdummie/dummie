@@ -24,9 +24,6 @@ interface SettingRow {
   updated_at: string
 }
 
-// A secret never comes back from the server, so its field starts empty on every
-// load and submitting an empty one is a no-op rather than a way to clear it by
-// accident. Kept out of `items` so a reload cannot echo a typed credential.
 const drafts = ref<Record<string, string>>({})
 
 const { authFetch } = useAuth()
@@ -34,7 +31,6 @@ const { authFetch } = useAuth()
 const items = ref<SettingRow[]>([])
 const loading = ref(true)
 const error = ref<string | null>(null)
-// Keyed by setting key so two toggles saving at once cannot disable each other.
 const saving = ref<Record<string, boolean>>({})
 const saveError = ref<string | null>(null)
 const savedKey = ref<string | null>(null)
@@ -49,13 +45,11 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
 }
 
-/** "8th August 2026, 12:07 AM" */
 function fmtDate(s: string) {
   if (!s) return 'never'
   const d = new Date(s)
@@ -88,9 +82,6 @@ onMounted(load)
 
 async function save(row: SettingRow, value: boolean | string) {
   const previous = row.value
-  // Optimistic for the switch only: it has already moved under the pointer, so
-  // reverting on failure reads better than snapping back and forth on every
-  // success. A text field has not changed the row yet.
   if (typeof value === 'boolean') row.value = String(value)
   saving.value = { ...saving.value, [row.key]: true }
   saveError.value = null
@@ -106,8 +97,6 @@ async function save(row: SettingRow, value: boolean | string) {
     row.value = saved.value
     row.is_set = saved.is_set
     row.updated_at = saved.updated_at
-    // Typed credentials are dropped as soon as they are stored; everything else
-    // re-syncs with what the server actually kept after trimming.
     if (row.kind === 'secret') drafts.value = { ...drafts.value, [row.key]: '' }
     else if (row.kind === 'string') drafts.value = { ...drafts.value, [row.key]: saved.value }
     savedKey.value = row.key
@@ -123,8 +112,6 @@ async function save(row: SettingRow, value: boolean | string) {
   }
 }
 
-// An unchanged text field should not be savable: it would push the same value
-// to every client in the fleet for nothing.
 function isDirty(row: SettingRow) {
   const draft = drafts.value[row.key] ?? ''
   if (row.kind === 'secret') return draft !== ''
@@ -178,13 +165,8 @@ function isDirty(row: SettingRow) {
           class="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:gap-4"
         >
           <div class="min-w-0 flex-1">
-            <!-- Not a <label>: the switch is a button, which `for` cannot target.
-                 The Switch points at these two with aria-labelledby/describedby. -->
             <p :id="`setting-${s.key}-label`" class="flex flex-wrap items-center gap-2 text-sm font-medium">
               {{ s.label }}
-              <!-- Button, not a bare icon: a tooltip that only opens on hover is
-                   unreachable by keyboard, and this is the only place the risk is
-                   spelled out. (WCAG 1.4.13) -->
               <Tooltip v-if="s.warn && s.value === 'true'">
                 <TooltipTrigger as-child>
                   <button
@@ -243,8 +225,6 @@ function isDirty(row: SettingRow) {
 
       <AdminOIDCProviders />
 
-      <!-- The switch's own state change isn't announced as a save confirmation,
-           so the outcome gets its own live region. (WCAG 4.1.3) -->
       <p role="status" aria-live="polite" class="sr-only">
         {{ savedKey ? `${savedKey} saved` : '' }}
       </p>

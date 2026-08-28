@@ -10,7 +10,6 @@ import socketserver
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     name = "backend"
@@ -38,7 +37,6 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):  # noqa: A002 - signature fixed by the base class
         sys.stderr.write(f"[{self.name}] {format % args}\n")
 
-
 class EchoHandler(socketserver.BaseRequestHandler):
     def handle(self):
         while True:
@@ -47,11 +45,9 @@ class EchoHandler(socketserver.BaseRequestHandler):
                 return
             self.request.sendall(data)
 
-
 class ThreadedTCPServer(socketserver.ThreadingTCPServer):
     allow_reuse_address = True
     daemon_threads = True
-
 
 def main() -> int:
     if len(sys.argv) < 3:
@@ -67,7 +63,6 @@ def main() -> int:
         print(__doc__, file=sys.stderr)
         return 2
     return 0
-
 
 if __name__ == "__main__":
     try:

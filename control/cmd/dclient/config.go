@@ -9,15 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Config is the host's operator-set configuration. It is the source of truth
-// for the daemon; net.json remains only as the resolved copy the direct
-// (no-daemon, root) path reads.
-//
-// The file holds the enrollment key, so it is expected to be 0600 root:root.
-// Membership of the dclient group grants the socket, deliberately not this.
 type Config struct {
-	// Control plane. EnrollmentKey is only consulted the first time: once
-	// client.json has a token, the key is ignored.
 	ControlURL    string `yaml:"control_url"`
 	EnrollmentKey string `yaml:"enrollment_key"`
 	Insecure      bool   `yaml:"insecure"`
@@ -29,64 +21,27 @@ type Config struct {
 	Features Features      `yaml:"features"`
 	Network  NetworkConfig `yaml:"network"`
 
-	// The companion binaries dclient installs and runs as systemd units -- dpipe,
-	// dproxy and vector -- used to be configured here, each with an enable flag and
-	// a download_url. All of it moved to the control server: which build a host runs
-	// is a fleet decision, and having every machine hold its own answer meant an
-	// upgrade was an ssh loop and nothing in the control plane knew what any host
-	// was actually running.
-	//
-	// The three sections are still parsed so that a config written for an older
-	// build gets told, rather than an operator finding their download_url quietly
-	// ignored. Nothing reads the contents.
 	LegacyDpipe  *yaml.Node `yaml:"dpipe"`
 	LegacyProxy  *yaml.Node `yaml:"dproxy"`
 	LegacyVector *yaml.Node `yaml:"vector"`
 }
 
-// Features is every part of `serve` that changes something outside dclient's own
-// data directory: kernel settings, device permissions, the packet filter,
-// another daemon's firewall chain, a container, a listening socket on the
-// gateway. All of it is off unless the operator turned it on, so a dclient
-// started with no configuration -- or with a configuration that only sets up
-// the control link -- touches nothing.
-//
-// The zero value is therefore the safe value, which is also what an empty or
-// missing config file yields.
 type Features struct {
-	// IPForward sets net.ipv4.ip_forward. Host-wide, and other things on the box
-	// may be relying on its current value either way.
 	IPForward bool `yaml:"ip_forward"`
 
-	// KVMAccess chowns and chmods /dev/kvm so an unprivileged uid can open it,
-	// creating the kvm group if it is missing.
 	KVMAccess bool `yaml:"kvm_access"`
 
-	// Nftables installs and then continuously reconciles the inet table. Without
-	// it nothing repairs drift, and the reconciler's per-VM tap and shaping
-	// cleanup does not run either.
 	Nftables bool `yaml:"nftables"`
 
-	// DockerCompat adds the accepts to Docker's DOCKER-USER chain that VM traffic
-	// needs to survive Docker's FORWARD policy.
 	DockerCompat bool `yaml:"docker_compat"`
 
-	// Suricata queues allowed egress to a Suricata container rather than
-	// accepting it outright, and starts that container.
 	Suricata bool `yaml:"suricata"`
 
-	// DHCP serves leases to guests. A /32 guest cannot install a default route
-	// without it, so a host with VMs that expect one wants this on.
 	DHCP bool `yaml:"dhcp"`
 
-	// Metadata serves per-VM identity on the gateway address.
 	Metadata bool `yaml:"metadata"`
 }
 
-// NetworkConfig mirrors netConfig, in the shape an operator writes rather than
-// the shape the reconciler uses. The two former toggles here, `suricata` and
-// `no_docker_compat`, moved to features; they are still parsed so that a config
-// written for an older build gets told rather than silently changing behaviour.
 type NetworkConfig struct {
 	Pool    string `yaml:"pool"`
 	Gateway string `yaml:"gateway"`
@@ -104,9 +59,6 @@ const (
 	defaultGroup  = "dclient"
 )
 
-// loadConfig reads the config file, filling in defaults. A missing file is not
-// an error: every field has a usable default, and a host with no control server
-// needs no configuration at all.
 func loadConfig(path string) (Config, error) {
 	var cfg Config
 	if path == "" {
@@ -122,9 +74,6 @@ func loadConfig(path string) (Config, error) {
 		warnIfReadable(path, cfg)
 		warnIfMoved(path, cfg)
 	case os.IsPermission(err):
-		// Expected for the CLI: the file is root-only because it holds the
-		// enrollment key, and the client only needs the socket path, which has a
-		// default. DCLIENT_SOCKET covers the case where an operator moved it.
 	case !os.IsNotExist(err):
 		return cfg, err
 	}
@@ -157,8 +106,6 @@ func loadConfig(path string) (Config, error) {
 	return cfg, nil
 }
 
-// warnIfReadable is a nudge, not a refusal: an operator who has deliberately
-// loosened the permissions should not be locked out of their own host.
 func warnIfReadable(path string, cfg Config) {
 	if cfg.EnrollmentKey == "" {
 		return
@@ -173,9 +120,6 @@ func warnIfReadable(path string, cfg Config) {
 	}
 }
 
-// warnIfMoved reports settings that used to live under network: and are now
-// features. Ignoring them silently would take Suricata off a host that thinks
-// it still has it, which is the kind of change an operator has to be told about.
 func warnIfMoved(path string, cfg Config) {
 	if cfg.Network.Suricata != nil {
 		log.Printf("WARNING: %s sets network.suricata, which moved to features.suricata and is being ignored", path)
@@ -198,10 +142,6 @@ func warnIfMoved(path string, cfg Config) {
 	}
 }
 
-// netConfigFrom converts the operator's configuration into the form the
-// reconciler works with, resolving the uplink if it was left unset. The two
-// behavioural flags come from features, so there is one place an operator turns
-// each of them on.
 func (c Config) netConfig() (netConfig, error) {
 	n := netConfig{
 		Pool:           c.Network.Pool,
@@ -221,6 +161,4 @@ func (c Config) netConfig() (netConfig, error) {
 	return n, nil
 }
 
-// socketDir is created before the listener binds; systemd's RuntimeDirectory
-// would also do it, but the daemon should not depend on being run by systemd.
 func socketDir(socket string) string { return filepath.Dir(socket) }

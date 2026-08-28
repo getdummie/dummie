@@ -3,7 +3,6 @@
 pkgs.mkShell {
   name = "linux-kernel-build";
 
-  # Tools needed to configure and compile a Linux kernel (vmlinux/bzImage).
   nativeBuildInputs = with pkgs; [
     gnumake
     gcc

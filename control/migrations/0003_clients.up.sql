@@ -1,8 +1,4 @@
--- 0003_clients: ephemeral enrollment keys and the client registry.
 
--- Keys handed to a machine so it can enroll itself once. Stored hashed; the raw
--- key is shown exactly once at creation. Validity is bounded by expires_at
--- and/or max_uses, either of which may be NULL for "unbounded on that axis".
 CREATE TABLE client_enrollment_keys (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     key_hash   TEXT NOT NULL UNIQUE,
@@ -16,9 +12,6 @@ CREATE TABLE client_enrollment_keys (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- One row per enrolled machine. machine_id is UNIQUE so a re-enroll from the
--- same box (reinstall, lost state file) rotates the token in place instead of
--- creating a duplicate client.
 CREATE TABLE clients (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     machine_id      TEXT NOT NULL UNIQUE,

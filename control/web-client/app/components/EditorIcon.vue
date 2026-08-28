@@ -1,22 +1,8 @@
 <script setup lang="ts">
 import { Code } from '@lucide/vue'
 
-// Brand marks for the editors the VM page can hand off to. Inlined from
-// simple-icons (CC0) rather than added as a dependency: a handful of paths do
-// not justify a package, and the logos change about as often as the editors are
-// renamed. The marks themselves remain their owners' trademarks and are used
-// here only to identify which editor a menu entry opens.
-//
-// Each is a single path on the 24x24 grid simple-icons uses, drawn in
-// currentColor so it inherits whatever the button or menu item is using.
-//
-// An editor with no mark here falls back to a generic one rather than to a gap,
-// so every menu entry lines up. Drop its path in and the fallback stops applying
-// on its own.
 const props = defineProps<{ name: string }>()
 
-// The caller sizes this with a class, and the branches below are two separate
-// roots, so the fallthrough is bound by hand rather than left to Vue.
 defineOptions({ inheritAttrs: false })
 
 const paths: Record<string, string> = {
@@ -27,8 +13,6 @@ const paths: Record<string, string> = {
   windsurf: 'M23.55 5.067c-1.2038-.002-2.1806.973-2.1806 2.1765v4.8676c0 .972-.8035 1.7594-1.7597 1.7594-.568 0-1.1352-.286-1.4718-.7659l-4.9713-7.1003c-.4125-.5896-1.0837-.941-1.8103-.941-1.1334 0-2.1533.9635-2.1533 2.153v4.8957c0 .972-.7969 1.7594-1.7596 1.7594-.57 0-1.1363-.286-1.4728-.7658L.4076 5.1598C.2822 4.9798 0 5.0688 0 5.2882v4.2452c0 .2147.0656.4228.1884.599l5.4748 7.8183c.3234.462.8006.8052 1.3509.9298 1.3771.313 2.6446-.747 2.6446-2.0977v-4.893c0-.972.7875-1.7593 1.7596-1.7593h.003a1.798 1.798 0 0 1 1.4718.7658l4.9723 7.0994c.4135.5905 1.05.941 1.8093.941 1.1587 0 2.1515-.9645 2.1515-2.153v-4.8948c0-.972.7875-1.7594 1.7596-1.7594h.194a.22.22 0 0 0 .2204-.2202v-4.622a.22.22 0 0 0-.2203-.2203Z',
 }
 
-// The Insiders build ships the same mark as VS Code -- only the colour differs,
-// and these are drawn in currentColor.
 paths['vscode-insiders'] = paths.vscode ?? ''
 
 const d = computed(() => paths[props.name] ?? '')

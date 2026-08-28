@@ -1,7 +1,3 @@
-// Package httpsniff reads the header block of an HTTP/1.x request and extracts
-// the routing host without consuming (or losing) any body bytes.
-//
-// This package is SHARED SOURCE with the proxy repository.
 package httpsniff
 
 import (
@@ -13,25 +9,15 @@ import (
 )
 
 var (
-	// ErrTooLarge means the header block exceeded the byte budget.
 	ErrTooLarge = errors.New("httpsniff: header block too large")
-	// ErrMalformed means the request line was not valid HTTP/1.x.
 	ErrMalformed = errors.New("httpsniff: malformed request")
-	// ErrNoHost means neither an absolute-form URI nor a Host header was present.
 	ErrNoHost = errors.New("httpsniff: missing host")
 )
 
 var terminator = []byte("\r\n\r\n")
 
-// DefaultMaxBytes is used when max <= 0.
 const DefaultMaxBytes = 65536
 
-// ReadHeaderBlock reads until the end of the header block and returns every byte
-// read (header block plus any body bytes that arrived in the same reads, so the
-// caller can replay the prefix verbatim) together with the routing host.
-//
-// On error the bytes read so far are still returned so the caller can decide
-// what to do with them.
 func ReadHeaderBlock(r io.Reader, max int) ([]byte, string, error) {
 	if max <= 0 {
 		max = DefaultMaxBytes
@@ -75,9 +61,6 @@ func ReadHeaderBlock(r io.Reader, max int) ([]byte, string, error) {
 	return buf, host, err
 }
 
-// ParseHost extracts the routing host from a complete HTTP/1.x header block.
-// An absolute-form request target takes precedence over the Host header
-// (RFC 9112 §3.2.2). The result is lowercased with any port removed.
 func ParseHost(header []byte) (string, error) {
 	lines := strings.Split(strings.TrimRight(string(header), "\r\n"), "\r\n")
 	if len(lines) == 0 || lines[0] == "" {
@@ -107,8 +90,6 @@ func ParseHost(header []byte) (string, error) {
 	return "", ErrNoHost
 }
 
-// authorityFromTarget returns the authority of an absolute-form request target,
-// or "" for origin-form / asterisk-form targets.
 func authorityFromTarget(target string) string {
 	i := strings.Index(target, "://")
 	if i < 0 {
@@ -124,7 +105,6 @@ func authorityFromTarget(target string) string {
 	return rest
 }
 
-// NormalizeHost lowercases a host and strips the port, if any.
 func NormalizeHost(h string) string { return normalizeHost(h) }
 
 func normalizeHost(h string) string {

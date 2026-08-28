@@ -38,8 +38,6 @@ const toc = computed(() => page.value?.body?.toc?.links ?? [])
       </div>
     </header>
 
-    <!-- Three columns on wide screens: section nav, the page, its table of
-         contents. Both navs collapse below the article on narrow ones. -->
     <div class="mx-auto max-w-6xl gap-10 px-4 py-12 sm:px-6 lg:grid lg:grid-cols-[13rem_minmax(0,1fr)_12rem]">
       <div class="hidden lg:block">
         <DocsNav />
@@ -63,7 +61,6 @@ const toc = computed(() => page.value?.body?.toc?.links ?? [])
         </ul>
       </nav>
 
-      <!-- Below the article on narrow screens, where the sticky rail is hidden. -->
       <div class="mt-14 border-t border-border pt-10 lg:hidden">
         <DocsNav />
       </div>

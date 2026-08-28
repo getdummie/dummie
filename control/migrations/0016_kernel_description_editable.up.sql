@@ -1,12 +1,3 @@
--- 0016_kernel_description_editable: the description becomes the one editable
--- field on a kernel.
---
--- What makes an entry trustworthy is that the name and the image behind it never
--- change. A description is a note about them, not part of their identity, and
--- being unable to correct a typo in one was a cost with nothing bought by it.
---
--- A withdrawn kernel is closed to every change, including this one: it is a
--- record of what a name used to mean, and editing it would rewrite that record.
 
 CREATE OR REPLACE FUNCTION kernels_forbid_update() RETURNS trigger AS $$
 BEGIN

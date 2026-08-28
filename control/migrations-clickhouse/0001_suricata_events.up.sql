@@ -1,6 +1,5 @@
 CREATE TABLE suricata_events
 (
-    -- ---- root-level fields: no prefix ----
     timestamp       DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
     event_type      LowCardinality(String),
     flow_id         UInt64 CODEC(ZSTD(1)),
@@ -14,7 +13,6 @@ CREATE TABLE suricata_events
     ip_v            UInt8 CODEC(ZSTD(1)),
     app_proto       LowCardinality(String) DEFAULT '',
 
-    -- ---- alert.* ----
     alert__action        LowCardinality(String) DEFAULT '',
     alert__gid           UInt16 DEFAULT 0,
     alert__signature_id  UInt32 DEFAULT 0,
@@ -23,14 +21,12 @@ CREATE TABLE suricata_events
     alert__category      LowCardinality(String) DEFAULT '',
     alert__severity      UInt8 DEFAULT 0,
 
-    -- ---- flow.* ----
     flow__pkts_toserver  UInt64 DEFAULT 0 CODEC(T64, ZSTD(1)),
     flow__pkts_toclient  UInt64 DEFAULT 0 CODEC(T64, ZSTD(1)),
     flow__bytes_toserver UInt64 DEFAULT 0 CODEC(T64, ZSTD(1)),
     flow__bytes_toclient UInt64 DEFAULT 0 CODEC(T64, ZSTD(1)),
     flow__start          Nullable(DateTime64(6, 'UTC')) CODEC(Delta, ZSTD(1)),
 
-    -- ---- drop.* ----
     drop__reason    LowCardinality(String) DEFAULT '',
     drop__len       UInt16 DEFAULT 0,
     drop__ttl       UInt8  DEFAULT 0,
@@ -49,7 +45,6 @@ CREATE TABLE suricata_events
     drop__urg       Bool DEFAULT false,
     drop__fin       Bool DEFAULT false,
 
-    -- ---- dns.* ----
     dns__version    UInt8 DEFAULT 0,
     dns__type       LowCardinality(String) DEFAULT '',
     dns__id         UInt16 DEFAULT 0,
@@ -60,7 +55,6 @@ CREATE TABLE suricata_events
     dns__rcode      LowCardinality(String) DEFAULT '',
     dns__queries    Nested(rrname String, rrtype LowCardinality(String)),
 
-    -- ---- tls.* / http.* ----
     tls__sni        String DEFAULT '' CODEC(ZSTD(1)),
     tls__version    LowCardinality(String) DEFAULT '',
     http__hostname  String DEFAULT '' CODEC(ZSTD(1)),
@@ -68,12 +62,10 @@ CREATE TABLE suricata_events
     http__method    LowCardinality(String) DEFAULT '',
     http__status    UInt16 DEFAULT 0,
 
-    -- ---- anomaly.* ----
     anomaly__type   LowCardinality(String) DEFAULT '',
     anomaly__event  LowCardinality(String) DEFAULT '',
     anomaly__layer  LowCardinality(String) DEFAULT '',
 
-    -- ---- derived, for domain queries across event types ----
     domain          String MATERIALIZED coalesce(
                         nullIf(dns__queries.rrname[1], ''),
                         nullIf(tls__sni, ''),

@@ -4,10 +4,6 @@ VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: ConsumeEnrollmentKey :one
--- ConsumeEnrollmentKey claims one use of a key. Validity (not revoked, not
--- expired, uses remaining) is checked in the same statement that increments the
--- counter, so two clients racing on a single-use key cannot both win. Zero rows
--- means unknown/revoked/expired/exhausted -- the caller must not distinguish.
 UPDATE client_enrollment_keys
 SET uses = uses + 1
 WHERE key_hash = $1

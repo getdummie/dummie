@@ -19,9 +19,6 @@ import (
 	"dproxy/internal/xnet"
 )
 
-// fakeDpipe is a minimal stand-in for the data plane: it performs copy by
-// piping the two adopted descriptors and publishes raw sockets received via
-// ssh_accept / tls_accept so a test can inspect them.
 type fakeDpipe struct {
 	t    *testing.T
 	path string
@@ -31,8 +28,6 @@ type fakeDpipe struct {
 	peers chan *control.Peer
 }
 
-// Peer returns a control connection the proxy opened to us, so a test can act
-// as dpipe and send requests (resolve) to the proxy.
 func (f *fakeDpipe) Peer(t *testing.T) *control.Peer {
 	t.Helper()
 	select {
@@ -44,7 +39,6 @@ func (f *fakeDpipe) Peer(t *testing.T) *control.Peer {
 	}
 }
 
-// hostEntry turns a listener's "host:port" into an http.hosts entry.
 func hostEntry(t *testing.T, addr string) HTTPHost {
 	t.Helper()
 	host, port, err := net.SplitHostPort(addr)
@@ -178,8 +172,6 @@ func startProxy(t *testing.T, cfg *Config, wantListeners int) *Proxy {
 	return nil
 }
 
-// httpClientVia returns a client whose connections always go to addr, so the
-// request's Host header drives the proxy's routing decision.
 func httpClientVia(addr string) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
@@ -192,7 +184,6 @@ func httpClientVia(addr string) *http.Client {
 	}
 }
 
-// 1. HTTP host routing including POST body passthrough.
 func TestHTTPHostRouting(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -250,7 +241,6 @@ func TestHTTPUnknownHostIs502(t *testing.T) {
 	}
 }
 
-// 2. TCP echo through an opaque route.
 func TestTCPEcho(t *testing.T) {
 	echo, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -292,8 +282,6 @@ func TestTCPEcho(t *testing.T) {
 	}
 }
 
-// 3/4. HTTPS and SSH ingress hand over the raw pre-crypto socket untouched: the
-// first bytes the client sends must arrive in dpipe, not in the proxy.
 func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
@@ -308,7 +296,7 @@ func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 		}}},
 	}
 	p := startProxy(t, cfg, 3)
-	addrs := p.Addrs() // bind order: http, https, ssh
+	addrs := p.Addrs()
 
 	for _, tc := range []struct {
 		name  string
@@ -345,7 +333,6 @@ func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 				t.Fatalf("got %q, want %q", buf, tc.first)
 			}
 
-			// The handed-off socket is fully usable from dpipe.
 			if _, err := io.WriteString(raw, "reply"); err != nil {
 				t.Fatalf("write back: %v", err)
 			}
@@ -361,8 +348,6 @@ func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 	}
 }
 
-// The control connection is duplex: dpipe initiates resolve on it and the
-// proxy answers from the host map / pubkey policy.
 func TestResolveOverControlConnection(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{

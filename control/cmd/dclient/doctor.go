@@ -18,7 +18,6 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// result is a check's verdict. warn is reported but does not fail the run.
 type result int
 
 const (
@@ -38,8 +37,6 @@ func (r result) String() string {
 	}
 }
 
-// check is one preflight test. Add to `checks` to grow the suite -- nothing
-// else needs to change.
 type check struct {
 	name string
 	run  func() (result, string)
@@ -67,14 +64,6 @@ var checks = []check{
 	{"data directory is writable", checkDataDir},
 }
 
-// supportedDistros are the os-release IDs the client is tested against.
-//
-// What a distribution has to provide is systemd, cgroup v2, nftables and an
-// FHS layout -- nothing here installs packages or shells out to a package
-// manager, so the list is about what has been run rather than what could be. The
-// two places that carry a Debian assumption both check the host instead of
-// trusting it: /dev/kvm's group is read off the device (see kvmAccess), and the
-// checks below look for binaries on PATH rather than for packages.
 var supportedDistros = []string{"ubuntu", "debian", "arch"}
 
 func doctorCommand() *cli.Command {
@@ -126,8 +115,6 @@ func checkDistro() (result, string) {
 	if slices.Contains(supportedDistros, rel["ID"]) {
 		return pass, describeOSRelease(rel)
 	}
-	// Derivatives (Mint, Pop!_OS, Raspberry Pi OS, Manjaro, EndeavourOS...) will
-	// mostly behave, but they are not what we test against.
 	for _, id := range supportedDistros {
 		if slices.Contains(strings.Fields(rel["ID_LIKE"]), id) {
 			return warn, describeOSRelease(rel) + " (" + id + "-derived, not " + id + ")"
@@ -158,8 +145,6 @@ func checkQEMUImg() (result, string) {
 	return pass, path
 }
 
-// checkKVM is a warning, not a failure: qemu still runs guests under TCG
-// emulation, just an order of magnitude slower.
 func checkKVM() (result, string) {
 	f, err := os.OpenFile("/dev/kvm", os.O_RDWR, 0)
 	if err != nil {
@@ -173,23 +158,16 @@ func checkKVM() (result, string) {
 	return pass, "/dev/kvm is readable and writable"
 }
 
-// checkCgroup2 is a warning for the same reason: without it the vm boots, it
-// just boots without cpu and memory ceilings.
 func checkCgroup2() (result, string) {
 	if !cgroup2Available() {
 		return warn, "no unified hierarchy at " + cgroupRoot + "; vms will run without cpu or memory limits"
 	}
-	// Creating the slice is the part that actually needs privilege, so it is the
-	// honest thing to test.
 	if err := os.MkdirAll(filepath.Join(cgroupRoot, dclientSlice), 0o755); err != nil {
 		return warn, "cannot create " + dclientSlice + " (" + err.Error() + "); vms will run without limits"
 	}
 	return pass, cgroupRoot + ", " + dclientSlice + " is writable"
 }
 
-// checkVMUID covers the two things a per-VM uid needs from the host: privilege
-// to drop, and a /dev/kvm the dropped-to uid can still reach. Both are warnings
-// -- the VM boots either way, less isolated or slower.
 func checkVMUID() (result, string) {
 	if os.Geteuid() != 0 {
 		return warn, "not root; vms will run as this user and share their files with each other"
@@ -207,10 +185,6 @@ func checkVMUID() (result, string) {
 	}
 }
 
-// describeKVMDevice names the device's owner and mode rather than the reason it
-// is unreachable. "Not reachable by an unprivileged uid" has several causes --
-// no group access at all, a root-owned group, a hand-made device node -- and the
-// numbers say which one it is without a second round of questions.
 func describeKVMDevice() string {
 	info, err := os.Stat("/dev/kvm")
 	if err != nil {
@@ -223,8 +197,6 @@ func describeKVMDevice() string {
 	return fmt.Sprintf("/dev/kvm is owned %d:%d mode %04o", st.Uid, st.Gid, info.Mode().Perm())
 }
 
-// checkRootfsTools covers --rootfs-tar only, so a missing tool is a warning:
-// everything else about the client still works without it.
 func checkRootfsTools() (result, string) {
 	var missing []string
 	for _, bin := range []string{"tar", "mkfs.ext4"} {
@@ -238,15 +210,6 @@ func checkRootfsTools() (result, string) {
 	return pass, "tar and mkfs.ext4 are present"
 }
 
-// checkSSHPort is a hard failure: proxy binds 0.0.0.0:22 to front VM ssh, so a
-// host sshd on the same port means one of the two will not start. Which one
-// loses depends on boot order, which is the worst way to find out.
-//
-// Whoever actually holds the port is the authority. The sshd configuration only
-// answers the question while nobody has it: once proxy is up and listening, an
-// sshd config that still reads like 22 -- moved by a drop-in or a socket unit
-// `sshd -T` does not reflect, or left at the default on a daemon that is not
-// running -- is not a conflict, and reporting it as one fails a healthy host.
 func checkSSHPort() (result, string) {
 	switch owner, held, err := listenerOn(22); {
 	case err != nil:
@@ -272,7 +235,6 @@ func checkSSHPort() (result, string) {
 	if err != nil {
 		return warn, "cannot read the sshd configuration (" + err.Error() + "); make sure it does not listen on 22"
 	}
-	// sshd's own default when nothing sets a port.
 	if len(ports) == 0 {
 		ports = []string{"22"}
 		source += " (no Port directive; sshd defaults to 22)"
@@ -284,14 +246,12 @@ func checkSSHPort() (result, string) {
 	return pass, ":22 is free; sshd on " + strings.Join(ports, ", ") + " per " + source
 }
 
-// sshdConfigPath is a variable so tests can point it elsewhere.
 var sshdConfigPath = "/etc/ssh/sshd_config"
 
 func lookSSHD() (string, error) {
 	if path, err := exec.LookPath("sshd"); err == nil {
 		return path, nil
 	}
-	// sshd lives in sbin, which is not on a non-root user's PATH.
 	for _, p := range []string{"/usr/sbin/sshd", "/sbin/sshd"} {
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
@@ -300,10 +260,6 @@ func lookSSHD() (string, error) {
 	return "", os.ErrNotExist
 }
 
-// sshdPorts asks sshd for its own effective configuration and falls back to
-// parsing the file. `sshd -T` is the answer that counts -- it resolves includes
-// and defaults the same way the daemon does -- but it wants root and readable
-// host keys, so it is not always available.
 func sshdPorts(bin string) ([]string, string, error) {
 	if out, err := exec.Command(bin, "-T").Output(); err == nil {
 		var ports []string
@@ -318,8 +274,6 @@ func sshdPorts(bin string) ([]string, string, error) {
 	return ports, sshdConfigPath, err
 }
 
-// parseSSHDPorts collects Port directives, plus the port half of any
-// ListenAddress that carries one, following Include globs.
 func parseSSHDPorts(path string, depth int) ([]string, error) {
 	if depth > 8 {
 		return nil, fmt.Errorf("include nesting too deep at %s", path)
@@ -378,20 +332,13 @@ func parseSSHDPorts(path string, depth int) ([]string, error) {
 	return ports, nil
 }
 
-// listener is the process holding a listening socket. pid 0 means the socket
-// exists but its owner could not be resolved, which is what a non-root doctor
-// sees for anybody else's process.
 type listener struct {
 	pid  int
 	name string
 }
 
-// procRoot is a variable so tests can point it elsewhere.
 var procRoot = "/proc"
 
-// listenerOn reports what is listening on port, over IPv4 or IPv6. An error
-// means the question could not be asked at all; held=false means it was asked
-// and nothing is there.
 func listenerOn(port int) (listener, bool, error) {
 	var inodes []string
 	var readable bool
@@ -415,8 +362,6 @@ func listenerOn(port int) (listener, bool, error) {
 	return listener{pid: pid, name: name}, true, nil
 }
 
-// listeningInodes collects the socket inodes of listening sockets bound to port
-// in one /proc/net/tcp-format table.
 func listeningInodes(path string, port int) ([]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -424,11 +369,10 @@ func listeningInodes(path string, port int) ([]string, error) {
 	}
 	defer f.Close()
 
-	// "sl local_address rem_address st ... uid timeout inode"; 0A is TCP_LISTEN.
 	const stListen = "0A"
 	var inodes []string
 	sc := bufio.NewScanner(f)
-	sc.Scan() // header
+	sc.Scan()
 	for sc.Scan() {
 		fields := strings.Fields(sc.Text())
 		if len(fields) < 10 || fields[3] != stListen {
@@ -447,9 +391,6 @@ func listeningInodes(path string, port int) ([]string, error) {
 	return inodes, sc.Err()
 }
 
-// socketOwner walks /proc looking for the process holding one of these socket
-// inodes. Unreadable fd directories are skipped rather than reported: without
-// root most of them are, and the caller has a weaker answer for that case.
 func socketOwner(inodes []string) (int, string) {
 	want := make(map[string]bool, len(inodes))
 	for _, ino := range inodes {
@@ -482,8 +423,6 @@ func socketOwner(inodes []string) (int, string) {
 	return 0, ""
 }
 
-// checkTun is a hard failure: without /dev/net/tun no VM can have a network
-// device, and the fd handoff that keeps QEMU unprivileged depends on it.
 func checkTun() (result, string) {
 	f, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
@@ -496,8 +435,6 @@ func checkTun() (result, string) {
 	return pass, "/dev/net/tun is readable and writable"
 }
 
-// checkNftables tries the same netlink socket the policy layer uses. Listing is
-// harmless and proves both the kernel support and our permission to use it.
 func checkNftables() (result, string) {
 	c, err := nftables.New()
 	if err != nil {
@@ -523,8 +460,6 @@ func checkForwarding() (result, string) {
 	if len(b) > 0 && b[0] == '1' {
 		return pass, "net.ipv4.ip_forward=1"
 	}
-	// Turned on automatically when a VM is created, so this is only a warning --
-	// but it will not survive a reboot unless it is also set in sysctl.d.
 	return warn, "net.ipv4.ip_forward=0; dclient will enable it, but set it in /etc/sysctl.d to make it stick"
 }
 
@@ -544,10 +479,6 @@ func checkSuricata() (result, string) {
 	return suricataStatus(cfg)
 }
 
-// checkCoreDNS is separate from checkSuricata even though one switch turns both
-// on: the two fail in different ways and an operator reading one line needs to
-// know which. Suricata down is no egress at all; the resolver down is egress that
-// works only for an address somebody typed.
 func checkCoreDNS() (result, string) {
 	cfg, err := loadNetConfig(defaultDataDir())
 	if err != nil {
@@ -556,10 +487,6 @@ func checkCoreDNS() (result, string) {
 	return corednsStatus(cfg)
 }
 
-// checkQueues compares the queues something is actually bound to against the
-// number dclient hands packets to. A mismatch is not cosmetic: traffic hashed to
-// an unbound queue is dropped, so it takes VM egress down for a fraction of
-// flows in a way that looks like packet loss rather than policy.
 func checkQueues() (result, string) {
 	cfg, err := loadNetConfig(defaultDataDir())
 	if err != nil {
@@ -578,7 +505,6 @@ func checkQueues() (result, string) {
 		return warn, "cannot read " + p + " (" + err.Error() + "); run as root"
 	}
 
-	// One row per bound queue.
 	bound := 0
 	if rows := strings.TrimSpace(string(b)); rows != "" {
 		bound = len(strings.Split(rows, "\n"))
@@ -624,11 +550,8 @@ func describeOSRelease(rel map[string]string) string {
 	return strings.TrimSpace(name)
 }
 
-// osReleasePath is a variable so tests can point it elsewhere.
 var osReleasePath = "/etc/os-release"
 
-// readOSRelease parses the KEY=value format of os-release(5), stripping the
-// optional quoting.
 func readOSRelease() (map[string]string, error) {
 	f, err := os.Open(osReleasePath)
 	if err != nil {
@@ -656,8 +579,6 @@ func readOSRelease() (map[string]string, error) {
 	return rel, sc.Err()
 }
 
-// osFacts is what connect reports at enrollment: the distribution id and its
-// version, falling back to runtime info when os-release is unavailable.
 func osFacts() (osName, osVersion string) {
 	osName = runtime.GOOS
 	rel, err := readOSRelease()

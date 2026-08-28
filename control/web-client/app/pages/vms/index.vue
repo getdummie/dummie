@@ -40,8 +40,6 @@ import {
   toTargetPayload,
 } from '@/lib/targets'
 
-// Mirrors maxCreateTargets on the server. Said here only so the dialog can stop
-// before the round trip; the server is the one that decides.
 const maxTargets = 32
 
 const columns: DataTableColumn[] = [
@@ -62,8 +60,6 @@ interface VM {
   id: string
   client_id: string
   vm_id: string
-  // Unique across the fleet, and the key its http route is published under.
-  // Generated when the create request leaves it empty.
   name: string
   default_port: number
   public_ports: number[]
@@ -75,12 +71,7 @@ interface VM {
   ip: string
   last_error: string
   created_at: string
-  // The spec as it was sent to the client. Empty for a VM adopted from a host's
-  // inventory report -- nobody here asked for it, so there is nothing to copy.
   spec: Record<string, unknown>
-  // When a temporary VM is due to be destroyed, and "" for one with no TTL. It
-  // comes from the pending scheduled task, so it disappears the moment the
-  // expiry is cancelled or has run.
   expires_at: string
 }
 
@@ -97,9 +88,6 @@ const { authFetch } = useAuth()
 
 const items = ref<VM[]>([])
 const quota = ref<Quota | null>(null)
-// Only whether a key is on file. The server refuses a create without one, so the
-// form needs to know before offering it -- the key itself is nothing this page
-// shows.
 const hasPublicKey = ref(true)
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -141,7 +129,6 @@ function fmtBytes(n: number) {
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${units[i]}`
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
@@ -155,9 +142,6 @@ function fmtDate(s: string) {
   return `${date}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
 }
 
-// A ticking clock for the TTL countdowns. Coarse on purpose: the label is
-// in minutes and hours, so a second-by-second tick would re-render the table for
-// no visible change.
 const nowMs = ref(Date.now())
 let ttlClock: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
@@ -167,8 +151,6 @@ onBeforeUnmount(() => {
   if (ttlClock) clearInterval(ttlClock)
 })
 
-// How long a temporary VM has left. Past its deadline it says so rather than
-// counting up: the VM is still there, and the control plane has not got to it.
 function expiryLabel(s: string) {
   if (!s) return ''
   const at = new Date(s).getTime()
@@ -185,8 +167,6 @@ async function load(quiet = false) {
   if (!quiet) loading.value = true
   error.value = null
   try {
-    // Not on a quiet poll: the poll runs every few seconds to watch a pending
-    // row, and a key does not change on that timescale.
     const [vmRes, qRes, meRes] = await Promise.all([
       authFetch('/vms?limit=100'),
       authFetch('/vms/quota'),
@@ -207,29 +187,16 @@ async function load(quiet = false) {
 }
 onMounted(() => load())
 
-// A create takes minutes on the host — the client downloads images and builds a
-// filesystem — so the row sits at 'pending' and only a poll moves it. Polling
-// stops as soon as nothing is in flight rather than running forever.
 const anyPending = computed(() => items.value.some(v => v.status === 'pending'))
 
-// A start or stop is answered with 202 and settles when the client reports back,
-// so the row keeps its old status for a moment. Tracking which rows are waiting
-// keeps the poll running and the switch honest until they land.
 const settleTimeoutMs = 60_000
 const settling = ref<Record<string, { want: VM['status'], until: number }>>({})
 
 const anySettling = computed(() => Object.keys(settling.value).length > 0)
-// Rows whose delete is waiting on the host to confirm the destroy. Kept apart
-// from `settling`, which tracks a row heading for a status: these are heading
-// for not existing.
 const deleting = ref<string[]>([])
 const anyDeleting = computed(() => deleting.value.length > 0)
 let timer: ReturnType<typeof setInterval> | null = null
 
-// Drop a row from `settling` once the server agrees, or once waiting stops
-// being reasonable — otherwise a job that never lands leaves the switch stuck.
-// A pending delete is dropped once the row is gone from the list, or once it
-// comes back carrying the error a failed destroy left on it.
 watch(items, (rows) => {
   const now = Date.now()
   const next: typeof settling.value = {}
@@ -258,7 +225,6 @@ onBeforeUnmount(() => {
   if (timer) clearInterval(timer)
 })
 
-// --- allowance ---
 const cpuRemaining = computed(() => {
   const q = quota.value
   return q ? Math.max(0, q.vcpu_limit - q.vcpu_used) : 0
@@ -274,15 +240,12 @@ const diskRemaining = computed(() => {
 const atCapacity = computed(() =>
   cpuRemaining.value < 1 || memRemaining.value < 64 || diskRemaining.value < 1)
 
-// Two independent reasons a create cannot happen. The button needs one answer,
-// but the label has to say which -- "disabled" with no reason is a dead end.
 const blockedReason = computed(() => {
   if (!hasPublicKey.value) return 'Cannot create a VM: add an SSH public key in Settings first'
   if (atCapacity.value) return 'Cannot create a VM: your allowance is fully used'
   return null
 })
 
-// --- create ---
 interface Host {
   id: string
   hostname: string
@@ -307,11 +270,6 @@ function hostLabel(h: Host) {
   return h.hostname || `${h.id.slice(0, 8)}…`
 }
 
-// --- kernels and os images ---
-//
-// The catalogues an admin uploaded, newest first as the API returns them. A user
-// picks from them rather than typing urls: what a guest boots is the
-// installation's decision. Both lists carry the same fields, so one shape does.
 interface Kernel {
   id: string
   name: string
@@ -363,21 +321,13 @@ const blankForm = {
   memory_mib: '512',
   default_port: '8000',
   public_ports: '',
-  // Sizes the per-VM overlay, not the shared base image built from the tar.
   disk_size: '2G',
   kernel_id: '',
   osimage_id: '',
-  // '0' is a VM that lives until somebody destroys it. Anything else makes it a
-  // temporary sandbox: the control plane destroys it that many seconds after it
-  // is created, and the clock keeps running while the VM is stopped.
   ttl_seconds: '0',
 }
 const form = reactive({ ...blankForm })
 
-// The allowlist the VM is born with. Separate from `form` because it is a list,
-// and because it is the one part of the dialog that is optional in a way the
-// rest is not: a VM with none of these is created just fine and reaches nothing
-// until somebody allows something.
 const targets = ref<TargetForm[]>([])
 
 function addTargetRow() {
@@ -388,8 +338,6 @@ function removeTargetRow(i: number) {
   targets.value = targets.value.filter((_, n) => n !== i)
 }
 
-// Same reasoning as the VM page's form: called from the control, never from a
-// watcher, so a value set programmatically is not wiped a tick later.
 function onTargetKindChange(t: TargetForm) {
   resetForKind(t)
 }
@@ -418,33 +366,22 @@ function resetForm() {
   copiedFrom.value = null
 }
 
-// Set while the dialog was opened by copying, so it can say what it copied.
 const copiedFrom = ref<string | null>(null)
 
 async function openCreate() {
   resetForm()
   copiedFrom.value = null
   createOpen.value = true
-  // A host that came online since the page loaded should be pickable now, and so
-  // should an artifact uploaded since then.
   await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
-  // Preselect when there is no choice to make; with several, the pick is real.
   if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
-  // The newest of each is the one almost always wanted, and the lists arrive in
-  // that order, so they start selected rather than making an empty pick the
-  // default state of the form.
   form.kernel_id = kernels.value[0]?.id ?? ''
   form.osimage_id = osImages.value[0]?.id ?? ''
 }
 
-// Only a VM this server created has a spec to copy. One adopted from a host's
-// inventory report has an empty one, and a form prefilled from nothing is worse
-// than no button.
 function copyable(v: VM) {
   return !!(v.spec?.kernel || v.spec?.rootfs_tar || v.spec?.rootfs)
 }
 
-/** Reads a spec field as a string, since the spec is whatever was sent. */
 function specStr(spec: Record<string, unknown>, key: string) {
   const v = spec?.[key]
   return typeof v === 'string' ? v : ''
@@ -454,31 +391,20 @@ async function openCopy(v: VM) {
   resetForm()
   copiedFrom.value = v.name || v.vm_id || 'that VM'
 
-  // The name is deliberately not copied: it is unique across the fleet, so
-  // reusing it would be rejected. Left empty, the copy gets a generated one.
   form.cpus = String(v.cpus || 1)
   form.memory_mib = String(v.memory_mib || 512)
   form.default_port = String(v.default_port || 8000)
   form.public_ports = (v.public_ports ?? []).join(', ')
-  // From the spec, not from disk_mib: the spec holds what was typed ("2G"),
-  // which is what belongs back in the field. disk_mib is the parsed number.
   form.disk_size = specStr(v.spec, 'disk_size') || '2G'
 
   createOpen.value = true
   await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
-  // Neither artifact is copied: the spec holds the expiring links the host was
-  // given, not which catalogue entries they came from. The newest of each is
-  // preselected, same as a fresh create.
   form.kernel_id = kernels.value[0]?.id ?? ''
   form.osimage_id = osImages.value[0]?.id ?? ''
-  // The original host only if it is still connected — otherwise the create
-  // would be rejected, and preselecting an unusable host hides why.
   if (hosts.value.some(h => h.id === v.client_id)) form.client_id = v.client_id
   else if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
 }
 
-// Mirrors the server's parseSizeMiB: same units, same rounding up, so the form
-// and the server agree on whether a size fits.
 function sizeToMiB(s: string): number | null {
   const v = s.trim()
   if (!v) return 0
@@ -489,8 +415,6 @@ function sizeToMiB(s: string): number | null {
   return Math.ceil(bytes / (1 << 20))
 }
 
-// Checked client-side purely so the form can say no before a round trip; the
-// server does the same check and is the one that decides.
 const wouldExceed = computed(() => {
   const q = quota.value
   if (!q) return false
@@ -503,14 +427,8 @@ const wouldExceed = computed(() => {
     || q.disk_used_mib + disk > q.disk_limit_mib
 })
 
-// Mirrors the server's checks so a mistake is caught before the round trip.
-// The server repeats all of them and is the one that decides.
-// The server is the authority on both of these -- the name has a unique
-// constraint behind it, and the ports are re-validated there. These checks only
-// save a round trip on a typo.
 const namePattern = /^[a-z0-9]+(-[a-z0-9]+)*$/
 
-/** "8000, 9090" -> [8000, 9090]. Blank entries are dropped, not zeroed. */
 function parsePorts(s: string): number[] {
   return s.split(',').map(p => p.trim()).filter(Boolean).map(Number)
 }
@@ -540,17 +458,11 @@ function validate(): string | null {
   if (form.disk_size.trim() && !/^\d+[KkMmGgTt]?$/.test(form.disk_size.trim())) {
     return 'Disk size must be a number, optionally with a K, M, G or T suffix — e.g. 2G.'
   }
-  // The same bounds the server enforces, said here so a typo is caught before the
-  // request rather than coming back as a 400.
   const ttl = Number(form.ttl_seconds)
   if (!Number.isInteger(ttl) || ttl < 0) return 'TTL must be a whole number of seconds, or 0 for no limit.'
   if (ttl > 0 && ttl < 10) return 'A TTL must be at least 10 seconds. Use 0 for no limit.'
   if (ttl > 30 * 24 * 3600) return 'A TTL must be at most 30 days (2592000 seconds).'
 
-  // Only the checks that are cheap and unambiguous here. Whether a destination
-  // is a name or an address, and whether a port can actually be enforced, is the
-  // server's call — it has the one implementation of that, and saying it twice
-  // is how the two answers start disagreeing.
   if (targets.value.length > maxTargets) {
     return `A VM can start with at most ${maxTargets} destinations. Add the rest after it is created.`
   }
@@ -594,9 +506,6 @@ async function create() {
     const created = await res.json()
     createOpen.value = false
     resetForm()
-    // Straight to the new VM: it is still pending, and its own page is where the
-    // build is watched. Falls back to refreshing the list if the response
-    // carried no id, which would otherwise navigate to /vms/undefined.
     if (created?.id) await navigateTo(`/vms/${created.id}`)
     else await load(true)
   }
@@ -608,18 +517,11 @@ async function create() {
   }
 }
 
-// --- start / stop ---
-//
-// The switch shows where the VM is being asked to go while a job is in flight,
-// not where it currently is: a switch that snaps back for the minute a boot
-// takes reads as "that didn't work".
 function isRunning(v: VM) {
   const want = settling.value[v.id]?.want
   return want ? want === 'running' : v.status === 'running'
 }
 
-// Only a VM the host has actually built can be started or stopped. 'pending'
-// has no id yet, 'gone' no longer exists, 'failed' never got that far.
 function switchable(v: VM) {
   return !!v.vm_id && (v.status === 'running' || v.status === 'stopped')
 }
@@ -643,14 +545,10 @@ async function toggleRunning(v: VM, run: boolean) {
   }
 }
 
-// --- delete ---
 const toDelete = ref<VM | null>(null)
 const working = ref(false)
 const actionError = ref<string | null>(null)
 
-// Anything but a create in flight can go: a row with nothing on a host is
-// deleted outright, and one with a guest is destroyed first. 'pending' is the
-// exception the server refuses, since its row is what the host's result settles.
 function deletable(v: VM) {
   return v.status !== 'pending'
 }
@@ -663,8 +561,6 @@ async function confirmDelete() {
   try {
     const res = await authFetch(`/vms/${id}`, { method: 'DELETE' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    // 202 means the destroy is on its way to the host and the row goes when it
-    // confirms, so the id is held until a poll stops returning it.
     if (res.status === 202) deleting.value = [...deleting.value, id]
     toDelete.value = null
     await load(true)
@@ -700,8 +596,6 @@ async function confirmDelete() {
             <Plus class="size-4" aria-hidden="true" />
             New VM
           </Button>
-          <!-- Scrolling content: the form is taller than a short viewport, and
-               the footer must stay reachable. -->
           <DialogContent class="max-h-[85svh] overflow-y-auto sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>{{ copiedFrom ? 'New VM from a copy' : 'New VM' }}</DialogTitle>
@@ -797,8 +691,6 @@ async function confirmDelete() {
               <div class="space-y-2">
                 <Label for="vm-disk">Disk size</Label>
                 <Input id="vm-disk" v-model="form.disk_size" placeholder="2G" aria-describedby="vm-disk-hint" />
-                <!-- Says what the number does: it grows the block device, not
-                     the filesystem inside it, which is the surprise otherwise. -->
                 <p id="vm-disk-hint" class="text-xs text-muted-foreground">
                   Size of this VM's disk. The guest still has to grow its own filesystem to use the space.
                 </p>
@@ -816,9 +708,6 @@ async function confirmDelete() {
                   inputmode="numeric"
                   aria-describedby="vm-ttl-hint"
                 />
-                <!-- Both halves of what a TTL means, because neither is guessable:
-                     it is destroyed rather than stopped, and stopping it does not
-                     buy more time. -->
                 <p id="vm-ttl-hint" class="text-xs text-muted-foreground">
                   0 means no limit. Anything else is a time to live in seconds: the VM is destroyed
                   automatically when it runs out and the disk goes with it. The clock starts now and
@@ -873,8 +762,6 @@ async function confirmDelete() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-                <!-- Uploaded by an admin under Kernels; a user picks from the
-                     catalogue rather than pointing at an arbitrary url. -->
                 <p v-if="selectedKernel?.description" class="text-xs text-muted-foreground">
                   {{ selectedKernel.description }}
                 </p>
@@ -938,10 +825,6 @@ async function confirmDelete() {
                 </p>
               </div>
 
-              <!-- The allowlist the VM is born with. Here rather than left to the
-                   VM page because the guest starts reaching for things the moment
-                   it boots: an allowance added a minute later is a minute of a
-                   sandbox that looks broken rather than governed. -->
               <div class="space-y-3 border-t border-border pt-4">
                 <div class="flex flex-wrap items-start justify-between gap-3">
                   <div>
@@ -1006,10 +889,6 @@ async function confirmDelete() {
                     </div>
                   </div>
 
-                  <!-- A domain chooses between the two ports its name can be
-                       checked on, or neither. Not a free port field: the ports
-                       suricata looks for http and tls on come from a per-host
-                       config, so a rule on 8443 would load and never match. -->
                   <div v-if="t.kind === 'domain'" class="space-y-2">
                     <Label :for="`t-dports-${i}`">Allow on</Label>
                     <Select v-model="t.domainPorts">
@@ -1024,9 +903,6 @@ async function confirmDelete() {
                     </Select>
                   </div>
 
-                  <!-- Transport and ports exist only for an address. A domain is
-                       matched by the name in the traffic, and the header of the
-                       rule that does it names no address. -->
                   <template v-else>
                     <div class="space-y-2">
                       <Label :for="`t-preset-${i}`">Protocol</Label>
@@ -1110,7 +986,6 @@ async function confirmDelete() {
       </div>
     </div>
 
-    <!-- allowance -->
     <div class="mt-6 grid gap-4 sm:grid-cols-3">
       <div class="rounded-lg border border-border p-4">
         <p class="eyebrow text-muted-foreground">vCPU</p>
@@ -1135,8 +1010,6 @@ async function confirmDelete() {
       </div>
     </div>
 
-    <!-- Before the allowance notice: a missing key blocks every create regardless
-         of how much room is left, so it is the thing to fix first. -->
     <Alert v-if="!hasPublicKey && !loading" class="mt-4">
       <AlertTitle>No SSH public key on your profile</AlertTitle>
       <AlertDescription>
@@ -1188,14 +1061,9 @@ async function confirmDelete() {
           >
             {{ v.name || v.vm_id || '—' }}
           </NuxtLink>
-          <!-- The failure reason is the whole point of a failed row, so it
-               is shown inline rather than hidden behind a detail view. -->
           <span v-if="v.status === 'failed' && v.last_error" class="mt-1 block text-xs text-destructive">
             {{ v.last_error }}
           </span>
-          <!-- A temporary VM says so where its name is, not in a column: it
-               changes what the row means, and a column would be empty for
-               almost every row. -->
           <span v-if="v.expires_at && v.status !== 'gone'" class="mt-1 block font-mono text-xs text-muted-foreground">
             {{ expiryLabel(v.expires_at) }}
           </span>
@@ -1206,17 +1074,12 @@ async function confirmDelete() {
         <TableCell class="font-mono text-muted-foreground">
           {{ v.cpus }} vCPU · {{ fmtMiB(v.memory_mib) }}
         </TableCell>
-        <!-- An em dash, not '0': the size was never recorded for VMs made
-             before the column existed or adopted from a host, and 0 would
-             read as a diskless VM. -->
         <TableCell class="font-mono text-muted-foreground">
           {{ v.disk_mib ? fmtMiB(v.disk_mib) : '—' }}
         </TableCell>
         <TableCell class="font-mono text-muted-foreground">{{ v.ip || '—' }}</TableCell>
         <TableCell class="text-muted-foreground">{{ fmtDate(v.created_at) }}</TableCell>
         <TableCell>
-          <!-- One switch per row, so the name has to be in the label or
-               they all read alike to a screen reader. (WCAG 2.4.6) -->
           <Switch
             :model-value="isRunning(v)"
             :disabled="!switchable(v) || !!settling[v.id]"
@@ -1228,8 +1091,6 @@ async function confirmDelete() {
         </TableCell>
         <TableCell class="text-right">
           <div class="flex justify-end gap-1">
-            <!-- Icon-only, one per row: the name has to be in the label or
-                 every button reads the same to a screen reader. (WCAG 2.4.6) -->
             <Button
               variant="ghost"
               size="icon"
@@ -1260,7 +1121,6 @@ async function confirmDelete() {
       </TableRow>
     </DataTable>
 
-    <!-- delete confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>

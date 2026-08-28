@@ -52,9 +52,6 @@ const loading = ref(true)
 const error = ref<string | null>(null)
 const toggling = ref<Record<string, boolean>>({})
 
-// Templates and the redirect-URI pattern are loaded separately from the
-// providers: they only prefill a form, and a provider list that fails to load
-// (an unmigrated database, say) must not also take the Add form's help with it.
 const templates = ref<Template[]>([])
 const redirectPattern = ref('')
 const redirectSlugKey = ref('SLUG')
@@ -79,7 +76,6 @@ async function loadTemplates() {
     redirectSlugKey.value = data.redirect_uri_slug_key ?? 'SLUG'
   }
   catch {
-    // Nothing to report: the form works without them.
   }
 }
 
@@ -104,9 +100,6 @@ onMounted(() => {
   void load()
 })
 
-// --- the add/edit dialog ---
-// One dialog for both: the fields are the same except the slug, which is part of
-// the redirect URI the provider already has registered and so cannot move.
 const CUSTOM = '__custom__'
 
 const dialogOpen = ref(false)
@@ -133,13 +126,8 @@ const activeTemplate = computed(() =>
   editing.value ? null : templates.value.find(t => t.id === templateId.value) ?? null,
 )
 
-// The issuer is a fixed, published address for a templated provider, so it is
-// shown as a fact rather than as something to get wrong.
 const issuerLocked = computed(() => !!activeTemplate.value && !activeTemplate.value.issuer_editable)
 
-// What to register at the provider's end. Live off the slug field, because it is
-// needed before there is a row to read it from -- the provider has to accept the
-// URI before a sign-in can be tried at all.
 const previewRedirectURI = computed(() => {
   if (editing.value) return editing.value.redirect_uri
   if (!redirectPattern.value) return ''
@@ -163,8 +151,6 @@ function openAdd() {
   editing.value = null
   Object.assign(form, blankForm)
   formError.value = null
-  // Default to the first template rather than to a blank form: adding a listed
-  // provider is the common case, and the alternative is one click away.
   applyTemplate(templates.value[0]?.id ?? CUSTOM)
   dialogOpen.value = true
 }
@@ -176,8 +162,6 @@ function openEdit(p: ProviderRow) {
     display_name: p.display_name,
     issuer: p.issuer,
     client_id: p.client_id,
-    // Never echoed back by the server, so it starts empty and an untouched field
-    // means "keep the stored one".
     client_secret: '',
     scopes: p.scopes,
     enabled: p.enabled,
@@ -221,9 +205,6 @@ async function save() {
   }
 }
 
-// --- enable/disable + delete ---
-// Only `enabled` is sent: every other field is omitted, which the server reads as
-// "leave as is", so flipping a switch cannot quietly rewrite the row.
 async function toggle(p: ProviderRow, enabled: boolean) {
   const previous = p.enabled
   p.enabled = enabled
@@ -276,7 +257,6 @@ async function remove() {
   }
 }
 
-// --- copying a redirect URI ---
 const copiedKey = ref<string | null>(null)
 
 async function copy(key: string, value: string) {
@@ -387,7 +367,6 @@ async function copy(key: string, value: string) {
       </div>
     </div>
 
-    <!-- Add / edit -->
     <Dialog v-model:open="dialogOpen">
       <DialogContent class="max-h-[90vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
@@ -398,9 +377,6 @@ async function copy(key: string, value: string) {
         </DialogHeader>
 
         <form class="space-y-4" @submit.prevent="save">
-          <!-- Templates. A row of choices rather than a dropdown: there are few
-               of them and picking one rewrites the form, which is easier to
-               understand when the options are all visible. -->
           <fieldset v-if="!editing && templates.length" class="space-y-2">
             <legend class="mb-2 text-sm font-medium">Provider</legend>
             <div class="flex flex-wrap gap-2">
@@ -444,8 +420,6 @@ async function copy(key: string, value: string) {
             </a>
           </div>
 
-          <!-- Shown before saving, not after: it goes into the provider's console,
-               and the provider has to accept it before a sign-in can be tested. -->
           <div v-if="previewRedirectURI" class="space-y-2">
             <Label as="p">Redirect URI to register</Label>
             <div class="flex items-start gap-2">
@@ -572,7 +546,6 @@ async function copy(key: string, value: string) {
       </DialogContent>
     </Dialog>
 
-    <!-- Delete confirmation -->
     <Dialog :open="!!confirming" @update:open="(v: boolean) => { if (!v) confirming = null }">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>

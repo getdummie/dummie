@@ -13,7 +13,6 @@ import (
 	"control/internal/db"
 )
 
-// newAccessToken mints a short-lived HS256 JWT carrying the user's identity.
 func newAccessToken(u db.User, secret string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	claims := jwt.MapClaims{
@@ -27,9 +26,6 @@ func newAccessToken(u db.User, secret string, ttl time.Duration) (string, error)
 	return tok.SignedString([]byte(secret))
 }
 
-// randomToken returns 256 bits of entropy in a form that is safe in a URL, a
-// cookie and a header. Used for anything opaque and unguessable: refresh tokens,
-// and the state and nonce of a federated sign-in.
 func randomToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
@@ -38,12 +34,10 @@ func randomToken() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// newRefreshToken returns a high-entropy opaque token (raw, to hand to the client).
 func newRefreshToken() (string, error) {
 	return randomToken()
 }
 
-// hashRefresh is the value we persist: we never store the raw refresh token.
 func hashRefresh(raw string) string {
 	sum := sha256.Sum256([]byte(raw))
 	return hex.EncodeToString(sum[:])

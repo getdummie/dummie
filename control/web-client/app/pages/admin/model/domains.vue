@@ -96,7 +96,6 @@ async function load() {
 }
 onMounted(load)
 
-// --- create ---
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref<string | null>(null)
@@ -129,7 +128,6 @@ async function create() {
   }
 }
 
-// --- delete ---
 const toDelete = ref<DomainRow | null>(null)
 const deleting = ref(false)
 const actionError = ref<string | null>(null)
@@ -152,24 +150,15 @@ async function confirmDelete() {
   }
 }
 
-// --- certificate ---
-
-// The token is held apart from `cert`, and never written back into it. The
-// server never returns one, so a value in `cert` could only have come from this
-// form -- and keeping it there would mean a reload of the dialog re-displaying a
-// credential the operator typed. Same bargain the settings screen makes.
 const cert = ref<CertificateState | null>(null)
 const credential = ref('')
 const certOpen = ref(false)
 const certBusy = ref(false)
 const certError = ref<string | null>(null)
 
-// The uploaded pair, also kept out of `cert` and cleared on every close.
 const certPem = ref('')
 const keyPem = ref('')
 
-// A guided order publishes its records from a goroutine, so the screen finds out
-// by asking. Only while a dialog is open on an order that is running.
 let poll: ReturnType<typeof setInterval> | null = null
 
 function stopPolling() {
@@ -226,8 +215,6 @@ function closeCert(open: boolean) {
   }
 }
 
-// One wrapper for every certificate action: they all take the same shape, and
-// they all end by re-reading the state the server now holds.
 async function certAction(path: string, init: RequestInit, onDone?: () => void) {
   if (!cert.value) return
   const id = cert.value.domain_id
@@ -286,12 +273,8 @@ async function copy(text: string) {
     await navigator.clipboard.writeText(text)
   }
   catch {
-    // Clipboard access is denied outside a secure context, which is exactly where
-    // a fleet that has not got its certificate yet is. The value is on screen.
   }
 }
-
-// --- row status ---
 
 function daysUntil(iso?: string): number | null {
   if (!iso) return null
@@ -308,9 +291,6 @@ function tlsLabel(d: DomainRow): string {
   return `on · ${days}d left`
 }
 
-// Anything that needs a person before it becomes an outage reads as a warning:
-// an expiry inside the renewal window that nothing is going to act on, an error
-// from the last attempt, or a certificate that has already run out.
 function tlsVariant(d: DomainRow): 'default' | 'secondary' | 'destructive' | 'outline' {
   const days = daysUntil(d.cert_not_after)
   if (d.cert_error || (days !== null && days < 0)) return 'destructive'
@@ -321,13 +301,6 @@ function tlsVariant(d: DomainRow): 'default' | 'secondary' | 'destructive' | 'ou
 
 const isACME = computed(() => cert.value != null && cert.value.cert_mode !== 'upload')
 
-// Grouped by record name, because two authorizations can land on one name with
-// different values and a flat list of three rows reads as a contradiction --
-// which is satisfied by replacing one with the other, and then both fail. Every
-// value under a name has to exist at the same time.
-//
-// With the apex dropped from the requested names this is normally one value per
-// name, but grouping is what makes the other case survivable rather than a trap.
 const pendingGroups = computed(() => {
   const byName = new Map<string, string[]>()
   for (const r of cert.value?.pending ?? []) {
@@ -336,9 +309,6 @@ const pendingGroups = computed(() => {
   return [...byName].map(([name, values]) => ({ name, values }))
 })
 
-// Listed rather than written inline in the template: SelectValue renders the
-// selected item's own text, so the option labels have to be short enough to read
-// inside the trigger. The reasoning behind each one is in the help text below it.
 const certModes = [
   { value: 'upload', label: 'upload — I supply the certificate' },
   { value: 'acme_manual', label: 'acme_manual — guided, I create the DNS records' },
@@ -440,7 +410,6 @@ const acmeDirectories = [
       </TableRow>
     </DataTable>
 
-    <!-- certificate -->
     <Dialog :open="certOpen" @update:open="closeCert">
       <DialogContent class="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
@@ -451,7 +420,6 @@ const acmeDirectories = [
         </DialogHeader>
 
         <div v-if="cert" class="space-y-6">
-          <!-- what the certificate has to cover -->
           <div class="rounded-md border border-border p-3">
             <p class="text-xs text-muted-foreground">
               Must cover, on one certificate:
@@ -466,7 +434,6 @@ const acmeDirectories = [
             </p>
           </div>
 
-          <!-- current state -->
           <div v-if="cert.fingerprint" class="space-y-1 text-sm">
             <p>
               Issued {{ cert.issued_at?.slice(0, 10) }}, expires {{ cert.not_after?.slice(0, 10) }}
@@ -483,7 +450,6 @@ const acmeDirectories = [
             <AlertDescription>{{ cert.error }}</AlertDescription>
           </Alert>
 
-          <!-- settings -->
           <div class="space-y-4 border-t border-border pt-4">
             <div class="space-y-2">
               <Label for="c-mode">How it is obtained</Label>
@@ -565,7 +531,6 @@ const acmeDirectories = [
             </Button>
           </div>
 
-          <!-- upload -->
           <div v-if="cert.cert_mode === 'upload'" class="space-y-3 border-t border-border pt-4">
             <div class="space-y-2">
               <Label for="c-cert">Certificate chain (PEM)</Label>
@@ -581,7 +546,6 @@ const acmeDirectories = [
             </Button>
           </div>
 
-          <!-- acme -->
           <div v-else class="space-y-3 border-t border-border pt-4">
             <div v-if="cert.in_flight && pendingGroups.length" class="space-y-3">
               <p class="text-sm">
@@ -612,9 +576,6 @@ const acmeDirectories = [
                   </div>
                 </div>
 
-                <!-- The trap this is guarding against: most registrar UIs make
-                     replacing an existing TXT record easier than adding a second
-                     one at the same name, and a replacement fails both. -->
                 <p v-if="g.values.length > 1" class="text-xs text-muted-foreground">
                   Both values must exist at this name at the same time. Add the second as a new
                   record — do not replace the first.
@@ -643,10 +604,6 @@ const acmeDirectories = [
 
             <div v-else-if="cert.in_flight" class="flex items-center gap-3">
               <p class="text-sm text-muted-foreground">{{ cert.stage || 'Order running…' }}</p>
-              <!-- Only offered for a guided order. An automated one is already
-                   mid-conversation with the CA and the DNS provider, and there is
-                   no safe point to stop it at; a button that did nothing would be
-                   worse than no button. -->
               <Button
                 v-if="cert.cert_mode === 'acme_manual'"
                 variant="outline"
@@ -680,7 +637,6 @@ const acmeDirectories = [
       </DialogContent>
     </Dialog>
 
-    <!-- delete confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>

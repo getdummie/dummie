@@ -15,8 +15,6 @@ const route = useRoute()
 const identifier = ref('')
 const password = ref('')
 const loading = ref(false)
-// A failed federated sign-in comes back as a redirect carrying its reason, since
-// the browser was navigating and there was no fetch to reject.
 const error = ref<string | null>(
   typeof route.query.oidc_error === 'string' ? route.query.oidc_error : null,
 )
@@ -26,9 +24,6 @@ async function onSubmit() {
   loading.value = true
   try {
     await signin(identifier.value, password.value)
-    // ?redirect is how /login (the proxy hand-off, served by the API and not by
-    // Nuxt) gets the browser back to itself with its params intact. external:
-    // true because it is not a route in this app.
     const back = safeRedirect(route.query.redirect)
     await navigateTo(back ?? '/dashboard', back ? { external: true } : undefined)
   }
@@ -46,8 +41,6 @@ async function onSubmit() {
     <p class="eyebrow mb-4 text-primary-text">// Authenticate</p>
     <Card>
       <CardHeader>
-        <!-- This is the page's only title, so it has to be the h1 — otherwise
-             the document starts at h3 and heading navigation has no entry point. -->
         <CardTitle as="h1" class="text-2xl tracking-tight">Sign in</CardTitle>
         <CardDescription>Welcome back. Use your username or email.</CardDescription>
       </CardHeader>

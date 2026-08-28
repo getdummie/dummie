@@ -11,29 +11,6 @@ import (
 	"control/internal/proto"
 )
 
-// suricata.yaml is compiled here rather than seeded on the host, for two
-// reasons that stack.
-//
-// The first is the one local.rules already had: what suricata enforces is the
-// control plane's decision, and a file each host owned a copy of drifts the
-// moment it is changed anywhere.
-//
-// The second only became true once events were shipped off the host. The
-// eve-log types below decide which fields exist in the clickhouse rows this
-// server queries -- no `dns` type means no dns__queries.rrname, which means the
-// denied panel is empty in a way that reads as "nothing was blocked".
-// The vector transform and the migrations that back it already live here, and
-// this is the third leg of the same tripod.
-//
-// The host keeps a minimal bootstrap copy of its own (see seedSuricataConfig in
-// cmd/dclient/suricata.go): the container has to be able to start before this
-// server has ever spoken to it, or a host that cannot reach the control plane
-// drops all VM egress.
-
-// suricataConfigTemplate is filled by generateSuricataConfig. HOME_NET is the
-// only substitution, and it is a host fact -- reported in the client's hello --
-// so a rule written against $HOME_NET means "our guests" on every host
-// regardless of what pool it was given.
 const suricataConfigTemplate = `%YAML 1.1
 ---
 # Written by the control server and installed by dclient. Edits on the host are
@@ -155,21 +132,10 @@ unix-command:
   enabled: yes
 `
 
-// generateSuricataConfig renders the file for one host. pool is the host's VM
-// subnet, which only it knows.
 func generateSuricataConfig(pool string) string {
 	return strings.NewReplacer("__HOME_NET__", pool).Replace(suricataConfigTemplate)
 }
 
-// pushSuricataConfig sends one client its suricata.yaml. Called on connect,
-// which is the only time the pool is known -- it arrives in the hello frame and
-// is not stored, because nothing else needs it and a column would be a second
-// copy of a fact the host restates every time it connects.
-//
-// A host that reported no pool gets nothing rather than a config with an empty
-// HOME_NET: that would judge every guest as external and quietly stop every
-// $HOME_NET rule from matching, which is worse than leaving the bootstrap file
-// in place.
 func pushSuricataConfig(ctx context.Context, hub *Hub, clientID pgtype.UUID, pool string) {
 	id := uuid.UUID(clientID.Bytes).String()
 	if pool == "" {

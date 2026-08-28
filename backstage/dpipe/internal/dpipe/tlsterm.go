@@ -17,20 +17,12 @@ import (
 	"dpipe/internal/httpsniff"
 )
 
-// serveTLS terminates TLS on an adopted raw socket, sniffs the decrypted HTTP
-// Host, asks the proxy where to send it, and copies the decrypted stream to the
-// backend.
-//
-// TLS is terminated here (not in the proxy) because a live TLS session cannot be
-// fd-passed: its state lives in userspace and must therefore live in the process
-// that is not redeployed.
 func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 	remoteIP := hostOnly(client.RemoteAddr())
 	log := s.log.With("id", id, "protocol", control.ProtoTLS, "client", remoteIP)
 
 	cfg := &tls.Config{
 		MinVersion: s.mat.tlsMin,
-		// HTTP/1.1 only in v1: no h2.
 		NextProtos:     []string{"http/1.1"},
 		GetCertificate: s.certForSNI,
 	}
@@ -64,9 +56,6 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 		V: control.Version, Type: control.TypeResolve, ID: control.NewID(),
 		Kind: control.KindHTTP, Host: routeHost, SNI: sni, ClientIP: remoteIP,
 	}
-	// The proxy owns the auth policy and cannot see this request, so forward the
-	// details it needs to apply it. A request whose own headers do not fit is sent
-	// without them, which the proxy treats as unauthenticated.
 	if req, perr := parseRequest(prefix); perr == nil {
 		fillAuthDetails(&msg, req)
 	} else {
@@ -82,8 +71,6 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 		_ = tc.Close()
 		return
 	}
-	// The proxy answered with a response of its own: the login redirect, or a
-	// refusal. dpipe writes it verbatim and never learns why.
 	if rep.Location != "" || rep.Status != 0 {
 		log.Info("tls resolve answered by proxy", "host", routeHost, "status", rep.Status)
 		writeAuthTLS(tc, rep.Status, rep.Location, rep.SetCookie)
@@ -96,8 +83,6 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 		_ = tc.Close()
 		return
 	}
-	// A console hostname: the proxy validated the token and the handshake, so the
-	// terminal runs on this connection rather than being forwarded anywhere.
 	if rep.Protocol == control.ProtoConsole {
 		s.serveTLSConsole(log, id, rep, tc, routeHost, remoteIP, prefix)
 		return
@@ -110,7 +95,6 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 		_ = tc.Close()
 		return
 	}
-	// Replay the decrypted prefix (header block plus any body bytes read with it).
 	if _, err := backend.Write(prefix); err != nil {
 		log.Warn("tls prefix replay failed", "target", rep.Target, "err", err)
 		_ = tc.Close()
@@ -126,8 +110,6 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 	log.Info("tls session end")
 }
 
-// certForSNI selects a certificate by exact SNI match, falling back to the
-// configured default. A miss fails the handshake cleanly.
 func (s *Server) certForSNI(chi *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if c, ok := s.mat.certs[normalizeSNI(chi.ServerName)]; ok {
 		return c, nil
@@ -142,11 +124,6 @@ func normalizeSNI(s string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s), "."))
 }
 
-// serveTLSConsole runs a browser terminal on a connection whose TLS this process
-// has already terminated, which is why it is served here instead of being handed
-// back as a console_accept: a live TLS session cannot be fd-passed. Everything
-// about who this is and which guest they may reach was decided by the proxy; what
-// is decided here is whether there is room to run it.
 func (s *Server) serveTLSConsole(log *slog.Logger, id string, rep control.Msg, tc net.Conn, host, clientIP string, prefix []byte) {
 	if !s.cfg.Console.Enabled {
 		log.Warn("console over tls but console is not enabled", "host", host)
@@ -160,17 +137,12 @@ func (s *Server) serveTLSConsole(log *slog.Logger, id string, rep control.Msg, t
 		_ = tc.Close()
 		return
 	}
-	// Anything the client pipelined behind the upgrade request belongs to the
-	// websocket stream. It never leaves this process, so MaxConsolePrefix — which
-	// bounds what a console_accept can carry — does not apply.
 	s.serveConsole(id, control.Msg{
 		Host: host, Target: rep.Target, RemoteUser: rep.RemoteUser,
 		Sub: rep.Sub, WSKey: rep.WSKey, ClientIP: clientIP,
 	}, tc, pipelinedBytes(prefix))
 }
 
-// pipelinedBytes returns the bytes of a sniffed prefix that follow the header
-// block.
 func pipelinedBytes(prefix []byte) []byte {
 	if i := bytes.Index(prefix, []byte("\r\n\r\n")); i >= 0 {
 		return prefix[i+4:]
@@ -178,19 +150,10 @@ func pipelinedBytes(prefix []byte) []byte {
 	return nil
 }
 
-// parseRequest recovers the request line and headers from the decrypted prefix.
-// The body is irrelevant here and is left in the prefix for replay.
 func parseRequest(prefix []byte) (*http.Request, error) {
 	return http.ReadRequest(bufio.NewReader(bytes.NewReader(prefix)))
 }
 
-// fillAuthDetails copies the request details the proxy's policy reads into an
-// http resolve, within a budget that keeps the message under MaxMsgSize. The
-// small headers go first and the cookie takes what is left, because it is the
-// only one big enough to crowd the others out — and dpipe cannot tell a session
-// cookie from any other, so it must forward the header whole or not at all. A
-// field that does not fit is left out, which fails closed: at worst the client
-// makes another trip through the login flow.
 func fillAuthDetails(m *control.Msg, req *http.Request) {
 	budget := control.MaxResolveDetails
 
@@ -211,9 +174,6 @@ func fillAuthDetails(m *control.Msg, req *http.Request) {
 	m.Cookie = take(strings.Join(req.Header.Values("Cookie"), "; "), budget)
 }
 
-// writeAuthTLS writes the response the proxy decided on. A location makes it the
-// 302 that starts (or finishes) the login round trip; otherwise the status is
-// written on its own.
 func writeAuthTLS(w io.Writer, status int, location, setCookie string) {
 	if location == "" {
 		if status == 0 {
@@ -231,8 +191,6 @@ func writeAuthTLS(w io.Writer, status int, location, setCookie string) {
 	_, _ = io.WriteString(w, b.String())
 }
 
-// writeQuickTLS writes a minimal HTTP/1.1 response over an already-handshaked
-// TLS connection.
 func writeQuickTLS(w io.Writer, code int) {
 	_, _ = io.WriteString(w, quickResponse(code))
 }
@@ -256,8 +214,6 @@ func quickResponse(code int) string {
 		code, reason, len(body), body)
 }
 
-// addrString renders an address defensively: adopted sockets (a socketpair, for
-// instance) can have an empty or absent peer address.
 func addrString(a net.Addr) string {
 	if a == nil {
 		return ""

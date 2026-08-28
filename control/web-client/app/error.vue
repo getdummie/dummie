@@ -23,8 +23,6 @@ const message = computed(() => {
     <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-40" />
     <div class="relative">
       <p class="eyebrow mb-4 text-primary-text">// Error</p>
-      <!-- The status code alone is a meaningless heading; the sr-only half
-           carries the actual meaning for anyone navigating by heading. -->
       <h1 class="font-mono text-7xl font-bold tracking-tight sm:text-8xl">
         {{ error.statusCode || 500 }}
         <span class="sr-only">— {{ message }}</span>

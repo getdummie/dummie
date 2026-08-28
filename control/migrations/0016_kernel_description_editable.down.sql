@@ -1,5 +1,3 @@
--- Back to a fully immutable row: the description joins the columns nothing may
--- change once saved.
 CREATE OR REPLACE FUNCTION kernels_forbid_update() RETURNS trigger AS $$
 BEGIN
     IF NEW.id IS DISTINCT FROM OLD.id

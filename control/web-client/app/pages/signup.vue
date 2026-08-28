@@ -11,7 +11,6 @@ useHead({ title: 'dummie — create account' })
 
 const { signup, signupEnabled } = useAuth()
 
-// Starts null so the form isn't flashed on screen before we know it is offered.
 const enabled = ref<boolean | null>(null)
 onMounted(async () => {
   enabled.value = await signupEnabled()
@@ -25,17 +24,10 @@ const password = ref('')
 const confirm = ref('')
 const loading = ref(false)
 const error = ref<string | null>(null)
-// Which input the current error belongs to, so `aria-invalid` and
-// `aria-describedby` land on that field rather than smearing across the form.
-// `null` means the error came from the server and isn't attributable.
 const errorField = ref<string | null>(null)
 
-// The password rules, stated once so the hint text under the field and the
-// validator below can't drift apart.
 const PASSWORD_RULES = 'At least 8 characters, including an uppercase letter, a lowercase letter, a number, and a special character.'
 
-// Mirror the server's rules for UX. The backend is authoritative and applies
-// strong rules only when APP_ENV=prod; here we key off the client build mode.
 function validate(): { message: string, field: string } | null {
   if (!username.value.trim()) return { message: 'Username is required', field: 'username' }
   if (!email.value.trim()) return { message: 'Email is required', field: 'email' }
@@ -52,7 +44,6 @@ function validate(): { message: string, field: string } | null {
   return null
 }
 
-// Ties a field to the error region only when the error is actually about it.
 function describedBy(field: string, ...extra: string[]) {
   const ids = [...extra]
   if (error.value && errorField.value === field) ids.unshift('signup-error')
@@ -68,7 +59,6 @@ async function onSubmit() {
   error.value = failure?.message ?? null
   errorField.value = failure?.field ?? null
   if (error.value) {
-    // Move focus to the offending field so the user isn't left hunting for it.
     await nextTick()
     document.getElementById(failure!.field)?.focus()
     return
@@ -106,8 +96,6 @@ async function onSubmit() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <!-- A configured provider may still be allowed to create accounts: the
-             two are separate settings, so this is not necessarily a dead end. -->
         <SsoButtons label="Sign up with" :divider="false" />
         <p class="text-center text-sm text-muted-foreground">
           Already have an account?
@@ -124,8 +112,6 @@ async function onSubmit() {
       <CardContent>
         <SsoButtons label="Sign up with" />
         <form class="space-y-4" :aria-busy="loading" @submit.prevent="onSubmit">
-          <!-- Grid drops to one column under 380px so the two name fields
-               don't get squeezed below a usable width at 320px. -->
           <div class="grid grid-cols-1 gap-3 min-[380px]:grid-cols-2">
             <div class="space-y-2">
               <Label for="firstName">First name</Label>
@@ -172,8 +158,6 @@ async function onSubmit() {
               :aria-invalid="invalid('password')"
               :aria-describedby="describedBy('password', 'password-help')"
             />
-            <!-- Stating the rules up front beats only revealing them after a
-                 rejected submit. (WCAG 3.3.2) -->
             <p id="password-help" class="text-xs text-muted-foreground">
               {{ PASSWORD_RULES }}
             </p>

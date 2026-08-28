@@ -52,8 +52,6 @@ interface VM {
   id: string
   client_id: string
   vm_id: string
-  // Unique across the fleet, and the key its http route is published under.
-  // Generated when the create request leaves it empty.
   name: string
   default_port: number
   public_ports: number[]
@@ -63,19 +61,12 @@ interface VM {
   memory_mib: number
   disk_mib: number
   ip: string
-  // Where this VM answers http: its name under the domain of the host it runs
-  // on. "" when that host has no domain, so there is no name to route on.
   url: string
-  // The websocket endpoint the browser terminal talks to. "" under the same
-  // condition that leaves url empty: the host it runs on has no domain.
   console_url: string
   last_error: string
   created_at: string
   started_at: string
   reported_at: string
-  // When a temporary VM is due to be destroyed, and "" for one with no limit.
-  // Read from the pending scheduled task -- the deadline is not a column on the
-  // VM, so this is empty the moment the expiry is cancelled or has run.
   expires_at: string
 }
 
@@ -84,33 +75,12 @@ interface Target {
   destination: string
   kind: 'domain' | 'ip'
   transport: '' | 'tcp' | 'udp' | 'any'
-  // Suricata's port syntax for an address. For a domain it is which of the two
-  // web ports the name is allowed on -- '' for both, or 'none', which lets the
-  // name resolve and grants nothing.
   ports: string
   note: string
   created_at: string
-  // When a temporary allowance is due to be withdrawn, and "" for a permanent
-  // one. Same source as the VM's: the scheduled task that will do it.
   expires_at: string
 }
 
-// What a domain row's ports field can say. Only 80 and 443 because those are the
-// ports suricata is told to look for http and tls on, and a rule on any other
-// would load and never match.
-//
-// "both" is sent as '80,443' rather than as the empty string the server also
-// accepts for it. Not a preference: reka-ui reserves '' to mean "nothing is
-// selected", so an item carrying it throws on mount and takes the whole dropdown --
-// and the dialog around it -- with it. The server normalises '80,443' to '' anyway,
-// so nothing downstream can tell the difference.
-// domainPortChoices and portPresets now live in lib/targets, shared with the
-// new-VM dialog's starting allowlist.
-
-// Something this VM tried to do that policy stopped. Two shapes: a 'lookup' the
-// resolver refused, which never became a packet at all, and a 'packet' the ruleset
-// dropped, which carries where it was going. Attempts is per destination over the
-// window the server queries, not per packet.
 interface DeniedAttempt {
   kind: 'lookup' | 'packet'
   domain: string
@@ -149,13 +119,7 @@ const id = computed(() => String(route.params.id))
 const vm = ref<VM | null>(null)
 const targets = ref<Target[]>([])
 const denied = ref<DeniedAttempt[]>([])
-// Whether the answer above is trustworthy. An empty list means two different
-// things -- nothing was denied, or nothing is collecting events -- and the
-// panel has to be able to say which.
 const deniedAvailable = ref(true)
-// Which of the two records answered. They fail independently — dropped packets come
-// from suricata, refused lookups from the resolver's log and its own migration — so
-// "nothing is recorded" and "half of it is recorded" are different things to say.
 const deniedRecording = ref({ packets: false, lookups: false })
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -190,7 +154,6 @@ function fmtMiB(mib: number) {
   return Number.isInteger(gib) ? `${gib} GiB` : `${gib.toFixed(1)} GiB`
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
@@ -210,9 +173,6 @@ async function load(quiet = false) {
   try {
     const res = await authFetch(`/vms/${id.value}`)
     if (res.status === 404) {
-      // The record going missing while a delete is in flight is the delete landing,
-      // so this ends on the list rather than on an error about a VM the user just
-      // removed on purpose.
       if (purging.value) {
         purging.value = null
         await navigateTo('/vms')
@@ -223,8 +183,6 @@ async function load(quiet = false) {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     vm.value = await res.json()
     await loadTargets()
-    // Not awaited with the rest: this one reads clickhouse, and a slow or
-    // missing event store must not hold up the page it is a panel on.
     loadDenied()
   }
   catch (e) {
@@ -242,14 +200,8 @@ async function loadTargets() {
 }
 
 const deniedLoading = ref(true)
-// Skeletons stand in for a table that is not there yet, not for one being re-read.
-// Without this, refreshing throws the rows away and puts them back, which reads as
-// the list having changed when it has not.
 const deniedFirstLoad = ref(true)
 
-// Never throws: a failure here reports itself in the panel rather than
-// replacing the whole page with an error, since nothing else on it depends on
-// the event store being reachable.
 async function loadDenied() {
   deniedLoading.value = true
   try {
@@ -271,12 +223,6 @@ async function loadDenied() {
   }
 }
 
-// refreshDenied is loadDenied with a floor on how briefly the spinner may appear.
-//
-// The read is usually faster than a frame, so without this the icon's state changes
-// and changes back inside one paint and the button looks dead -- the user cannot
-// tell a refresh that returned the same rows from a click that did nothing. The
-// delay is feedback, not work.
 const deniedRefreshing = ref(false)
 
 async function refreshDenied() {
@@ -296,7 +242,6 @@ async function refreshDenied() {
 }
 onMounted(() => load())
 
-// --- power ---
 const settleTimeoutMs = 60_000
 const settling = ref<{ want: VM['status'], until: number } | null>(null)
 let timer: ReturnType<typeof setInterval> | null = null
@@ -310,21 +255,15 @@ const switchable = computed(() => {
   return !!v?.vm_id && (v.status === 'running' || v.status === 'stopped')
 })
 
-// Set from a delete's 202 until the record goes. Separate from settling, which
-// tracks a row heading for a status: this one is heading for not existing, and
-// the page follows it to the list when it does.
 const purging = ref<{ until: number } | null>(null)
 
 watch(vm, (v) => {
   const s = settling.value
   if (s && v && (v.status === s.want || Date.now() >= s.until)) settling.value = null
-  // A destroy that failed leaves the message on the row and the VM where it was,
-  // so the wait ends and the error is what the page shows.
   const p = purging.value
   if (p && v && (v.last_error || Date.now() >= p.until)) purging.value = null
 })
 
-// Poll only while something is in flight; a settled VM does not need a timer.
 watch([() => vm.value?.status, settling, purging], () => {
   const busy = vm.value?.status === 'pending' || !!settling.value || !!purging.value
   if (busy && !timer) timer = setInterval(() => load(true), 5000)
@@ -352,13 +291,9 @@ async function togglePower(run: boolean) {
   }
 }
 
-// --- delete ---
 const deleteOpen = ref(false)
 const deleting = ref(false)
 
-// Anything but a create in flight can go: a VM with a guest is destroyed first,
-// a record with nothing on a host is deleted outright. 'pending' is the one the
-// server refuses, since its row is what the host's result frame settles.
 const deletable = computed(() => vm.value?.status !== 'pending')
 
 async function confirmDelete() {
@@ -368,14 +303,10 @@ async function confirmDelete() {
     const res = await authFetch(`/vms/${id.value}`, { method: 'DELETE' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     deleteOpen.value = false
-    // 204: there was nothing on a host and the record is already gone, so there is
-    // nothing left on this page to look at.
     if (res.status !== 202) {
       await navigateTo('/vms')
       return
     }
-    // 202: stay put until the record disappears. Leaving now would claim the guest
-    // was destroyed when the host has only just been asked.
     purging.value = { until: Date.now() + settleTimeoutMs }
     await load(true)
   }
@@ -388,18 +319,11 @@ async function confirmDelete() {
   }
 }
 
-// --- ports ---
-//
-// Editable because what a VM serves changes; the name and the address are not,
-// so this dialog is the whole of what an owner can change about routing.
 const portsOpen = ref(false)
 const savingPorts = ref(false)
 const portsError = ref<string | null>(null)
 const portsForm = reactive({ default_port: '8000', public_ports: '' })
 
-// The hostname the server published this VM under -- name plus the domain of
-// its host. Taken from the url rather than built here because the domain half
-// is not on the VM row, and "" when the host has no domain at all.
 const sshHost = computed(() => {
   if (!vm.value?.url) return ''
   try {
@@ -410,8 +334,6 @@ const sshHost = computed(() => {
   }
 })
 
-// The hostname above with the VM's own label taken off. Wildcard DNS points both
-// at the same proxy, so either is the same address to connect to.
 const sshDomain = computed(() => {
   const host = sshHost.value
   const name = vm.value?.name
@@ -419,29 +341,14 @@ const sshDomain = computed(() => {
   return host.startsWith(`${name}.`) ? host.slice(name.length + 1) : host
 })
 
-// The login name selects the VM: without it the proxy cannot tell which of the
-// owner's VMs this is, and answers with the list instead.
 const sshDestination = computed(() =>
   vm.value?.name ? `${vm.value.name}@${sshDomain.value}` : sshDomain.value,
 )
 const sshCommand = computed(() => `ssh ${sshDestination.value}`)
 const sshCopied = ref(false)
 
-// Where an editor lands inside the guest. Every image this fleet builds runs as
-// the same account (the control server's proxyRemoteUser), which is what the
-// generated proxy config sends an ssh session to.
 const remoteHome = '/home/ubuntu'
 
-// Every editor reaches the VM the same way the SSH button does -- the same
-// name@domain destination, over the host's proxy, authorised by the key the user
-// already has registered -- so none of them needs a port here. What differs is
-// only the url each one registers with the OS.
-//
-// The schemes are not interchangeable. The VS Code forks change the scheme but
-// keep the `vscode-remote` authority, so `cursor://cursor-remote/...` is not a
-// working substitution; Zed's remote form is `zed://ssh/`, not `zed://` on its
-// own. The `ssh-remote+` resolver is contributed by a remote-ssh extension, so
-// each editor needs one installed before its link resolves.
 const editors = computed(() => {
   const host = sshDestination.value
   if (!sshHost.value) return []
@@ -458,25 +365,16 @@ const editors = computed(() => {
   ]
 })
 
-// Which editor the button opens on a plain click. Remembered across visits and
-// across VMs -- which editor someone uses is a property of their machine, not of
-// the guest they are opening -- so it is stored under one key rather than per id.
 const editorKey = useLocalStorage('dummie:vm-editor', 'vscode')
 const editorMenuOpen = ref(false)
 
-// Falls back to the first entry rather than trusting the stored value: it comes
-// from localStorage, so it can name an editor that has since been removed here.
 const activeEditor = computed(() =>
   editors.value.find(e => e.key === editorKey.value) ?? editors.value[0])
 
-// Choosing from the menu both switches the default and opens that editor, so
-// picking one is never a two-step action.
 function chooseEditor(key: string) {
   editorKey.value = key
   editorMenuOpen.value = false
   const target = editors.value.find(e => e.key === key)
-  // Assigning location rather than following a link: a custom scheme is handed
-  // to the OS, so the page it was clicked from stays where it is.
   if (target) window.location.href = target.href
 }
 
@@ -491,7 +389,6 @@ async function copySsh() {
   }
 }
 
-/** "8000, 9090" -> [8000, 9090]. Blank entries are dropped, not zeroed. */
 function parsePorts(s: string): number[] {
   return s.split(',').map(p => p.trim()).filter(Boolean).map(Number)
 }
@@ -525,8 +422,6 @@ async function savePorts() {
       body: JSON.stringify({ default_port: defaultPort, public_ports: publicPorts }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    // The response is the saved row, so the page shows what was stored rather
-    // than what was typed.
     vm.value = await res.json()
     portsOpen.value = false
   }
@@ -538,13 +433,9 @@ async function savePorts() {
   }
 }
 
-// --- destinations ---
 const addOpen = ref(false)
 const adding = ref(false)
 const addError = ref<string | null>(null)
-// The kind is chosen, not inferred from what has been typed. Inferring it meant
-// transport and ports simply did not exist on an empty form, so there was no way
-// to discover that an address entry takes them at all.
 const form = reactive(blankTarget())
 
 function resetTargetForm() {
@@ -552,11 +443,6 @@ function resetTargetForm() {
   addError.value = null
 }
 
-// Change handlers rather than watchers on form.kind, and that is not a style
-// choice: a watcher flushes after the current call stack, so prefilling the form
-// from a denial -- which sets the kind and then the fields that go with it -- would
-// have the reset land afterwards and wipe them. These only run when someone
-// actually operates the control.
 function onKindChange() {
   resetForKind(form)
 }
@@ -596,29 +482,16 @@ async function addTarget() {
   }
 }
 
-// --- reading a denial -------------------------------------------------------
-
-// What the guest was trying to reach, preferring the name when one was seen. A
-// blocked https request has both; an ssh to a bare address has only the address.
 function deniedDestination(d: DeniedAttempt) {
   return d.domain || d.address || '—'
 }
 
-// The name of the thing on that port, so a row reads "ssh" rather than "tcp 22".
-// Falls back to what suricata identified the traffic as, then to the numbers.
-//
-// Two sources because they know different things: suricata names the protocol only
-// once it has seen payload, and most of these are dropped at the handshake with no
-// payload at all -- but the port is in the packet either way.
 function deniedWhat(d: DeniedAttempt) {
   if (d.kind === 'lookup') return 'dns lookup'
   if (d.proto === 'icmp') return 'ping (icmp)'
 
   const preset = portPresets.find(p => p.transport === d.proto && p.ports === String(d.port))
   const named = preset ? preset.label.replace(/ \(.*\)$/, '') : ''
-  // 'failed' is suricata saying detection ran and found nothing, which is not a
-  // protocol name and would read as an error in the machinery rather than a fact
-  // about the traffic.
   const identified = d.app_proto && d.app_proto !== 'failed' ? d.app_proto : ''
 
   const label = named || identified
@@ -626,15 +499,6 @@ function deniedWhat(d: DeniedAttempt) {
   return label ? `${label} — ${where}` : where
 }
 
-// Opens the add form already filled in from a denial, which is the whole point of
-// showing these: the row a user reads and then has to retype somewhere else is the
-// row they will get wrong.
-//
-// A refused lookup can only become a name allowance -- there is no address to offer,
-// because nothing was ever sent. A dropped packet becomes an address allowance on
-// the transport and port it was actually using, except on 443 or 80 where a name
-// was seen: there the name is the better allowance, since it does not grant the
-// whole address.
 function allowDenied(d: DeniedAttempt) {
   resetTargetForm()
   const byName = d.kind === 'lookup' || (!!d.domain && (d.port === 443 || d.port === 80))
@@ -642,8 +506,6 @@ function allowDenied(d: DeniedAttempt) {
   if (byName) {
     form.kind = 'domain'
     form.destination = d.domain
-    // A refused lookup says nothing about which port the guest wanted, so it gets
-    // both web ports; a blocked request names the one it was actually using.
     form.domainPorts = d.kind === 'lookup' ? '80,443' : String(d.port)
   }
   else {
@@ -657,8 +519,6 @@ function allowDenied(d: DeniedAttempt) {
   addOpen.value = true
 }
 
-// What the row is actually checked against. A lookup-only domain is the one worth
-// spelling out: it is in the list, and it grants no access at all.
 function matchedOn(t: Target) {
   if (t.kind !== 'domain') return 'address'
   return t.ports === 'none' ? 'name — resolves only' : 'tls sni · http host'
@@ -669,23 +529,9 @@ function portsLabel(t: Target) {
   return t.ports === 'none' ? 'none' : (t.ports || '443, 80')
 }
 
-// --- allow a hostname on a port that is not 443 or 80 ----------------------
-//
-// ssh, postgres and everything else carry no destination name in the traffic, so
-// there is nothing for a rule to check a hostname against and the access has to be
-// granted by address. This turns the name a user is thinking of into the two rows
-// that express it: the name itself as a lookup-only domain so the guest can
-// resolve it, and one address row per answer.
-//
-// Deliberately a one-time helper rather than something that re-resolves. Addresses
-// move, and a list that quietly followed them would be an allowlist nobody had
-// read.
 const resolveOpen = ref(false)
 const resolveHost = ref('')
 const resolvePreset = ref('ssh')
-// Used when the preset is 'custom'. The presets are a shortcut for the ports people
-// reach for most, not the limit of what an allowance can say -- so the raw transport
-// and ports are reachable here too, exactly as they are in the main form.
 const resolveTransport = ref('tcp')
 const resolvePorts = ref('')
 const resolving = ref(false)
@@ -694,8 +540,6 @@ const resolveAddresses = ref<string[]>([])
 const resolveChosen = ref<string[]>([])
 const resolveTruncated = ref(false)
 const addingResolved = ref(false)
-// Seconds, '0' for permanent, matching the main form. Kept separate from it
-// because both dialogs can be filled in before either is submitted.
 const resolveTTL = ref('0')
 
 function resetResolveForm() {
@@ -710,8 +554,6 @@ function resetResolveForm() {
   resolveTTL.value = '0'
 }
 
-// A ticking clock for the countdowns on this page. Coarse: the labels are in
-// minutes, so a faster tick would re-render for no visible change.
 const nowMs = ref(Date.now())
 let ttlClock: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
@@ -721,12 +563,6 @@ onBeforeUnmount(() => {
   if (ttlClock) clearInterval(ttlClock)
 })
 
-// How long is left, or that the deadline has passed. Past it the row says
-// "overdue" rather than counting up: the allowance is still in force, and the
-// control plane has not caught up -- which is exactly what a reader needs to know.
-// The bounds the server enforces, checked here so a typo is caught before the
-// request. Both dialogs that take a TTL use this rather than each spelling the
-// numbers out.
 function ttlProblem(raw: string) {
   const ttl = Number(raw)
   if (!Number.isInteger(ttl) || ttl < 0) return 'TTL must be a whole number of seconds, or 0 for no limit.'
@@ -747,8 +583,6 @@ function timeLeft(s: string) {
   return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`
 }
 
-// What the address rows will actually say, whichever way the user got there. One
-// place so the rows written and the note describing them cannot disagree.
 const resolveSpec = computed(() => {
   const preset = portPresets.find(p => p.key === resolvePreset.value)
   if (preset && preset.key !== 'custom') {
@@ -781,8 +615,6 @@ async function lookupHost() {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const data = await res.json()
     resolveAddresses.value = data.addresses ?? []
-    // Pre-checked: the user asked for this name, and unchecking is the rarer
-    // intention than checking all of them one by one.
     resolveChosen.value = [...resolveAddresses.value]
     resolveTruncated.value = data.truncated ?? false
     if (data.error) resolveError.value = data.error
@@ -808,8 +640,6 @@ async function postTarget(body: Record<string, string | number>) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  // A duplicate is not a failure here: this flow writes several rows and one of
-  // them already being on the list is the normal result of running it twice.
   if (!res.ok && res.status !== 409) {
     throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
   }
@@ -826,11 +656,6 @@ async function addResolved() {
   addingResolved.value = true
   resolveError.value = null
   try {
-    // The lookup-only row first. Without it the guest cannot resolve the name, and
-    // the address rows below would only be reachable by typing an IP.
-    // The same TTL on every row this flow writes, including the lookup-only one:
-    // leaving the name resolvable after its addresses expire would be an allowance
-    // that half-survives, which is harder to reason about than either outcome.
     const ttl = Number(resolveTTL.value)
     await postTarget({
       kind: 'domain',
@@ -929,8 +754,6 @@ async function confirmRemove() {
               @update:model-value="togglePower"
             />
           </div>
-          <!-- Labelled, not icon-only: this is the one irreversible action on
-               the page, and it sits next to a switch that is not. -->
           <Button
             variant="outline"
             size="sm"
@@ -957,7 +780,6 @@ async function confirmRemove() {
         <AlertDescription>{{ vm.last_error }}</AlertDescription>
       </Alert>
 
-      <!-- details -->
       <section aria-labelledby="details-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="details-heading" class="text-sm font-semibold">Details</h2>
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -967,8 +789,6 @@ async function confirmRemove() {
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">Disk</dt>
-            <!-- Shown even when unrecorded: '0' would read as a diskless VM,
-                 and a blank field as one that has no such property at all. -->
             <dd class="mt-1 font-mono text-sm">
               {{ vm.disk_mib ? fmtMiB(vm.disk_mib) : 'not recorded' }}
             </dd>
@@ -982,13 +802,9 @@ async function confirmRemove() {
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.started_at) }}</dd>
           </div>
           <div>
-            <!-- The status is the host's claim as of this moment, not a live
-                 reading, so the age of that claim belongs next to it. -->
             <dt class="eyebrow text-muted-foreground">Last confirmed by host</dt>
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.reported_at) }}</dd>
           </div>
-          <!-- Only for a temporary VM. A "TTL: none" row on every other VM
-               would be a field nobody reads, and this one has to be read. -->
           <div v-if="vm.expires_at">
             <dt class="eyebrow text-muted-foreground">Destroyed</dt>
             <dd class="mt-1 text-sm">
@@ -1001,7 +817,6 @@ async function confirmRemove() {
         </dl>
       </section>
 
-      <!-- routing -->
       <section aria-labelledby="ports-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -1011,9 +826,6 @@ async function confirmRemove() {
               one. Changes reach the host straight away.
             </p>
           </div>
-          <!-- Edit alone up here: it changes what this panel says, while the
-               rest act on the VM the panel describes and read better under the
-               values they use. -->
           <div class="flex flex-wrap items-center gap-2">
             <Dialog v-model:open="portsOpen">
               <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
@@ -1080,9 +892,6 @@ async function confirmRemove() {
             <dt class="eyebrow text-muted-foreground">Default port</dt>
             <dd class="mt-1 flex items-center gap-2 font-mono text-sm">
               {{ vm.default_port }}
-              <!-- Only when the server worked out a hostname: the host it runs
-                   on has no domain otherwise, and a link to a name nothing
-                   resolves is worse than none. -->
               <a
                 v-if="vm.url"
                 :href="vm.url"
@@ -1104,16 +913,8 @@ async function confirmRemove() {
           </div>
         </dl>
 
-        <!-- Ways in, under the routing they use. SSH is kept apart from the
-             others: it is a command to run elsewhere, shown in full so it can be
-             read as well as copied, while the rest navigate somewhere. The left
-             group is rendered even when there is no hostname so the others stay
-             right-aligned without it. -->
         <div class="mt-6 flex flex-wrap items-center justify-between gap-2">
           <div class="flex min-w-0 items-center gap-2">
-            <!-- Only when there is a hostname: without a domain there is
-                 nothing to ssh to, and a bare name would show a command that
-                 fails. -->
             <div
               v-if="sshHost"
               class="flex min-w-0 items-center gap-2 rounded-md border border-border bg-muted/40 py-1 pl-3 pr-1"
@@ -1152,10 +953,6 @@ async function confirmRemove() {
               Web
               <span class="sr-only">: open {{ vm.url }} in a new tab</span>
             </Button>
-            <!-- A new tab, not a route change: a terminal is a session, and
-                 navigating the page away from it would drop the shell. Only
-                 when the VM is running, since the console opens an ssh
-                 connection to it and a stopped VM has nothing listening. -->
             <Button
               v-if="vm.console_url"
               as="a"
@@ -1175,8 +972,6 @@ async function confirmRemove() {
               Console
               <span class="sr-only">: open a terminal in a new tab</span>
             </Button>
-            <!-- The two web frames and a shell in one screen. A new tab for the
-                 same reason the console is: it holds a live session. -->
             <Button
               v-if="vm.url"
               as="a"
@@ -1196,10 +991,6 @@ async function confirmRemove() {
               Workspace
               <span class="sr-only">: open previews and a terminal in a new tab</span>
             </Button>
-            <!-- One control, two targets: the wide half opens whichever editor
-                 was used last, the chevron changes which that is. Same
-                 reachability rule as the SSH button -- without a hostname there
-                 is nothing for an editor to connect to. -->
             <div v-if="sshHost && activeEditor" class="inline-flex items-center">
               <Button
                 as="a"
@@ -1228,8 +1019,6 @@ async function confirmRemove() {
                     <ChevronDown class="size-3.5 opacity-60" aria-hidden="true" />
                   </Button>
                 </DropdownMenuTrigger>
-                <!-- p-0: Command brings its own padding, and the menu's would
-                     otherwise inset the search field from the menu edge. -->
                 <DropdownMenuContent align="end" class="w-56 p-0">
                   <Command>
                     <CommandInput placeholder="Search editors…" />
@@ -1264,7 +1053,6 @@ async function confirmRemove() {
         </div>
       </section>
 
-      <!-- destinations -->
       <section aria-labelledby="targets-heading" class="mt-6 rounded-lg border border-border">
         <div class="flex flex-wrap items-start justify-between gap-4 p-4 sm:p-6">
           <div>
@@ -1275,8 +1063,6 @@ async function confirmRemove() {
             </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
-          <!-- ssh, postgres and the rest carry no hostname for a rule to check, so
-               they are allowed by address. This turns a name into those rows. -->
           <Dialog v-model:open="resolveOpen" @update:open="(v: boolean) => !v && resetResolveForm()">
             <Button size="sm" variant="outline" class="font-mono text-xs" @click="resolveOpen = true">
               From a hostname
@@ -1315,8 +1101,6 @@ async function confirmRemove() {
                   </Select>
                 </div>
 
-                <!-- The presets are a shortcut for the common ports, not the limit
-                     of what can be allowed. -->
                 <div v-if="resolvePreset === 'custom'" class="grid gap-4 sm:grid-cols-2">
                   <div class="space-y-2">
                     <Label for="r-transport">Transport</Label>
@@ -1332,8 +1116,6 @@ async function confirmRemove() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <!-- icmp has no ports: its type and code sit where a port would
-                       be, and a rule header cannot address them. -->
                   <div v-if="resolveTransport !== 'icmp'" class="space-y-2">
                     <Label for="r-ports">Ports</Label>
                     <Input id="r-ports" v-model="resolvePorts" placeholder="8080, 5000:5010" aria-describedby="r-ports-hint" />
@@ -1423,8 +1205,6 @@ async function confirmRemove() {
                       <SelectItem value="ip">IP address or CIDR</SelectItem>
                     </SelectContent>
                   </Select>
-                  <!-- Live region: choosing a type adds or removes the fields
-                       below, which is otherwise a silent reflow. (WCAG 4.1.3) -->
                   <p id="t-kind-hint" role="status" aria-live="polite" class="text-xs text-muted-foreground">
                     {{ matchSummary }}
                   </p>
@@ -1440,10 +1220,6 @@ async function confirmRemove() {
                   />
                 </div>
 
-                <!-- A domain chooses between the two ports its name can be
-                     checked on, or neither. Not a free port field: the ports
-                     suricata looks for http and tls on come from a per-host
-                     config, so a rule on 8443 would load and never match. -->
                 <div v-if="form.kind === 'domain'" class="space-y-2">
                   <Label for="t-domain-ports">Allow on</Label>
                   <Select v-model="form.domainPorts">
@@ -1462,9 +1238,6 @@ async function confirmRemove() {
                   </p>
                 </div>
 
-                <!-- Transport and ports exist only for an address. A domain is
-                     matched by the name in the traffic, and the header of the
-                     rule that does it names no address. -->
                 <template v-if="form.kind === 'ip'">
                   <div class="space-y-2">
                     <Label for="t-preset">Protocol</Label>
@@ -1498,8 +1271,6 @@ async function confirmRemove() {
                         Allows tcp and udp. To allow only ping, choose icmp.
                       </p>
                     </div>
-                    <!-- icmp has no ports: its type and code sit where a port
-                         would be, and a rule header cannot address them. -->
                     <div v-if="form.transport !== 'icmp'" class="space-y-2">
                       <Label for="t-ports">Ports</Label>
                       <Input id="t-ports" v-model="form.ports" placeholder="443, 80,443, 1000:2000" aria-describedby="t-ports-hint" />
@@ -1554,13 +1325,9 @@ async function confirmRemove() {
             <TableCell class="font-mono text-xs text-muted-foreground">
               {{ matchedOn(t) }}
             </TableCell>
-            <!-- An em dash, not 'any': transport does not apply to a domain row at
-                 all, and 'any' would read as "every transport is allowed". -->
             <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
             <TableCell class="font-mono text-muted-foreground">{{ portsLabel(t) }}</TableCell>
             <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
-            <!-- An em dash for a permanent allowance, which is most of them. The
-                 ones with a deadline are the ones worth reading. -->
             <TableCell class="font-mono text-xs">
               <span v-if="!t.expires_at" class="text-muted-foreground">—</span>
               <span v-else :class="timeLeft(t.expires_at) === 'overdue' ? 'text-destructive' : 'text-muted-foreground'">
@@ -1582,7 +1349,6 @@ async function confirmRemove() {
         </DataTable>
       </section>
 
-      <!-- denied egress -->
       <section aria-labelledby="denied-heading" class="mt-6 rounded-lg border border-border">
         <div class="flex flex-wrap items-start justify-between gap-4 p-4 sm:p-6">
           <div>
@@ -1594,8 +1360,6 @@ async function confirmRemove() {
               something the guest should not have been reaching at all.
             </p>
           </div>
-          <!-- This list changes on its own as the guest keeps trying, so it is the
-               one panel on the page worth re-reading without reloading everything. -->
           <Button
             variant="outline"
             size="sm"
@@ -1609,9 +1373,6 @@ async function confirmRemove() {
           </Button>
         </div>
 
-        <!-- Said plainly rather than shown as an empty table: with nothing
-             recording, "nothing was denied" and "nothing is being recorded" look
-             identical, and only one of them is reassuring. -->
         <p v-if="!deniedFirstLoad && !deniedAvailable" class="px-4 pb-6 text-sm text-muted-foreground sm:px-6">
           Neither record could be read, so nothing is being reported here. This says nothing about
           whether this VM has been blocked.
@@ -1623,9 +1384,6 @@ async function confirmRemove() {
         </div>
 
         <template v-else>
-          <!-- One record readable and the other not is a partial list, and saying
-               which half is missing is the difference between a list that can be
-               trusted and one that merely looks complete. -->
           <p v-if="!deniedRecording.lookups" class="px-4 pb-4 text-sm text-muted-foreground sm:px-6">
             Refused lookups are not being recorded, so names this VM could not resolve are missing
             from this list. Everything the ruleset dropped is still shown.
@@ -1641,8 +1399,6 @@ async function confirmRemove() {
             <TableRow v-for="d in denied" :key="`${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`">
               <TableCell class="font-mono break-all">
                 {{ deniedDestination(d) }}
-                <!-- Both, when both are known: the name is what the user recognises
-                     and the address is what the packet was actually going to. -->
                 <span v-if="d.domain && d.address" class="block text-xs text-muted-foreground">
                   {{ d.address }}
                 </span>
@@ -1668,7 +1424,6 @@ async function confirmRemove() {
       </section>
     </template>
 
-    <!-- delete confirm -->
     <Dialog v-model:open="deleteOpen">
       <DialogContent>
         <DialogHeader>
@@ -1692,7 +1447,6 @@ async function confirmRemove() {
       </DialogContent>
     </Dialog>
 
-    <!-- remove confirm -->
     <Dialog :open="!!toRemove" @update:open="(v: boolean) => { if (!v) toRemove = null }">
       <DialogContent>
         <DialogHeader>

@@ -59,7 +59,6 @@ func TestResolveSSHKnownKey(t *testing.T) {
 	}
 	r := newTestResolver(t, cfg)
 
-	// The offered key carries a different comment: normalization must ignore it.
 	rep := r.Handle(control.Msg{
 		V: control.Version, Type: control.TypeResolve, ID: "r1", Kind: control.KindSSH,
 		SSHUser: "build", SSHPubKey: authorizedLine(alice, " someone-else@host"),
@@ -117,8 +116,6 @@ func TestResolveHTTP(t *testing.T) {
 	}
 }
 
-// protectedHTTPSResolver is a host that requires auth, reachable over the https
-// ingress, plus the authenticator whose cookies open it.
 func protectedHTTPSResolver(t *testing.T) (*Resolver, *Authenticator) {
 	t.Helper()
 	cfg := &Config{
@@ -218,7 +215,6 @@ func TestResolveHTTPCallbackMintsSession(t *testing.T) {
 		t.Fatalf("callback must set the session cookie: %q", rep.SetCookie)
 	}
 
-	// The cookie the callback handed out must be the one that opens the host.
 	c, err := http.ParseSetCookie(rep.SetCookie)
 	if err != nil {
 		t.Fatalf("ParseSetCookie: %v", err)
@@ -237,7 +233,6 @@ func TestResolveHTTPCallbackRejectsForgedToken(t *testing.T) {
 	}
 }
 
-// consoleResolver is a host published with a console, reachable over https.
 func consoleResolver(t *testing.T) (*Resolver, *Authenticator) {
 	t.Helper()
 	cfg := &Config{
@@ -254,7 +249,6 @@ func consoleResolver(t *testing.T) (*Resolver, *Authenticator) {
 	return r, r.auth
 }
 
-// wsResolve is a console websocket upgrade as dpipe would forward it.
 func wsResolve(token string) control.Msg {
 	return control.Msg{
 		Host:       "one.shell.vm.local",
@@ -286,7 +280,6 @@ func TestResolveConsoleOverHTTPSRefusals(t *testing.T) {
 	r, a := consoleResolver(t)
 	good := a.Mint("alice", consoleAudPrefix+"one.shell.vm.local")
 
-	// A session token for the VM must never open a shell on its console.
 	session := a.Mint("alice", "one.vm.local")
 
 	cases := []struct {
@@ -352,7 +345,6 @@ func TestDuplicateKeyAndVMRejected(t *testing.T) {
 	}
 }
 
-// An entry a client cannot name is unreachable, not merely unused.
 func TestValidateRejectsUnusableVMNames(t *testing.T) {
 	line := authorizedLine(newTestKey(t), "")
 	for name, vm := range map[string]string{"empty": "", "with a space": "my vm", "with an at": "vm@host"} {
@@ -367,8 +359,6 @@ func TestValidateRejectsUnusableVMNames(t *testing.T) {
 	}
 }
 
-// One user owns one key and may own many VMs, which is what the login name
-// picks between.
 func TestResolveSSHOneKeyManyVMs(t *testing.T) {
 	alice := newTestKey(t)
 	line := authorizedLine(alice, " alice@laptop")
@@ -409,7 +399,6 @@ func TestResolveSSHNoVMSelected(t *testing.T) {
 	}
 }
 
-// An unknown key learns nothing, not even that the mechanism exists.
 func TestResolveSSHUnknownKeyGetsNoNotice(t *testing.T) {
 	alice, bob := newTestKey(t), newTestKey(t)
 	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{
@@ -424,7 +413,6 @@ func TestResolveSSHUnknownKeyGetsNoNotice(t *testing.T) {
 	}
 }
 
-// A key may not reach a VM it does not own even by naming it exactly.
 func TestResolveSSHOtherUsersVM(t *testing.T) {
 	alice, bob := newTestKey(t), newTestKey(t)
 	cfg := &Config{SSH: &SSHConfig{Listen: ":2222", Users: []SSHUser{

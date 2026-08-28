@@ -13,14 +13,6 @@ import (
 	"time"
 )
 
-// The certificate this feature installs is the one input that can stop a host
-// booting: dpipe refuses to start when tls is on and what it is pointed at will
-// not load, and the config that points at it is written in the same push. So the
-// cases below are the ones that must never get past the validator, not a
-// representative sample.
-
-// testCert mints a self-signed certificate for the given names, valid over the
-// given window, and returns it as a PEM pair.
 func testCert(t *testing.T, names []string, notBefore, notAfter time.Time) (certPEM, keyPEM string) {
 	t.Helper()
 
@@ -65,10 +57,6 @@ func TestCertificateNamesCoverConsoles(t *testing.T) {
 	}
 }
 
-// The apex and "*.<tld>" publish their dns-01 challenges at the same record
-// name, so asking for both turns one order into two TXT values an operator has
-// to add side by side -- and replacing rather than adding fails both. Nothing
-// this fleet serves is at the apex, so it is not asked for.
 func TestCertificateNamesOmitTheApex(t *testing.T) {
 	for _, n := range certificateNames("example.com") {
 		if n == "example.com" {
@@ -77,8 +65,6 @@ func TestCertificateNamesOmitTheApex(t *testing.T) {
 	}
 }
 
-// Dropping the apex from what is requested must not start rejecting certificates
-// that carry it anyway -- every public ca includes it with a wildcard.
 func TestValidateCertificateAcceptsAnApexItDidNotAskFor(t *testing.T) {
 	names := append([]string{"example.com"}, certificateNames("example.com")...)
 	certPEM, keyPEM := testCert(t, names, time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour))
@@ -103,9 +89,6 @@ func TestValidateCertificateAcceptsAFleetCertificate(t *testing.T) {
 	}
 }
 
-// The whole reason the validator exists. A "*.example.com" wildcard looks
-// complete and covers every guest; the consoles are on a label deeper, and a
-// wildcard matches one label.
 func TestValidateCertificateRejectsMissingConsoleWildcard(t *testing.T) {
 	certPEM, keyPEM := testCert(t,
 		[]string{"example.com", "*.example.com"},
@@ -136,7 +119,6 @@ func TestValidateCertificateRejectsAMismatchedKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("a certificate was accepted with someone else's private key")
 	}
-	// The message must not carry the key that failed to match.
 	if strings.Contains(err.Error(), "PRIVATE KEY") {
 		t.Errorf("the error quotes the private key: %v", err)
 	}
@@ -175,8 +157,6 @@ func TestValidateCertificateRejectsEmpty(t *testing.T) {
 	}
 }
 
-// A pasted certificate often arrives with CRLFs and a "Bag Attributes" preamble.
-// Neither should reach the host, and neither should make the paste fail.
 func TestNormalizePEMStripsNoiseAroundTheBlocks(t *testing.T) {
 	certPEM, _ := testFleetCert(t, "example.com")
 	pasted := "Bag Attributes\n    friendlyName: example\n" +
@@ -194,8 +174,6 @@ func TestNormalizePEMStripsNoiseAroundTheBlocks(t *testing.T) {
 	}
 }
 
-// A chain must survive normalizing: dropping everything after the leaf would
-// produce a certificate that works in curl and fails in a browser.
 func TestNormalizePEMKeepsEveryBlock(t *testing.T) {
 	leaf, _ := testFleetCert(t, "example.com")
 	intermediate, _ := testFleetCert(t, "ca.example.com")

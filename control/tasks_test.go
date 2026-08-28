@@ -12,14 +12,10 @@ func TestParseTTLSeconds(t *testing.T) {
 		want    time.Duration
 		wantErr bool
 	}{
-		// Zero is the ordinary case, not an omission to complain about: most VMs and
-		// most allowances are permanent.
 		{name: "absent", secs: 0, want: 0},
 		{name: "floor", secs: 10, want: 10 * time.Second},
 		{name: "an hour", secs: 3600, want: time.Hour},
 		{name: "ceiling", secs: 30 * 24 * 3600, want: 30 * 24 * time.Hour},
-		// Below the floor the deadline can land inside the time it takes to apply,
-		// which is a promise the pipeline cannot keep.
 		{name: "under the floor", secs: 5, wantErr: true},
 		{name: "over the ceiling", secs: 31 * 24 * 3600, wantErr: true},
 		{name: "negative", secs: -60, wantErr: true},
@@ -62,9 +58,6 @@ func TestFormatTTL(t *testing.T) {
 	}
 }
 
-// The backoff is only used for retries a handler had no expectation about, so
-// what matters is that it grows and then stops growing -- an unbounded doubling
-// would turn a transient fault into a task that effectively never runs again.
 func TestTaskBackoffGrowsAndIsCapped(t *testing.T) {
 	prev := time.Duration(0)
 	for attempts := int32(0); attempts < 6; attempts++ {

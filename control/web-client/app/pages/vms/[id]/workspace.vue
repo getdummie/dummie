@@ -8,9 +8,6 @@ import { desktopPresets, mobilePresets } from '@/lib/viewports'
 import VmTerminal from '@/components/VmTerminal.vue'
 import VmViewport from '@/components/VmViewport.vue'
 
-// layout: false for the same reason the console page skips it -- this view is a
-// workspace that wants the whole viewport, with no sidebar eating a third of the
-// width it is trying to render two devices side by side in.
 definePageMeta({ middleware: ['auth'], layout: false })
 
 interface VM {
@@ -31,15 +28,6 @@ const id = computed(() => String(route.params.id))
 const vm = ref<VM | null>(null)
 const loadError = ref<string | null>(null)
 
-// Where the frames point: the guest's own address, carrying a token its host
-// redeems for a session cookie. The guest stays on its own origin -- which is
-// what keeps its code away from this page's storage, dom and session -- and the
-// cookie is what authenticates everything it loads after the first document.
-//
-// Minted per load rather than held: the token is good for minutes, so a reload an
-// hour later needs a new one, and asking for one costs a single request.
-// One per pane rather than one shared: reloading a pane mints again, and a shared
-// url would make that reload the other pane too.
 const desktopURL = ref('')
 const mobileURL = ref('')
 const frameError = ref<string | null>(null)
@@ -86,9 +74,6 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
-// Fetched here as well as inside the terminal: this page needs the VM's name and
-// status for its header and its own link out, which the terminal has no use for
-// and does not report.
 onMounted(async () => {
   try {
     const res = await authFetch(`/vms/${id.value}`)
@@ -101,8 +86,6 @@ onMounted(async () => {
     return
   }
 
-  // Its own failure, kept apart from the one above: a VM that loaded fine but
-  // cannot be framed should still show its console.
   await Promise.all([openGuest(desktopURL), openGuest(mobileURL)])
 })
 </script>
@@ -132,9 +115,6 @@ onMounted(async () => {
       <AlertDescription>{{ loadError }}</AlertDescription>
     </Alert>
 
-    <!-- The whole workspace is one vertical split: the two previews above, the
-         shell below. Sizes are saved per pane group so a layout someone has
-         dragged into shape survives a reload. -->
     <ResizablePanelGroup
       v-if="!loadError"
       direction="vertical"
@@ -142,8 +122,6 @@ onMounted(async () => {
       class="min-h-0 flex-1"
     >
       <ResizablePanel :default-size="65" :min-size="20">
-        <!-- Desktop on the left, mobile on the right, per the intent of the
-             view: the wide frame gets the room it needs by default. -->
         <ResizablePanelGroup direction="horizontal" auto-save-id="dummie:work-columns" class="size-full">
           <ResizablePanel :default-size="62" :min-size="20">
             <VmViewport

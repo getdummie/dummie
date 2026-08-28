@@ -14,10 +14,6 @@ import (
 	"dpipe/internal/control"
 )
 
-// serveSSH terminates SSH on an adopted raw socket: it authenticates the client
-// by public key (the signature check is the library's; the proxy decides which
-// VM that key may reach), dials the returned target as an SSH client with
-// dpipe's own client key, and relays channels and requests both ways.
 func (s *Server) serveSSH(p *control.Peer, id string, client net.Conn) {
 	remoteIP := hostOnly(client.RemoteAddr())
 	log := s.log.With("id", id, "protocol", control.ProtoSSH, "client", remoteIP)
@@ -37,13 +33,9 @@ func (s *Server) serveSSH(p *control.Peer, id string, client net.Conn) {
 				ClientIP:       remoteIP,
 			}, nil)
 			if err != nil {
-				// Retryable: the client may offer another key or reconnect.
 				log.Warn("ssh resolve failed", "user", cm.User(), "fp", fp, "err", err)
 				return nil, errors.New("authorization unavailable")
 			}
-			// A notice means the key is known but selected no VM. Auth has to
-			// succeed for the client to see anything at all: an error here reaches
-			// it as "Permission denied" with no text.
 			if !rep.Authorized && rep.Notice != "" {
 				log.Info("ssh no vm selected", "user", cm.User(), "fp", fp)
 				return &ssh.Permissions{Extensions: map[string]string{"notice": rep.Notice}}, nil
@@ -84,8 +76,6 @@ func (s *Server) serveSSH(p *control.Peer, id string, client net.Conn) {
 		log.Warn("ssh session without a target")
 		return
 	}
-	// Not falling back to sconn.User(): the login name is the VM the client asked
-	// for, not an account inside it.
 	if remoteUser == "" {
 		log.Warn("ssh session without a remote user")
 		return
@@ -117,17 +107,10 @@ func (s *Server) serveSSH(p *control.Peer, id string, client net.Conn) {
 	log.Info("ssh session end")
 }
 
-// noticeWait bounds how long a session with nothing to route to stays open
-// waiting for a channel to print on. A client that opens none -- ssh -N, a
-// forward-only session -- has nowhere to be told anything and is just closed.
 const noticeWait = 10 * time.Second
 
-// serveSSHNotice prints text on the first session channel and hangs up. The
-// caller closes the connection.
 func serveSSHNotice(log *slog.Logger, chans <-chan ssh.NewChannel, reqs <-chan *ssh.Request, notice string) {
 	go ssh.DiscardRequests(reqs)
-	// The client puts its terminal in raw mode once it has asked for a pty, so
-	// bare newlines would stair-step.
 	text := strings.ReplaceAll(notice, "\n", "\r\n")
 
 	timer := time.NewTimer(noticeWait)

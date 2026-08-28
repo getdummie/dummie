@@ -1,5 +1,3 @@
-// Command dproxy is the control plane: it owns the public ingress listeners,
-// decides where each connection goes and hands connections to dpipe.
 package main
 
 import (
@@ -14,7 +12,6 @@ import (
 	"dproxy/internal/proxy"
 )
 
-// Set at build time with -X main.version; "dev" in a plain `go build`.
 var (
 	version = "dev"
 	commit  = "none"

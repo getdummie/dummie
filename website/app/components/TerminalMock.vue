@@ -1,5 +1,4 @@
 <script setup lang="ts">
-// Static, decorative CLI transcript in the Oxide "monodraw" spirit.
 const lines = [
   { kind: 'cmd', text: 'dummie run ./agent.py --net=egress-only' },
   { kind: 'muted', text: 'resolving image  python:3.13-slim' },
@@ -13,15 +12,11 @@ const lines = [
 </script>
 
 <template>
-  <!-- This is a picture of a terminal, not a terminal. Exposing it as one image
-       with a summary beats making a screen-reader user wade through eight lines
-       of fake shell output to reach the rest of the hero. (WCAG 1.1.1) -->
   <div
     role="img"
     aria-label="Screenshot of a terminal: running an agent script in a dummie sandbox, which boots in 142 milliseconds, executes in an isolated VM, exits cleanly, and saves a snapshot."
     class="overflow-hidden rounded-lg border border-border bg-card shadow-2xl shadow-black/20"
   >
-    <!-- title bar -->
     <div class="flex items-center gap-2 border-b border-border bg-secondary/40 px-4 py-2.5">
       <div class="flex gap-1.5">
         <span class="size-2.5 rounded-full bg-border" />
@@ -30,7 +25,6 @@ const lines = [
       </div>
       <span class="ml-2 font-mono text-xs text-muted-foreground">~/dummie — sandbox</span>
     </div>
-    <!-- body -->
     <div class="space-y-1.5 p-4 font-mono text-[13px] leading-relaxed sm:p-5">
       <div v-for="(l, i) in lines" :key="i" class="flex gap-2">
         <span class="select-none text-primary-text" :class="l.kind === 'cmd' ? 'opacity-100' : 'opacity-0'">$</span>

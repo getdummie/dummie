@@ -9,16 +9,11 @@ import (
 	"control/internal/db"
 )
 
-// testProxyAuth is a fully configured hand-off, so what these tests generate is
-// the file a real fleet gets rather than a stripped-down one.
 var testProxyAuth = proxyAuthConfig{
 	secret:     testProxySecret,
 	controlURL: "http://control.example.com:1323",
 }
 
-// parsedProxyConfig is the part of the generated file these tests assert on.
-// Parsed rather than string-matched, because what matters is what proxy reads,
-// not how it was laid out.
 type parsedProxyConfig struct {
 	Auth struct {
 		ControlURL       string `yaml:"control_url"`
@@ -40,15 +35,11 @@ type parsedProxyConfig struct {
 		Listen string `yaml:"listen"`
 		Hosts  map[string]struct {
 			Host string `yaml:"host"`
-			// The emitted key, which is deliberately not the name the column, the
-			// API or the UI uses for the same list.
 			UnauthPorts []int `yaml:"unauthenticated_ports"`
 			DefaultPort int   `yaml:"default_port"`
 		} `yaml:"hosts"`
 		Default string `yaml:"default"`
 	} `yaml:"http"`
-	// Absent entirely on a host with no certificate, which is what the zero value
-	// here distinguishes.
 	HTTPS struct {
 		Listen    string `yaml:"listen"`
 		Reuseport bool   `yaml:"reuseport"`
@@ -57,8 +48,6 @@ type parsedProxyConfig struct {
 		Label      string `yaml:"label"`
 		RemoteUser string `yaml:"remote_user"`
 	} `yaml:"console"`
-	// Absent on a host with no domain, which is what the empty Hosts here
-	// distinguishes.
 	Site struct {
 		Listen   string   `yaml:"listen"`
 		HTMLFile string   `yaml:"html_file"`
@@ -108,17 +97,6 @@ func TestGenerateProxyConfigOneVMPerUser(t *testing.T) {
 	}
 }
 
-// A host whose VMs were all destroyed -- or which has just enrolled -- has to get
-// a file proxy will actually start on. It publishes nothing either way, but the
-// two halves express that differently, and the difference is not cosmetic:
-//
-//   - the http table is emitted empty, because http is the ingress that keeps
-//     proxy a valid configuration at all, and an empty table routes nothing
-//   - the ssh block is omitted entirely, because proxy refuses to load an ssh
-//     ingress with no users, so spelling it `users: []` produced a config no such
-//     host could start on
-//
-// Both mean "nobody may connect". Only one of them loads.
 func TestGenerateProxyConfigEmptyHost(t *testing.T) {
 	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil)
 	if strings.Contains(out, "ssh:") {
@@ -127,8 +105,6 @@ func TestGenerateProxyConfigEmptyHost(t *testing.T) {
 	if !strings.Contains(out, "hosts: {}") {
 		t.Errorf("an empty host did not emit an empty host table:\n%s", out)
 	}
-	// The zero value is what distinguishes an absent block, the same way it does
-	// for https above.
 	got := parseProxyConfig(t, out)
 	if got.SSH.Listen != "" || len(got.SSH.Users) != 0 {
 		t.Errorf("got an ssh block (listen %q, %d users), want none at all",
@@ -139,9 +115,6 @@ func TestGenerateProxyConfigEmptyHost(t *testing.T) {
 	}
 }
 
-// One http entry per VM, keyed by the VM's name under the client's domain and
-// carrying its address, the ports it publishes and the one a request goes to
-// when nothing picks.
 func TestGenerateProxyConfigHTTPHosts(t *testing.T) {
 	rows := []db.ListProxyHTTPRoutesByClientRow{
 		{VMName: "interesting-hawking", VMIP: "10.64.0.2", HostVMID: "abc123", DomainTLD: "example.com", DefaultPort: 8000, PublicPorts: []int32{8000}},
@@ -167,21 +140,16 @@ func TestGenerateProxyConfigHTTPHosts(t *testing.T) {
 		t.Errorf("unauthenticated_ports is %v, want [8000]", one.UnauthPorts)
 	}
 
-	// The list is written in the order it was given, not sorted: that order is the
-	// caller's, and reordering it would show up as a diff on every host.
 	two := got.HTTP.Hosts["quirky-curie.example.com"]
 	if len(two.UnauthPorts) != 2 || two.UnauthPorts[0] != 3000 || two.UnauthPorts[1] != 9090 {
 		t.Errorf("unauthenticated_ports is %v, want [3000 9090]", two.UnauthPorts)
 	}
 
-	// An unmatched Host header must miss rather than land on some arbitrary guest.
 	if got.HTTP.Default != "" {
 		t.Errorf("http default is %q, want empty", got.HTTP.Default)
 	}
 }
 
-// A VM that publishes nothing still gets an entry, with an empty list rather
-// than a missing key.
 func TestGenerateProxyConfigHTTPNoPublicPorts(t *testing.T) {
 	rows := []db.ListProxyHTTPRoutesByClientRow{
 		{VMName: "quirky-curie", VMIP: "10.64.0.3", HostVMID: "def456", DomainTLD: "example.com", DefaultPort: 8000},
@@ -197,9 +165,6 @@ func TestGenerateProxyConfigHTTPNoPublicPorts(t *testing.T) {
 	}
 }
 
-// The key is the one unquoted value in the file. A row that cannot produce a
-// real hostname is dropped rather than written, so it cannot introduce structure
-// into the document.
 func TestGenerateProxyConfigSkipsUnusableHostnames(t *testing.T) {
 	rows := []db.ListProxyHTTPRoutesByClientRow{
 		{VMName: "evil\nhttp:\n  hosts: {}", VMIP: "10.64.0.2", HostVMID: "abc123", DomainTLD: "example.com", DefaultPort: 8000},
@@ -216,9 +181,6 @@ func TestGenerateProxyConfigSkipsUnusableHostnames(t *testing.T) {
 	}
 }
 
-// Stored keys carry no comment any more, so nothing here should be awkward --
-// which is exactly why the quoting is worth a test: an unquoted " #" would
-// truncate the scalar and leave a valid-looking key that is not the one on file.
 func TestGenerateProxyConfigQuotesAwkwardComments(t *testing.T) {
 	const awkward = `ssh-ed25519 AAAAC3Nz me@host # not a comment: "quoted" \ and: more`
 	rows := []db.ListProxySSHUsersByClientRow{
@@ -234,8 +196,6 @@ func TestGenerateProxyConfigQuotesAwkwardComments(t *testing.T) {
 	}
 }
 
-// A VM name ends up in a '#' comment line. A newline in one would end the
-// comment and put whatever followed into the document as configuration.
 func TestGenerateProxyConfigNeutralisesNamesInComments(t *testing.T) {
 	rows := []db.ListProxySSHUsersByClientRow{
 		{
@@ -252,9 +212,6 @@ func TestGenerateProxyConfigNeutralisesNamesInComments(t *testing.T) {
 	}
 }
 
-// The auth block is what points a guest's proxy back at this server, so the url
-// in it has to be the login path under the origin browsers reach us on -- not
-// the address this process binds.
 func TestGenerateProxyConfigAuthBlock(t *testing.T) {
 	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil))
 
@@ -270,14 +227,10 @@ func TestGenerateProxyConfigAuthBlock(t *testing.T) {
 	if got.Auth.CookieSecure {
 		t.Error("cookie_secure is on for a dev control plane, so the browser will drop the cookie over http")
 	}
-	// Same reasoning: SameSite=None is only kept by a browser alongside Secure, so
-	// a dev fleet has to stay lax or the cookie is dropped on every request.
 	if got.Auth.CookieSameSite != "lax" {
 		t.Errorf("cookie_samesite = %q for a dev control plane, want \"lax\"", got.Auth.CookieSameSite)
 	}
 
-	// The key itself is never in the file -- it is written to a 0600 file the
-	// block names, and dproxy.yaml is readable by anyone on the host.
 	if strings.Contains(generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil), testProxySecret) {
 		t.Error("the shared secret was written into dproxy.yaml")
 	}
@@ -289,8 +242,6 @@ func TestGenerateProxyConfigAuthBlockOmittedWithoutASecret(t *testing.T) {
 	if strings.Contains(out, "auth:") {
 		t.Errorf("an auth block was written with no key to verify tokens with:\n%s", out)
 	}
-	// Still a whole config: the guests on the host stay reachable exactly as they
-	// were before the hand-off existed.
 	if got := parseProxyConfig(t, out); got.HTTP.Listen != proxyHTTPListen {
 		t.Errorf("http listen is %q, want %q", got.HTTP.Listen, proxyHTTPListen)
 	}
@@ -302,15 +253,11 @@ func TestGenerateProxyConfigConsoleBlock(t *testing.T) {
 	if got.Console.Label != proxyConsoleLabel {
 		t.Errorf("console label is %q, want %q", got.Console.Label, proxyConsoleLabel)
 	}
-	// The shell runs as the account the images actually have a key for; anything
-	// else would be a terminal that cannot log in.
 	if got.Console.RemoteUser != proxyRemoteUser {
 		t.Errorf("console remote_user is %q, want %q", got.Console.RemoteUser, proxyRemoteUser)
 	}
 }
 
-// The console token is verified with the key the auth block names, so a fleet
-// with no key must not be told to answer on the console hostnames at all.
 func TestGenerateProxyConfigConsoleOmittedWithoutASecret(t *testing.T) {
 	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, proxyHost{}, nil, nil)
 
@@ -319,8 +266,6 @@ func TestGenerateProxyConfigConsoleOmittedWithoutASecret(t *testing.T) {
 	}
 }
 
-// A prod control plane serves guests over https, and a cookie without Secure
-// there is one that travels in the clear.
 func TestGenerateProxyConfigCookieSecureInProd(t *testing.T) {
 	auth := testProxyAuth
 	auth.cookieSecure = true
@@ -329,18 +274,11 @@ func TestGenerateProxyConfigCookieSecureInProd(t *testing.T) {
 	if !got.Auth.CookieSecure {
 		t.Error("cookie_secure is off in prod")
 	}
-	// The control plane and the guests are different domains in prod, so the work
-	// view frames a guest cross-site. Lax there is a cookie the browser never
-	// sends, which reads as every request being unauthenticated.
 	if got.Auth.CookieSameSite != "none" {
 		t.Errorf("cookie_samesite = %q in prod, want \"none\"", got.Auth.CookieSameSite)
 	}
 }
 
-// A host with no certificate must not be told to listen on 443. dpipe is the
-// half that would fail -- it refuses to start with tls on and nothing to serve
-// -- and a host that will not start is a worse answer to "no certificate yet"
-// than a host still on plain http.
 func TestGenerateProxyConfigWithoutACertificate(t *testing.T) {
 	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil)
 
@@ -366,8 +304,6 @@ func TestGenerateProxyConfigSite(t *testing.T) {
 	}
 }
 
-// A host with no domain has no name to claim, and a "www." with nothing after it
-// would be a routing key no request could carry.
 func TestGenerateProxyConfigSiteAbsentWithoutADomain(t *testing.T) {
 	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil)
 
@@ -382,7 +318,6 @@ func TestProxySitePage(t *testing.T) {
 	if strings.Contains(page, proxySiteControlPlaceholder) {
 		t.Error("the control url placeholder survived into the page")
 	}
-	// Trailing slash off, or every link built from it doubles the separator.
 	if !strings.Contains(page, `href="http://control.example.com:1323"`) {
 		t.Errorf("the console link is not in the page:\n%s", page)
 	}
@@ -391,8 +326,6 @@ func TestProxySitePage(t *testing.T) {
 	}
 }
 
-// The url is operator-set and lands in an href, where a quote would end the
-// attribute and everything after it would be markup.
 func TestProxySitePageEscapesTheControlURL(t *testing.T) {
 	page := proxySitePage(`http://x/"><script>alert(1)</script>`)
 
@@ -410,17 +343,11 @@ func TestGenerateProxyConfigWithACertificate(t *testing.T) {
 	if !got.HTTPS.Reuseport {
 		t.Error("https.reuseport is off, so a restart cannot bind before the old process is gone")
 	}
-	// The plain http ingress stays: a fleet on https still answers on 80, and
-	// removing it would strand anything that has not been told about the move.
 	if got.HTTP.Listen != proxyHTTPListen {
 		t.Errorf("http.listen = %q, want %q", got.HTTP.Listen, proxyHTTPListen)
 	}
 }
 
-// Once a host's own domain has a certificate its guests are on https, so the
-// session cookie can be Secure whether or not the control plane is in prod. This
-// is the flip that has to happen automatically -- an operator who issued a
-// certificate should not also have to know about a cookie flag.
 func TestGenerateProxyConfigCookieFollowsTheCertificate(t *testing.T) {
 	auth := testProxyAuth
 	auth.cookieSecure = false
@@ -429,15 +356,11 @@ func TestGenerateProxyConfigCookieFollowsTheCertificate(t *testing.T) {
 	if !got.Auth.CookieSecure {
 		t.Error("cookie_secure is off on a host serving https")
 	}
-	// Secure is what lets a browser keep a SameSite=None cookie, which is what
-	// lets the workspace view frame a guest from another origin.
 	if got.Auth.CookieSameSite != "none" {
 		t.Errorf("cookie_samesite = %q, want \"none\" once the cookie is Secure", got.Auth.CookieSameSite)
 	}
 }
 
-// The flip only ever turns the cookie on. A dev fleet with no certificate must
-// keep serving guests over plain http with a cookie the browser will accept.
 func TestGenerateProxyConfigCookieStaysOpenWithoutACertificate(t *testing.T) {
 	auth := testProxyAuth
 	auth.cookieSecure = false
@@ -451,8 +374,6 @@ func TestGenerateProxyConfigCookieStaysOpenWithoutACertificate(t *testing.T) {
 	}
 }
 
-// The client skips the restart when the file is unchanged, which only works if
-// the same fleet compiles to the same bytes every time.
 func TestGenerateProxyConfigIsDeterministic(t *testing.T) {
 	rows := []db.ListProxySSHUsersByClientRow{
 		{VMIP: "10.64.0.2", HostVMID: "abc123", VMName: "build", PublicKey: "ssh-ed25519 AAAAC3Nz one"},
@@ -467,8 +388,6 @@ func TestGenerateProxyConfigIsDeterministic(t *testing.T) {
 	}
 }
 
-// A generated name goes into the same column a user-supplied one does, so it has
-// to satisfy every rule that column enforces.
 func TestRandomVMNameIsValid(t *testing.T) {
 	seen := make(map[string]int)
 	for range 200 {
@@ -484,15 +403,12 @@ func TestRandomVMNameIsValid(t *testing.T) {
 		}
 		seen[name]++
 	}
-	// Not a uniqueness guarantee -- the database has that -- but a generator that
-	// keeps returning one name would pass every check above.
 	if len(seen) < 100 {
 		t.Errorf("200 draws produced only %d distinct names", len(seen))
 	}
 }
 
 func TestValidateVMName(t *testing.T) {
-	// Empty is the request to generate one, not a rejection.
 	if got, err := validateVMName("  "); err != nil || got != "" {
 		t.Errorf("blank name gave (%q, %v), want (\"\", nil)", got, err)
 	}
@@ -512,12 +428,9 @@ func TestValidateVMName(t *testing.T) {
 }
 
 func TestNormalizePorts(t *testing.T) {
-	// Unset means the default, so a request that omits the field and one that
-	// sends 0 land on the same row.
 	if def, ports, err := normalizePorts(0, nil); err != nil || def != defaultVMPort || len(ports) != 0 {
 		t.Errorf("empty request gave (%d, %v, %v), want (%d, [], nil)", def, ports, err, defaultVMPort)
 	}
-	// Duplicates collapse, order is kept.
 	def, ports, err := normalizePorts(3000, []int32{9090, 3000, 9090})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -535,8 +448,6 @@ func TestNormalizePorts(t *testing.T) {
 	}
 }
 
-// vm_name is a routing key now, not just a comment, so a name that tried to be
-// yaml has to arrive as one scalar.
 func TestGenerateProxyConfigQuotesVMNames(t *testing.T) {
 	const awkward = "evil\nssh:\n  users: []"
 	rows := []db.ListProxySSHUsersByClientRow{

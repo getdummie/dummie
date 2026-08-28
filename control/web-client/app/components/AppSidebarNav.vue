@@ -38,8 +38,6 @@ const main: NavItem[] = [
   { label: 'VMs', to: '/vms', icon: Boxes },
 ]
 
-// Landing page for the admin section; the section's own tab strip takes over
-// from there.
 const adminEntry: NavItem = { label: 'Admin Dashboard', to: '/admin/model/settings', icon: Shield }
 
 function isActive(to: string) {
@@ -48,9 +46,6 @@ function isActive(to: string) {
 
 const adminActive = computed(() => isActive('/admin'))
 
-// `focus-visible:` is not optional here: without it the entire rail is
-// invisible to keyboard users, since none of these are shadcn primitives that
-// bring their own ring. (WCAG 2.4.7)
 const itemBase
   = 'group relative flex items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring'
 const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 'size-9 justify-center'))
@@ -59,8 +54,6 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
 <template>
   <TooltipProvider :delay-duration="150">
     <div class="flex min-h-0 flex-1 flex-col" :class="expanded ? 'px-2' : 'items-center px-1.5'">
-      <!-- Named so the landmark list distinguishes this from the admin tab
-           strip and the header nav. (WCAG 1.3.1) -->
       <nav aria-label="Main" class="flex flex-1 flex-col gap-0.5 overflow-y-auto py-3">
         <Tooltip v-for="item in main" :key="item.to" :disabled="expanded">
           <TooltipTrigger as-child>
@@ -80,7 +73,6 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
         </Tooltip>
       </nav>
 
-      <!-- Admin entry and the API reference, pinned to the bottom -->
       <div class="flex flex-col gap-0.5 pb-2">
         <Tooltip v-if="isAdmin" :disabled="expanded">
           <TooltipTrigger as-child>
@@ -99,16 +91,11 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
           </TooltipContent>
         </Tooltip>
 
-        <!-- A plain anchor, not a NuxtLink: this leaves the app for a new tab,
-             so routing it through the client router buys nothing. Never carries
-             aria-current -- it is not somewhere you can already be. -->
         <Tooltip :disabled="expanded">
           <TooltipTrigger as-child>
             <a href="/docs" target="_blank" rel="noopener" :class="[itemBase, itemSize]">
               <BookOpen class="size-[18px] shrink-0" aria-hidden="true" />
               <span v-if="expanded" class="truncate font-mono text-[0.8rem]">API docs</span>
-              <!-- Opening a new tab unannounced is a change of context with no
-                   warning, so the destination says so either way. (WCAG 3.2.5) -->
               <span class="sr-only">{{ expanded ? '(opens in a new tab)' : 'API docs (opens in a new tab)' }}</span>
             </a>
           </TooltipTrigger>
@@ -118,14 +105,10 @@ const itemSize = computed(() => (props.expanded ? 'h-9 w-full gap-3 px-2.5' : 's
         </Tooltip>
       </div>
 
-      <!-- Account + theme -->
       <div
         class="flex border-t border-border/80 py-2"
         :class="expanded ? '-mx-2 items-center gap-1 px-2' : '-mx-1.5 flex-col items-center gap-1 px-1.5'"
       >
-        <!-- No tooltip on this one: a Tooltip trigger wrapping the menu trigger
-             leaves two reka Primitives on one element and the menu stops
-             opening. The menu itself names the account, so nothing is lost. -->
         <DropdownMenu>
           <DropdownMenuTrigger as-child>
             <button

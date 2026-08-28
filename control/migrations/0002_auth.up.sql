@@ -1,4 +1,3 @@
--- 0002_auth: users and refresh_tokens for password auth + DB-backed sessions.
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE users (
@@ -13,8 +12,6 @@ CREATE TABLE users (
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Refresh tokens are stored hashed (never in plaintext). One row per session,
--- enabling revocation and concurrent-session tracking.
 CREATE TABLE refresh_tokens (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,

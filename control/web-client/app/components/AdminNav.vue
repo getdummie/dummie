@@ -19,9 +19,6 @@ interface AdminLink {
   icon: Component
 }
 
-// Grouped rather than one flat list: these fall into settings, accounts, the
-// fleet's plumbing, the VMs themselves, and the artifacts they boot from. The
-// groups are what the separators between them draw.
 const groups: AdminLink[][] = [
   [
     { label: 'Settings', to: '/admin/model/settings', icon: Settings },
@@ -53,15 +50,11 @@ function isActive(to: string) {
 </script>
 
 <template>
-  <!-- Named landmark: the app's own rail is on screen at the same time, so an
-       unnamed second nav is ambiguous in the landmark list. -->
   <nav
     aria-label="Admin sections"
     class="flex gap-1 overflow-x-auto border-b border-border pb-px lg:sticky lg:top-6 lg:flex-col lg:gap-0.5 lg:overflow-visible lg:rounded-lg lg:border lg:p-2 lg:pb-2"
   >
     <template v-for="(group, gi) in groups" :key="gi">
-      <!-- A rule between groups: vertical while the nav is a scrolling row on
-           small screens, horizontal once it is a column. -->
       <span
         v-if="gi > 0"
         aria-hidden="true"

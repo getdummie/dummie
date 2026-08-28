@@ -13,14 +13,6 @@ import (
 	"github.com/urfave/cli/v3"
 )
 
-// `dclient serve` is what the systemd unit runs. It is everything privileged in
-// one process: the network policy and its reconciler, DHCP, metadata, the CLI's
-// socket, and -- when a control server is configured -- the websocket that
-// carries work down from it.
-//
-// One process rather than several because they share the same state directory
-// and the same kernel objects. Two writers to nftables was a real hazard when
-// `netd` and an occasional `sudo vm create` both existed.
 func serveCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "serve",
@@ -42,12 +34,6 @@ func serveCommand() *cli.Command {
 	}
 }
 
-// checkFeatures rejects combinations that would start something with nothing
-// behind it. Both of these are enforced by the packet policy: Suricata only ever
-// sees traffic the ruleset queues to it, and the DOCKER-USER accepts exist to
-// let traffic reach a ruleset that has to be there to accept it. Running either
-// without nftables is a config that does nothing, quietly, which is worse than
-// refusing to start.
 func checkFeatures(f Features) error {
 	if f.Nftables {
 		return nil
@@ -80,9 +66,6 @@ func runServe(ctx context.Context, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	// Persisted so the direct (root, no daemon) path and `netd teardown` agree
-	// with the daemon about the pool, gateway and queue count. Inside dclient's own
-	// data directory, so it is not one of the things features gate.
 	if err := saveNetConfig(cfg.DataDir, nc); err != nil {
 		return err
 	}
@@ -92,9 +75,6 @@ func runServe(ctx context.Context, cfg Config) error {
 			return fmt.Errorf("could not enable ip forwarding: %w", err)
 		}
 	}
-	// Repaired on every start, not once at install: /dev is rebuilt at boot, and
-	// in a container it is rebuilt whenever the container is. Not fatal -- a host
-	// with no usable /dev/kvm still runs guests, just slowly.
 	if f.KVMAccess {
 		if msg, err := ensureKVMAccess(); err != nil {
 			log.Printf("could not make /dev/kvm reachable by an unprivileged uid (%v); vms will fall back to software emulation", err)
@@ -109,8 +89,6 @@ func runServe(ctx context.Context, cfg Config) error {
 		log.Printf("policy installed: pool %s, gateway %s, uplink %s", nc.Pool, nc.Gateway, nc.Uplink)
 	}
 
-	// Bind the socket before anything long-running, so a permissions problem
-	// fails immediately rather than after the network is half set up.
 	ln, err := listen(cfg.Socket, cfg.Group)
 	if err != nil {
 		return err
@@ -123,17 +101,11 @@ func runServe(ctx context.Context, cfg Config) error {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	// None of the companions is installed from here any more: which build each one
-	// runs comes from the control server, so all a start can do is bring back what
-	// a previous push already put down. A host that has never connected gets them
-	// on its first connect instead.
 	ensureManagedServicesRunning(ctx)
 	ensureVectorRunning(ctx)
 
 	errs := make(chan error, 4)
 
-	// The CLI socket is not gated: it is the daemon, not something the daemon
-	// does to the host, and without it `serve` is a process with no way in.
 	api := &apiServer{data: cfg.DataDir, cfg: nc}
 	go func() { errs <- api.serve(ctx, ln) }()
 
@@ -147,21 +119,14 @@ func runServe(ctx context.Context, cfg Config) error {
 		go func() { errs <- dhcp.serve(ctx) }()
 	}
 
-	// The control link is optional: a host with no control server is still a
-	// perfectly good standalone dclient.
 	if cfg.ControlURL != "" {
 		go func() {
 			if err := runConnect(cfg.ControlURL, cfg.EnrollmentKey, cfg.DataDir, cfg.DataDir, cfg.Insecure); err != nil {
-				// Not fatal to the daemon -- losing the control plane must not take
-				// local VM management down with it.
 				log.Printf("control link stopped: %v", err)
 			}
 		}()
 	}
 
-	// Docker compat, Suricata and the resolver are repaired inside reconcile, so
-	// they follow nftables: checkFeatures has already rejected a config that asks
-	// for any of them without it.
 	if !f.Nftables {
 		log.Print("features.nftables is off: no packet policy is being installed or repaired")
 	}

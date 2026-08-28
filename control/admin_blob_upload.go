@@ -11,13 +11,8 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// maxFormFieldBytes bounds a text part ("name", "description"). Both are short,
-// and the cap is what stops a client sending a gigabyte under a field name that
-// is read into memory.
 const maxFormFieldBytes = 64 << 10
 
-// uploadedBlob is what readUploadedBlob pulled out of the request: the text
-// fields, plus the object it streamed into the bucket.
 type uploadedBlob struct {
 	name        string
 	description string
@@ -26,22 +21,8 @@ type uploadedBlob struct {
 	size        int64
 }
 
-// readUploadedBlob reads a "name" / optional "description" / "file" multipart
-// request and streams the file straight into the bucket under kind.
-//
-// It walks the parts itself rather than calling ParseMultipartForm, which
-// spools every part above its memory limit into a temp file under os.TempDir()
-// before a handler sees it: an image is hundreds of megabytes to gigabytes, and
-// a container's /tmp is the wrong place to need that much room -- when it does
-// not have it, the failure surfaces as an unreadable form rather than as the
-// full disk it is.
-//
-// Errors come back as *echo.HTTPError, with any object already written removed
-// first, so a caller that gets an error has nothing to clean up.
 func (h *AdminHandler) readUploadedBlob(c *echo.Context, kind string) (*uploadedBlob, error) {
 	req := c.Request()
-	// Caps the whole request, not just the file part, so an oversized upload
-	// fails on the read instead of after it has all arrived.
 	req.Body = http.MaxBytesReader(c.Response(), req.Body, h.blobs.maxUploadBytes+(1<<20))
 	mr, err := req.MultipartReader()
 	if err != nil {
@@ -93,9 +74,6 @@ func (h *AdminHandler) readUploadedBlob(c *echo.Context, kind string) (*uploaded
 			counted := &countingReader{r: part}
 			if err := h.blobs.Put(req.Context(), key, contentType, counted); err != nil {
 				part.Close()
-				// The uploader hands back whatever the body read returned, so a
-				// client that blew the request cap is told that rather than
-				// having object storage blamed for it.
 				var tooLarge *http.MaxBytesError
 				if errors.As(err, &tooLarge) {
 					return fail(echo.NewHTTPError(http.StatusRequestEntityTooLarge, "that file is larger than this server accepts"))
@@ -128,9 +106,6 @@ func (h *AdminHandler) readUploadedBlob(c *echo.Context, kind string) (*uploaded
 	return out, nil
 }
 
-// readError turns a failed read of the request into a status. The cause is
-// logged either way: a client that is told "could not read the upload" cannot
-// say why, and the answer is usually on this side.
 func readError(kind string, err error) error {
 	var tooLarge *http.MaxBytesError
 	if errors.As(err, &tooLarge) {
@@ -151,8 +126,6 @@ func readFormField(p *multipart.Part) (string, error) {
 	return string(b), nil
 }
 
-// countingReader is how the size ends up in the row: streaming means there is no
-// header to read it off, only the bytes that went past.
 type countingReader struct {
 	r io.Reader
 	n int64

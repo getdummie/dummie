@@ -16,8 +16,6 @@
       firstVm = builtins.head (builtins.attrNames vms);
     in
     {
-      # `nix run .#<name>`        -> start VM in the foreground (Ctrl-a x to quit)
-      # `nix run .#<name> -- stop`   / `-- status`
       packages.${system} = launchers // {
         default = launchers.${firstVm};
       };
@@ -27,7 +25,6 @@
         program = "${l}/bin/microqemu-${name}";
       }) launchers;
 
-      # Import in your host config for systemd-managed lifecycle.
       nixosModules.default = ./modules;
     };
 }

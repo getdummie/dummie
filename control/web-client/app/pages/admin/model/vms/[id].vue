@@ -37,10 +37,7 @@ interface AdminVM {
   last_error: string
   created_at: string
   started_at: string
-  // "" for a VM nobody here asked for: adopted from a host's inventory, or made
-  // before ownership was recorded.
   created_by: string
-  // When the host last confirmed this VM; "" if it never has.
   reported_at: string
 }
 
@@ -49,9 +46,6 @@ interface Target {
   destination: string
   kind: 'domain' | 'ip'
   transport: '' | 'tcp' | 'udp' | 'any'
-  // Suricata's port syntax for an address. For a domain it is which of the two web
-  // ports the name is allowed on -- '' for both, or 'none', which lets the name
-  // resolve and grants nothing.
   ports: string
   note: string
   created_at: string
@@ -65,8 +59,6 @@ const targetColumns: DataTableColumn[] = [
   { key: 'note', label: 'Note' },
 ]
 
-// What the row is checked against. A lookup-only domain is the one worth spelling
-// out: it is on the list, and it grants no access at all.
 function matchedOn(t: Target) {
   if (t.kind !== 'domain') return 'address'
   return t.ports === 'none' ? 'name — resolves only' : 'tls sni · http host'
@@ -100,7 +92,6 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
-// 11th–13th are the exception the mod-10 rule gets wrong.
 function ordinal(n: number) {
   if (n % 100 >= 11 && n % 100 <= 13) return `${n}th`
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] ?? 'th'}`
@@ -120,22 +111,12 @@ function fmtMiB(mib: number) {
   return Number.isInteger(gib) ? `${gib} GiB` : `${gib.toFixed(1)} GiB`
 }
 
-// --- staleness ---
-//
-// Same reasoning as the list: 'running' is what the host claimed when it last
-// reported, not a live reading, so a claim nobody has renewed in four missed
-// 30s reports stops being shown as fact. The clock ticks on its own, because a
-// control server that has gone unreachable is exactly when a stale 'running'
-// most needs to stop being believed.
 const staleAfterMs = 2 * 60_000
 const hostReported = new Set(['running', 'stopped'])
 const now = ref(Date.now())
 let clock: ReturnType<typeof setInterval> | undefined
 
 const settleTimeoutMs = 60_000
-// `from` is the status at the moment the action was sent, which is how we
-// recognise that the row has moved. `until` bounds the wait, so an client that
-// never answers leaves the page telling the truth rather than spinning forever.
 const settling = ref<{ verb: string, running: boolean, from: string, until: number } | null>(null)
 
 const displayStatus = computed(() => {
@@ -173,10 +154,6 @@ const statusVariant: Record<string, BadgeVariant> = {
   destroying: 'secondary',
 }
 
-// --- host and owner ---
-//
-// A VM row carries ids, not names. Both are resolved with a second request and
-// fall back to the id, so neither lookup failing can break the page it decorates.
 const hostname = ref('')
 const owner = ref<{ id: string, username: string } | null>(null)
 
@@ -189,7 +166,6 @@ async function loadHost(clientID: string) {
     if (match?.hostname) hostname.value = match.hostname
   }
   catch {
-    // the id stays on screen
   }
 }
 
@@ -201,15 +177,9 @@ async function loadOwner(userID: string) {
     owner.value = { id: u.id, username: u.username }
   }
   catch {
-    // the id stays on screen
   }
 }
 
-// --- allowed destinations ---
-//
-// Its own request and its own error: nothing here can be acted on, so a failure
-// to read the list is a gap in one card rather than a reason to blank the page.
-// Fetched once — this page cannot change the list, and neither can the host.
 const targets = ref<Target[]>([])
 const targetsLoading = ref(true)
 const targetsError = ref<string | null>(null)
@@ -255,19 +225,14 @@ async function load(quiet = false) {
 onMounted(() => {
   load()
   loadTargets()
-  // Well under staleAfterMs, so the badge turns within a few seconds of the
-  // claim actually going stale rather than on the next poll.
   clock = setInterval(() => (now.value = Date.now()), 10_000)
 })
 
-// A settle is done once the server has moved the row off the status it had, or
-// once the wait runs out — true as well for a change someone else made.
 watch(vm, (v) => {
   const s = settling.value
   if (s && v && (v.status !== s.from || Date.now() >= s.until)) settling.value = null
 })
 
-// Poll only while something is in flight; a settled VM does not need a timer.
 let timer: ReturnType<typeof setInterval> | null = null
 watch([() => vm.value?.status, settling], () => {
   const busy = vm.value?.status === 'pending' || !!settling.value
@@ -283,15 +248,6 @@ onBeforeUnmount(() => {
   clearInterval(clock)
 })
 
-// --- stop / destroy / forget ---
-//
-// Three different things, deliberately not collapsed into one control:
-//   stop     shuts the guest down, keeps its disk
-//   destroy  deletes the guest and its disk on the host
-//   forget   removes only this record, leaving whatever is on the host alone
-//
-// A row with no guest behind it — a failed create, or one already gone — can
-// only be forgotten, so that is what the trash affordance offers it.
 const working = ref(false)
 const stopOpen = ref(false)
 const destroyOpen = ref(false)
@@ -302,9 +258,6 @@ const switchable = computed(() => {
   const v = vm.value
   return !!v?.vm_id && (v.status === 'running' || v.status === 'stopped')
 })
-// The switch shows the stored status, not displayStatus: a stale VM was last
-// known to be running, and flipping the control off would claim we know it
-// stopped. The badge is where that doubt belongs.
 const isRunning = computed(() => settling.value?.running ?? vm.value?.status === 'running')
 
 async function act(path: string, method: string, failure: string, settle: { verb: string, running: boolean } | null) {
@@ -328,8 +281,6 @@ async function act(path: string, method: string, failure: string, settle: { verb
   }
 }
 
-// Starting asks for no confirmation: it is cheap, reversible by the same switch,
-// and destroys nothing. Stopping kills whatever the guest was doing, so it does.
 function togglePower(on: boolean) {
   if (on) act(`/admin/vms/${id.value}/start`, 'POST', 'Could not start this VM', { verb: 'starting', running: true })
   else stopOpen.value = true
@@ -341,8 +292,6 @@ function confirmDestroy() {
   act(`/admin/vms/${id.value}/destroy`, 'POST', 'Could not destroy this VM', { verb: 'destroying', running: false })
 }
 
-// Forgetting leaves nothing on this page to look at, so it is the one action
-// that navigates away.
 const forgetting = ref(false)
 async function confirmForget() {
   forgetting.value = true
@@ -397,9 +346,6 @@ async function confirmForget() {
               {{ displayStatus }}
             </Badge>
           </div>
-          <!-- A stale badge without the age is as unhelpful as the wrong status
-               was: the age is what says whether the host missed one report or
-               went down an hour ago. -->
           <p v-if="displayStatus === 'stale'" class="mt-2 text-xs text-muted-foreground">
             was <span class="font-mono">{{ vm.status }}</span>, last confirmed {{ since(vm.reported_at) }}
           </p>
@@ -417,8 +363,6 @@ async function confirmForget() {
               @update:model-value="togglePower"
             />
           </div>
-          <!-- Labelled, not icon-only: these are the irreversible actions on the
-               page, and they sit next to a switch that is not. -->
           <Button
             v-if="hasGuest"
             variant="outline"
@@ -451,15 +395,11 @@ async function confirmForget() {
         <AlertDescription>{{ actionError }}</AlertDescription>
       </Alert>
 
-      <!-- Any recorded failure, not just a failed create: a stop the host refused
-           leaves the status alone and only sets this, which would otherwise be
-           invisible. -->
       <Alert v-if="vm.last_error" variant="destructive" class="mt-4">
         <AlertTitle>Last reported failure</AlertTitle>
         <AlertDescription>{{ vm.last_error }}</AlertDescription>
       </Alert>
 
-      <!-- details -->
       <section aria-labelledby="details-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="details-heading" class="text-sm font-semibold">Details</h2>
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -484,8 +424,6 @@ async function confirmForget() {
               >
                 {{ owner.username }}
               </NuxtLink>
-              <!-- A VM adopted from a host's inventory has no owner here, which
-                   is a real state rather than missing data. -->
               <span v-else-if="vm.created_by" class="font-mono text-xs break-all text-muted-foreground">
                 {{ vm.created_by }}
               </span>
@@ -502,8 +440,6 @@ async function confirmForget() {
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">Disk</dt>
-            <!-- Shown even when unrecorded: '0' would read as a diskless VM,
-                 and a blank field as one that has no such property at all. -->
             <dd class="mt-1 font-mono text-sm">
               {{ vm.disk_mib ? fmtMiB(vm.disk_mib) : 'not recorded' }}
             </dd>
@@ -529,15 +465,12 @@ async function confirmForget() {
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.started_at) }}</dd>
           </div>
           <div>
-            <!-- The status is the host's claim as of this moment, not a live
-                 reading, so the age of that claim belongs next to it. -->
             <dt class="eyebrow text-muted-foreground">Last confirmed by host</dt>
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.reported_at) }}</dd>
           </div>
         </dl>
       </section>
 
-      <!-- routing -->
       <section aria-labelledby="routing-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="routing-heading" class="text-sm font-semibold">Routing</h2>
         <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
@@ -558,7 +491,6 @@ async function confirmForget() {
         </dl>
       </section>
 
-      <!-- destinations -->
       <section aria-labelledby="targets-heading" class="mt-6 rounded-lg border border-border">
         <div class="p-4 sm:p-6">
           <h2 id="targets-heading" class="text-sm font-semibold">Allowed destinations</h2>
@@ -590,8 +522,6 @@ async function confirmForget() {
             <TableCell class="font-mono text-xs text-muted-foreground">
               {{ matchedOn(t) }}
             </TableCell>
-            <!-- An em dash, not 'any': transport does not apply to a domain row at
-                 all, and 'any' would read as "every transport is allowed". -->
             <TableCell class="font-mono text-muted-foreground">{{ t.transport || '—' }}</TableCell>
             <TableCell class="font-mono text-muted-foreground">{{ portsLabel(t) }}</TableCell>
             <TableCell class="text-muted-foreground">{{ t.note || '—' }}</TableCell>
@@ -599,7 +529,6 @@ async function confirmForget() {
         </DataTable>
       </section>
 
-      <!-- spec -->
       <section aria-labelledby="spec-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
         <h2 id="spec-heading" class="text-sm font-semibold">Spec</h2>
         <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
@@ -614,7 +543,6 @@ async function confirmForget() {
       </section>
     </template>
 
-    <!-- stop confirm -->
     <Dialog v-model:open="stopOpen">
       <DialogContent>
         <DialogHeader>
@@ -636,7 +564,6 @@ async function confirmForget() {
       </DialogContent>
     </Dialog>
 
-    <!-- destroy confirm -->
     <Dialog v-model:open="destroyOpen">
       <DialogContent>
         <DialogHeader>
@@ -659,7 +586,6 @@ async function confirmForget() {
       </DialogContent>
     </Dialog>
 
-    <!-- forget confirm -->
     <Dialog v-model:open="forgetOpen">
       <DialogContent>
         <DialogHeader>

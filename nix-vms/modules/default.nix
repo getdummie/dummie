@@ -1,7 +1,3 @@
-# NixOS module: turns the vms.nix attrset into one systemd service per VM,
-# plus the host-side tap device for each. Import via the flake's
-# nixosModules.default in your host configuration, then it's managed with:
-#   systemctl {start,stop,status} microqemu-<name>
 { config, lib, pkgs, ... }:
 
 let
@@ -26,8 +22,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # Host owns the taps now. Remove any manually-added vm-tap0 netdev/network
-    # from your host config to avoid a duplicate definition.
     systemd.network.enable = true;
 
     systemd.network.netdevs = lib.mapAttrs' (

@@ -108,12 +108,10 @@ function prev() {
   }
 }
 
-// --- create ---
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref<string | null>(null)
 const form = reactive({ label: '', max_uses: '', expires_in_hours: '24' })
-// The raw key exists only in this ref, only until the dialog is dismissed.
 const issuedKey = ref<string | null>(null)
 const copied = ref(false)
 
@@ -166,7 +164,6 @@ async function copyKey() {
 const connectCommand = computed(() =>
   `dclient connect --control-url ${window.location.origin} --key ${issuedKey.value ?? ''}`)
 
-// --- revoke / delete ---
 const toRevoke = ref<KeyRow | null>(null)
 const toDelete = ref<KeyRow | null>(null)
 const working = ref(false)
@@ -232,9 +229,6 @@ async function confirmDelete() {
             </DialogDescription>
           </DialogHeader>
 
-          <!-- issued: show the raw key exactly once -->
-          <!-- min-w-0: DialogContent is a grid, so without it the long command
-               below sets the track's min-content width and stretches the modal. -->
           <div v-if="issuedKey" class="min-w-0 space-y-4">
             <div class="rounded-lg border border-primary-text/40 bg-primary/5 p-3">
               <p class="sr-only">Enrollment key:</p>
@@ -244,14 +238,10 @@ async function confirmDelete() {
               <component :is="copied ? Check : Copy" class="size-4" aria-hidden="true" />
               {{ copied ? 'Copied' : 'Copy key' }}
             </Button>
-            <!-- The button's own label change isn't reliably re-announced, so
-                 the confirmation gets its own live region. (WCAG 4.1.3) -->
             <p role="status" aria-live="polite" class="sr-only">
               {{ copied ? 'Enrollment key copied to clipboard' : '' }}
             </p>
             <div class="min-w-0 space-y-2">
-              <!-- Wrapping <label> would falsely claim to label the <p>; this is
-                   a heading for a static block, so it's marked up as one. -->
               <p id="connect-command-label" class="text-sm font-medium">Run on the target machine</p>
               <p
                 class="max-w-full overflow-x-auto rounded-md border border-border bg-muted/40 p-3 font-mono text-xs whitespace-pre"
@@ -268,7 +258,6 @@ async function confirmDelete() {
             </DialogFooter>
           </div>
 
-          <!-- create form -->
           <form v-else class="space-y-4" :aria-busy="creating" @submit.prevent="create">
             <div class="space-y-2">
               <Label for="k-label">Label</Label>
@@ -366,7 +355,6 @@ async function confirmDelete() {
       </div>
     </nav>
 
-    <!-- revoke confirm -->
     <Dialog :open="!!toRevoke" @update:open="(v: boolean) => { if (!v) toRevoke = null }">
       <DialogContent>
         <DialogHeader>
@@ -389,7 +377,6 @@ async function confirmDelete() {
       </DialogContent>
     </Dialog>
 
-    <!-- delete confirm -->
     <Dialog :open="!!toDelete" @update:open="(v: boolean) => { if (!v) toDelete = null }">
       <DialogContent>
         <DialogHeader>

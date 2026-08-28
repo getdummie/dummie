@@ -26,16 +26,11 @@ func TestStripContainerMarkers(t *testing.T) {
 			t.Errorf("%s survived; systemd would still ignore the kernel command line", m)
 		}
 	}
-	// A rootfs that never had them is the normal case for an image not built from
-	// a container, so a second pass has to be a no-op rather than an error.
 	if err := stripContainerMarkers(root); err != nil {
 		t.Errorf("stripping an already-stripped rootfs failed: %v", err)
 	}
 }
 
-// A host with no dpipe key still gets a keyed cache entry: what the build does
-// to the rootfs is part of the image even when no key goes in, so an image built
-// by an older dclient must not be served to a create expecting this one's.
 func TestImageRecipeKeysEveryBuild(t *testing.T) {
 	if imageRecipe("", "") == "" {
 		t.Error("a keyless build has no recipe, so its images can never be invalidated")
@@ -48,9 +43,6 @@ func TestImageRecipeKeysEveryBuild(t *testing.T) {
 	}
 }
 
-// The docker-export case: a zero-byte /etc/resolv.conf, which glibc reads as
-// 127.0.0.1:53. Left alone, the guest resolves nothing and no query ever reaches
-// the tap, so the denial is recorded nowhere at all.
 func TestEnsureResolvConfWritesEmptyFile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {
@@ -72,8 +64,6 @@ func TestEnsureResolvConfWritesEmptyFile(t *testing.T) {
 	}
 }
 
-// An image whose resolv.conf is a symlink has a manager for it -- resolved,
-// NetworkManager, resolvconf -- and all of them read the same dhcp lease.
 func TestEnsureResolvConfLeavesSymlinkAlone(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "etc"), 0o755); err != nil {

@@ -25,7 +25,6 @@ const stats = [
 
 <template>
   <div>
-    <!-- Hero -->
     <section aria-labelledby="hero-heading" class="relative overflow-hidden border-b border-border">
       <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-60" />
       <div class="relative mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28 lg:py-32">
@@ -44,8 +43,6 @@ const stats = [
               without ever risking your own.
             </p>
             <div id="start" class="mt-8 flex flex-col gap-3 sm:flex-row">
-              <!-- Plain anchors, not NuxtLink: these leave this site for the
-                   console, which is a different origin. -->
               <Button as-child size="lg" class="font-mono text-sm">
                 <a :href="`${consoleUrl}/signin`">Start building <ArrowRight class="size-4" aria-hidden="true" /></a>
               </Button>
@@ -58,8 +55,6 @@ const stats = [
             </p>
           </div>
 
-          <!-- `tabindex="-1"` so following the in-page link moves keyboard
-               focus here, not just the viewport. (WCAG 2.4.3) -->
           <div id="runtime" tabindex="-1" class="lg:pl-4">
             <TerminalMock />
           </div>
@@ -67,7 +62,6 @@ const stats = [
       </div>
     </section>
 
-    <!-- Stats -->
     <section aria-label="Runtime performance figures" class="border-b border-border">
       <ul class="mx-auto grid max-w-6xl grid-cols-2 divide-x divide-border border-x border-border sm:grid-cols-4">
         <li v-for="s in stats" :key="s.label" class="px-4 py-8 sm:px-6">
@@ -81,7 +75,6 @@ const stats = [
       </ul>
     </section>
 
-    <!-- Features -->
     <section id="product" aria-labelledby="product-heading" class="border-b border-border">
       <div class="mx-auto max-w-6xl px-4 pt-16 sm:px-6 sm:pt-20">
         <p class="eyebrow mb-4 text-primary-text">// Built for agents</p>
@@ -98,7 +91,6 @@ const stats = [
       <div class="h-16 sm:h-20" />
     </section>
 
-    <!-- Closing CTA -->
     <section aria-labelledby="cta-heading" class="relative overflow-hidden">
       <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-40" />
       <div class="relative mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-28">
