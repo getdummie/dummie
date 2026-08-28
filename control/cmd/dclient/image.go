@@ -153,12 +153,12 @@ const tarSlack = 256 << 20
 // The image is built with mkfs.ext4 -d, which populates from a directory
 // without a loop mount, so nothing here needs to mount anything. That window --
 // the rootfs as a plain directory -- is also where the container markers are
-// stripped and where pubKey, when there is one, is installed into the guest's
-// authorized_keys.
+// stripped, where resolv.conf is pointed at the gateway resolver, and where
+// pubKey, when there is one, is installed into the guest's authorized_keys.
 //
-// The result is shared by every VM built from the same tar, so pubKey must be a
-// host-wide key rather than anything per VM.
-func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes int64) (string, error) {
+// The result is shared by every VM built from the same tar, so pubKey and
+// resolver must both be host-wide rather than anything per VM.
+func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, sizeBytes int64) (string, error) {
 	digest, err := fileDigest(tarPath)
 	if err != nil {
 		return "", err
@@ -168,7 +168,7 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes i
 	// that changed what it does to the rootfs, kept serving the image built before
 	// it -- forever and silently, because the filename would still match and the
 	// build that fixes it would never run.
-	digest = keyedDigest(digest, imageRecipe(pubKey))
+	digest = keyedDigest(digest, imageRecipe(pubKey, resolver))
 	// Rebuilding a 400 MiB image on every create, for inputs that have not
 	// changed, is a minute of nothing.
 	dst := filepath.Join(cache, digest[:32]+"-rootfs.ext4")
@@ -210,6 +210,13 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes i
 	// is an ordinary directory this process can write to.
 	if err := stripContainerMarkers(work); err != nil {
 		return "", fmt.Errorf("could not strip the container markers from the rootfs: %w", err)
+	}
+
+	// Fatal for the same reason as the key below: the cache key says this image
+	// was built for this resolver, so an image built without it would be served to
+	// every later create on this host.
+	if err := ensureResolvConf(work, resolver); err != nil {
+		return "", fmt.Errorf("could not point the rootfs at the resolver: %w", err)
 	}
 
 	// Fatal rather than a warning: the cache key says this image has the key in
@@ -254,8 +261,9 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey string, sizeBytes i
 //
 // The version leads it and is bumped whenever the steps change; doing so
 // invalidates every image on every host, which is the point.
-func imageRecipe(pubKey string) string {
-	r := "recipe=2;strip=" + strings.Join(containerMarkers, ",") + ";" + authKeyRecipe()
+func imageRecipe(pubKey, resolver string) string {
+	r := "recipe=3;strip=" + strings.Join(containerMarkers, ",") + ";" +
+		authKeyRecipe() + ";" + resolvConfRecipe(resolver)
 	if pubKey != "" {
 		r += ";key=" + pubKey
 	}

@@ -147,8 +147,14 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 		if pubKey == "" {
 			logf("no dpipe key at %s; this vm will not accept dpipe's ssh key", clientPubKeyPath)
 		}
+		// The resolver the guest is handed over dhcp, written into the image for the
+		// images that have nothing to turn a lease into a resolv.conf.
+		cfg, err := loadNetConfig(data)
+		if err != nil {
+			return vm{}, err
+		}
 		logf("building an ext4 rootfs from the tar (cached after the first time)")
-		if v.Backing, err = ext4FromTar(ctx, cache, v.Backing, pubKey, rootfsSize); err != nil {
+		if v.Backing, err = ext4FromTar(ctx, cache, v.Backing, pubKey, cfg.resolver(), rootfsSize); err != nil {
 			return vm{}, err
 		}
 	}
