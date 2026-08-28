@@ -24,11 +24,15 @@ const (
 	taskCleanup = "tasks.cleanup"
 
 	taskCertRenew = "cert.renew"
+
+	taskCustomDomainIssue = "custom_domain.issue"
 )
 
 const (
 	subjectVM       = "vm"
 	subjectVMTarget = "vm_network_target"
+
+	subjectCustomDomain = "vm_custom_domain"
 )
 
 const (
@@ -129,6 +133,7 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer) *taskRunner {
 		taskVMExpire:       handleVMExpire,
 		taskCleanup:        handleTaskCleanup,
 		taskCertRenew:      handleCertRenew,
+		taskCustomDomainIssue: handleCustomDomainIssue,
 	}
 	return r
 }

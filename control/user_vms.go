@@ -757,6 +757,14 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, "this vm is still being created; try again once it has settled")
 	}
 
+	// The row itself goes with the VM, but the certificate it holds in object
+	// storage would outlive it.
+	if cd, err := h.q.GetCustomDomainByVM(ctx, row.ID); err == nil {
+		if err := h.dropCustomDomain(ctx, cd, row.ClientID); err != nil {
+			log.Printf("could not drop the custom domain of vm %s: %v", row.Name, err)
+		}
+	}
+
 	if row.VMID == "" || row.Status == "failed" || row.Status == "gone" {
 		if err := h.q.DeleteVM(ctx, row.ID); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "could not delete vm")
@@ -1290,7 +1298,11 @@ func (h *UserHandler) ResolveTargetHost(c *echo.Context) error {
 }
 
 func (h *UserHandler) resolver(ctx context.Context) *net.Resolver {
-	upstream := setting(ctx, h.q, settingResolverUpstream)
+	return configuredResolver(ctx, h.q)
+}
+
+func configuredResolver(ctx context.Context, q *db.Queries) *net.Resolver {
+	upstream := setting(ctx, q, settingResolverUpstream)
 	if upstream == "" {
 		return net.DefaultResolver
 	}

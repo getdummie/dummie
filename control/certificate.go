@@ -20,6 +20,10 @@ type certInfo struct {
 }
 
 func validateCertificate(certPEM, keyPEM, tld string) (certInfo, error) {
+	return validateCertificateFor(certPEM, keyPEM, certificateNames(tld)...)
+}
+
+func validateCertificateFor(certPEM, keyPEM string, names ...string) (certInfo, error) {
 	if strings.TrimSpace(certPEM) == "" {
 		return certInfo{}, errors.New("the certificate is empty")
 	}
@@ -48,7 +52,7 @@ func validateCertificate(certPEM, keyPEM, tld string) (certInfo, error) {
 		return certInfo{}, fmt.Errorf("the certificate is not valid until %s", leaf.NotBefore.Format(time.RFC3339))
 	}
 
-	for _, name := range certificateNames(tld) {
+	for _, name := range names {
 		if err := leaf.VerifyHostname(name); err != nil {
 			return certInfo{}, fmt.Errorf("the certificate does not cover %s, which this fleet serves", name)
 		}

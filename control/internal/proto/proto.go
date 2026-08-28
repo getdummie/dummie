@@ -89,6 +89,8 @@ const (
 	KindCoreDNSConfig JobKind = "coredns.config"
 
 	KindServicesConfig JobKind = "services.config"
+
+	KindCustomCert JobKind = "cert.custom"
 )
 
 type Job struct {
@@ -101,6 +103,16 @@ type Job struct {
 	File *FileConfig `json:"file,omitempty"`
 	DpipeCerts *DpipeCerts `json:"dpipe_certs,omitempty"`
 	Services *ServicesConfig `json:"services,omitempty"`
+	CustomCert *CustomCertOrder `json:"custom_cert,omitempty"`
+}
+
+// CustomCertOrder asks a host to obtain a certificate for one name over the
+// HTTP-01 challenge. The name already points at this host, which is what makes
+// the challenge answerable there rather than here.
+type CustomCertOrder struct {
+	Domain    string `json:"domain"`
+	Email     string `json:"email"`
+	Directory string `json:"directory"`
 }
 
 type ServicesConfig struct {
@@ -125,6 +137,16 @@ type DpipeCerts struct {
 	Cert string `json:"cert"`
 	Key  string `json:"key"`
 	Fingerprint string `json:"fingerprint,omitempty"`
+
+	// Named certificates, one per custom domain, selected by SNI. The pair
+	// above stays the fallback for everything under the fleet's own domain.
+	Named []DpipeNamedCert `json:"named,omitempty"`
+}
+
+type DpipeNamedCert struct {
+	SNI  string `json:"sni"`
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
 }
 
 type VectorConfig struct {
@@ -182,6 +204,14 @@ type JobResult struct {
 	Error string  `json:"error,omitempty"`
 	VM    *VMInfo `json:"vm,omitempty"`
 	Services *ServicesState `json:"services,omitempty"`
+
+	Domain string `json:"domain,omitempty"`
+	Cert   *IssuedCert `json:"cert,omitempty"`
+}
+
+type IssuedCert struct {
+	Cert string `json:"cert"`
+	Key  string `json:"key"`
 }
 
 type VMInfo struct {

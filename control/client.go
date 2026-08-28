@@ -336,6 +336,11 @@ func (h *ClientHandler) handleResult(ctx context.Context, client db.Client, clie
 		return
 	}
 
+	if res.Kind == proto.KindCustomCert {
+		h.settleCustomCert(ctx, client, clientID, rowID, res)
+		return
+	}
+
 	switch res.Kind {
 	case proto.KindVMCreate:
 		h.settleCreate(ctx, client, clientID, env.ID, rowID, res)
@@ -352,6 +357,40 @@ func (h *ClientHandler) handleResult(ctx context.Context, client db.Client, clie
 		}
 	default:
 		log.Printf("client %s: result for job %s of unknown kind %q", clientID, env.ID, res.Kind)
+	}
+}
+
+func (h *ClientHandler) settleCustomCert(ctx context.Context, client db.Client, clientID string, rowID pgtype.UUID, res proto.JobResult) {
+	row, err := h.q.GetCustomDomain(ctx, rowID)
+	if err != nil {
+		log.Printf("client %s: a certificate came back for a custom domain that is gone: %v", clientID, err)
+		return
+	}
+
+	fail := func(detail string) {
+		log.Printf("client %s: could not obtain a certificate for %s: %s", clientID, row.Domain, detail)
+		if row.Status == customDomainActive {
+			return
+		}
+		if _, err := h.q.SetCustomDomainStatus(ctx, db.SetCustomDomainStatusParams{
+			ID: row.ID, Status: customDomainFailed, LastError: detail,
+		}); err != nil {
+			log.Printf("could not record the custom domain failure: %v", err)
+		}
+	}
+
+	if !res.OK {
+		fail(res.Error)
+		return
+	}
+	if res.Cert == nil || res.Cert.Cert == "" || res.Cert.Key == "" {
+		fail("the host reported success but sent no certificate")
+		return
+	}
+	if err := storeCustomCert(ctx, h.q, h.blobs, h.hub, h.proxy, row, client.ID,
+		res.Cert.Cert, res.Cert.Key); err != nil {
+		fail(err.Error())
+		return
 	}
 }
 

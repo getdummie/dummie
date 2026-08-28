@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -268,6 +270,12 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 		return
 	}
 
+	if target, ok := p.acmeTarget(prefix); ok {
+		log.Info("acme challenge", "host", host, "target", target)
+		p.pipeTo(id, log, client, target, prefix)
+		return
+	}
+
 	if _, published := p.router.HostEntry(host); !published {
 		if vmHost, ok := consoleVMHost(p.router, p.cfg.Console, host); ok {
 			log.Info("console route", "host", host, "vm_host", vmHost)
@@ -288,7 +296,10 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 		return
 	}
 	log.Info("http route", "host", host, "target", target)
+	p.pipeTo(id, log, client, target, prefix)
+}
 
+func (p *Proxy) pipeTo(id string, log *slog.Logger, client net.Conn, target string, prefix []byte) {
 	backend, err := net.DialTimeout("tcp", target, p.cfg.DialTimeout.Or(defaultDialTimeout))
 	if err != nil {
 		log.Warn("http backend dial failed", "target", target, "err", err)
@@ -303,6 +314,31 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 		return
 	}
 	p.handoffCopy(id, client, backend, control.ProtoHTTP)
+}
+
+// acmeTarget answers for the challenge path alone, before the host map is
+// consulted: the name being validated has no route here yet, and by design
+// will not have one until the certificate it is asking for exists.
+func (p *Proxy) acmeTarget(prefix []byte) (string, bool) {
+	if p.cfg.ACME == nil || p.cfg.ACME.ChallengeTarget == "" {
+		return "", false
+	}
+	if !strings.HasPrefix(requestPath(prefix), ACMEChallengePrefix) {
+		return "", false
+	}
+	return p.cfg.ACME.ChallengeTarget, true
+}
+
+func requestPath(prefix []byte) string {
+	line, _, ok := bytes.Cut(prefix, []byte("\r\n"))
+	if !ok {
+		return ""
+	}
+	fields := bytes.Fields(line)
+	if len(fields) < 2 {
+		return ""
+	}
+	return string(fields[1])
 }
 
 func (p *Proxy) handleHTTPS(client net.Conn) {

@@ -183,19 +183,32 @@ func (h *ProxyLoginHandler) hostIsOurs(ctx context.Context, host string) (bool, 
 			return true, nil
 		}
 	}
-	return false, nil
+	return h.q.CustomDomainIsServed(ctx, host)
 }
 
 func (h *ProxyLoginHandler) mayReachHost(ctx context.Context, u db.User, host string) (bool, error) {
-	name, tld, ok := strings.Cut(host, ".")
-	if !ok || name == "" || tld == "" {
-		return false, nil
+	isAdmin := u.UserType == "admin"
+
+	if name, tld, ok := strings.Cut(host, "."); ok && name != "" && tld != "" {
+		_, err := h.q.GetVMForOwnerByHostname(ctx, db.GetVMForOwnerByHostnameParams{
+			Name:      name,
+			DomainTLD: tld,
+			IsAdmin:   isAdmin,
+			OwnerID:   u.ID,
+		})
+		if err == nil {
+			return true, nil
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return false, err
+		}
 	}
-	_, err := h.q.GetVMForOwnerByHostname(ctx, db.GetVMForOwnerByHostnameParams{
-		Name:      name,
-		DomainTLD: tld,
-		IsAdmin:   u.UserType == "admin",
-		OwnerID:   u.ID,
+
+	// A custom domain is not name.tld, so the split above cannot find it.
+	_, err := h.q.GetVMForOwnerByCustomDomain(ctx, db.GetVMForOwnerByCustomDomainParams{
+		Domain:  host,
+		IsAdmin: isAdmin,
+		OwnerID: u.ID,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil

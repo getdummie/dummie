@@ -24,6 +24,8 @@ const (
 	dpipeCertDir  = "/etc/dpipe/certs"
 	dpipeCertPath = dpipeCertDir + "/fullchain.pem"
 	dpipeKeyPath  = dpipeCertDir + "/privkey.pem"
+
+	dpipeNamedCertDir = dpipeCertDir + "/named"
 )
 
 func ensureDpipeKeys() error {

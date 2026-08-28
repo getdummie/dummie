@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -55,26 +56,47 @@ const dpipeTLSDisabled = `tls:
 `
 
 const (
-	dpipeCertFile = "/etc/dpipe/certs/fullchain.pem"
-	dpipeKeyFile  = "/etc/dpipe/certs/privkey.pem"
+	dpipeCertDir  = "/etc/dpipe/certs"
+	dpipeCertFile = dpipeCertDir + "/fullchain.pem"
+	dpipeKeyFile  = dpipeCertDir + "/privkey.pem"
+
+	dpipeNamedCertDir = dpipeCertDir + "/named"
 )
 
-var dpipeTLSEnabled = fmt.Sprintf(`tls:
-  enabled: true
-  # Written by dclient from the certificate this server issued for the domain.
-  default_cert: %s
-  default_key: %s
-  min_version: "1.2"
+const dpipeTLSTail = `  min_version: "1.2"
   dial_timeout: 5s
   resolve_timeout: 3s
   sniff_timeout: 5s
   sniff_max_bytes: 65536
-`, dpipeCertFile, dpipeKeyFile)
+`
 
-func generateDpipeConfig(tls bool) string {
+func dpipeNamedCertPaths(sni string) (string, string) {
+	dir := dpipeNamedCertDir + "/" + sni
+	return dir + "/fullchain.pem", dir + "/privkey.pem"
+}
+
+func generateDpipeConfig(certs *proto.DpipeCerts) string {
 	block := dpipeTLSDisabled
-	if tls {
-		block = dpipeTLSEnabled
+	if certs != nil && (certs.Cert != "" || len(certs.Named) > 0) {
+		var b strings.Builder
+		b.WriteString("tls:\n  enabled: true\n")
+		if certs.Cert != "" && certs.Key != "" {
+			b.WriteString("  # Written by dclient from the certificate this server issued for the domain.\n")
+			fmt.Fprintf(&b, "  default_cert: %s\n", dpipeCertFile)
+			fmt.Fprintf(&b, "  default_key: %s\n", dpipeKeyFile)
+		}
+		if len(certs.Named) > 0 {
+			b.WriteString("  # One per custom domain, chosen by SNI.\n")
+			b.WriteString("  certs:\n")
+			for _, c := range certs.Named {
+				cert, key := dpipeNamedCertPaths(c.SNI)
+				fmt.Fprintf(&b, "    - sni: %s\n", yamlString(c.SNI))
+				fmt.Fprintf(&b, "      cert: %s\n", yamlString(cert))
+				fmt.Fprintf(&b, "      key: %s\n", yamlString(key))
+			}
+		}
+		b.WriteString(dpipeTLSTail)
+		block = b.String()
 	}
 	return fmt.Sprintf(dpipeConfigTemplate, block)
 }
@@ -90,7 +112,7 @@ func pushDpipeConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hub *
 
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind:       proto.KindDpipeConfig,
-		File:       &proto.FileConfig{Config: generateDpipeConfig(certs != nil)},
+		File:       &proto.FileConfig{Config: generateDpipeConfig(certs)},
 		DpipeCerts: certs,
 	})
 	if err != nil {
@@ -103,32 +125,53 @@ func pushDpipeConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hub *
 }
 
 func dpipeCertsForClient(ctx context.Context, q *db.Queries, blobs *blobStore, clientID pgtype.UUID) (*proto.DpipeCerts, error) {
+	out := &proto.DpipeCerts{}
+
 	domain, err := q.GetClientDomain(ctx, clientID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+	case err != nil:
 		return nil, err
+	case domain.TlsEnabled && domain.CertObjectKey != "" && domain.KeyObjectKey != "":
+		if blobs == nil {
+			return nil, errNoBlobStore
+		}
+		cert, err := blobs.Get(ctx, domain.CertObjectKey)
+		if err != nil {
+			return nil, fmt.Errorf("could not read the certificate for %s: %w", domain.TLD, err)
+		}
+		key, err := blobs.Get(ctx, domain.KeyObjectKey)
+		if err != nil {
+			return nil, fmt.Errorf("could not read the private key for %s", domain.TLD)
+		}
+		out.Cert, out.Key, out.Fingerprint = string(cert), string(key), domain.CertFingerprint
 	}
-	if !domain.TlsEnabled || domain.CertObjectKey == "" || domain.KeyObjectKey == "" {
+
+	named, err := q.ListCustomDomainCertsByClient(ctx, clientID)
+	if err != nil {
+		return nil, fmt.Errorf("could not list the custom domain certificates: %w", err)
+	}
+	for _, n := range named {
+		if blobs == nil {
+			return nil, errNoBlobStore
+		}
+		cert, err := blobs.Get(ctx, n.CertObjectKey)
+		if err != nil {
+			log.Printf("skipping the certificate for %s: %v", n.Domain, err)
+			continue
+		}
+		key, err := blobs.Get(ctx, n.KeyObjectKey)
+		if err != nil {
+			log.Printf("skipping the private key for %s: %v", n.Domain, err)
+			continue
+		}
+		out.Named = append(out.Named, proto.DpipeNamedCert{
+			SNI: n.Domain, Cert: string(cert), Key: string(key),
+		})
+	}
+
+	if out.Cert == "" && len(out.Named) == 0 {
 		return nil, nil
 	}
-	if blobs == nil {
-		return nil, errNoBlobStore
-	}
-
-	cert, err := blobs.Get(ctx, domain.CertObjectKey)
-	if err != nil {
-		return nil, fmt.Errorf("could not read the certificate for %s: %w", domain.TLD, err)
-	}
-	key, err := blobs.Get(ctx, domain.KeyObjectKey)
-	if err != nil {
-		return nil, fmt.Errorf("could not read the private key for %s", domain.TLD)
-	}
-
-	return &proto.DpipeCerts{
-		Cert:        string(cert),
-		Key:         string(key),
-		Fingerprint: domain.CertFingerprint,
-	}, nil
+	return out, nil
 }

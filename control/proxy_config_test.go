@@ -53,6 +53,9 @@ type parsedProxyConfig struct {
 		HTMLFile string   `yaml:"html_file"`
 		Hosts    []string `yaml:"hosts"`
 	} `yaml:"site"`
+	ACME struct {
+		ChallengeTarget string `yaml:"challenge_target"`
+	} `yaml:"acme"`
 }
 
 func parseProxyConfig(t *testing.T, out string) parsedProxyConfig {
@@ -70,7 +73,7 @@ func TestGenerateProxyConfigOneVMPerUser(t *testing.T) {
 		{VMIP: "10.64.0.3", HostVMID: "def456", VMName: "test", PublicKey: "ssh-ed25519 AAAAC3Ny two"},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil, nil))
 	if got.SSH.Listen != proxySSHListen {
 		t.Errorf("listen is %q, want %q", got.SSH.Listen, proxySSHListen)
 	}
@@ -98,7 +101,7 @@ func TestGenerateProxyConfigOneVMPerUser(t *testing.T) {
 }
 
 func TestGenerateProxyConfigEmptyHost(t *testing.T) {
-	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil)
+	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil)
 	if strings.Contains(out, "ssh:") {
 		t.Errorf("an empty host emitted an ssh block, which proxy will not start on:\n%s", out)
 	}
@@ -121,7 +124,7 @@ func TestGenerateProxyConfigHTTPHosts(t *testing.T) {
 		{VMName: "quirky-curie", VMIP: "10.64.0.3", HostVMID: "def456", DomainTLD: "example.com", DefaultPort: 3000, PublicPorts: []int32{3000, 9090}},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, rows))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, rows, nil))
 	if got.HTTP.Listen != proxyHTTPListen {
 		t.Errorf("http listen is %q, want %q", got.HTTP.Listen, proxyHTTPListen)
 	}
@@ -155,7 +158,7 @@ func TestGenerateProxyConfigHTTPNoPublicPorts(t *testing.T) {
 		{VMName: "quirky-curie", VMIP: "10.64.0.3", HostVMID: "def456", DomainTLD: "example.com", DefaultPort: 8000},
 	}
 
-	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, rows)
+	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, rows, nil)
 	if !strings.Contains(out, "unauthenticated_ports: []") {
 		t.Errorf("a vm with no published ports did not emit an empty list:\n%s", out)
 	}
@@ -172,7 +175,7 @@ func TestGenerateProxyConfigSkipsUnusableHostnames(t *testing.T) {
 		{VMName: "peaceful-tesla", VMIP: "10.64.0.4", HostVMID: "ghi789", DomainTLD: "example.com", DefaultPort: 8000},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, rows))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, rows, nil))
 	if len(got.HTTP.Hosts) != 1 {
 		t.Fatalf("got %d http hosts, want 1: %v", len(got.HTTP.Hosts), got.HTTP.Hosts)
 	}
@@ -187,7 +190,7 @@ func TestGenerateProxyConfigQuotesAwkwardComments(t *testing.T) {
 		{VMIP: "10.64.0.2", HostVMID: "abc123", VMName: "build", PublicKey: awkward},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil, nil))
 	if len(got.SSH.Users) != 1 {
 		t.Fatalf("got %d users, want 1", len(got.SSH.Users))
 	}
@@ -206,14 +209,14 @@ func TestGenerateProxyConfigNeutralisesNamesInComments(t *testing.T) {
 		},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil, nil))
 	if len(got.SSH.Users) != 1 {
 		t.Fatalf("a name broke out of its comment and changed the document: got %d users, want 1", len(got.SSH.Users))
 	}
 }
 
 func TestGenerateProxyConfigAuthBlock(t *testing.T) {
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil))
 
 	if want := "http://control.example.com:1323/login"; got.Auth.ControlURL != want {
 		t.Errorf("control_url = %q, want %q", got.Auth.ControlURL, want)
@@ -231,13 +234,13 @@ func TestGenerateProxyConfigAuthBlock(t *testing.T) {
 		t.Errorf("cookie_samesite = %q for a dev control plane, want \"lax\"", got.Auth.CookieSameSite)
 	}
 
-	if strings.Contains(generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil), testProxySecret) {
+	if strings.Contains(generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil), testProxySecret) {
 		t.Error("the shared secret was written into dproxy.yaml")
 	}
 }
 
 func TestGenerateProxyConfigAuthBlockOmittedWithoutASecret(t *testing.T) {
-	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, proxyHost{}, nil, nil)
+	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, proxyHost{}, nil, nil, nil)
 
 	if strings.Contains(out, "auth:") {
 		t.Errorf("an auth block was written with no key to verify tokens with:\n%s", out)
@@ -248,7 +251,7 @@ func TestGenerateProxyConfigAuthBlockOmittedWithoutASecret(t *testing.T) {
 }
 
 func TestGenerateProxyConfigConsoleBlock(t *testing.T) {
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil))
 
 	if got.Console.Label != proxyConsoleLabel {
 		t.Errorf("console label is %q, want %q", got.Console.Label, proxyConsoleLabel)
@@ -259,7 +262,7 @@ func TestGenerateProxyConfigConsoleBlock(t *testing.T) {
 }
 
 func TestGenerateProxyConfigConsoleOmittedWithoutASecret(t *testing.T) {
-	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, proxyHost{}, nil, nil)
+	out := generateProxyConfig(proxyAuthConfig{controlURL: "http://control.example.com:1323"}, proxyHost{}, nil, nil, nil)
 
 	if strings.Contains(out, "console:") {
 		t.Errorf("a console block was written with no key to verify tokens with:\n%s", out)
@@ -270,7 +273,7 @@ func TestGenerateProxyConfigCookieSecureInProd(t *testing.T) {
 	auth := testProxyAuth
 	auth.cookieSecure = true
 
-	got := parseProxyConfig(t, generateProxyConfig(auth, proxyHost{}, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(auth, proxyHost{}, nil, nil, nil))
 	if !got.Auth.CookieSecure {
 		t.Error("cookie_secure is off in prod")
 	}
@@ -280,7 +283,7 @@ func TestGenerateProxyConfigCookieSecureInProd(t *testing.T) {
 }
 
 func TestGenerateProxyConfigWithoutACertificate(t *testing.T) {
-	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil)
+	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil)
 
 	if strings.Contains(out, "https:") {
 		t.Errorf("an https ingress was written for a host with no certificate:\n%s", out)
@@ -291,7 +294,7 @@ func TestGenerateProxyConfigWithoutACertificate(t *testing.T) {
 }
 
 func TestGenerateProxyConfigSite(t *testing.T) {
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{tld: "example.com"}, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{tld: "example.com"}, nil, nil, nil))
 
 	if len(got.Site.Hosts) != 1 || got.Site.Hosts[0] != "www.example.com" {
 		t.Errorf("site.hosts = %v, want [www.example.com]", got.Site.Hosts)
@@ -305,7 +308,7 @@ func TestGenerateProxyConfigSite(t *testing.T) {
 }
 
 func TestGenerateProxyConfigSiteAbsentWithoutADomain(t *testing.T) {
-	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil)
+	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil)
 
 	if strings.Contains(out, "site:") {
 		t.Errorf("a site block was written for a host with no domain:\n%s", out)
@@ -335,7 +338,7 @@ func TestProxySitePageEscapesTheControlURL(t *testing.T) {
 }
 
 func TestGenerateProxyConfigWithACertificate(t *testing.T) {
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{tls: true}, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{tls: true}, nil, nil, nil))
 
 	if got.HTTPS.Listen != proxyHTTPSListen {
 		t.Errorf("https.listen = %q, want %q", got.HTTPS.Listen, proxyHTTPSListen)
@@ -352,7 +355,7 @@ func TestGenerateProxyConfigCookieFollowsTheCertificate(t *testing.T) {
 	auth := testProxyAuth
 	auth.cookieSecure = false
 
-	got := parseProxyConfig(t, generateProxyConfig(auth, proxyHost{tls: true}, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(auth, proxyHost{tls: true}, nil, nil, nil))
 	if !got.Auth.CookieSecure {
 		t.Error("cookie_secure is off on a host serving https")
 	}
@@ -365,7 +368,7 @@ func TestGenerateProxyConfigCookieStaysOpenWithoutACertificate(t *testing.T) {
 	auth := testProxyAuth
 	auth.cookieSecure = false
 
-	got := parseProxyConfig(t, generateProxyConfig(auth, proxyHost{}, nil, nil))
+	got := parseProxyConfig(t, generateProxyConfig(auth, proxyHost{}, nil, nil, nil))
 	if got.Auth.CookieSecure {
 		t.Error("cookie_secure is on for a host serving plain http; the browser would drop the cookie")
 	}
@@ -383,7 +386,7 @@ func TestGenerateProxyConfigIsDeterministic(t *testing.T) {
 		{VMName: "interesting-hawking", VMIP: "10.64.0.2", HostVMID: "abc123", DomainTLD: "example.com", DefaultPort: 8000, PublicPorts: []int32{8000}},
 		{VMName: "quirky-curie", VMIP: "10.64.0.3", HostVMID: "def456", DomainTLD: "example.com", DefaultPort: 8000},
 	}
-	if generateProxyConfig(testProxyAuth, proxyHost{}, rows, httpRows) != generateProxyConfig(testProxyAuth, proxyHost{}, rows, httpRows) {
+	if generateProxyConfig(testProxyAuth, proxyHost{}, rows, httpRows, nil) != generateProxyConfig(testProxyAuth, proxyHost{}, rows, httpRows, nil) {
 		t.Error("two runs over the same rows produced different files")
 	}
 }
@@ -454,11 +457,48 @@ func TestGenerateProxyConfigQuotesVMNames(t *testing.T) {
 		{VMIP: "10.64.0.2", HostVMID: "abc123", VMName: awkward, PublicKey: "ssh-ed25519 AAAAC3Nz"},
 	}
 
-	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil))
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil, nil))
 	if len(got.SSH.Users) != 1 {
 		t.Fatalf("got %d users, want 1", len(got.SSH.Users))
 	}
 	if got.SSH.Users[0].VMName != awkward {
 		t.Errorf("the name did not survive:\n got %q\nwant %q", got.SSH.Users[0].VMName, awkward)
+	}
+}
+
+func TestGenerateProxyConfigRoutesACustomDomainToItsVM(t *testing.T) {
+	httpRows := []db.ListProxyHTTPRoutesByClientRow{
+		{VMName: "amazing-jepsen", VMIP: "10.64.0.2", HostVMID: "abc123",
+			DomainTLD: "example.com", DefaultPort: 8000, PublicPorts: []int32{8000}},
+	}
+	custom := []db.ListCustomDomainRoutesByClientRow{
+		{Domain: "codingcoffee.dev", VMName: "amazing-jepsen", VMIP: "10.64.0.2",
+			DefaultPort: 8000, PublicPorts: []int32{8000}},
+	}
+
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, httpRows, custom))
+
+	entry, ok := got.HTTP.Hosts["codingcoffee.dev"]
+	if !ok {
+		t.Fatalf("the custom domain is not in the host table: %+v", got.HTTP.Hosts)
+	}
+	if entry.Host != "10.64.0.2" || entry.DefaultPort != 8000 {
+		t.Errorf("the custom domain points at %s:%d, want the vm at 10.64.0.2:8000", entry.Host, entry.DefaultPort)
+	}
+	if _, ok := got.HTTP.Hosts["amazing-jepsen.example.com"]; !ok {
+		t.Error("the vm stopped answering to its own name once it had a custom domain")
+	}
+	if got.HTTPS.Listen != proxyHTTPSListen {
+		t.Errorf("https.listen = %q, want %q: a custom domain has a certificate to serve",
+			got.HTTPS.Listen, proxyHTTPSListen)
+	}
+}
+
+func TestGenerateProxyConfigAlwaysPublishesTheACMEChallenge(t *testing.T) {
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil))
+
+	if got.ACME.ChallengeTarget != proxyACMEChallengeTarget {
+		t.Errorf("acme.challenge_target = %q, want %q: a first order has to be answerable",
+			got.ACME.ChallengeTarget, proxyACMEChallengeTarget)
 	}
 }

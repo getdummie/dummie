@@ -170,6 +170,7 @@ async function load(quiet = false) {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     vm.value = await res.json()
     await loadTargets()
+    loadDomain()
     loadDenied()
   }
   catch (e) {
@@ -735,6 +736,123 @@ async function confirmRemove() {
     removing.value = false
   }
 }
+
+interface CustomDomain {
+  domain: string
+  status: 'pending_dns' | 'verifying' | 'issuing' | 'active' | 'failed'
+  cname_name: string
+  cname_target: string
+  last_error?: string
+  url?: string
+  cert_not_after?: string
+}
+
+const domain = ref<CustomDomain | null>(null)
+const domainInput = ref('')
+const domainBusy = ref(false)
+const domainError = ref<string | null>(null)
+let domainPoll: ReturnType<typeof setInterval> | null = null
+
+const domainSettling = computed(
+  () => domain.value?.status === 'verifying' || domain.value?.status === 'issuing',
+)
+
+const domainStatusLabel: Record<CustomDomain['status'], string> = {
+  pending_dns: 'Waiting for your CNAME',
+  verifying: 'Checking the CNAME',
+  issuing: 'Getting a certificate',
+  active: 'Live',
+  failed: 'Could not be set up',
+}
+
+const domainStatusVariant: Record<CustomDomain['status'], BadgeVariant> = {
+  pending_dns: 'outline',
+  verifying: 'secondary',
+  issuing: 'secondary',
+  active: 'default',
+  failed: 'destructive',
+}
+
+async function loadDomain() {
+  const res = await authFetch(`/vms/${id.value}/domain`)
+  if (res.status === 404) {
+    domain.value = null
+    return
+  }
+  if (!res.ok) return
+  domain.value = await res.json()
+  if (domainSettling.value) startDomainPoll()
+  else stopDomainPoll()
+}
+
+function startDomainPoll() {
+  if (domainPoll) return
+  domainPoll = setInterval(loadDomain, 5000)
+}
+
+function stopDomainPoll() {
+  if (!domainPoll) return
+  clearInterval(domainPoll)
+  domainPoll = null
+}
+
+onBeforeUnmount(stopDomainPoll)
+
+async function saveDomain() {
+  const wanted = domainInput.value.trim()
+  if (!wanted) return
+  domainBusy.value = true
+  domainError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/domain`, {
+      method: 'POST',
+      body: JSON.stringify({ domain: wanted }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    domain.value = await res.json()
+    domainInput.value = ''
+  }
+  catch (e) {
+    domainError.value = e instanceof Error ? e.message : 'Could not record that domain'
+  }
+  finally {
+    domainBusy.value = false
+  }
+}
+
+async function verifyDomain() {
+  domainBusy.value = true
+  domainError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/domain/verify`, { method: 'POST' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    domain.value = await res.json()
+    startDomainPoll()
+  }
+  catch (e) {
+    domainError.value = e instanceof Error ? e.message : 'Could not start the check'
+  }
+  finally {
+    domainBusy.value = false
+  }
+}
+
+async function removeDomain() {
+  domainBusy.value = true
+  domainError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/domain`, { method: 'DELETE' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    domain.value = null
+    stopDomainPoll()
+  }
+  catch (e) {
+    domainError.value = e instanceof Error ? e.message : 'Could not remove the domain'
+  }
+  finally {
+    domainBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -1080,6 +1198,112 @@ async function confirmRemove() {
             </div>
           </div>
         </div>
+      </section>
+
+      <section aria-labelledby="domain-heading" class="mt-4 rounded-lg border border-border p-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="domain-heading" class="text-sm font-semibold">Custom domain</h2>
+            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
+              A domain of your own that answers to this VM, with its own certificate. This VM already
+              answers to <span class="font-mono text-foreground">{{ vm.name }}</span>; a custom domain
+              is served alongside that, not instead of it.
+            </p>
+          </div>
+          <Badge v-if="domain" :variant="domainStatusVariant[domain.status]" class="font-mono text-xs">
+            {{ domainStatusLabel[domain.status] }}
+          </Badge>
+        </div>
+
+        <Alert v-if="domainError" variant="destructive" class="mt-3">
+          <AlertDescription>{{ domainError }}</AlertDescription>
+        </Alert>
+
+        <form v-if="!domain" class="mt-3 flex flex-wrap items-end gap-2" @submit.prevent="saveDomain">
+          <div class="min-w-0 flex-1 space-y-2">
+            <Label for="custom-domain">Domain</Label>
+            <Input
+              id="custom-domain"
+              v-model="domainInput"
+              class="font-mono"
+              placeholder="www.example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <Button type="submit" size="sm" :disabled="domainBusy || !domainInput.trim()">
+            {{ domainBusy ? 'Saving…' : 'Add' }}
+          </Button>
+        </form>
+
+        <template v-else>
+          <dl class="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
+            <div>
+              <dt class="eyebrow text-muted-foreground">Domain</dt>
+              <dd class="mt-1 font-mono text-sm break-all">
+                <a
+                  v-if="domain.url"
+                  :href="domain.url"
+                  target="_blank"
+                  rel="noopener"
+                  class="inline-flex items-center gap-1.5 underline-offset-4 hover:underline"
+                >
+                  {{ domain.domain }}
+                  <ExternalLink class="size-3.5" aria-hidden="true" />
+                </a>
+                <span v-else>{{ domain.domain }}</span>
+              </dd>
+            </div>
+            <div v-if="domain.cert_not_after">
+              <dt class="eyebrow text-muted-foreground">Certificate valid until</dt>
+              <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(domain.cert_not_after) }}</dd>
+            </div>
+          </dl>
+
+          <div v-if="domain.status !== 'active'" class="mt-3 rounded-md border border-border bg-muted/40 p-3">
+            <p class="text-xs text-muted-foreground">
+              Create this record at whoever holds your domain, then confirm it below. It has to be a
+              CNAME: an A record pointing at the same address is not accepted, because the CNAME is
+              what keeps the name following this VM if it moves.
+            </p>
+            <dl class="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-3">
+              <div>
+                <dt class="eyebrow text-muted-foreground">Type</dt>
+                <dd class="mt-1 font-mono text-sm">CNAME</dd>
+              </div>
+              <div class="min-w-0">
+                <dt class="eyebrow text-muted-foreground">Name</dt>
+                <dd class="mt-1 font-mono text-sm break-all">{{ domain.cname_name }}</dd>
+              </div>
+              <div class="min-w-0">
+                <dt class="eyebrow text-muted-foreground">Points to</dt>
+                <dd class="mt-1 font-mono text-sm break-all">{{ domain.cname_target || '—' }}</dd>
+              </div>
+            </dl>
+          </div>
+
+          <p v-if="domain.last_error" class="mt-3 text-xs text-destructive">{{ domain.last_error }}</p>
+          <p v-else-if="domainSettling" class="mt-3 text-xs text-muted-foreground">
+            Processing. This page keeps checking; a certificate usually lands within a minute of the
+            CNAME being visible.
+          </p>
+
+          <div class="mt-3 flex flex-wrap items-center gap-2">
+            <Button
+              v-if="domain.status !== 'active'"
+              size="sm"
+              :disabled="domainBusy || domainSettling"
+              @click="verifyDomain"
+            >
+              <RefreshCw class="size-4" aria-hidden="true" />
+              {{ domainSettling ? 'Checking…' : 'I have added the CNAME' }}
+            </Button>
+            <Button variant="outline" size="sm" :disabled="domainBusy" @click="removeDomain">
+              <Trash2 class="size-4" aria-hidden="true" />
+              Remove
+            </Button>
+          </div>
+        </template>
       </section>
 
       <section aria-labelledby="targets-heading" class="mt-4 rounded-lg border border-border">

@@ -65,9 +65,6 @@ type CreateVMParams struct {
 	PublicPorts []int32
 }
 
-// CreateVM records the intent before the job is pushed to the client. The row id
-// doubles as the job's correlation id, which is what lets the result frame find
-// its way back to exactly this row.
 func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) {
 	row := q.db.QueryRow(ctx, createVM,
 		arg.ClientID,
@@ -117,11 +114,6 @@ type DeleteAdoptedVMParams struct {
 	ID       pgtype.UUID
 }
 
-// DeleteAdoptedVM resolves the one race between the two ways a row is born: an
-// inventory report can land after the client has written vm.json but before its
-// result frame arrives, adopting a VM that already has a pending row waiting for
-// it. The adopted duplicate is dropped so the pending row -- which holds the
-// spec that was asked for -- is the one that survives.
 func (q *Queries) DeleteAdoptedVM(ctx context.Context, arg DeleteAdoptedVMParams) error {
 	_, err := q.db.Exec(ctx, deleteAdoptedVM, arg.ClientID, arg.VMID, arg.ID)
 	return err
@@ -143,8 +135,6 @@ SET status = 'failed', last_error = $1, updated_at = now()
 WHERE status = 'pending'
 `
 
-// FailAllPendingVMs is the startup counterpart: in-flight jobs belonged to the
-// previous process's sockets and cannot be resumed.
 func (q *Queries) FailAllPendingVMs(ctx context.Context, lastError string) error {
 	_, err := q.db.Exec(ctx, failAllPendingVMs, lastError)
 	return err
@@ -161,9 +151,6 @@ type FailPendingVMsForClientParams struct {
 	LastError string
 }
 
-// FailPendingVMsForClient runs when an client's socket drops and at startup: a
-// pending row is waiting on a result frame that can no longer arrive, so it
-// would otherwise sit there forever claiming to be in progress.
 func (q *Queries) FailPendingVMsForClient(ctx context.Context, arg FailPendingVMsForClientParams) error {
 	_, err := q.db.Exec(ctx, failPendingVMsForClient, arg.ClientID, arg.LastError)
 	return err
@@ -211,9 +198,6 @@ type GetVMForOwnerParams struct {
 	CreatedBy pgtype.UUID
 }
 
-// GetVMForOwner is the ownership check and the read in one statement. Doing it
-// as two -- read, then compare created_by in Go -- is the same query written so
-// that forgetting the second half silently leaks another user's VM.
 func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (Vm, error) {
 	row := q.db.QueryRow(ctx, getVMForOwner, arg.ID, arg.CreatedBy)
 	var i Vm
@@ -259,23 +243,6 @@ type GetVMForOwnerByHostnameParams struct {
 	OwnerID   pgtype.UUID
 }
 
-// GetVMForOwnerByHostname resolves the name proxy routes on -- a VM's name under
-// the domain of the client running it -- back to the VM, and checks in the same
-// statement that the caller may reach it. Used by the /login hand-off, which is
-// handed a hostname and nothing else.
-//
-// The ownership test is in the WHERE for the same reason it is in GetVMForOwner:
-// written as a read followed by a comparison in Go, it is a check a later edit
-// can drop without the query stopping working.
-//
-// is_admin widens it to any VM rather than being a second query, so there is one
-// statement that decides who may be handed a token for a host. An unowned VM
-// (created on the host, created_by NULL) is reachable only by an admin -- there
-// is no user to match, and treating "nobody owns it" as "everybody owns it"
-// would publish every adopted guest to every account.
-//
-// 'gone' rows are excluded: the name may since have been re-used, and a token
-// for a hostname that no longer routes anywhere is not worth minting.
 func (q *Queries) GetVMForOwnerByHostname(ctx context.Context, arg GetVMForOwnerByHostnameParams) (pgtype.UUID, error) {
 	row := q.db.QueryRow(ctx, getVMForOwnerByHostname,
 		arg.Name,
@@ -309,22 +276,6 @@ type ListProxyHTTPRoutesByClientRow struct {
 	DomainTLD   string
 }
 
-// ListProxyHTTPRoutesByClient is the other half of the dproxy.yaml input: every VM
-// on the host that can be reached over http, with the ports it publishes and the
-// domain its hostname sits under.
-//
-// The join on domains is inner, so a host whose client has no domain contributes
-// nothing. That is the honest outcome rather than a gap: the hostname is the VM
-// name under that domain, so without one there is no name to route on, and
-// inventing a suffix would publish a hostname the operator never configured and
-// nothing resolves.
-//
-// Unlike the ssh side this does not join users: an http route exposes a port the
-// guest chose to listen on, so it does not depend on who owns the VM or on their
-// having a key. Rows with no address are still skipped, and 'gone' VMs excluded,
-// for the same reason -- an address that has gone back to the pool will be handed
-// to another guest, and a stale route would then publish that one under this
-// name.
 func (q *Queries) ListProxyHTTPRoutesByClient(ctx context.Context, clientID pgtype.UUID) ([]ListProxyHTTPRoutesByClientRow, error) {
 	rows, err := q.db.Query(ctx, listProxyHTTPRoutesByClient, clientID)
 	if err != nil {
@@ -370,21 +321,6 @@ type ListProxySSHUsersByClientRow struct {
 	PublicKey string
 }
 
-// ListProxySSHUsersByClient is the input to the dproxy.yaml generator: every VM on
-// the host that can be reached over ssh, carrying the key of whoever owns it.
-//
-// One query for the whole host, like the Suricata one, because the file is
-// written as a whole -- a VM missed here is a VM its owner silently loses access
-// to until the next regeneration.
-//
-// An inner join on users drops VMs with no owner: one adopted from a host's
-// inventory report was created outside the control plane, so there is no key to
-// route with. A user with no key on file drops out for the same reason.
-//
-// Rows without an address are skipped -- there is nothing to point the route at
-// -- and 'gone' VMs are excluded because their address goes back to the pool and
-// will be handed to some other guest, which a stale route would then expose to
-// the wrong user's key.
 func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype.UUID) ([]ListProxySSHUsersByClientRow, error) {
 	rows, err := q.db.Query(ctx, listProxySSHUsersByClient, clientID)
 	if err != nil {
@@ -581,12 +517,6 @@ type MarkMissingVMsGoneParams struct {
 	VmIds    []string
 }
 
-// MarkMissingVMsGone settles the other half of an inventory report: a row the
-// client no longer lists has been removed on the host.
-//
-// Only rows the host had already assigned an id to are considered. A 'pending'
-// row has no id yet and is waiting on its result frame, and a 'failed' one never
-// got that far -- neither is missing, and neither should be touched here.
 func (q *Queries) MarkMissingVMsGone(ctx context.Context, arg MarkMissingVMsGoneParams) error {
 	_, err := q.db.Exec(ctx, markMissingVMsGone, arg.ClientID, arg.VmIds)
 	return err
@@ -631,13 +561,6 @@ type MarkVMRunningParams struct {
 	IP        string
 }
 
-// MarkVMRunning applies what the client actually built: the id and the address
-// are allocated on the host, so they are only known once it answers.
-//
-// The name is NOT taken from the host. It was chosen here, it is unique across
-// the fleet, and it is what proxy routes http by -- so accepting the host's copy
-// of it would let a rename on one machine either collide with another VM or move
-// a live route out from under whoever is using it.
 func (q *Queries) MarkVMRunning(ctx context.Context, arg MarkVMRunningParams) error {
 	_, err := q.db.Exec(ctx, markVMRunning,
 		arg.ID,
@@ -661,9 +584,6 @@ type SetVMLastErrorParams struct {
 	LastError string
 }
 
-// SetVMLastError records a failed action without changing the status. A stop
-// that failed most likely leaves the VM running, so claiming otherwise would be
-// worse than saying nothing.
 func (q *Queries) SetVMLastError(ctx context.Context, arg SetVMLastErrorParams) error {
 	_, err := q.db.Exec(ctx, setVMLastError, arg.ID, arg.LastError)
 	return err
@@ -680,14 +600,6 @@ type SetVMStatusParams struct {
 	Status string
 }
 
-// SetVMStatus settles a start, stop or destroy as soon as the client confirms it,
-// rather than waiting up to a full inventory tick for the row to catch up.
-//
-// reported_at moves too. A result frame *is* the host vouching for this VM, at
-// this moment, on the same socket an inventory report would use -- so treating
-// it as older than it is would show a VM that was just confirmed as stale, which
-// is both wrong and alarming. A host that dies immediately afterwards is still
-// caught, by the ordinary staleness window.
 func (q *Queries) SetVMStatus(ctx context.Context, arg SetVMStatusParams) error {
 	_, err := q.db.Exec(ctx, setVMStatus, arg.ID, arg.Status)
 	return err
@@ -708,13 +620,6 @@ type SumActiveVMUsageByOwnerRow struct {
 	DiskMiB   int32
 }
 
-// SumActiveVMUsageByOwner totals what a user is currently holding, for the
-// quota check on create.
-//
-// 'failed' and 'gone' are excluded: neither has anything running on a host, so
-// counting them would let a run of failed creates permanently consume someone's
-// allowance. 'pending' IS counted -- it is a create in flight, and leaving it
-// out lets concurrent requests each see room that only one of them can have.
 func (q *Queries) SumActiveVMUsageByOwner(ctx context.Context, createdBy pgtype.UUID) (SumActiveVMUsageByOwnerRow, error) {
 	row := q.db.QueryRow(ctx, sumActiveVMUsageByOwner, createdBy)
 	var i SumActiveVMUsageByOwnerRow
@@ -738,12 +643,6 @@ type UpdateVMPortsForOwnerParams struct {
 	PublicPorts []int32
 }
 
-// UpdateVMPortsForOwner changes what a VM publishes. Scoped to the owner in the
-// statement, like GetVMForOwner: an ownership check written as a separate read
-// is one a later edit can drop without the query stopping working.
-//
-// Only the ports. The name is settled at create and the address is the host's,
-// so this is the whole of what an owner may change about how their VM is routed.
 func (q *Queries) UpdateVMPortsForOwner(ctx context.Context, arg UpdateVMPortsForOwnerParams) (Vm, error) {
 	row := q.db.QueryRow(ctx, updateVMPortsForOwner,
 		arg.ID,
@@ -803,18 +702,6 @@ type UpsertVMFromInventoryParams struct {
 	StartedAt pgtype.Timestamptz
 }
 
-// UpsertVMFromInventory records what an client reports it is actually running.
-// This is how a VM created locally with `dclient vm create` gets adopted: the
-// control plane learns about it the same way it learns about one it asked for.
-//
-// created_at comes from the host, not from now(): the VM's age is a fact about
-// the guest, not about when this server first heard of it. started_at is kept if
-// we already knew it, since the host does not report when a boot happened.
-//
-// name is insert-only: it is absent from the update list below because it is
-// what the VM's http route is keyed on, so re-taking it from the host on every
-// inventory tick would move that route underneath whoever is using it -- and
-// could collide with a name another VM already holds.
 func (q *Queries) UpsertVMFromInventory(ctx context.Context, arg UpsertVMFromInventoryParams) error {
 	_, err := q.db.Exec(ctx, upsertVMFromInventory,
 		arg.ClientID,

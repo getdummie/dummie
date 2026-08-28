@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 
 	"control/internal/proto"
@@ -130,7 +132,7 @@ func applyDpipeConfig(ctx context.Context, config string, certs *proto.DpipeCert
 }
 
 func writeDpipeCerts(certs *proto.DpipeCerts) (bool, error) {
-	if certs == nil || certs.Cert == "" || certs.Key == "" {
+	if certs == nil {
 		return false, nil
 	}
 
@@ -141,19 +143,82 @@ func writeDpipeCerts(certs *proto.DpipeCerts) (bool, error) {
 		return false, fmt.Errorf("could not tighten %s: %w", dpipeCertDir, err)
 	}
 
-	certChanged, err := writeIfChanged(dpipeCertPath, certs.Cert, 0o644)
+	changed := false
+	if certs.Cert != "" && certs.Key != "" {
+		certChanged, err := writeIfChanged(dpipeCertPath, certs.Cert, 0o644)
+		if err != nil {
+			return false, err
+		}
+		keyChanged, err := writeIfChanged(dpipeKeyPath, certs.Key, 0o600)
+		if err != nil {
+			return false, err
+		}
+		if certChanged || keyChanged {
+			log.Printf("installed a new wildcard certificate in %s", dpipeCertDir)
+			changed = true
+		}
+	}
+
+	namedChanged, err := writeNamedCerts(certs.Named)
 	if err != nil {
-		return false, err
+		return changed, err
 	}
-	keyChanged, err := writeIfChanged(dpipeKeyPath, certs.Key, 0o600)
-	if err != nil {
-		return false, err
-	}
-	if certChanged || keyChanged {
-		log.Printf("installed a new wildcard certificate in %s", dpipeCertDir)
-	}
-	return certChanged || keyChanged, nil
+	return changed || namedChanged, nil
 }
+
+// writeNamedCerts lays out one directory per custom domain and removes the
+// directories of domains the control server no longer lists, so a name that
+// was dropped stops being served rather than lingering in the SNI table.
+func writeNamedCerts(named []proto.DpipeNamedCert) (bool, error) {
+	if err := os.MkdirAll(dpipeNamedCertDir, 0o700); err != nil {
+		return false, fmt.Errorf("could not create %s: %w", dpipeNamedCertDir, err)
+	}
+
+	changed := false
+	keep := make(map[string]bool, len(named))
+	for _, c := range named {
+		if !hostnamePattern.MatchString(c.SNI) || c.Cert == "" || c.Key == "" {
+			log.Printf("skipping a certificate for %q: it is not a usable hostname or carries no key", c.SNI)
+			continue
+		}
+		keep[c.SNI] = true
+
+		dir := filepath.Join(dpipeNamedCertDir, c.SNI)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return changed, fmt.Errorf("could not create %s: %w", dir, err)
+		}
+		certChanged, err := writeIfChanged(filepath.Join(dir, "fullchain.pem"), c.Cert, 0o644)
+		if err != nil {
+			return changed, err
+		}
+		keyChanged, err := writeIfChanged(filepath.Join(dir, "privkey.pem"), c.Key, 0o600)
+		if err != nil {
+			return changed, err
+		}
+		if certChanged || keyChanged {
+			log.Printf("installed a certificate for %s in %s", c.SNI, dir)
+			changed = true
+		}
+	}
+
+	entries, err := os.ReadDir(dpipeNamedCertDir)
+	if err != nil {
+		return changed, fmt.Errorf("could not read %s: %w", dpipeNamedCertDir, err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() || keep[e.Name()] {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dpipeNamedCertDir, e.Name())); err != nil {
+			return changed, fmt.Errorf("could not remove the certificate for %s: %w", e.Name(), err)
+		}
+		log.Printf("removed the certificate for %s, which is no longer served here", e.Name())
+		changed = true
+	}
+	return changed, nil
+}
+
+var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 func writeIfChanged(path, content string, mode os.FileMode) (bool, error) {
 	if !strings.HasSuffix(content, "\n") {

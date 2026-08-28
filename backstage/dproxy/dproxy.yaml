@@ -49,6 +49,13 @@ site:
   hosts:
     - www.vm.local
 
+# One path on the plaintext ingress that is answered before the host map is
+# consulted: a certificate authority validates a name while no certificate for
+# it exists, so the request can be neither TLS nor routed to a guest. dclient
+# holds a listener here only for the length of an order.
+acme:
+  challenge_target: "127.0.0.1:8078"
+
 tcp:
   - listen: ":9000"
     target: "127.0.0.1:9000"

@@ -21,10 +21,6 @@ WHERE key_hash = $1
 RETURNING id, key_hash, key_prefix, label, max_uses, uses, expires_at, revoked, created_by, created_at
 `
 
-// ConsumeEnrollmentKey claims one use of a key. Validity (not revoked, not
-// expired, uses remaining) is checked in the same statement that increments the
-// counter, so two clients racing on a single-use key cannot both win. Zero rows
-// means unknown/revoked/expired/exhausted -- the caller must not distinguish.
 func (q *Queries) ConsumeEnrollmentKey(ctx context.Context, keyHash string) (ClientEnrollmentKey, error) {
 	row := q.db.QueryRow(ctx, consumeEnrollmentKey, keyHash)
 	var i ClientEnrollmentKey

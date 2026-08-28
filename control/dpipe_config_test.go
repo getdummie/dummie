@@ -5,7 +5,11 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"control/internal/proto"
 )
+
+var testWildcardCerts = &proto.DpipeCerts{Cert: "cert-pem", Key: "key-pem"}
 
 type parsedDpipeConfig struct {
 	SSH struct {
@@ -35,7 +39,7 @@ func parseDpipeConfig(t *testing.T, out string) parsedDpipeConfig {
 }
 
 func TestGenerateDpipeConfigWithoutACertificate(t *testing.T) {
-	got := parseDpipeConfig(t, generateDpipeConfig(false))
+	got := parseDpipeConfig(t, generateDpipeConfig(nil))
 
 	if got.TLS.Enabled {
 		t.Error("tls is on for a host with no certificate; dpipe would refuse to start")
@@ -49,7 +53,7 @@ func TestGenerateDpipeConfigWithoutACertificate(t *testing.T) {
 }
 
 func TestGenerateDpipeConfigWithACertificate(t *testing.T) {
-	got := parseDpipeConfig(t, generateDpipeConfig(true))
+	got := parseDpipeConfig(t, generateDpipeConfig(testWildcardCerts))
 
 	if !got.TLS.Enabled {
 		t.Fatal("tls is off for a host that has a certificate")
@@ -67,7 +71,7 @@ func TestGenerateDpipeConfigWithACertificate(t *testing.T) {
 }
 
 func TestGenerateDpipeConfigUsesTheDefaultCertificateNotTheSNITable(t *testing.T) {
-	out := generateDpipeConfig(true)
+	out := generateDpipeConfig(testWildcardCerts)
 
 	if got := parseDpipeConfig(t, out); len(got.TLS.Certs) != 0 {
 		t.Errorf("the config populates the sni table, where a wildcard is never matched: %+v", got.TLS.Certs)
@@ -77,10 +81,44 @@ func TestGenerateDpipeConfigUsesTheDefaultCertificateNotTheSNITable(t *testing.T
 	}
 }
 
+func TestGenerateDpipeConfigNamesCustomDomainsBySNI(t *testing.T) {
+	certs := &proto.DpipeCerts{
+		Cert: "cert-pem", Key: "key-pem",
+		Named: []proto.DpipeNamedCert{{SNI: "codingcoffee.dev", Cert: "c", Key: "k"}},
+	}
+	out := generateDpipeConfig(certs)
+	got := parseDpipeConfig(t, out)
+
+	if len(got.TLS.Certs) != 1 || got.TLS.Certs[0].SNI != "codingcoffee.dev" {
+		t.Fatalf("the sni table does not carry the custom domain: %+v", got.TLS.Certs)
+	}
+	if got.TLS.DefaultCert != dpipeCertFile {
+		t.Errorf("the wildcard stopped being the fallback: %q", got.TLS.DefaultCert)
+	}
+	certPath, keyPath := dpipeNamedCertPaths("codingcoffee.dev")
+	if !strings.Contains(out, certPath) || !strings.Contains(out, keyPath) {
+		t.Errorf("the config does not point at the paths dclient writes:\n%s", out)
+	}
+}
+
+func TestGenerateDpipeConfigServesACustomDomainWithoutAWildcard(t *testing.T) {
+	certs := &proto.DpipeCerts{
+		Named: []proto.DpipeNamedCert{{SNI: "codingcoffee.dev", Cert: "c", Key: "k"}},
+	}
+	got := parseDpipeConfig(t, generateDpipeConfig(certs))
+
+	if !got.TLS.Enabled {
+		t.Fatal("tls is off for a host that holds a custom domain certificate")
+	}
+	if got.TLS.DefaultCert != "" || got.TLS.DefaultKey != "" {
+		t.Errorf("the config names wildcard files that were never sent: %+v", got.TLS)
+	}
+}
+
 func TestGenerateDpipeConfigIsStable(t *testing.T) {
-	for _, tls := range []bool{false, true} {
-		if generateDpipeConfig(tls) != generateDpipeConfig(tls) {
-			t.Errorf("generateDpipeConfig(%v) is not deterministic", tls)
+	for _, certs := range []*proto.DpipeCerts{nil, testWildcardCerts} {
+		if generateDpipeConfig(certs) != generateDpipeConfig(certs) {
+			t.Errorf("generateDpipeConfig(%v) is not deterministic", certs)
 		}
 	}
 }

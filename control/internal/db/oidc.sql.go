@@ -52,8 +52,6 @@ type CreateFederatedUserParams struct {
 	UserType  string
 }
 
-// password_hash is left at its default (empty), which is not a valid bcrypt
-// hash, so this account can only ever be signed into through its provider.
 func (q *Queries) CreateFederatedUser(ctx context.Context, arg CreateFederatedUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, createFederatedUser,
 		arg.Username,
@@ -435,10 +433,6 @@ type UpdateOIDCProviderParams struct {
 	ID           pgtype.UUID
 }
 
-// An empty client_secret means "leave the stored one alone": the value is never
-// read back to the admin screen, so an untouched field arrives empty and must
-// not be mistaken for a request to clear it. Clearing is done by switching the
-// provider to a public client, which sends the sentinel below.
 func (q *Queries) UpdateOIDCProvider(ctx context.Context, arg UpdateOIDCProviderParams) (OidcProvider, error) {
 	row := q.db.QueryRow(ctx, updateOIDCProvider,
 		arg.DisplayName,

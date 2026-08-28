@@ -215,6 +215,22 @@ type Vm struct {
 	PublicPorts []int32
 }
 
+type VmCustomDomain struct {
+	ID              pgtype.UUID
+	VMID            pgtype.UUID
+	Domain          string
+	Status          string
+	LastError       string
+	CertObjectKey   string
+	KeyObjectKey    string
+	CertFingerprint string
+	CertNotAfter    pgtype.Timestamptz
+	CertIssuedAt    pgtype.Timestamptz
+	OrderedAt       pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type VmNetworkTarget struct {
 	ID          pgtype.UUID
 	VMID        pgtype.UUID

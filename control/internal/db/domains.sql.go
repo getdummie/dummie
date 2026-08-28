@@ -25,9 +25,6 @@ WHERE id = $1
 RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
 `
 
-// Forgets the certificate and turns tls off in the same statement, because a
-// host left with tls on and nothing to serve it with is a dpipe that will not
-// start.
 func (q *Queries) ClearDomainCert(ctx context.Context, id pgtype.UUID) (Domain, error) {
 	row := q.db.QueryRow(ctx, clearDomainCert, id)
 	var i Domain
@@ -107,9 +104,6 @@ JOIN clients c ON c.domain_id = d.id
 WHERE c.id = $1
 `
 
-// GetClientDomain returns the domain of one client, and no rows when the client
-// has none. The push paths need the whole row rather than the tld, because what
-// they are deciding is whether to turn tls on for that host.
 func (q *Queries) GetClientDomain(ctx context.Context, id pgtype.UUID) (Domain, error) {
 	row := q.db.QueryRow(ctx, getClientDomain, id)
 	var i Domain
@@ -166,10 +160,6 @@ SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credent
 WHERE (SELECT count(*) FROM domains) = 1
 `
 
-// GetSoleDomain returns the single configured domain, and no rows when there is
-// none or more than one. Enrollment uses it to pick a domain for a new client
-// without having to guess: with exactly one there is nothing to choose, and with
-// several the choice is the operator's, so the client is left unassigned.
 func (q *Queries) GetSoleDomain(ctx context.Context) (Domain, error) {
 	row := q.db.QueryRow(ctx, getSoleDomain)
 	var i Domain
@@ -198,7 +188,6 @@ SELECT id FROM clients
 WHERE domain_id = $1 AND NOT revoked
 `
 
-// Who to push to when a domain's certificate changes.
 func (q *Queries) ListClientIDsByDomain(ctx context.Context, domainID pgtype.UUID) ([]pgtype.UUID, error) {
 	rows, err := q.db.Query(ctx, listClientIDsByDomain, domainID)
 	if err != nil {
@@ -269,9 +258,6 @@ WHERE tls_enabled
 ORDER BY cert_not_after NULLS FIRST
 `
 
-// What the daily renewal task acts on. Only the automated mode: an uploaded or
-// hand-walked certificate cannot be replaced without a person, so listing one
-// here would produce a failure every day instead of a warning once.
 func (q *Queries) ListDomainsDueForRenewal(ctx context.Context, withinSeconds float64) ([]Domain, error) {
 	rows, err := q.db.Query(ctx, listDomainsDueForRenewal, withinSeconds)
 	if err != nil {
@@ -320,7 +306,6 @@ type SetDomainAccountKeyParams struct {
 	AcmeAccountKey string
 }
 
-// Written once, the first time a domain talks to a ca.
 func (q *Queries) SetDomainAccountKey(ctx context.Context, arg SetDomainAccountKeyParams) error {
 	_, err := q.db.Exec(ctx, setDomainAccountKey, arg.ID, arg.AcmeAccountKey)
 	return err
@@ -338,8 +323,6 @@ type SetDomainCertErrorParams struct {
 	CertError string
 }
 
-// A failed attempt records why and changes nothing else: the certificate already
-// in place stays in place and stays served.
 func (q *Queries) SetDomainCertError(ctx context.Context, arg SetDomainCertErrorParams) error {
 	_, err := q.db.Exec(ctx, setDomainCertError, arg.ID, arg.CertError)
 	return err
@@ -366,8 +349,6 @@ type UpdateDomainCertParams struct {
 	CertNotAfter    pgtype.Timestamptz
 }
 
-// One statement for a successful issuance: where the certificate is, what it is,
-// and the clearing of whatever error the last attempt left behind.
 func (q *Queries) UpdateDomainCert(ctx context.Context, arg UpdateDomainCertParams) (Domain, error) {
 	row := q.db.QueryRow(ctx, updateDomainCert,
 		arg.ID,
@@ -418,9 +399,6 @@ type UpdateDomainTLSParams struct {
 	AcmeCredentials string
 }
 
-// The operator-editable half. acme_credentials keeps its stored value when the
-// argument is empty, so saving the form without retyping a token does not wipe
-// it -- which also means the only way to remove one is to change provider.
 func (q *Queries) UpdateDomainTLS(ctx context.Context, arg UpdateDomainTLSParams) (Domain, error) {
 	row := q.db.QueryRow(ctx, updateDomainTLS,
 		arg.ID,

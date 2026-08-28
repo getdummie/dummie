@@ -2,12 +2,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"control/internal/db"
 	"control/internal/proto"
@@ -118,6 +122,147 @@ func handleTaskCleanup(ctx context.Context, r *taskRunner, t db.ScheduledTask) t
 	return taskDone("pruned %d settled task(s) older than %d days", n, int(taskRetention.Hours()/24))
 }
 
+const (
+	customDomainAttempts = 40
+
+	customDomainRetry = 30 * time.Second
+
+	// How long a host is given to finish an order before the job is sent
+	// again. An HTTP-01 order is seconds of work; this is the window for a
+	// host that took the job and then died with it.
+	customDomainOrderTimeout = 5 * time.Minute
+)
+
+type customDomainIssuePayload struct {
+	Renew bool `json:"renew,omitempty"`
+}
+
+// handleCustomDomainIssue drives one name from "the owner says the CNAME is
+// there" to "a host holds a certificate for it". A renewal takes the same path
+// but never writes the status: the old certificate keeps serving until the new
+// one lands, and a renewal that cannot be finished is a failed task, not a
+// domain taken off the air.
+func handleCustomDomainIssue(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome {
+	if !t.SubjectID.Valid {
+		return taskFailed("this task names no custom domain")
+	}
+	var payload customDomainIssuePayload
+	_ = json.Unmarshal(t.Payload, &payload)
+
+	row, err := r.q.GetCustomDomainForIssue(ctx, t.SubjectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return taskCancelled("the custom domain had already been removed")
+		}
+		return taskRetry(customDomainRetry, "could not read the custom domain: %v", err)
+	}
+
+	if payload.Renew {
+		if row.CertNotAfter.Valid && time.Until(row.CertNotAfter.Time) > certRenewBefore {
+			return taskDone("%s is serving a certificate that is good until %s",
+				row.Domain, row.CertNotAfter.Time.Format(time.RFC3339))
+		}
+	} else {
+		switch row.Status {
+		case customDomainActive:
+			return taskDone("%s is serving with its own certificate", row.Domain)
+		case customDomainFailed:
+			return taskFailed("%s", row.LastError)
+		}
+	}
+
+	give := func(detail string) taskOutcome {
+		if !payload.Renew {
+			noteCustomDomain(ctx, r, row.ID, customDomainFailed, detail)
+		}
+		return taskFailed("%s", detail)
+	}
+	lastAttempt := t.Attempts+1 >= t.MaxAttempts
+
+	if row.DomainTLD == "" {
+		return give("the host this vm runs on has no domain to point at")
+	}
+	target := row.VMName + "." + row.DomainTLD
+
+	if row.OrderedAt.Valid && time.Since(row.OrderedAt.Time) < customDomainOrderTimeout {
+		if lastAttempt {
+			return give("the host never came back with a certificate for " + row.Domain)
+		}
+		return taskRetry(customDomainRetry, "the host is obtaining a certificate for %s", row.Domain)
+	}
+
+	if err := verifyCNAME(ctx, r.q, row.Domain, target); err != nil {
+		if lastAttempt {
+			return give(err.Error())
+		}
+		if !payload.Renew {
+			noteCustomDomain(ctx, r, row.ID, customDomainVerifying, err.Error())
+		}
+		return taskRetry(customDomainRetry, "%v", err)
+	}
+
+	clientID := uuid.UUID(row.ClientID.Bytes).String()
+	if !r.hub.Connected(clientID) {
+		if lastAttempt {
+			return give("the host serving this vm never reconnected")
+		}
+		return taskRetry(customDomainRetry, "the host serving %s is not connected", row.VMName)
+	}
+
+	env, err := proto.NewEnvelope(proto.TypeJob, uuid.UUID(row.ID.Bytes).String(), proto.Job{
+		Kind: proto.KindCustomCert,
+		CustomCert: &proto.CustomCertOrder{
+			Domain:    row.Domain,
+			Email:     row.AcmeEmail,
+			Directory: row.AcmeDirectory,
+		},
+	})
+	if err != nil {
+		return taskFailed("could not build the certificate job: %v", err)
+	}
+	if err := r.hub.Send(clientID, env); err != nil {
+		return taskRetry(customDomainRetry, "could not deliver the certificate job to the host: %v", err)
+	}
+	if !payload.Renew {
+		noteCustomDomain(ctx, r, row.ID, customDomainIssuing, "")
+	}
+	if err := r.q.MarkCustomDomainOrdered(ctx, row.ID); err != nil {
+		log.Printf("could not record that %s was ordered: %v", row.Domain, err)
+	}
+	log.Printf("task: asked host %s to obtain a certificate for %s", clientID, row.Domain)
+
+	return taskRetry(customDomainRetry, "asked the host to obtain a certificate for %s", row.Domain)
+}
+
+func noteCustomDomain(ctx context.Context, r *taskRunner, id pgtype.UUID, status, detail string) {
+	if _, err := r.q.SetCustomDomainStatus(ctx, db.SetCustomDomainStatusParams{
+		ID: id, Status: status, LastError: detail,
+	}); err != nil {
+		log.Printf("could not record the custom domain status: %v", err)
+	}
+}
+
+// verifyCNAME insists on a real CNAME. An A record that happens to hold the
+// right address is not accepted: the CNAME is what keeps the name following
+// this VM if it is ever rebuilt on another host with another address.
+func verifyCNAME(ctx context.Context, q *db.Queries, domain, target string) error {
+	lookupCtx, cancel := context.WithTimeout(ctx, resolveTimeout)
+	defer cancel()
+
+	cname, err := configuredResolver(lookupCtx, q).LookupCNAME(lookupCtx, domain)
+	if err != nil {
+		return fmt.Errorf("%s does not resolve yet", domain)
+	}
+	got := strings.TrimSuffix(strings.ToLower(cname), ".")
+	if got == strings.ToLower(domain) {
+		return fmt.Errorf("%s has no CNAME record yet; point it at %s", domain, target)
+	}
+	if got != strings.ToLower(target) {
+		return fmt.Errorf("%s is a CNAME for %s, not %s", domain, got, target)
+	}
+	return nil
+}
+
 func handleCertRenew(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome {
 	started, skipped := 0, 0
 	if r.certs != nil {
@@ -133,6 +278,19 @@ func handleCertRenew(ctx context.Context, r *taskRunner, t db.ScheduledTask) tas
 			}
 			started++
 		}
+	}
+
+	custom, err := r.q.ListCustomDomainsDueForRenewal(ctx, certRenewBefore.Seconds())
+	if err != nil {
+		return taskRetry(taskExpireRetry, "could not list the custom domains due for renewal: %v", err)
+	}
+	for _, row := range custom {
+		if err := startCustomDomainIssue(ctx, r.q, row, true); err != nil {
+			log.Printf("not renewing %s: %v", row.Domain, err)
+			skipped++
+			continue
+		}
+		started++
 	}
 
 	if _, err := scheduleTask(ctx, r.q, scheduleTaskParams{

@@ -106,6 +106,9 @@ ssh:
       target: "127.0.0.1:2200"
       remote_user: "root"
 
+acme:
+  challenge_target: "127.0.0.1:8078"
+
 listen_forwards:
   - listen: "127.0.0.1:15432"
     target: "127.0.0.1:5432"
@@ -123,7 +126,9 @@ ssh login name) + `target` (`host:port`) + `remote_user`. The same
 If `https` is set, `dpipe.tls.enabled` must be true (document the
 cross-process dependency). `site` requires an `http` ingress, an `html_file` that
 exists at startup, and ≥1 host; its listener is claimed like any other, so it
-cannot collide with an ingress.
+cannot collide with an ingress. `acme` requires an `http` ingress and a
+`challenge_target` in `host:port` form; it claims no listener of its own, since
+it is somewhere to dial rather than somewhere to accept.
 
 **Dependencies** (verify approved list first): `golang.org/x/sys/unix`,
 `golang.org/x/crypto/ssh` (only to parse/normalize pubkeys for the policy map — the
@@ -220,6 +225,7 @@ for conn := httpLn.Accept(): go {
     buf, host, err := httpsniff.ReadHeaderBlock(conn, http_sniff_max_bytes)
     conn.SetReadDeadline(zero)
     if err { writeQuick(conn,400); conn.Close(); return }
+    if t, ok := acmeTarget(buf); ok { pipeTo(conn, t, buf); return }  // §7.2.1
     target, ok := router.HostBackend(host)
     if !ok { writeQuick(conn,502); conn.Close(); return }
     backend, err := net.DialTimeout("tcp", target, dial_timeout)
@@ -228,6 +234,14 @@ for conn := httpLn.Accept(): go {
     handoffCopy(conn, backend, "http")
 }
 ```
+#### 7.2.1 ACME challenge
+When `acme.challenge_target` is set, a request whose path starts with
+`/.well-known/acme-challenge/` goes there instead of to the host map, for every
+Host and before any routing or auth decision. This is deliberate: a certificate
+authority validates a custom domain before a certificate for it exists, so the
+request cannot arrive over TLS and the name may have no route yet. The cost is
+that a guest cannot serve that path itself over plaintext http.
+
 ### 7.3 HTTPS (accept raw, hand off; TLS terminates in dpipe)
 ```
 for conn := httpsLn.Accept(): go {

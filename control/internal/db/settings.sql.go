@@ -74,8 +74,6 @@ type UpsertSettingParams struct {
 	UpdatedBy pgtype.UUID
 }
 
-// The row is seeded by the migration, but an upsert keeps a setting writable on
-// a database where the seed was removed or the key was added after the fact.
 func (q *Queries) UpsertSetting(ctx context.Context, arg UpsertSettingParams) (Setting, error) {
 	row := q.db.QueryRow(ctx, upsertSetting, arg.Key, arg.Value, arg.UpdatedBy)
 	var i Setting

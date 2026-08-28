@@ -20,11 +20,6 @@ WHERE token_hash = $1
 RETURNING id, user_id, token_hash, token_prefix, label, expires_at, revoked, last_used_at, created_at
 `
 
-// AuthenticatePersonalAccessToken is the whole auth check for a token, done as
-// the same statement that stamps last_used_at: validity and the stamp in one
-// round trip, so authenticating costs one query rather than a read plus a
-// write. Zero rows means unknown, revoked or expired -- the caller must not
-// distinguish, since telling them which would confirm the token exists.
 func (q *Queries) AuthenticatePersonalAccessToken(ctx context.Context, tokenHash string) (PersonalAccessToken, error) {
 	row := q.db.QueryRow(ctx, authenticatePersonalAccessToken, tokenHash)
 	var i PersonalAccessToken

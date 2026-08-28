@@ -190,15 +190,6 @@ type ListAvailableHostsRow struct {
 	Hostname string
 }
 
-// ListAvailableHosts is the host list a self-service caller picks from, least
-// busy first so the default choice spreads load instead of piling onto whichever
-// client happens to sort first.
-//
-// Deliberately NOT filtered on status: that column is a cached copy of
-// connectivity and goes stale -- startup sets every client 'offline', and a
-// reconnect that has not written back yet would hide a host that is genuinely
-// there. The hub is the authority, and the caller filters on it. Matching what
-// the admin screen does, which reads connectivity only from the hub.
 func (q *Queries) ListAvailableHosts(ctx context.Context) ([]ListAvailableHostsRow, error) {
 	rows, err := q.db.Query(ctx, listAvailableHosts)
 	if err != nil {
@@ -237,8 +228,6 @@ type ListClientsRow struct {
 	DomainTLD pgtype.Text
 }
 
-// The domain is joined in rather than resolved per row by the caller: the admin
-// table shows the TLD, not the id, and one join beats a lookup per client.
 func (q *Queries) ListClients(ctx context.Context, arg ListClientsParams) ([]ListClientsRow, error) {
 	rows, err := q.db.Query(ctx, listClients, arg.Limit, arg.Offset)
 	if err != nil {
@@ -313,8 +302,6 @@ SET status = 'offline', updated_at = now()
 WHERE status <> 'offline'
 `
 
-// SetAllClientsOffline runs at startup: the hub is in-memory, so any 'online'
-// row left behind by a previous process is stale.
 func (q *Queries) SetAllClientsOffline(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, setAllClientsOffline)
 	return err
@@ -332,13 +319,6 @@ type SetClientDomainParams struct {
 	DomainID pgtype.UUID
 }
 
-// SetClientDomain moves one client to a domain, or clears it when the argument
-// is null.
-//
-// Enrollment assigns a domain only when there is exactly one to assign, and only
-// on the row's first insert, so without this an installation that added its
-// domain after its hosts enrolled has no way to attach them -- and a host with no
-// domain publishes no vms and can never be served over tls.
 func (q *Queries) SetClientDomain(ctx context.Context, arg SetClientDomainParams) (Client, error) {
 	row := q.db.QueryRow(ctx, setClientDomain, arg.ID, arg.DomainID)
 	var i Client
@@ -461,13 +441,6 @@ type UpdateClientInstalledVersionsParams struct {
 	ProxyInstalledVersion string
 }
 
-// UpdateClientInstalledVersions records what dpipe and dproxy actually are on the
-// host, as the host itself reported them.
-//
-// Written through rather than merged: an empty value means the host could not say,
-// which is a fact about the host now and not a reason to keep showing what it said
-// last time. :exec because nothing waits on the row -- it is a report arriving,
-// not a change being made.
 func (q *Queries) UpdateClientInstalledVersions(ctx context.Context, arg UpdateClientInstalledVersionsParams) error {
 	_, err := q.db.Exec(ctx, updateClientInstalledVersions, arg.ID, arg.DpipeInstalledVersion, arg.ProxyInstalledVersion)
 	return err
@@ -504,9 +477,6 @@ type UpdateClientMetricsParams struct {
 	UptimeSeconds  int64
 }
 
-// UpdateClientMetrics overwrites the host snapshot in place. last_seen_at moves
-// too: a metrics frame is proof the client is alive, and it arrives often enough
-// that the throttled touch in the read loop rarely has anything left to do.
 func (q *Queries) UpdateClientMetrics(ctx context.Context, arg UpdateClientMetricsParams) error {
 	_, err := q.db.Exec(ctx, updateClientMetrics,
 		arg.ID,
@@ -547,13 +517,6 @@ type UpdateClientServiceVersionsParams struct {
 	ProxyDownloadURL   string
 }
 
-// UpdateClientServiceVersions sets which build of dclient, dpipe and dproxy this
-// host should run. All six together rather than one at a time: an operator moving
-// a host onto a release moves all three, and a partial write would leave the host
-// running a mixture nobody asked for.
-//
-// An empty version means "track this control server's version"; an empty url
-// means "build it from the version".
 func (q *Queries) UpdateClientServiceVersions(ctx context.Context, arg UpdateClientServiceVersionsParams) (Client, error) {
 	row := q.db.QueryRow(ctx, updateClientServiceVersions,
 		arg.ID,
@@ -616,9 +579,6 @@ SET hostname        = EXCLUDED.hostname,
     arch            = EXCLUDED.arch,
     client_version   = EXCLUDED.client_version,
     enrolled_key_id = EXCLUDED.enrolled_key_id,
-    -- COALESCE, not EXCLUDED: a domain already on the row was either assigned
-    -- deliberately or picked at first enrollment, and a re-enroll is not a
-    -- statement about which domain the machine belongs to.
     domain_id       = COALESCE(clients.domain_id, EXCLUDED.domain_id),
     revoked         = false,
     updated_at      = now()
@@ -637,10 +597,6 @@ type UpsertClientByMachineIDParams struct {
 	DomainID      pgtype.UUID
 }
 
-// UpsertClientByMachineID re-enrolls an existing machine in place rather than
-// creating a duplicate row: the token is rotated and the facts refreshed. A
-// previously revoked client is restored, because holding a valid enrollment key
-// is the authorization to enroll.
 func (q *Queries) UpsertClientByMachineID(ctx context.Context, arg UpsertClientByMachineIDParams) (Client, error) {
 	row := q.db.QueryRow(ctx, upsertClientByMachineID,
 		arg.MachineID,

@@ -61,6 +61,7 @@ type Config struct {
 	Auth    *AuthConfig    `yaml:"auth"`
 	Console *ConsoleConfig `yaml:"console"`
 	Site    *SiteConfig    `yaml:"site"`
+	ACME    *ACMEConfig    `yaml:"acme"`
 
 	ListenForwards []ForwardConfig `yaml:"listen_forwards"`
 
@@ -153,6 +154,16 @@ func (s *SiteConfig) entry() (HTTPHost, error) {
 	}
 	return HTTPHost{Host: host, UnauthenticatedPorts: []int{p}, DefaultPort: p}, nil
 }
+
+// ACMEConfig sends one path on the plain-http ingress somewhere other than the
+// VM the Host header names: the certificate authority checks a name before any
+// certificate for it exists, so the request cannot be answered over TLS and
+// cannot be answered by the guest.
+type ACMEConfig struct {
+	ChallengeTarget string `yaml:"challenge_target"`
+}
+
+const ACMEChallengePrefix = "/.well-known/acme-challenge/"
 
 type HTTPSConfig struct {
 	Listen    string `yaml:"listen"`
@@ -358,6 +369,15 @@ func (c *Config) Validate() error {
 			if !hostnamePattern.MatchString(httpsniff.NormalizeHost(h)) {
 				return fmt.Errorf("config: site.hosts[%d] %q is not a hostname", i, h)
 			}
+		}
+	}
+
+	if c.ACME != nil {
+		if c.HTTP == nil {
+			return errors.New("config: acme requires an http ingress (the challenge is answered over plain http)")
+		}
+		if err := validHostPort("acme.challenge_target", c.ACME.ChallengeTarget); err != nil {
+			return err
 		}
 	}
 

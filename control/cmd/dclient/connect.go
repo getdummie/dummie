@@ -397,6 +397,12 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.applyServices(ctx, env.ID, *job.Services)
+	case proto.KindCustomCert:
+		if job.CustomCert == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no certificate order"})
+			return
+		}
+		go l.obtainCert(ctx, env.ID, *job.CustomCert)
 	case proto.KindSuricataConfig, proto.KindDpipeConfig, proto.KindCoreDNSConfig:
 		if job.File == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
@@ -461,6 +467,25 @@ func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConf
 		log.Printf("job %s: installed a new proxy config or key and restarted %s", jobID, proxyService)
 	}
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, OK: true})
+}
+
+func (l *link) obtainCert(ctx context.Context, jobID string, order proto.CustomCertOrder) {
+	ctx = context.WithoutCancel(ctx)
+	log.Printf("job %s: obtaining a certificate for %s", jobID, order.Domain)
+
+	cert, key, err := obtainCustomCert(order)
+	if err != nil {
+		log.Printf("job %s: could not obtain a certificate for %s: %v", jobID, order.Domain, err)
+		l.reply(ctx, jobID, proto.JobResult{
+			Kind: proto.KindCustomCert, Domain: order.Domain, Error: err.Error(),
+		})
+		return
+	}
+	log.Printf("job %s: obtained a certificate for %s", jobID, order.Domain)
+	l.reply(ctx, jobID, proto.JobResult{
+		Kind: proto.KindCustomCert, OK: true, Domain: order.Domain,
+		Cert: &proto.IssuedCert{Cert: cert, Key: key},
+	})
 }
 
 func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.JobKind, config string, certs *proto.DpipeCerts) {

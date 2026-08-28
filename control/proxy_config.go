@@ -72,6 +72,8 @@ func proxySitePage(controlURL string) string {
 	return strings.ReplaceAll(proxySiteTemplate, proxySiteControlPlaceholder, html.EscapeString(url))
 }
 
+const proxyACMEChallengeTarget = "127.0.0.1:8078"
+
 const proxyCookieSecretPath = "/etc/dpipe/keys/cookie_secret"
 
 const proxyCookieTTL = "1h"
@@ -81,16 +83,20 @@ type proxyHost struct {
 	tls bool
 }
 
-func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow) string {
-	auth.cookieSecure = auth.cookieSecure || host.tls
+func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow, custom []db.ListCustomDomainRoutesByClientRow) string {
+	// A fleet with no wildcard can still hold a certificate for a custom
+	// domain, and that domain is only reachable if the https ingress is up.
+	tls := host.tls || len(custom) > 0
+	auth.cookieSecure = auth.cookieSecure || tls
 
 	var b strings.Builder
 	b.WriteString(proxyConfigHeader)
 	b.WriteString(proxyStaticConfig)
 	writeProxyAuth(&b, auth)
 	writeProxyConsole(&b, auth)
-	writeProxyHTTP(&b, http)
-	writeProxyHTTPS(&b, host.tls)
+	writeProxyHTTP(&b, http, custom)
+	writeProxyACME(&b)
+	writeProxyHTTPS(&b, tls)
 	writeProxySite(&b, host.tld)
 	writeProxySSH(&b, ssh)
 	b.WriteString(proxyConfigFooter)
@@ -129,23 +135,37 @@ func writeProxyConsole(b *strings.Builder, auth proxyAuthConfig) {
 	fmt.Fprintf(b, "  remote_user: %s\n", yamlString(proxyRemoteUser))
 }
 
-func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByClientRow) {
+type proxyRoute struct {
+	host        string
+	ip          string
+	defaultPort int32
+	publicPorts []int32
+}
+
+func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByClientRow, custom []db.ListCustomDomainRoutesByClientRow) {
 	b.WriteString("\nhttp:\n")
 	fmt.Fprintf(b, "  listen: %q\n", proxyHTTPListen)
 	b.WriteString("  reuseport: true\n")
 
-	type route struct {
-		host string
-		row  db.ListProxyHTTPRoutesByClientRow
-	}
-	usable := make([]route, 0, len(rows))
+	usable := make([]proxyRoute, 0, len(rows)+len(custom))
 	for _, r := range rows {
 		host := r.VMName + "." + r.DomainTLD
 		if !hostnamePattern.MatchString(host) {
 			log.Printf("skipping the http route for vm %s: %q is not a usable hostname", r.HostVMID, host)
 			continue
 		}
-		usable = append(usable, route{host: host, row: r})
+		usable = append(usable, proxyRoute{
+			host: host, ip: r.VMIP, defaultPort: r.DefaultPort, publicPorts: r.PublicPorts,
+		})
+	}
+	for _, r := range custom {
+		if !hostnamePattern.MatchString(r.Domain) {
+			log.Printf("skipping the custom domain route for vm %s: %q is not a usable hostname", r.VMName, r.Domain)
+			continue
+		}
+		usable = append(usable, proxyRoute{
+			host: r.Domain, ip: r.VMIP, defaultPort: r.DefaultPort, publicPorts: r.PublicPorts,
+		})
 	}
 
 	if len(usable) == 0 {
@@ -154,20 +174,28 @@ func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByClientRow
 		b.WriteString("  hosts:\n")
 		for _, u := range usable {
 			fmt.Fprintf(b, "    %s:\n", u.host)
-			fmt.Fprintf(b, "      host: %s\n", yamlString(u.row.VMIP))
-			if len(u.row.PublicPorts) == 0 {
+			fmt.Fprintf(b, "      host: %s\n", yamlString(u.ip))
+			if len(u.publicPorts) == 0 {
 				b.WriteString("      unauthenticated_ports: []\n")
 			} else {
 				b.WriteString("      unauthenticated_ports:\n")
-				for _, p := range u.row.PublicPorts {
+				for _, p := range u.publicPorts {
 					fmt.Fprintf(b, "        - %d\n", p)
 				}
 			}
-			fmt.Fprintf(b, "      default_port: %d\n", u.row.DefaultPort)
+			fmt.Fprintf(b, "      default_port: %d\n", u.defaultPort)
 		}
 	}
 
 	b.WriteString(`  default: ""` + "\n")
+}
+
+// writeProxyACME publishes the one path that must answer before a custom
+// domain has a certificate: dclient holds a listener there for the length of
+// an order and nothing else in the fleet listens on it.
+func writeProxyACME(b *strings.Builder) {
+	b.WriteString("\nacme:\n")
+	fmt.Fprintf(b, "  challenge_target: %s\n", yamlString(proxyACMEChallengeTarget))
 }
 
 func writeProxyHTTPS(b *strings.Builder, tls bool) {
@@ -249,6 +277,11 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 		log.Printf("could not read the http routes for client %s: %v", id, err)
 		return
 	}
+	customRows, err := q.ListCustomDomainRoutesByClient(ctx, clientID)
+	if err != nil {
+		log.Printf("could not read the custom domains for client %s: %v", id, err)
+		return
+	}
 	host, err := clientProxyHost(ctx, q, clientID)
 	if err != nil {
 		log.Printf("could not read the domain of client %s, writing its proxy config without tls: %v", id, err)
@@ -256,7 +289,7 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindProxyConfig,
 		Proxy: &proto.ProxyConfig{
-			Config:           generateProxyConfig(auth, host, sshRows, httpRows),
+			Config:           generateProxyConfig(auth, host, sshRows, httpRows, customRows),
 			CookieSecret:     auth.secret,
 			CookieSecretPath: proxyCookieSecretPath,
 			SiteHTML: proxySitePage(auth.controlURL),
