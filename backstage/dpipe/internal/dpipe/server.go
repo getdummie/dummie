@@ -26,6 +26,8 @@ type Server struct {
 	reg *Registry
 	fwd *ForwardManager
 
+	handovers *handoverRegistry
+
 	ctrlLn *net.UnixListener
 	upLn   *net.UnixListener
 
@@ -49,6 +51,7 @@ func New(cfg *Config, log *slog.Logger) (*Server, error) {
 		cfg:     cfg,
 		log:     log,
 		mat:     mat,
+		handovers: newHandoverRegistry(cfg.RDP.HandoverTTL.D()),
 		peers:    map[*control.Peer]struct{}{},
 		consoles: map[string]int{},
 		stopped:  make(chan struct{}),
@@ -131,6 +134,10 @@ func (s *Server) handle(p *control.Peer, m control.Msg, fds []int) {
 		s.handleTLSAccept(p, m, fds)
 	case control.TypeConsoleAccept:
 		s.handleConsoleAccept(p, m, fds)
+	case control.TypeRDPAccept:
+		s.handleRDPAccept(p, m, fds)
+	case control.TypeDesktopAccept:
+		s.handleDesktopAccept(p, m, fds)
 	case control.TypeListenForward:
 		control.CloseFDs(fds)
 		s.handleListenForward(p, m)
@@ -248,6 +255,34 @@ func (s *Server) handleTLSAccept(p *control.Peer, m control.Msg, fds []int) {
 	}
 	_ = p.Send(control.OK(m.ID), nil)
 	go s.serveTLS(p, msgID(m), client)
+}
+
+func (s *Server) handleRDPAccept(p *control.Peer, m control.Msg, fds []int) {
+	if len(fds) != 1 {
+		control.CloseFDs(fds)
+		_ = p.Send(control.Err(m.ID, "rdp_accept requires exactly 1 file descriptor"), nil)
+		return
+	}
+	if !s.cfg.RDP.Enabled {
+		control.CloseFDs(fds)
+		// dproxy sends accepts fire-and-forget, so this error reaches nobody:
+		// log it here or the client just sees the connection close.
+		s.log.Warn("rdp accept refused: rdp is not enabled in this dpipe config", "id", m.ID)
+		_ = p.Send(control.Err(m.ID, "rdp not enabled"), nil)
+		return
+	}
+	if s.reg.Draining() {
+		control.CloseFDs(fds)
+		_ = p.Send(control.Err(m.ID, "draining"), nil)
+		return
+	}
+	client, err := xnet.FileConn(fds[0])
+	if err != nil {
+		_ = p.Send(control.Err(m.ID, err.Error()), nil)
+		return
+	}
+	_ = p.Send(control.OK(m.ID), nil)
+	go s.serveRDP(p, msgID(m), client)
 }
 
 func msgID(m control.Msg) string {

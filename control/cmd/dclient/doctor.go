@@ -52,6 +52,7 @@ var checks = []check{
 	{"vms can run as their own uid", checkVMUID},
 	{"rootfs images can be built from tars", checkRootfsTools},
 	{"port 22 is the proxy's", checkSSHPort},
+	{"port 3389 is the proxy's", checkRDPPort},
 	{"tap devices can be created", checkTun},
 	{"nftables is usable", checkNftables},
 	{"ip forwarding is enabled", checkForwarding},
@@ -208,6 +209,24 @@ func checkRootfsTools() (result, string) {
 		return warn, strings.Join(missing, " and ") + " not on PATH; --rootfs-tar will not work (install tar and e2fsprogs)"
 	}
 	return pass, "tar and mkfs.ext4 are present"
+}
+
+// checkRDPPort is the counterpart of checkSSHPort for the remote desktop ingress.
+// It is a warning rather than a failure: unlike :22, a host with nothing on :3389
+// and no desktop VMs is perfectly healthy, and proxy simply will not bind it.
+func checkRDPPort() (result, string) {
+	switch owner, held, err := listenerOn(3389); {
+	case err != nil:
+		return warn, "cannot tell what is listening on :3389 (" + err.Error() + "); make sure nothing but proxy is"
+	case held && owner.pid == 0:
+		return warn, "something is listening on :3389 but its owner is not visible to this user; re-run as root"
+	case held && (owner.name == proxyService || owner.name == dpipeService):
+		return pass, fmt.Sprintf("%s holds :3389 (pid %d)", owner.name, owner.pid)
+	case held:
+		return fail, fmt.Sprintf("%s (pid %d) is listening on :3389, which proxy needs for vm remote desktop",
+			owner.name, owner.pid)
+	}
+	return pass, ":3389 is free for vm remote desktop"
 }
 
 func checkSSHPort() (result, string) {

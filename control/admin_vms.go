@@ -44,6 +44,8 @@ type vmDTO struct {
 
 	ConsoleURL string `json:"console_url"`
 
+	DesktopURL string `json:"desktop_url"`
+
 	ExpiresAt string `json:"expires_at"`
 
 	ReportedAt string `json:"reported_at"`

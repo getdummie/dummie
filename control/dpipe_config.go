@@ -49,6 +49,22 @@ console:
   enabled: true
   idle_timeout: 30m
   max_sessions_per_host: 3
+
+# The native remote desktop. dpipe terminates TLS and NLA here so the credential
+# a client types is one the control server issued, then opens its own NLA session
+# to the guest. It holds no password of its own: the client's is verified by
+# dproxy against a hash, and the guest's arrives per-session in the resolve reply.
+#
+# The client leg needs a certificate before NLA. dpipe uses the fleet's own when
+# there is one and generates a self-signed certificate otherwise, so this does not
+# depend on tls being configured.
+rdp:
+  enabled: true
+  computer_name: "dpipe"
+  domain_name: "DPIPE"
+  dial_timeout: 5s
+  resolve_timeout: 3s
+  handshake_timeout: 30s
 `
 
 const dpipeTLSDisabled = `tls:

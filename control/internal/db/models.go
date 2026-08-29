@@ -213,6 +213,7 @@ type Vm struct {
 	DiskMiB     int32
 	DefaultPort int32
 	PublicPorts []int32
+	RdpNonce    string
 }
 
 type VmCustomDomain struct {

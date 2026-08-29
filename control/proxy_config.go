@@ -24,6 +24,12 @@ const proxyRemoteUser = "ubuntu"
 
 const proxyGuestSSHPort = 22
 
+const proxyRDPListen = "0.0.0.0:3389"
+
+const proxyGuestRDPPort = 3389
+
+const proxyDesktopLabel = "desk"
+
 const proxyHTTPListen = "0.0.0.0:80"
 
 const proxyHTTPSListen = "0.0.0.0:443"
@@ -83,7 +89,7 @@ type proxyHost struct {
 	tls bool
 }
 
-func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow, custom []db.ListCustomDomainRoutesByClientRow) string {
+func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow, custom []db.ListCustomDomainRoutesByClientRow, rdp []db.ListProxyRDPUsersByClientRow) string {
 	// A fleet with no wildcard can still hold a certificate for a custom
 	// domain, and that domain is only reachable if the https ingress is up.
 	tls := host.tls || len(custom) > 0
@@ -99,6 +105,7 @@ func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProx
 	writeProxyHTTPS(&b, tls)
 	writeProxySite(&b, host.tld)
 	writeProxySSH(&b, ssh)
+	writeProxyRDP(&b, auth, rdp)
 	b.WriteString(proxyConfigFooter)
 	return b.String()
 }
@@ -133,6 +140,11 @@ func writeProxyConsole(b *strings.Builder, auth proxyAuthConfig) {
 	b.WriteString("\nconsole:\n")
 	fmt.Fprintf(b, "  label: %s\n", yamlString(proxyConsoleLabel))
 	fmt.Fprintf(b, "  remote_user: %s\n", yamlString(proxyRemoteUser))
+
+	b.WriteString("\ndesktop:\n")
+	fmt.Fprintf(b, "  label: %s\n", yamlString(proxyDesktopLabel))
+	fmt.Fprintf(b, "  remote_user: %s\n", yamlString(rdpGuestUser))
+	fmt.Fprintf(b, "  remote_password: %s\n", yamlString(rdpGuestPass))
 }
 
 type proxyRoute struct {
@@ -243,6 +255,33 @@ func writeProxySSH(b *strings.Builder, rows []db.ListProxySSHUsersByClientRow) {
 	}
 }
 
+// writeProxyRDP emits the native remote-desktop policy: one entry per VM, keyed
+// by the login name the client authenticates with. Only the NT hash is shipped,
+// so the file on the host holds no password a person could reuse elsewhere.
+//
+// Without an auth secret there is nothing to derive a credential from, so the
+// ingress is omitted entirely and the port stays closed — the same gate the
+// console uses.
+func writeProxyRDP(b *strings.Builder, auth proxyAuthConfig, rows []db.ListProxyRDPUsersByClientRow) {
+	if auth.secret == "" || len(rows) == 0 {
+		return
+	}
+
+	b.WriteString("\nrdp:\n")
+	fmt.Fprintf(b, "  listen: %q\n", proxyRDPListen)
+	b.WriteString("  reuseport: true\n")
+	b.WriteString("  users:\n")
+	for _, r := range rows {
+		vmID := uuid.UUID(r.VmPk.Bytes).String()
+		fmt.Fprintf(b, "    # %s\n", yamlComment(r.HostVMID))
+		fmt.Fprintf(b, "    - vm_name: %s\n", yamlString(r.VMName))
+		fmt.Fprintf(b, "      nt_hash: %s\n", yamlString(rdpNTHash(rdpPassword(auth.secret, vmID, r.RdpNonce))))
+		fmt.Fprintf(b, "      target: %s\n", yamlString(fmt.Sprintf("%s:%d", r.VMIP, proxyGuestRDPPort)))
+		fmt.Fprintf(b, "      remote_user: %s\n", yamlString(rdpGuestUser))
+		fmt.Fprintf(b, "      remote_password: %s\n", yamlString(rdpGuestPass))
+	}
+}
+
 func yamlString(s string) string {
 	r := strings.NewReplacer(
 		`\`, `\\`,
@@ -282,6 +321,11 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 		log.Printf("could not read the custom domains for client %s: %v", id, err)
 		return
 	}
+	rdpRows, err := q.ListProxyRDPUsersByClient(ctx, clientID)
+	if err != nil {
+		log.Printf("could not read the rdp routes for client %s: %v", id, err)
+		return
+	}
 	host, err := clientProxyHost(ctx, q, clientID)
 	if err != nil {
 		log.Printf("could not read the domain of client %s, writing its proxy config without tls: %v", id, err)
@@ -289,7 +333,7 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindProxyConfig,
 		Proxy: &proto.ProxyConfig{
-			Config:           generateProxyConfig(auth, host, sshRows, httpRows, customRows),
+			Config:           generateProxyConfig(auth, host, sshRows, httpRows, customRows, rdpRows),
 			CookieSecret:     auth.secret,
 			CookieSecretPath: proxyCookieSecretPath,
 			SiteHTML: proxySitePage(auth.controlURL),

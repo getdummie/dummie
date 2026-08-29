@@ -266,6 +266,26 @@
                 },
                 "type": "object"
             },
+            "main.desktopTokenDTO": {
+                "properties": {
+                    "expires_in": {
+                        "type": "integer"
+                    },
+                    "password": {
+                        "type": "string"
+                    },
+                    "token": {
+                        "type": "string"
+                    },
+                    "url": {
+                        "type": "string"
+                    },
+                    "username": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.hostDTO": {
                 "properties": {
                     "hostname": {
@@ -369,6 +389,23 @@
                     },
                     "vcpu_used": {
                         "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "main.rdpCredentialsDTO": {
+                "properties": {
+                    "host": {
+                        "type": "string"
+                    },
+                    "password": {
+                        "type": "string"
+                    },
+                    "port": {
+                        "type": "integer"
+                    },
+                    "username": {
+                        "type": "string"
                     }
                 },
                 "type": "object"
@@ -570,6 +607,9 @@
                     },
                     "default_port": {
                         "type": "integer"
+                    },
+                    "desktop_url": {
+                        "type": "string"
                     },
                     "disk_mib": {
                         "type": "integer"
@@ -1361,7 +1401,7 @@
         },
         "/vms": {
             "get": {
-                "description": "Scoped to you by the query itself. url and console_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.",
+                "description": "Scoped to you by the query itself. url, console_url and desktop_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.",
                 "parameters": [
                     {
                         "description": "1-100",
@@ -1985,6 +2025,94 @@
                 ]
             }
         },
+        "/vms/{id}/desktop-token": {
+            "post": {
+                "description": "Returns the websocket url for this VM's desktop, a short-lived token that opens it, and the guest credentials the in-browser client authenticates with. POST rather than GET for the same reason as the console token: it is a credential, and a GET would leave it in history, referrers and request logs.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.desktopTokenDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Service Unavailable"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Mint a browser desktop token",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
         "/vms/{id}/destroy": {
             "post": {
                 "description": "Stops the guest and deletes its disk on the host. This is the one action that frees the quota the VM was holding, and it cannot be undone.",
@@ -2417,6 +2545,270 @@
                     }
                 ],
                 "summary": "Set a VM's published ports",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/{id}/rdp-credentials": {
+            "get": {
+                "description": "Returns the gateway address and the username and password a native RDP client authenticates to the proxy with. The username is the VM name, which is what selects the VM; the password is issued by this server and is not the VM's own. The proxy verifies both and then logs into the guest itself, so these credentials reach nothing but this one VM.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.rdpCredentialsDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the vm is not running, or its host has no domain"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "remote desktop is not configured on this installation"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Read this VM's remote desktop credentials",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/{id}/rdp-file": {
+            "get": {
+                "description": "Returns a connection file carrying the gateway address and username. The password is deliberately not embedded: the file is a download that lands in a shared folder on most systems, and the client prompts for it once and can remember it itself.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "type": "string"
+                                }
+                            }
+                        },
+                        "description": "an rdp connection file"
+                    },
+                    "400": {
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    },
+                    "503": {
+                        "content": {
+                            "text/plain": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Service Unavailable"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Download an .rdp file for this VM",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/{id}/rdp-rotate": {
+            "post": {
+                "description": "Replaces the nonce the password is derived from and republishes the proxy config, so the previous password stops working as soon as the host picks the change up. Returns the new credentials.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.rdpCredentialsDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Conflict"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Service Unavailable"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Rotate this VM's remote desktop password",
                 "tags": [
                     "vms"
                 ]

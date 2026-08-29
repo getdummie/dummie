@@ -27,9 +27,17 @@ func (p *Proxy) handoffSSHAccept(id string, client net.Conn) error {
 	})
 }
 
-func (p *Proxy) handoffConsoleAccept(m control.Msg, client net.Conn) error {
+// handoffSessionAccept covers both the console and the desktop: the message
+// already carries the type, so the fd passing is identical.
+func (p *Proxy) handoffSessionAccept(m control.Msg, client net.Conn) error {
 	return xnet.WithFD(client, func(fd int) error {
-		return p.ctrl.ConsoleAccept(context.Background(), m, fd)
+		return p.ctrl.SessionAccept(context.Background(), m, fd)
+	})
+}
+
+func (p *Proxy) handoffRDPAccept(id string, client net.Conn) error {
+	return xnet.WithFD(client, func(fd int) error {
+		return p.ctrl.RDPAccept(context.Background(), id, fd)
 	})
 }
 

@@ -77,7 +77,7 @@ func callerID(c *echo.Context) (pgtype.UUID, error) {
 }
 
 // @Summary     List your VMs
-// @Description Scoped to you by the query itself. url and console_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.
+// @Description Scoped to you by the query itself. url, console_url and desktop_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
@@ -144,6 +144,7 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 	items := []vmDTO{toVMDTO(v)}
 	items[0].URL = h.vmURL(ctx, v)
 	items[0].ConsoleURL = h.consoleURL(ctx, v)
+	items[0].DesktopURL = h.desktopURL(ctx, v)
 	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, items[0])
 }
@@ -912,6 +913,7 @@ func (h *UserHandler) UpdatePorts(c *echo.Context) error {
 	d := toVMDTO(row)
 	d.URL = h.vmURL(ctx, row)
 	d.ConsoleURL = h.consoleURL(ctx, row)
+	d.DesktopURL = h.desktopURL(ctx, row)
 	return c.JSON(http.StatusOK, d)
 }
 

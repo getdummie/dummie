@@ -49,7 +49,7 @@ func (q *Queries) CountVMsByOwner(ctx context.Context, createdBy pgtype.UUID) (i
 const createVM = `-- name: CreateVM :one
 INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce
 `
 
 type CreateVMParams struct {
@@ -99,6 +99,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		&i.DiskMiB,
 		&i.DefaultPort,
 		&i.PublicPorts,
+		&i.RdpNonce,
 	)
 	return i, err
 }
@@ -157,7 +158,7 @@ func (q *Queries) FailPendingVMsForClient(ctx context.Context, arg FailPendingVM
 }
 
 const getVM = `-- name: GetVM :one
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
 WHERE id = $1
 `
 
@@ -184,12 +185,13 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.DiskMiB,
 		&i.DefaultPort,
 		&i.PublicPorts,
+		&i.RdpNonce,
 	)
 	return i, err
 }
 
 const getVMForOwner = `-- name: GetVMForOwner :one
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
 WHERE id = $1 AND created_by = $2
 `
 
@@ -221,6 +223,7 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 		&i.DiskMiB,
 		&i.DefaultPort,
 		&i.PublicPorts,
+		&i.RdpNonce,
 	)
 	return i, err
 }
@@ -303,6 +306,49 @@ func (q *Queries) ListProxyHTTPRoutesByClient(ctx context.Context, clientID pgty
 	return items, nil
 }
 
+const listProxyRDPUsersByClient = `-- name: ListProxyRDPUsersByClient :many
+SELECT v.id AS vm_pk, v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, v.rdp_nonce
+FROM vms v
+WHERE v.client_id = $1
+  AND v.ip <> ''
+  AND v.status <> 'gone'
+ORDER BY v.created_at, v.vm_id
+`
+
+type ListProxyRDPUsersByClientRow struct {
+	VmPk     pgtype.UUID
+	VMIP     string
+	HostVMID string
+	VMName   string
+	RdpNonce string
+}
+
+func (q *Queries) ListProxyRDPUsersByClient(ctx context.Context, clientID pgtype.UUID) ([]ListProxyRDPUsersByClientRow, error) {
+	rows, err := q.db.Query(ctx, listProxyRDPUsersByClient, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListProxyRDPUsersByClientRow
+	for rows.Next() {
+		var i ListProxyRDPUsersByClientRow
+		if err := rows.Scan(
+			&i.VmPk,
+			&i.VMIP,
+			&i.HostVMID,
+			&i.VMName,
+			&i.RdpNonce,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProxySSHUsersByClient = `-- name: ListProxySSHUsersByClient :many
 SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
 FROM vms v
@@ -347,7 +393,7 @@ func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype
 }
 
 const listVMs = `-- name: ListVMs :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -386,6 +432,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 			&i.DiskMiB,
 			&i.DefaultPort,
 			&i.PublicPorts,
+			&i.RdpNonce,
 		); err != nil {
 			return nil, err
 		}
@@ -398,7 +445,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 }
 
 const listVMsByClient = `-- name: ListVMsByClient :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
 WHERE client_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -439,6 +486,7 @@ func (q *Queries) ListVMsByClient(ctx context.Context, arg ListVMsByClientParams
 			&i.DiskMiB,
 			&i.DefaultPort,
 			&i.PublicPorts,
+			&i.RdpNonce,
 		); err != nil {
 			return nil, err
 		}
@@ -451,7 +499,7 @@ func (q *Queries) ListVMsByClient(ctx context.Context, arg ListVMsByClientParams
 }
 
 const listVMsByOwner = `-- name: ListVMsByOwner :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
 WHERE created_by = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -492,6 +540,7 @@ func (q *Queries) ListVMsByOwner(ctx context.Context, arg ListVMsByOwnerParams) 
 			&i.DiskMiB,
 			&i.DefaultPort,
 			&i.PublicPorts,
+			&i.RdpNonce,
 		); err != nil {
 			return nil, err
 		}
@@ -573,6 +622,47 @@ func (q *Queries) MarkVMRunning(ctx context.Context, arg MarkVMRunningParams) er
 	return err
 }
 
+const rotateVMRDPNonceForOwner = `-- name: RotateVMRDPNonceForOwner :one
+UPDATE vms
+SET rdp_nonce  = gen_random_uuid()::text,
+    updated_at = now()
+WHERE id = $1 AND created_by = $2
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce
+`
+
+type RotateVMRDPNonceForOwnerParams struct {
+	ID        pgtype.UUID
+	CreatedBy pgtype.UUID
+}
+
+func (q *Queries) RotateVMRDPNonceForOwner(ctx context.Context, arg RotateVMRDPNonceForOwnerParams) (Vm, error) {
+	row := q.db.QueryRow(ctx, rotateVMRDPNonceForOwner, arg.ID, arg.CreatedBy)
+	var i Vm
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.VMID,
+		&i.Name,
+		&i.Status,
+		&i.Boot,
+		&i.CPUs,
+		&i.MemoryMiB,
+		&i.IP,
+		&i.Spec,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.ReportedAt,
+		&i.CreatedBy,
+		&i.DiskMiB,
+		&i.DefaultPort,
+		&i.PublicPorts,
+		&i.RdpNonce,
+	)
+	return i, err
+}
+
 const setVMLastError = `-- name: SetVMLastError :exec
 UPDATE vms
 SET last_error = $2, updated_at = now()
@@ -633,7 +723,7 @@ SET default_port = $3,
     public_ports = $4,
     updated_at   = now()
 WHERE id = $1 AND created_by = $2
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce
 `
 
 type UpdateVMPortsForOwnerParams struct {
@@ -671,6 +761,7 @@ func (q *Queries) UpdateVMPortsForOwner(ctx context.Context, arg UpdateVMPortsFo
 		&i.DiskMiB,
 		&i.DefaultPort,
 		&i.PublicPorts,
+		&i.RdpNonce,
 	)
 	return i, err
 }

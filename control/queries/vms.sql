@@ -120,6 +120,14 @@ WHERE v.client_id = $1
   AND u.public_key <> ''
 ORDER BY v.created_at, v.vm_id;
 
+-- name: ListProxyRDPUsersByClient :many
+SELECT v.id AS vm_pk, v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, v.rdp_nonce
+FROM vms v
+WHERE v.client_id = $1
+  AND v.ip <> ''
+  AND v.status <> 'gone'
+ORDER BY v.created_at, v.vm_id;
+
 -- name: ListProxyHTTPRoutesByClient :many
 SELECT v.name AS vm_name, v.ip AS vm_ip, v.vm_id AS host_vm_id,
        v.default_port, v.public_ports, d.tld AS domain_tld
@@ -152,3 +160,10 @@ WHERE client_id = $1 AND status = 'pending';
 UPDATE vms
 SET status = 'failed', last_error = $1, updated_at = now()
 WHERE status = 'pending';
+
+-- name: RotateVMRDPNonceForOwner :one
+UPDATE vms
+SET rdp_nonce  = gen_random_uuid()::text,
+    updated_at = now()
+WHERE id = $1 AND created_by = $2
+RETURNING *;

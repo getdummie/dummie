@@ -21,6 +21,12 @@ const (
 	MaxResolvePath    = 1024
 
 	MaxNotice = 1024
+
+	// MaxNTLMBlob bounds the raw NTLM material carried in an rdp resolve. Base64
+	// of this plus the rest of the message stays inside MaxMsgSize; anything
+	// larger is refused rather than truncated, since a truncated NT response
+	// would fail verification for the wrong reason.
+	MaxNTLMBlob = 1024
 )
 
 const (
@@ -28,6 +34,8 @@ const (
 	TypeSSHAccept     = "ssh_accept"
 	TypeTLSAccept     = "tls_accept"
 	TypeConsoleAccept = "console_accept"
+	TypeRDPAccept     = "rdp_accept"
+	TypeDesktopAccept = "desktop_accept"
 	TypeListenForward = "listen_forward"
 	TypeStop          = "stop"
 	TypeStatus        = "status"
@@ -45,6 +53,7 @@ const (
 const (
 	KindSSH  = "ssh"
 	KindHTTP = "http"
+	KindRDP  = "rdp"
 )
 
 const (
@@ -53,6 +62,8 @@ const (
 	ProtoSSH     = "ssh"
 	ProtoTLS     = "tls"
 	ProtoConsole = "console"
+	ProtoRDP     = "rdp"
+	ProtoDesktop = "desktop"
 )
 
 const (
@@ -76,6 +87,15 @@ type Msg struct {
 	SSHPubKey      string `json:"ssh_pubkey,omitempty"`
 	SSHFingerprint string `json:"ssh_fp,omitempty"`
 
+	// RDP resolve request. The challenge and response are base64 of the raw NTLM
+	// values; dproxy verifies them against the NT hash it holds, so the password
+	// never reaches dpipe.
+	RDPUser        string `json:"rdp_user,omitempty"`
+	RDPDomain      string `json:"rdp_domain,omitempty"`
+	RDPWorkstation string `json:"rdp_workstation,omitempty"`
+	RDPChallenge   string `json:"rdp_challenge,omitempty"`
+	RDPNTResponse  string `json:"rdp_nt_response,omitempty"`
+
 	Host string `json:"host,omitempty"`
 	SNI  string `json:"sni,omitempty"`
 
@@ -98,6 +118,12 @@ type Msg struct {
 
 	Authorized bool   `json:"authorized,omitempty"`
 	RemoteUser string `json:"remote_user,omitempty"`
+
+	// RDP resolve reply. RemotePassword is the backend's own credential, not the
+	// caller's; RDPSessionKey is base64 of the NTLM session base key derived from
+	// the response dproxy just verified.
+	RemotePassword string `json:"remote_password,omitempty"`
+	RDPSessionKey  string `json:"rdp_session_key,omitempty"`
 
 	Notice string `json:"notice,omitempty"`
 

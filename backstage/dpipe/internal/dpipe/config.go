@@ -55,6 +55,52 @@ type Config struct {
 	SSH     SSHConfig     `yaml:"ssh"`
 	TLS     TLSConfig     `yaml:"tls"`
 	Console ConsoleConfig `yaml:"console"`
+	RDP     RDPConfig     `yaml:"rdp"`
+}
+
+// RDPConfig governs the RDP terminator. It carries no credentials: the client
+// leg's password lives in dproxy and the backend's arrives per-session in the
+// resolve reply.
+type RDPConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// ComputerName and DomainName are what a client sees in the NLA prompt.
+	ComputerName string `yaml:"computer_name"`
+	DomainName   string `yaml:"domain_name"`
+
+	// SelfSignedCert and SelfSignedKey are where the fallback certificate for the
+	// client leg is kept when the fleet has no TLS certificate of its own. Both
+	// default; see rdpcert.go for what the fallback does and does not protect.
+	SelfSignedCert string `yaml:"self_signed_cert"`
+	SelfSignedKey  string `yaml:"self_signed_key"`
+
+	DialTimeout      Duration `yaml:"dial_timeout"`
+	ResolveTimeout   Duration `yaml:"resolve_timeout"`
+	HandshakeTimeout Duration `yaml:"handshake_timeout"`
+
+	// HandoverTTL bounds how long a guest's redirection routing token stays
+	// usable. It is the window in which a reconnect skips credential checks, so
+	// it wants to be short.
+	HandoverTTL Duration `yaml:"handover_ttl"`
+}
+
+const (
+	defaultRDPHandshakeTimeout = 30 * time.Second
+	defaultRDPComputerName     = "dpipe"
+	defaultRDPDomainName       = "DPIPE"
+)
+
+func (c RDPConfig) computerName() string {
+	if c.ComputerName == "" {
+		return defaultRDPComputerName
+	}
+	return c.ComputerName
+}
+
+func (c RDPConfig) domainName() string {
+	if c.DomainName == "" {
+		return defaultRDPDomainName
+	}
+	return c.DomainName
 }
 
 type ConsoleConfig struct {
@@ -173,6 +219,7 @@ type material struct {
 
 	certs      map[string]*tls.Certificate
 	defaultCrt *tls.Certificate
+	rdpCrt     *tls.Certificate
 	tlsMin     uint16
 }
 
@@ -224,6 +271,24 @@ func loadMaterial(c *Config, log *slog.Logger) (*material, error) {
 		}
 		if len(m.certs) == 0 && m.defaultCrt == nil {
 			return nil, errors.New("tls.enabled but no usable certificate loaded")
+		}
+	}
+
+	if c.RDP.Enabled {
+		crt, err := loadRDPCert(c, m.defaultCrt, c.RDP.computerName())
+		if err != nil {
+			if crt == nil {
+				return nil, fmt.Errorf("rdp certificate: %w", err)
+			}
+			log.Warn("rdp: could not persist the self-signed certificate; clients will see a new one after every restart", "err", err)
+		}
+		if m.defaultCrt == nil {
+			certPath, _ := c.RDP.selfSignedPaths()
+			log.Warn("rdp: no fleet certificate, using a self-signed one for the client leg; rdp clients will warn about an unknown publisher", "cert", certPath)
+		}
+		m.rdpCrt = crt
+		if m.tlsMin == 0 {
+			m.tlsMin = tls.VersionTLS12
 		}
 	}
 

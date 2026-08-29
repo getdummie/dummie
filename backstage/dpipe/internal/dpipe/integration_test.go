@@ -355,7 +355,7 @@ func TestTLSAuthPolicyIsTheProxys(t *testing.T) {
 	})
 
 	t.Run("oversize cookie is dropped, not truncated", func(t *testing.T) {
-		big := "session=good; junk=" + strings.Repeat("x", control.MaxResolveCookie)
+		big := "session=good; junk=" + strings.Repeat("x", control.MaxResolveDetails)
 		resp := tlsRoundTrip(t, p, cfg, pool, "vm1.local",
 			"GET / HTTP/1.1\r\nHost: vm1.local\r\nCookie: "+big+"\r\nConnection: close\r\n\r\n")
 		if resp.StatusCode != 401 {

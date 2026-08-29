@@ -136,6 +136,13 @@ func (p *Proxy) bind() error {
 		}
 		go p.acceptLoop("ssh", ln, func(conn net.Conn) { p.handleSSH(conn) })
 	}
+	if c := p.cfg.RDP; c != nil {
+		ln, err := p.listen("rdp", c.Listen, c.Reuseport)
+		if err != nil {
+			return err
+		}
+		go p.acceptLoop("rdp", ln, func(conn net.Conn) { p.handleRDP(conn) })
+	}
 	if c := p.cfg.Site; c != nil {
 		page, err := os.ReadFile(c.HTMLFile)
 		if err != nil {
@@ -277,6 +284,11 @@ func (p *Proxy) handleHTTP(client net.Conn) {
 	}
 
 	if _, published := p.router.HostEntry(host); !published {
+		if vmHost, ok := p.desktopVMHost(host); ok {
+			log = log.With("protocol", control.ProtoDesktop)
+			p.handleDesktop(log, client, host, vmHost, prefix)
+			return
+		}
 		if vmHost, ok := consoleVMHost(p.router, p.cfg.Console, host); ok {
 			log.Info("console route", "host", host, "vm_host", vmHost)
 			p.handleConsole(log, client, host, vmHost, prefix)
@@ -362,6 +374,20 @@ func (p *Proxy) handleSSH(client net.Conn) {
 	_ = client.Close()
 	if err != nil {
 		log.Warn("ssh_accept handoff failed", "err", err)
+	}
+}
+
+// handleRDP reads nothing. The X.224 exchange, TLS and NLA all happen in dpipe,
+// so the socket handed over is still pre-crypto and therefore fd-passable.
+func (p *Proxy) handleRDP(client net.Conn) {
+	id := control.NewID()
+	log := p.log.With("id", id, "protocol", control.ProtoRDP, "client", client.RemoteAddr().String())
+	log.Info("rdp accept: handing raw socket to dpipe")
+
+	err := p.handoffRDPAccept(id, client)
+	_ = client.Close()
+	if err != nil {
+		log.Warn("rdp_accept handoff failed", "err", err)
 	}
 }
 

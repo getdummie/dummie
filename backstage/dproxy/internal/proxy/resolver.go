@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"dproxy/internal/control"
 	"dproxy/internal/httpsniff"
+	"dproxy/internal/ntlm"
 )
 
 type sshPolicy struct {
@@ -26,19 +28,48 @@ type sshUserKey struct {
 	vmName string
 }
 
+// rdpPolicy is the per-VM remote-desktop credential. The NT hash verifies the
+// caller; remoteUser/remotePassword are what dpipe presents to the guest.
+type rdpPolicy struct {
+	vmName         string
+	ntHash         []byte
+	target         string
+	remoteUser     string
+	remotePassword string
+}
+
 type Resolver struct {
 	log     *slog.Logger
 	router  *Router
 	auth    *Authenticator
 	console *ConsoleConfig
+	desktop *DesktopConfig
 	users   map[sshUserKey]sshPolicy
 	owned map[string][]string
+	rdp   map[string]rdpPolicy
 }
 
 func NewResolver(log *slog.Logger, router *Router, auth *Authenticator, cfg *Config) (*Resolver, error) {
 	r := &Resolver{
-		log: log, router: router, auth: auth, console: cfg.Console,
+		log: log, router: router, auth: auth, console: cfg.Console, desktop: cfg.Desktop,
 		users: map[sshUserKey]sshPolicy{}, owned: map[string][]string{},
+		rdp: map[string]rdpPolicy{},
+	}
+	if cfg.RDP != nil {
+		for i, u := range cfg.RDP.Users {
+			h, err := hex.DecodeString(u.NTHash)
+			if err != nil {
+				return nil, fmt.Errorf("rdp.users[%d].nt_hash: %w", i, err)
+			}
+			// RDP login names are matched case-insensitively, as Windows does.
+			r.rdp[strings.ToLower(u.VMName)] = rdpPolicy{
+				vmName:         u.VMName,
+				ntHash:         h,
+				target:         u.Target,
+				remoteUser:     u.RemoteUser,
+				remotePassword: u.RemotePassword,
+			}
+		}
 	}
 	if cfg.SSH == nil {
 		return r, nil
@@ -144,6 +175,9 @@ func (r *Resolver) Handle(m control.Msg) control.Msg {
 			"fp", ssh.FingerprintSHA256(key), "client", m.ClientIP)
 		return control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
 
+	case control.KindRDP:
+		return r.resolveRDP(m)
+
 	case control.KindHTTP:
 		log := r.log.With("id", m.ID, "client", m.ClientIP)
 		req, err := resolveRequest(m)
@@ -156,8 +190,15 @@ func (r *Resolver) Handle(m control.Msg) control.Msg {
 		}
 
 		if _, published := r.router.HostEntry(m.Host); !published {
-			if vmHost, ok := consoleVMHost(r.router, r.console, m.Host); ok {
-				return r.resolveConsole(log, m, vmHost, req)
+			if k, ok := desktopKind(r.desktop); ok {
+				if vmHost, ok := labelledVMHost(r.router, k.label, m.Host); ok {
+					return r.resolveSession(log, k, m, vmHost, req)
+				}
+			}
+			if k, ok := consoleKind(r.console); ok {
+				if vmHost, ok := labelledVMHost(r.router, k.label, m.Host); ok {
+					return r.resolveSession(log, k, m, vmHost, req)
+				}
 			}
 		}
 
@@ -184,22 +225,26 @@ func (r *Resolver) Handle(m control.Msg) control.Msg {
 	}
 }
 
-func (r *Resolver) resolveConsole(log *slog.Logger, m control.Msg, vmHost string, req *http.Request) control.Msg {
+// resolveSession answers a console or desktop upgrade arriving over https. It is
+// the same decision the plaintext ingress makes in handleSession; only who writes
+// the response differs, which is why the verdict travels back to dpipe instead.
+func (r *Resolver) resolveSession(log *slog.Logger, k sessionKind, m control.Msg, vmHost string, req *http.Request) control.Msg {
 	host := httpsniff.NormalizeHost(m.Host)
 	log = log.With("host", host, "vm_host", vmHost)
 
-	v := authorizeConsole(log, r.router, r.console, r.auth, host, vmHost, req)
+	v := authorizeSession(log, r.router, r.auth, k, host, vmHost, req)
 	if v.status != 0 {
 		return control.Msg{
 			V: control.Version, Type: control.TypeResolved, ID: m.ID,
 			Status: v.status,
 		}
 	}
-	log.Info("console: authorized", "sub", v.sub, "target", v.target, "remote_user", v.remoteUser)
+	log.Info(k.name+": authorized", "sub", v.sub, "target", v.target, "remote_user", v.remoteUser)
 	return control.Msg{
 		V: control.Version, Type: control.TypeResolved, ID: m.ID,
-		Authorized: true, Protocol: control.ProtoConsole,
-		Target: v.target, RemoteUser: v.remoteUser, Sub: v.sub, WSKey: v.wsKey,
+		Authorized: true, Protocol: k.protocol,
+		Target: v.target, RemoteUser: v.remoteUser, RemotePassword: v.remotePassword,
+		Sub: v.sub, WSKey: v.wsKey,
 	}
 }
 
@@ -220,4 +265,47 @@ func resolveRequest(m control.Msg) (*http.Request, error) {
 	req.Header.Set("Sec-WebSocket-Version", m.WSVersion)
 	req.Header.Set("Sec-WebSocket-Key", m.WSKey)
 	return req, nil
+}
+
+// resolveRDP verifies an NTLMv2 response against the NT hash for the VM the login
+// name selects. The name says which VM; the response proves the caller holds that
+// VM's issued password. Neither alone is enough, which is what stops one tenant
+// reaching another's desktop.
+func (r *Resolver) resolveRDP(m control.Msg) control.Msg {
+	deny := control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
+	log := r.log.With("id", m.ID, "client", m.ClientIP)
+
+	challenge, err := base64.StdEncoding.DecodeString(m.RDPChallenge)
+	if err != nil || len(challenge) != 8 {
+		log.Warn("rdp deny: unusable challenge", "user", m.RDPUser)
+		return deny
+	}
+	response, err := base64.StdEncoding.DecodeString(m.RDPNTResponse)
+	if err != nil || len(response) > control.MaxNTLMBlob {
+		log.Warn("rdp deny: unusable nt response", "user", m.RDPUser)
+		return deny
+	}
+
+	u, ok := r.rdp[strings.ToLower(m.RDPUser)]
+	if !ok {
+		log.Info("rdp deny: unknown vm", "user", m.RDPUser)
+		return deny
+	}
+	var sc [8]byte
+	copy(sc[:], challenge)
+	key, ok := ntlm.VerifyNTLMv2(u.ntHash, m.RDPUser, m.RDPDomain, sc, response)
+	if !ok {
+		log.Info("rdp deny: bad password", "vm", u.vmName)
+		return deny
+	}
+
+	log.Info("rdp authorize", "vm", u.vmName, "target", u.target, "remote_user", u.remoteUser)
+	return control.Msg{
+		V: control.Version, Type: control.TypeResolved, ID: m.ID,
+		Authorized:     true,
+		Target:         u.target,
+		RemoteUser:     u.remoteUser,
+		RemotePassword: u.remotePassword,
+		RDPSessionKey:  base64.StdEncoding.EncodeToString(key),
+	}
 }

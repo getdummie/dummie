@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -58,8 +59,10 @@ type Config struct {
 	HTTPS   *HTTPSConfig   `yaml:"https"`
 	TCP     []TCPRoute     `yaml:"tcp"`
 	SSH     *SSHConfig     `yaml:"ssh"`
+	RDP     *RDPConfig     `yaml:"rdp"`
 	Auth    *AuthConfig    `yaml:"auth"`
 	Console *ConsoleConfig `yaml:"console"`
+	Desktop *DesktopConfig `yaml:"desktop"`
 	Site    *SiteConfig    `yaml:"site"`
 	ACME    *ACMEConfig    `yaml:"acme"`
 
@@ -106,6 +109,32 @@ type AuthConfig struct {
 type ConsoleConfig struct {
 	Label string `yaml:"label"`
 	RemoteUser string `yaml:"remote_user"`
+}
+
+// DesktopConfig is the browser remote desktop, the console's counterpart: the
+// same labelled-hostname entry point, landing on the guest's RDP port instead of
+// its ssh port. The in-browser client speaks RDP itself, so unlike the console
+// the guest's own credentials travel to it.
+type DesktopConfig struct {
+	Label          string `yaml:"label"`
+	RemoteUser     string `yaml:"remote_user"`
+	RemotePassword string `yaml:"remote_password"`
+}
+
+const defaultDesktopLabel = "desk"
+
+func (c *DesktopConfig) label() string {
+	if c.Label != "" {
+		return c.Label
+	}
+	return defaultDesktopLabel
+}
+
+func (c *DesktopConfig) remoteUser() string {
+	if c.RemoteUser != "" {
+		return c.RemoteUser
+	}
+	return defaultConsoleRemoteUser
 }
 
 const defaultConsoleLabel = "shell"
@@ -189,6 +218,28 @@ type SSHUser struct {
 	VMName     string `yaml:"vm_name"`
 	Target     string `yaml:"target"`
 	RemoteUser string `yaml:"remote_user"`
+}
+
+// RDPConfig is the native remote-desktop ingress. It mirrors SSHConfig: one
+// shared listener, and the login name the client authenticates with selects the
+// VM. The difference is that the credential is issued by the control server
+// rather than owned by the user, so the policy carries a hash instead of a key.
+type RDPConfig struct {
+	Listen    string    `yaml:"listen"`
+	Reuseport bool      `yaml:"reuseport"`
+	Users     []RDPUser `yaml:"users"`
+}
+
+type RDPUser struct {
+	VMName string `yaml:"vm_name"`
+	// NTHash is hex MD4(UTF16-LE(password)) — enough to verify an NTLMv2
+	// response, and never the password itself.
+	NTHash string `yaml:"nt_hash"`
+	Target string `yaml:"target"`
+	// RemoteUser and RemotePassword are the guest's own credentials, which dpipe
+	// presents on the backend leg after the client has been authorized.
+	RemoteUser     string `yaml:"remote_user"`
+	RemotePassword string `yaml:"remote_password"`
 }
 
 type ForwardConfig struct {
@@ -312,8 +363,39 @@ func (c *Config) Validate() error {
 			}
 		}
 	}
+	if c.RDP != nil {
+		if err := claim("rdp", c.RDP.Listen); err != nil {
+			return err
+		}
+		ingress++
+		if len(c.RDP.Users) == 0 {
+			return errors.New("config: rdp requires at least one user")
+		}
+		names := map[string]bool{}
+		for i, u := range c.RDP.Users {
+			if u.VMName == "" || strings.ContainsAny(u.VMName, " \t@:\\") {
+				return fmt.Errorf("config: rdp.users[%d].vm_name %q is not a usable login name", i, u.VMName)
+			}
+			// The login name is the routing key, so a duplicate would silently
+			// make one of the two VMs unreachable.
+			lower := strings.ToLower(u.VMName)
+			if names[lower] {
+				return fmt.Errorf("config: rdp.users[%d].vm_name %q is listed twice", i, u.VMName)
+			}
+			names[lower] = true
+			if _, err := hex.DecodeString(u.NTHash); err != nil || len(u.NTHash) != 32 {
+				return fmt.Errorf("config: rdp.users[%d].nt_hash must be 32 hex characters", i)
+			}
+			if u.RemoteUser == "" {
+				return fmt.Errorf("config: rdp.users[%d].remote_user is required", i)
+			}
+			if err := validHostPort(fmt.Sprintf("rdp.users[%d].target", i), u.Target); err != nil {
+				return err
+			}
+		}
+	}
 	if ingress == 0 {
-		return errors.New("config: at least one ingress (http, https, tcp or ssh) is required")
+		return errors.New("config: at least one ingress (http, https, tcp, ssh or rdp) is required")
 	}
 
 	if c.Auth != nil {
@@ -346,6 +428,24 @@ func (c *Config) Validate() error {
 		}
 		if l := c.Console.label(); !hostLabelPattern.MatchString(l) {
 			return fmt.Errorf("config: console.label %q is not a single hostname label", l)
+		}
+	}
+
+	if c.Desktop != nil {
+		if c.Auth == nil {
+			return errors.New("config: desktop requires auth (the desktop token is verified with auth.cookie_secret_file)")
+		}
+		if c.HTTP == nil {
+			return errors.New("config: desktop requires http.hosts (a desktop host is derived from a VM's host entry)")
+		}
+		if l := c.Desktop.label(); !hostLabelPattern.MatchString(l) {
+			return fmt.Errorf("config: desktop.label %q is not a single hostname label", l)
+		}
+		if c.Console != nil && c.Desktop.label() == c.Console.label() {
+			return fmt.Errorf("config: desktop.label and console.label are both %q", c.Desktop.label())
+		}
+		if c.Desktop.RemotePassword == "" {
+			return errors.New("config: desktop.remote_password is required (the browser client authenticates to the guest itself)")
 		}
 	}
 

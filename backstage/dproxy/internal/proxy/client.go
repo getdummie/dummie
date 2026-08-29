@@ -174,6 +174,16 @@ func (c *Client) SSHAccept(_ context.Context, id string, clientFD int) error {
 	}, []int{clientFD})
 }
 
+func (c *Client) RDPAccept(_ context.Context, id string, clientFD int) error {
+	p, err := c.peerOrErr()
+	if err != nil {
+		return err
+	}
+	return p.Send(control.Msg{
+		V: control.Version, Type: control.TypeRDPAccept, ID: id, Protocol: control.ProtoRDP,
+	}, []int{clientFD})
+}
+
 func (c *Client) TLSAccept(_ context.Context, id string, clientFD int) error {
 	p, err := c.peerOrErr()
 	if err != nil {
@@ -184,7 +194,9 @@ func (c *Client) TLSAccept(_ context.Context, id string, clientFD int) error {
 	}, []int{clientFD})
 }
 
-func (c *Client) ConsoleAccept(_ context.Context, m control.Msg, clientFD int) error {
+// SessionAccept hands over a console or desktop upgrade; the message already
+// carries which one, so the fd passing is shared.
+func (c *Client) SessionAccept(_ context.Context, m control.Msg, clientFD int) error {
 	p, err := c.peerOrErr()
 	if err != nil {
 		return err

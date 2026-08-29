@@ -29,6 +29,8 @@ const defaultCookieTTL = 12 * time.Hour
 
 const consoleAudPrefix = "console:"
 
+const desktopAudPrefix = "desktop:"
+
 type Authenticator struct {
 	cfg    AuthConfig
 	secret []byte
@@ -74,17 +76,29 @@ func (a *Authenticator) Mint(sub, host string) string {
 }
 
 func (a *Authenticator) Verify(value, host string) (string, bool) {
-	if strings.HasPrefix(host, consoleAudPrefix) {
-		return "", false
+	// A labelled audience is never a bare host, so an http session token can
+	// never open a console or a desktop, in either direction.
+	for _, prefix := range []string{consoleAudPrefix, desktopAudPrefix} {
+		if strings.HasPrefix(host, prefix) {
+			return "", false
+		}
 	}
 	return a.verify(value, host)
 }
 
 func (a *Authenticator) VerifyConsole(value, host string) (string, bool) {
+	return a.verifyLabelled(value, consoleAudPrefix, host)
+}
+
+func (a *Authenticator) VerifyDesktop(value, host string) (string, bool) {
+	return a.verifyLabelled(value, desktopAudPrefix, host)
+}
+
+func (a *Authenticator) verifyLabelled(value, prefix, host string) (string, bool) {
 	if host == "" {
 		return "", false
 	}
-	return a.verify(value, consoleAudPrefix+host)
+	return a.verify(value, prefix+host)
 }
 
 func (a *Authenticator) verify(value, aud string) (string, bool) {

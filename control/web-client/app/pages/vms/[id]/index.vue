@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Columns2, Copy, ExternalLink, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Monitor, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -376,6 +376,85 @@ function chooseEditor(key: string) {
   editorMenuOpen.value = false
   const target = editors.value.find(e => e.key === key)
   if (target) window.location.href = target.href
+}
+
+type RdpCredentials = { host: string, port: number, username: string, password: string }
+
+const rdp = ref<RdpCredentials | null>(null)
+const rdpError = ref('')
+const rdpBusy = ref(false)
+const rdpRevealed = ref(false)
+const rdpCopied = ref('')
+
+// The password is derived on the server from a secret this client never sees, so
+// it is fetched on demand rather than carried in the VM payload.
+async function loadRdp() {
+  if (!vm.value || vm.value.status !== 'running') return
+  rdpBusy.value = true
+  rdpError.value = ''
+  try {
+    const res = await authFetch(`/vms/${vm.value.id}/rdp-credentials`)
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    rdp.value = await res.json()
+  }
+  catch (e) {
+    rdpError.value = e instanceof Error ? e.message : 'Could not read the remote desktop credentials'
+  }
+  finally {
+    rdpBusy.value = false
+  }
+}
+
+async function rotateRdp() {
+  if (!vm.value) return
+  rdpBusy.value = true
+  rdpError.value = ''
+  try {
+    const res = await authFetch(`/vms/${vm.value.id}/rdp-rotate`, { method: 'POST' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    rdp.value = await res.json()
+    rdpRevealed.value = true
+  }
+  catch (e) {
+    rdpError.value = e instanceof Error ? e.message : 'Could not rotate the password'
+  }
+  finally {
+    rdpBusy.value = false
+  }
+}
+
+async function copyRdp(field: 'address' | 'username' | 'password') {
+  if (!rdp.value) return
+  const value = field === 'address'
+    ? `${rdp.value.host}:${rdp.value.port}`
+    : field === 'username' ? rdp.value.username : rdp.value.password
+  try {
+    await navigator.clipboard.writeText(value)
+    rdpCopied.value = field
+    setTimeout(() => (rdpCopied.value = ''), 2000)
+  }
+  catch {
+    rdpError.value = 'Could not copy to the clipboard'
+  }
+}
+
+// The .rdp download goes through authFetch because the endpoint needs a bearer
+// token; a plain link would arrive unauthenticated.
+async function downloadRdpFile() {
+  if (!vm.value) return
+  try {
+    const res = await authFetch(`/vms/${vm.value.id}/rdp-file`)
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const url = URL.createObjectURL(await res.blob())
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${vm.value.name}.rdp`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  catch (e) {
+    rdpError.value = e instanceof Error ? e.message : 'Could not download the connection file'
+  }
 }
 
 async function copySsh() {
@@ -1061,6 +1140,7 @@ async function removeDomain() {
           </div>
         </dl>
 
+
         <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
           <div class="flex min-w-0 items-center gap-2">
             <div
@@ -1198,6 +1278,121 @@ async function removeDomain() {
               </DropdownMenu>
             </div>
           </div>
+        </div>
+
+        <div v-if="vm.status === 'running'" class="mt-4 rounded-md border border-border p-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <Monitor class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <span class="text-sm font-medium">Remote desktop</span>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
+                v-if="!rdp"
+                variant="outline"
+                size="sm"
+                class="text-xs"
+                :disabled="rdpBusy"
+                @click="loadRdp"
+              >
+                Show connection details
+              </Button>
+              <template v-else>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="text-xs"
+                  @click="downloadRdpFile"
+                >
+                  <Download class="size-4" aria-hidden="true" />
+                  Download .rdp
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="text-xs"
+                  :disabled="rdpBusy"
+                  :title="`Issue a new password for ${vm.name}; the current one stops working`"
+                  @click="rotateRdp"
+                >
+                  <RefreshCw class="size-4" aria-hidden="true" />
+                  Rotate password
+                </Button>
+              </template>
+            </div>
+          </div>
+
+          <p v-if="!rdp && !rdpError" class="mt-2 text-xs text-muted-foreground">
+            Connect with any RDP client. The username and password are issued by this
+            server and reach only this VM &mdash; they are not the credentials inside it.
+          </p>
+
+          <p v-if="rdpError" class="mt-2 text-xs text-destructive" role="alert">
+            {{ rdpError }}
+          </p>
+
+          <dl v-if="rdp" class="mt-3 grid gap-2 sm:grid-cols-3">
+            <div>
+              <dt class="eyebrow text-muted-foreground">Computer</dt>
+              <dd class="mt-1 flex min-w-0 items-center gap-1">
+                <code class="truncate font-mono text-xs">{{ rdp.host }}:{{ rdp.port }}</code>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  class="shrink-0"
+                  aria-label="Copy the address to the clipboard"
+                  @click="copyRdp('address')"
+                >
+                  <component :is="rdpCopied === 'address' ? Check : Copy" aria-hidden="true" />
+                </Button>
+              </dd>
+            </div>
+            <div>
+              <dt class="eyebrow text-muted-foreground">Username</dt>
+              <dd class="mt-1 flex min-w-0 items-center gap-1">
+                <code class="truncate font-mono text-xs">{{ rdp.username }}</code>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  class="shrink-0"
+                  aria-label="Copy the username to the clipboard"
+                  @click="copyRdp('username')"
+                >
+                  <component :is="rdpCopied === 'username' ? Check : Copy" aria-hidden="true" />
+                </Button>
+              </dd>
+            </div>
+            <div>
+              <dt class="eyebrow text-muted-foreground">Password</dt>
+              <dd class="mt-1 flex min-w-0 items-center gap-1">
+                <code class="truncate font-mono text-xs">
+                  {{ rdpRevealed ? rdp.password : '\u2022'.repeat(rdp.password.length) }}
+                </code>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  class="shrink-0"
+                  :aria-label="rdpRevealed ? 'Hide the password' : 'Show the password'"
+                  @click="rdpRevealed = !rdpRevealed"
+                >
+                  <component :is="rdpRevealed ? EyeOff : Eye" aria-hidden="true" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon-xs"
+                  class="shrink-0"
+                  aria-label="Copy the password to the clipboard"
+                  @click="copyRdp('password')"
+                >
+                  <component :is="rdpCopied === 'password' ? Check : Copy" aria-hidden="true" />
+                </Button>
+              </dd>
+            </div>
+          </dl>
+
+          <span role="status" aria-live="polite" class="sr-only">
+            {{ rdpCopied ? `Remote desktop ${rdpCopied} copied to clipboard` : '' }}
+          </span>
         </div>
       </section>
 
