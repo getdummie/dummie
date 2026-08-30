@@ -16,6 +16,7 @@ const (
 	ProtocolRDP      uint32 = 0x00000000
 	ProtocolSSL      uint32 = 0x00000001
 	ProtocolHybrid   uint32 = 0x00000002
+	ProtocolRDSTLS   uint32 = 0x00000004
 	ProtocolHybridEx uint32 = 0x00000008
 )
 

@@ -20,6 +20,15 @@ import (
 	"dpipe/internal/rdp"
 )
 
+// confirmFlags is what every connection confirm this proxy writes advertises.
+// The confirm has to go out before the client leg names the VM, so the backend's
+// own flags are never available in time. Advertising both unconditionally is
+// safe: a backend that does not use them ignores the extra client data, while
+// omitting DynVCGFXProtocolSupported makes the client drop
+// RNS_UD_CS_SUPPORT_DYNVC_GFX_PROTOCOL and gnome-remote-desktop then refuses the
+// session during licensing.
+const confirmFlags = rdp.ExtendedClientDataSupported | rdp.DynVCGFXProtocolSupported
+
 // serveRDP terminates one native RDP connection: X.224, TLS and NLA on the client
 // leg, then the same three on the backend leg with the credentials dproxy handed
 // back, then a plain splice. Nothing past NLA is parsed.
@@ -38,10 +47,9 @@ func (s *Server) serveRDP(p *control.Peer, id string, client net.Conn) {
 		return
 	}
 	// A recognised routing token means this is the second half of a handover the
-	// guest started. Nothing here is terminated: the guest answers the connection
-	// request itself and runs its own TLS and RDSTLS with the client.
+	// guest started.
 	if target, ok := s.handovers.take(req.Cookie); ok {
-		s.serveRDPHandover(log, id, client, target, req.Raw)
+		s.serveRDPHandover(log, id, client, target, req)
 		return
 	}
 
@@ -53,10 +61,6 @@ func (s *Server) serveRDP(p *control.Peer, id string, client net.Conn) {
 		_ = rdp.WriteConnectionFailure(client, req.SrcRef, rdp.FailHybridRequiredByServer)
 		return
 	}
-	// The confirm has to go out before NLA names the VM, so the backend's own
-	// flags are not available yet. Advertise both unconditionally: a backend that
-	// does not use them ignores the extra client data.
-	confirmFlags := rdp.ExtendedClientDataSupported | rdp.DynVCGFXProtocolSupported
 	if err := rdp.WriteConnectionConfirm(client, req.SrcRef, confirmFlags, rdp.ProtocolHybrid); err != nil {
 		log.Warn("rdp connection confirm failed", "err", err)
 		return
@@ -109,19 +113,89 @@ func (s *Server) serveRDP(p *control.Peer, id string, client net.Conn) {
 	log.Info("rdp session start", "target", res.Target, "remote_user", res.RemoteUser)
 	// Counted, because a post-NLA failure and a backend that hangs up at once
 	// look identical from here otherwise.
-	watch := &rdp.RedirectScanner{}
-	toGuest, toClient := pipeCounted(id, ctls, backend, func(b []byte) {
-		if token := watch.Scan(b); token != nil {
-			s.handovers.put(token, res.Target)
-			log.Info("rdp handover offered", "target", res.Target)
-		}
-	})
+	toGuest, toClient := s.spliceWatchingRedirects(log, id, ctls, backend, res.Target)
 	log.Info("rdp session end", "bytes_to_guest", toGuest, "bytes_to_client", toClient)
 }
 
-// serveRDPHandover splices a handover reconnect straight through to the guest,
-// starting with the connection request already read off the wire.
-func (s *Server) serveRDPHandover(log *slog.Logger, id string, client net.Conn, target string, request []byte) {
+// spliceWatchingRedirects joins the two legs and registers the routing token of
+// any Server Redirection the guest sends, so the reconnect that follows can be
+// sent back to the same guest.
+func (s *Server) spliceWatchingRedirects(log *slog.Logger, id string, client, backend net.Conn, target string) (toGuest, toClient int64) {
+	watch := &rdp.RedirectScanner{}
+	return pipeCounted(id, client, backend, func(b []byte) {
+		if token := watch.Scan(b); token != nil {
+			s.handovers.put(token, target)
+			log.Info("rdp handover offered", "target", target)
+		}
+	})
+}
+
+// serveRDPHandover answers the reconnect half of a handover. The routing token
+// has already named the guest, and the credentials the client replays were
+// minted by that guest and are checked by it, so this leg terminates RDSTLS not
+// to authorise anything but to keep the stream visible: gnome-remote-desktop
+// hands over twice, and a raw splice hides the second redirection.
+func (s *Server) serveRDPHandover(log *slog.Logger, id string, client net.Conn, target string, req *rdp.ConnectionRequest) {
+	if req.RequestedProtocols&rdp.ProtocolRDSTLS == 0 {
+		log.Info("rdp handover without rdstls, splicing", "protocols", req.RequestedProtocols)
+		s.spliceRDPHandover(log, id, client, target, req.Raw)
+		return
+	}
+	if s.mat.rdpCrt == nil {
+		log.Error("rdp: no certificate loaded for the handover leg")
+		return
+	}
+	if err := rdp.WriteConnectionConfirm(client, req.SrcRef, confirmFlags, rdp.ProtocolRDSTLS); err != nil {
+		log.Warn("rdp handover confirm failed", "err", err)
+		return
+	}
+	ctls := tls.Server(client, &tls.Config{
+		Certificates: []tls.Certificate{*s.mat.rdpCrt},
+		MinVersion:   s.mat.tlsMin,
+	})
+	if err := ctls.HandshakeContext(context.Background()); err != nil {
+		log.Warn("rdp handover tls handshake failed", "err", err)
+		return
+	}
+	if err := rdp.WriteRDSTLSCapabilities(ctls); err != nil {
+		log.Warn("rdp handover capabilities failed", "err", err)
+		return
+	}
+	auth, err := rdp.ReadRDSTLSAuthRequest(ctls)
+	if err != nil {
+		log.Warn("rdp handover authentication request failed", "err", err)
+		return
+	}
+	log.Info("rdp handover authenticating", "target", target, "data_type", auth.DataType,
+		"remote_user", rdp.RDSTLSString(auth.UserName), "password_bytes", len(auth.Password))
+
+	backend, code, err := s.dialGuestRDSTLS(log, target, req.Cookie, auth)
+	if err != nil {
+		log.Warn("rdp handover backend connect failed", "target", target, "err", err)
+		if code == rdp.RDSTLSSuccess {
+			code = rdp.RDSTLSAccessDenied
+		}
+		_ = rdp.WriteRDSTLSAuthResponse(ctls, code)
+		return
+	}
+	defer func() { _ = backend.Close() }()
+
+	if err := rdp.WriteRDSTLSAuthResponse(ctls, rdp.RDSTLSSuccess); err != nil {
+		log.Warn("rdp handover authentication response failed", "err", err)
+		return
+	}
+
+	_ = client.SetDeadline(time.Time{})
+	s.reg.Add(id)
+	defer s.reg.Done(id)
+	log.Info("rdp handover start", "target", target)
+	toGuest, toClient := s.spliceWatchingRedirects(log, id, ctls, backend, target)
+	log.Info("rdp handover end", "bytes_to_guest", toGuest, "bytes_to_client", toClient)
+}
+
+// spliceRDPHandover hands a reconnect this proxy cannot terminate straight to
+// the guest, starting with the connection request already read off the wire.
+func (s *Server) spliceRDPHandover(log *slog.Logger, id string, client net.Conn, target string, request []byte) {
 	backend, err := net.DialTimeout("tcp", target, s.cfg.RDP.DialTimeout.Or(defaultDialTimeout))
 	if err != nil {
 		log.Warn("rdp handover connect failed", "target", target, "err", err)
@@ -260,6 +334,61 @@ func (s *Server) dialGuestRDP(log *slog.Logger, target, user, password string) (
 	_ = nc.SetDeadline(time.Time{})
 	ok = true
 	return btls, nil
+}
+
+// dialGuestRDSTLS brings up the backend leg of a handover: TCP with the client's
+// routing token replayed, X.224 selecting RDSTLS, TLS, then the client's
+// authentication request forwarded byte for byte. The second return is the
+// guest's result code when it produced one, so a refusal can be passed on.
+func (s *Server) dialGuestRDSTLS(log *slog.Logger, target, cookie string, auth *rdp.RDSTLSAuthRequest) (net.Conn, uint32, error) {
+	nc, err := net.DialTimeout("tcp", target, s.cfg.RDP.DialTimeout.Or(defaultDialTimeout))
+	if err != nil {
+		return nil, 0, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = nc.Close()
+		}
+	}()
+	_ = nc.SetDeadline(time.Now().Add(s.cfg.RDP.HandshakeTimeout.Or(defaultRDPHandshakeTimeout)))
+
+	if err := rdp.WriteConnectionRequest(nc, cookie, rdp.ProtocolRDSTLS); err != nil {
+		return nil, 0, fmt.Errorf("connection request: %w", err)
+	}
+	selected, err := rdp.ReadConnectionConfirm(nc)
+	if err != nil {
+		return nil, 0, err
+	}
+	if selected != rdp.ProtocolRDSTLS {
+		return nil, 0, fmt.Errorf("backend selected protocol %d, want RDSTLS", selected)
+	}
+
+	// The guest's certificate is self-signed and the redirection names no target
+	// certificate to pin it against. What actually gates this leg is the routing
+	// token, and then the credentials the guest minted and verifies below.
+	btls := tls.Client(nc, &tls.Config{InsecureSkipVerify: true})
+	if err := btls.HandshakeContext(context.Background()); err != nil {
+		return nil, 0, fmt.Errorf("backend tls handshake: %w", err)
+	}
+	if err := rdp.ReadRDSTLSCapabilities(btls); err != nil {
+		return nil, 0, fmt.Errorf("backend rdstls capabilities: %w", err)
+	}
+	if _, err := btls.Write(auth.Raw); err != nil {
+		return nil, 0, fmt.Errorf("backend rdstls authentication request: %w", err)
+	}
+	code, err := rdp.ReadRDSTLSAuthResponse(btls)
+	if err != nil {
+		return nil, 0, fmt.Errorf("backend rdstls authentication response: %w", err)
+	}
+	if code != rdp.RDSTLSSuccess {
+		return nil, code, fmt.Errorf("backend refused the handover credentials (0x%08x)", code)
+	}
+	log.Debug("rdp handover backend authenticated", "target", target)
+
+	_ = nc.SetDeadline(time.Time{})
+	ok = true
+	return btls, rdp.RDSTLSSuccess, nil
 }
 
 // rdpDumpDir enables a capture of the post-NLA stream when it exists. Creating
