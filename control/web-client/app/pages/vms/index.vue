@@ -378,7 +378,6 @@ async function openCreate() {
   await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
   if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
   form.kernel_id = kernels.value[0]?.id ?? ''
-  form.osimage_id = osImages.value[0]?.id ?? ''
 }
 
 function copyable(v: VM) {
@@ -403,7 +402,6 @@ async function openCopy(v: VM) {
   createOpen.value = true
   await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
   form.kernel_id = kernels.value[0]?.id ?? ''
-  form.osimage_id = osImages.value[0]?.id ?? ''
   if (hosts.value.some(h => h.id === v.client_id)) form.client_id = v.client_id
   else if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
 }
@@ -647,6 +645,61 @@ async function confirmDelete() {
                 </p>
               </div>
 
+              <div class="space-y-2">
+                <Label for="vm-osimage">OS image</Label>
+                <Popover v-model:open="osImageOpen">
+                  <PopoverTrigger as-child>
+                    <Button
+                      id="vm-osimage"
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      :aria-expanded="osImageOpen"
+                      class="w-full justify-between font-mono text-xs font-normal"
+                      :disabled="!osImages.length"
+                    >
+                      <span class="truncate">
+                        {{ selectedOSImage?.name ?? (osImages.length ? 'Choose an OS image' : 'No OS images available') }}
+                      </span>
+                      <ChevronsUpDown class="size-4 shrink-0 opacity-50" aria-hidden="true" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent class="w-(--reka-popover-trigger-width) p-0">
+                    <Command>
+                      <CommandInput placeholder="Search OS images…" />
+                      <CommandList>
+                        <CommandEmpty>No OS image matches that.</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem
+                            v-for="o in osImages"
+                            :key="o.id"
+                            :value="o.name"
+                            class="gap-2"
+                            @select="pickOSImage(o.id)"
+                          >
+                            <Check
+                              class="size-4 shrink-0"
+                              :class="o.id === form.osimage_id ? 'opacity-100' : 'opacity-0'"
+                              aria-hidden="true"
+                            />
+                            <span class="truncate font-mono text-xs">{{ o.name }}</span>
+                            <span class="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                              {{ fmtBytes(o.size_bytes) }}
+                            </span>
+                          </CommandItem>
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+                <p v-if="selectedOSImage?.description" class="text-xs text-muted-foreground">
+                  {{ selectedOSImage.description }}
+                </p>
+                <p v-else-if="!osImages.length" class="text-xs text-muted-foreground">
+                  {{ osImagesError ?? 'No OS images have been uploaded yet. Ask an admin to add one.' }}
+                </p>
+              </div>
+
               <div class="grid gap-4 sm:grid-cols-2">
                 <div class="space-y-2">
                   <Label for="vm-default-port">Default port</Label>
@@ -770,61 +823,6 @@ async function confirmDelete() {
                 </p>
                 <p v-else-if="!kernels.length" class="text-xs text-muted-foreground">
                   {{ kernelsError ?? 'No kernels have been uploaded yet. Ask an admin to add one.' }}
-                </p>
-              </div>
-
-              <div class="space-y-2">
-                <Label for="vm-osimage">OS image</Label>
-                <Popover v-model:open="osImageOpen">
-                  <PopoverTrigger as-child>
-                    <Button
-                      id="vm-osimage"
-                      type="button"
-                      variant="outline"
-                      role="combobox"
-                      :aria-expanded="osImageOpen"
-                      class="w-full justify-between font-mono text-xs font-normal"
-                      :disabled="!osImages.length"
-                    >
-                      <span class="truncate">
-                        {{ selectedOSImage?.name ?? (osImages.length ? 'Choose an OS image' : 'No OS images available') }}
-                      </span>
-                      <ChevronsUpDown class="size-4 shrink-0 opacity-50" aria-hidden="true" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent class="w-(--reka-popover-trigger-width) p-0">
-                    <Command>
-                      <CommandInput placeholder="Search OS images…" />
-                      <CommandList>
-                        <CommandEmpty>No OS image matches that.</CommandEmpty>
-                        <CommandGroup>
-                          <CommandItem
-                            v-for="o in osImages"
-                            :key="o.id"
-                            :value="o.name"
-                            class="gap-2"
-                            @select="pickOSImage(o.id)"
-                          >
-                            <Check
-                              class="size-4 shrink-0"
-                              :class="o.id === form.osimage_id ? 'opacity-100' : 'opacity-0'"
-                              aria-hidden="true"
-                            />
-                            <span class="truncate font-mono text-xs">{{ o.name }}</span>
-                            <span class="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
-                              {{ fmtBytes(o.size_bytes) }}
-                            </span>
-                          </CommandItem>
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
-                <p v-if="selectedOSImage?.description" class="text-xs text-muted-foreground">
-                  {{ selectedOSImage.description }}
-                </p>
-                <p v-else-if="!osImages.length" class="text-xs text-muted-foreground">
-                  {{ osImagesError ?? 'No OS images have been uploaded yet. Ask an admin to add one.' }}
                 </p>
               </div>
 
