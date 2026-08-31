@@ -1,6 +1,6 @@
 -- name: CreateVM :one
-INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports, default_user)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 RETURNING *;
 
 -- name: MarkVMRunning :exec
@@ -111,7 +111,12 @@ WHERE created_by = $1
   AND status IN ('pending', 'running', 'stopped');
 
 -- name: ListProxySSHUsersByClient :many
-SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
+-- session_user is the account a session lands in: this vm's own override if it
+-- has one, otherwise the user its os image declared. The image user is read from
+-- the spec rather than the osimages row because the spec is the vm's own copy, so
+-- editing the image afterwards does not move a running vm to a different account.
+SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key,
+       COALESCE(NULLIF(v.default_user, ''), v.spec->'image'->>'user', '')::text AS session_user
 FROM vms v
 JOIN users u ON u.id = v.created_by
 WHERE v.client_id = $1
@@ -130,7 +135,8 @@ ORDER BY v.created_at, v.vm_id;
 
 -- name: ListProxyHTTPRoutesByClient :many
 SELECT v.name AS vm_name, v.ip AS vm_ip, v.vm_id AS host_vm_id,
-       v.default_port, v.public_ports, d.tld AS domain_tld
+       v.default_port, v.public_ports, d.tld AS domain_tld,
+       COALESCE(NULLIF(v.default_user, ''), v.spec->'image'->>'user', '')::text AS session_user
 FROM vms v
 JOIN clients a ON a.id = v.client_id
 JOIN domains d ON d.id = a.domain_id
@@ -145,6 +151,15 @@ SET default_port = $3,
     public_ports = $4,
     updated_at   = now()
 WHERE id = $1 AND created_by = $2
+RETURNING *;
+
+-- name: UpdateVMDefaultUserForOwner :one
+-- An empty default_user means "whatever the os image declared", which is how a
+-- vm starts out and how it goes back to following its image.
+UPDATE vms
+SET default_user = sqlc.arg(default_user),
+    updated_at   = now()
+WHERE id = sqlc.arg(id) AND created_by = sqlc.arg(created_by)
 RETURNING *;
 
 -- name: DeleteVM :exec

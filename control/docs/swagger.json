@@ -527,6 +527,14 @@
                 },
                 "type": "object"
             },
+            "main.updateVMDefaultUserReq": {
+                "properties": {
+                    "default_user": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.updateVMPortsReq": {
                 "properties": {
                     "default_port": {
@@ -611,6 +619,10 @@
                     },
                     "default_port": {
                         "type": "integer"
+                    },
+                    "default_user": {
+                        "description": "DefaultUser is the account a session lands in, empty when the VM follows\nwhatever its OS image declared.",
+                        "type": "string"
                     },
                     "desktop_url": {
                         "type": "string"
@@ -3400,6 +3412,94 @@
                 "summary": "Edit an allowed destination",
                 "tags": [
                     "egress"
+                ]
+            }
+        },
+        "/vms/{id}/user": {
+            "put": {
+                "description": "default_user is the account an SSH or console session logs into. Send an empty string to follow whatever the OS image declared, which is the default. It does not change the user the VM's workload runs as: that is fixed when the VM is created.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.updateVMDefaultUserReq",
+                                        "summary": "body",
+                                        "description": "user"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "user",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.vmDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "not a usable login name"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Set the account a VM's sessions land in",
+                "tags": [
+                    "vms"
                 ]
             }
         },

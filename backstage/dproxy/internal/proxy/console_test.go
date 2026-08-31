@@ -194,3 +194,30 @@ func TestConsoleConfigValidation(t *testing.T) {
 		t.Errorf("console together with the https ingress: %v", err)
 	}
 }
+
+func TestSessionRemoteUser(t *testing.T) {
+	console, ok := consoleKind(&ConsoleConfig{})
+	if !ok {
+		t.Fatal("consoleKind refused an empty config")
+	}
+	desktop, ok := desktopKind(&DesktopConfig{RemoteUser: "ubuntu", RemotePassword: "ubuntu"})
+	if !ok {
+		t.Fatal("desktopKind refused a config")
+	}
+
+	// A console lands in the VM's own account.
+	if got := sessionRemoteUser(console, HTTPHost{RemoteUser: "appuser"}); got != "appuser" {
+		t.Errorf("console remote user = %q, want appuser", got)
+	}
+	// With none named it keeps the host-wide default, so an older config and an
+	// image that declares no user are both unaffected.
+	if got := sessionRemoteUser(console, HTTPHost{}); got != defaultConsoleRemoteUser {
+		t.Errorf("console remote user = %q, want %q", got, defaultConsoleRemoteUser)
+	}
+	// A desktop must not be moved: its user and password are one pair belonging
+	// to the desktop image's own account, so overriding the user alone would
+	// present the wrong password.
+	if got := sessionRemoteUser(desktop, HTTPHost{RemoteUser: "appuser"}); got != "ubuntu" {
+		t.Errorf("desktop remote user = %q, want ubuntu: rdp credentials cannot be split", got)
+	}
+}

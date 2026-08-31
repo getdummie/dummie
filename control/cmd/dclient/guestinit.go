@@ -153,6 +153,15 @@ func injectImageConfig(root string, cfg *proto.ImageConfig) error {
 	return nil
 }
 
+// imageConfigUser is the image's user, or empty when the image declares none or
+// carries no config at all.
+func imageConfigUser(cfg *proto.ImageConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.User
+}
+
 func imageConfigJSON(cfg *proto.ImageConfig) []byte {
 	b, err := json.Marshal(cfg)
 	if err != nil {

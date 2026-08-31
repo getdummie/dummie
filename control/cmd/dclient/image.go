@@ -172,7 +172,7 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, i
 	}
 
 	if pubKey != "" {
-		if err := injectAuthorizedKey(work, pubKey); err != nil {
+		if err := injectAuthorizedKey(work, pubKey, imageConfigUser(image)); err != nil {
 			return "", false, fmt.Errorf("could not install the dpipe key into the rootfs: %w", err)
 		}
 	}

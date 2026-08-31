@@ -66,9 +66,26 @@ var authKeyAccounts = []string{"root", "ubuntu"}
 
 func authKeyRecipe() string { return "authkeys=" + strings.Join(authKeyAccounts, ",") }
 
-func authKeyTargets(root string) ([]passwdUser, error) {
+// authKeyAccountsFor adds the image's own user to the list. dproxy routes a
+// session to that account, and an image that brings its own sshd checks the
+// account's own authorized_keys -- so without the key there, ssh to a guest
+// running as anyone but root would be refused.
+func authKeyAccountsFor(imageUser string) []string {
+	name, _, _ := strings.Cut(strings.TrimSpace(imageUser), ":")
+	if name == "" {
+		return authKeyAccounts
+	}
+	for _, a := range authKeyAccounts {
+		if a == name {
+			return authKeyAccounts
+		}
+	}
+	return append(append([]string{}, authKeyAccounts...), name)
+}
+
+func authKeyTargets(root string, accounts []string) ([]passwdUser, error) {
 	var out []passwdUser
-	for _, name := range authKeyAccounts {
+	for _, name := range accounts {
 		u, ok := lookupPasswdUser(root, name)
 		if !ok {
 			continue
@@ -88,7 +105,7 @@ func authKeyTargets(root string) ([]passwdUser, error) {
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("none of %s is a usable account in the image's /etc/passwd",
-			strings.Join(authKeyAccounts, ", "))
+			strings.Join(accounts, ", "))
 	}
 	return out, nil
 }
@@ -105,12 +122,12 @@ func imagePath(root, guestPath string) (string, error) {
 	return p, nil
 }
 
-func injectAuthorizedKey(root, key string) error {
+func injectAuthorizedKey(root, key, imageUser string) error {
 	if os.Geteuid() != 0 {
 		return errors.New("installing the dpipe key needs root, so that authorized_keys ends up owned by the guest user")
 	}
 
-	targets, err := authKeyTargets(root)
+	targets, err := authKeyTargets(root, authKeyAccountsFor(imageUser))
 	if err != nil {
 		return err
 	}

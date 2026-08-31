@@ -47,9 +47,9 @@ func (q *Queries) CountVMsByOwner(ctx context.Context, createdBy pgtype.UUID) (i
 }
 
 const createVM = `-- name: CreateVM :one
-INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce
+INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports, default_user)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user
 `
 
 type CreateVMParams struct {
@@ -63,6 +63,7 @@ type CreateVMParams struct {
 	CreatedBy   pgtype.UUID
 	DefaultPort int32
 	PublicPorts []int32
+	DefaultUser string
 }
 
 func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) {
@@ -77,6 +78,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		arg.CreatedBy,
 		arg.DefaultPort,
 		arg.PublicPorts,
+		arg.DefaultUser,
 	)
 	var i Vm
 	err := row.Scan(
@@ -100,6 +102,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		&i.DefaultPort,
 		&i.PublicPorts,
 		&i.RdpNonce,
+		&i.DefaultUser,
 	)
 	return i, err
 }
@@ -158,7 +161,7 @@ func (q *Queries) FailPendingVMsForClient(ctx context.Context, arg FailPendingVM
 }
 
 const getVM = `-- name: GetVM :one
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user FROM vms
 WHERE id = $1
 `
 
@@ -186,12 +189,13 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.DefaultPort,
 		&i.PublicPorts,
 		&i.RdpNonce,
+		&i.DefaultUser,
 	)
 	return i, err
 }
 
 const getVMForOwner = `-- name: GetVMForOwner :one
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user FROM vms
 WHERE id = $1 AND created_by = $2
 `
 
@@ -224,6 +228,7 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 		&i.DefaultPort,
 		&i.PublicPorts,
 		&i.RdpNonce,
+		&i.DefaultUser,
 	)
 	return i, err
 }
@@ -260,7 +265,8 @@ func (q *Queries) GetVMForOwnerByHostname(ctx context.Context, arg GetVMForOwner
 
 const listProxyHTTPRoutesByClient = `-- name: ListProxyHTTPRoutesByClient :many
 SELECT v.name AS vm_name, v.ip AS vm_ip, v.vm_id AS host_vm_id,
-       v.default_port, v.public_ports, d.tld AS domain_tld
+       v.default_port, v.public_ports, d.tld AS domain_tld,
+       COALESCE(NULLIF(v.default_user, ''), v.spec->'image'->>'user', '')::text AS session_user
 FROM vms v
 JOIN clients a ON a.id = v.client_id
 JOIN domains d ON d.id = a.domain_id
@@ -277,6 +283,7 @@ type ListProxyHTTPRoutesByClientRow struct {
 	DefaultPort int32
 	PublicPorts []int32
 	DomainTLD   string
+	SessionUser string
 }
 
 func (q *Queries) ListProxyHTTPRoutesByClient(ctx context.Context, clientID pgtype.UUID) ([]ListProxyHTTPRoutesByClientRow, error) {
@@ -295,6 +302,7 @@ func (q *Queries) ListProxyHTTPRoutesByClient(ctx context.Context, clientID pgty
 			&i.DefaultPort,
 			&i.PublicPorts,
 			&i.DomainTLD,
+			&i.SessionUser,
 		); err != nil {
 			return nil, err
 		}
@@ -350,7 +358,8 @@ func (q *Queries) ListProxyRDPUsersByClient(ctx context.Context, clientID pgtype
 }
 
 const listProxySSHUsersByClient = `-- name: ListProxySSHUsersByClient :many
-SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key
+SELECT v.ip AS vm_ip, v.vm_id AS host_vm_id, v.name AS vm_name, u.public_key,
+       COALESCE(NULLIF(v.default_user, ''), v.spec->'image'->>'user', '')::text AS session_user
 FROM vms v
 JOIN users u ON u.id = v.created_by
 WHERE v.client_id = $1
@@ -361,12 +370,17 @@ ORDER BY v.created_at, v.vm_id
 `
 
 type ListProxySSHUsersByClientRow struct {
-	VMIP      string
-	HostVMID  string
-	VMName    string
-	PublicKey string
+	VMIP        string
+	HostVMID    string
+	VMName      string
+	PublicKey   string
+	SessionUser string
 }
 
+// session_user is the account a session lands in: this vm's own override if it
+// has one, otherwise the user its os image declared. The image user is read from
+// the spec rather than the osimages row because the spec is the vm's own copy, so
+// editing the image afterwards does not move a running vm to a different account.
 func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype.UUID) ([]ListProxySSHUsersByClientRow, error) {
 	rows, err := q.db.Query(ctx, listProxySSHUsersByClient, clientID)
 	if err != nil {
@@ -381,6 +395,7 @@ func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype
 			&i.HostVMID,
 			&i.VMName,
 			&i.PublicKey,
+			&i.SessionUser,
 		); err != nil {
 			return nil, err
 		}
@@ -393,7 +408,7 @@ func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype
 }
 
 const listVMs = `-- name: ListVMs :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -433,6 +448,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 			&i.DefaultPort,
 			&i.PublicPorts,
 			&i.RdpNonce,
+			&i.DefaultUser,
 		); err != nil {
 			return nil, err
 		}
@@ -445,7 +461,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 }
 
 const listVMsByClient = `-- name: ListVMsByClient :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user FROM vms
 WHERE client_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -487,6 +503,7 @@ func (q *Queries) ListVMsByClient(ctx context.Context, arg ListVMsByClientParams
 			&i.DefaultPort,
 			&i.PublicPorts,
 			&i.RdpNonce,
+			&i.DefaultUser,
 		); err != nil {
 			return nil, err
 		}
@@ -499,7 +516,7 @@ func (q *Queries) ListVMsByClient(ctx context.Context, arg ListVMsByClientParams
 }
 
 const listVMsByOwner = `-- name: ListVMsByOwner :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user FROM vms
 WHERE created_by = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -541,6 +558,7 @@ func (q *Queries) ListVMsByOwner(ctx context.Context, arg ListVMsByOwnerParams) 
 			&i.DefaultPort,
 			&i.PublicPorts,
 			&i.RdpNonce,
+			&i.DefaultUser,
 		); err != nil {
 			return nil, err
 		}
@@ -627,7 +645,7 @@ UPDATE vms
 SET rdp_nonce  = gen_random_uuid()::text,
     updated_at = now()
 WHERE id = $1 AND created_by = $2
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user
 `
 
 type RotateVMRDPNonceForOwnerParams struct {
@@ -659,6 +677,7 @@ func (q *Queries) RotateVMRDPNonceForOwner(ctx context.Context, arg RotateVMRDPN
 		&i.DefaultPort,
 		&i.PublicPorts,
 		&i.RdpNonce,
+		&i.DefaultUser,
 	)
 	return i, err
 }
@@ -717,13 +736,58 @@ func (q *Queries) SumActiveVMUsageByOwner(ctx context.Context, createdBy pgtype.
 	return i, err
 }
 
+const updateVMDefaultUserForOwner = `-- name: UpdateVMDefaultUserForOwner :one
+UPDATE vms
+SET default_user = $1,
+    updated_at   = now()
+WHERE id = $2 AND created_by = $3
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user
+`
+
+type UpdateVMDefaultUserForOwnerParams struct {
+	DefaultUser string
+	ID          pgtype.UUID
+	CreatedBy   pgtype.UUID
+}
+
+// An empty default_user means "whatever the os image declared", which is how a
+// vm starts out and how it goes back to following its image.
+func (q *Queries) UpdateVMDefaultUserForOwner(ctx context.Context, arg UpdateVMDefaultUserForOwnerParams) (Vm, error) {
+	row := q.db.QueryRow(ctx, updateVMDefaultUserForOwner, arg.DefaultUser, arg.ID, arg.CreatedBy)
+	var i Vm
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.VMID,
+		&i.Name,
+		&i.Status,
+		&i.Boot,
+		&i.CPUs,
+		&i.MemoryMiB,
+		&i.IP,
+		&i.Spec,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.ReportedAt,
+		&i.CreatedBy,
+		&i.DiskMiB,
+		&i.DefaultPort,
+		&i.PublicPorts,
+		&i.RdpNonce,
+		&i.DefaultUser,
+	)
+	return i, err
+}
+
 const updateVMPortsForOwner = `-- name: UpdateVMPortsForOwner :one
 UPDATE vms
 SET default_port = $3,
     public_ports = $4,
     updated_at   = now()
 WHERE id = $1 AND created_by = $2
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user
 `
 
 type UpdateVMPortsForOwnerParams struct {
@@ -762,6 +826,7 @@ func (q *Queries) UpdateVMPortsForOwner(ctx context.Context, arg UpdateVMPortsFo
 		&i.DefaultPort,
 		&i.PublicPorts,
 		&i.RdpNonce,
+		&i.DefaultUser,
 	)
 	return i, err
 }

@@ -32,6 +32,12 @@ type sessionKind struct {
 	remotePassword string
 	protocol       string
 	acceptType     string
+
+	// perVMRemoteUser lets a VM's own entry name the account to land in. Only
+	// the console sets it: a desktop authenticates to the guest with a password
+	// that belongs to the desktop image's own account, so its user and password
+	// have to stay one pair and cannot be overridden apart.
+	perVMRemoteUser bool
 }
 
 func (p *Proxy) consoleKind() (sessionKind, bool) {
@@ -63,13 +69,14 @@ func consoleKind(c *ConsoleConfig) (sessionKind, bool) {
 		return sessionKind{}, false
 	}
 	return sessionKind{
-		name:       "console",
-		label:      c.label(),
-		audPrefix:  consoleAudPrefix,
-		port:       consoleSSHPort,
-		remoteUser: c.remoteUser(),
-		protocol:   control.ProtoConsole,
-		acceptType: control.TypeConsoleAccept,
+		name:            "console",
+		label:           c.label(),
+		audPrefix:       consoleAudPrefix,
+		port:            consoleSSHPort,
+		remoteUser:      c.remoteUser(),
+		protocol:        control.ProtoConsole,
+		acceptType:      control.TypeConsoleAccept,
+		perVMRemoteUser: true,
 	}, true
 }
 
@@ -122,6 +129,18 @@ type sessionAuth struct {
 	wsKey          string
 }
 
+// sessionRemoteUser picks the account a session lands in. The VM's own entry
+// wins over the host-wide default: a guest runs its workload as the user its
+// image declared, and a session is only useful if it lands in the same place. An
+// entry naming none keeps the default, so a config written before this field and
+// an image that declares no user both behave as they did.
+func sessionRemoteUser(k sessionKind, entry HTTPHost) string {
+	if k.perVMRemoteUser && entry.RemoteUser != "" {
+		return entry.RemoteUser
+	}
+	return k.remoteUser
+}
+
 func authorizeSession(log *slog.Logger, router *Router, a *Authenticator, k sessionKind, host, vmHost string, req *http.Request) sessionAuth {
 	if a == nil {
 		log.Info(k.name + ": not configured")
@@ -148,7 +167,7 @@ func authorizeSession(log *slog.Logger, router *Router, a *Authenticator, k sess
 	}
 	return sessionAuth{
 		target:         net.JoinHostPort(entry.Host, strconv.Itoa(k.port)),
-		remoteUser:     k.remoteUser,
+		remoteUser:     sessionRemoteUser(k, entry),
 		remotePassword: k.remotePassword,
 		sub:            sub,
 		wsKey:          wsKey,

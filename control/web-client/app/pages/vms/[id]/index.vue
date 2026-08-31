@@ -58,6 +58,7 @@ interface VM {
   name: string
   default_port: number
   public_ports: number[]
+  default_user: string
   status: 'pending' | 'running' | 'stopped' | 'failed' | 'gone'
   boot: string
   cpus: number
@@ -509,6 +510,44 @@ async function savePorts() {
   }
   finally {
     savingPorts.value = false
+  }
+}
+
+const userOpen = ref(false)
+const savingUser = ref(false)
+const userError = ref<string | null>(null)
+const userForm = reactive({ default_user: '' })
+
+function openUser() {
+  userForm.default_user = vm.value?.default_user ?? ''
+  userError.value = null
+  userOpen.value = true
+}
+
+async function saveUser() {
+  const user = userForm.default_user.trim()
+  if (user !== '' && !/^[a-zA-Z0-9._][a-zA-Z0-9._-]*$/.test(user)) {
+    userError.value = 'A login name can hold letters, digits, dots, underscores and dashes, and cannot start with a dash.'
+    return
+  }
+
+  savingUser.value = true
+  userError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/user`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ default_user: user }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    vm.value = await res.json()
+    userOpen.value = false
+  }
+  catch (e) {
+    userError.value = e instanceof Error ? e.message : 'Could not save the default user'
+  }
+  finally {
+    savingUser.value = false
   }
 }
 
@@ -1047,10 +1086,10 @@ async function removeDomain() {
       <section aria-labelledby="ports-heading" class="mt-4 rounded-lg border border-border p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 id="ports-heading" class="text-sm font-semibold">Ports</h2>
+            <h2 id="ports-heading" class="text-sm font-semibold">Access</h2>
             <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-              Which ports inside this VM are reachable, and where a request goes when it does not pick
-              one. Changes reach the host straight away.
+              Which ports inside this VM are reachable, where a request goes when it does not pick
+              one, and which account a session logs into. Changes reach the host straight away.
             </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
@@ -1136,6 +1175,65 @@ async function removeDomain() {
             <dt class="eyebrow text-muted-foreground">Public ports</dt>
             <dd class="mt-1 font-mono text-sm">
               {{ vm.public_ports?.length ? vm.public_ports.join(', ') : 'none' }}
+            </dd>
+          </div>
+          <div class="sm:col-span-2">
+            <dt class="eyebrow flex items-center gap-2 text-muted-foreground">
+              Session user
+              <Dialog v-model:open="userOpen">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-6"
+                  aria-label="Edit the session user"
+                  @click="openUser"
+                >
+                  <Pencil class="size-3.5" aria-hidden="true" />
+                </Button>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Edit session user</DialogTitle>
+                    <DialogDescription>
+                      The account an SSH or console session logs into on
+                      <span class="font-mono text-foreground">{{ vm.name }}</span>. Leave it blank to
+                      follow whatever the OS image declared.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form class="space-y-4" :aria-busy="savingUser" @submit.prevent="saveUser">
+                    <div class="space-y-2">
+                      <Label for="vm-user">Session user <span class="text-muted-foreground">(optional)</span></Label>
+                      <Input
+                        id="vm-user"
+                        v-model="userForm.default_user"
+                        autocomplete="off"
+                        spellcheck="false"
+                        class="font-mono text-sm"
+                        placeholder="follow the OS image"
+                        aria-describedby="vm-user-hint"
+                      />
+                      <p id="vm-user-hint" class="text-xs text-muted-foreground">
+                        The account has to already exist inside the VM. This changes where a session
+                        lands, and takes effect on the next one — it does not change the user this
+                        VM's workload runs as, which is fixed when the VM is created.
+                      </p>
+                    </div>
+
+                    <FormError id="vm-user-error" :message="userError" />
+
+                    <DialogFooter>
+                      <DialogClose as-child>
+                        <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                      </DialogClose>
+                      <Button type="submit" class="font-mono text-xs" :disabled="savingUser">
+                        {{ savingUser ? 'Saving…' : 'Save' }}
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            </dt>
+            <dd class="mt-1 font-mono text-sm">
+              {{ vm.default_user || 'from the OS image' }}
             </dd>
           </div>
         </dl>

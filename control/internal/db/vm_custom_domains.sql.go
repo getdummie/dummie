@@ -245,7 +245,8 @@ func (q *Queries) ListCustomDomainCertsByClient(ctx context.Context, clientID pg
 
 const listCustomDomainRoutesByClient = `-- name: ListCustomDomainRoutesByClient :many
 SELECT cd.domain, v.name AS vm_name, v.ip AS vm_ip,
-       v.default_port, v.public_ports
+       v.default_port, v.public_ports,
+       COALESCE(NULLIF(v.default_user, ''), v.spec->'image'->>'user', '')::text AS session_user
 FROM vm_custom_domains cd
 JOIN vms v ON v.id = cd.vm_id
 WHERE v.client_id = $1
@@ -261,6 +262,7 @@ type ListCustomDomainRoutesByClientRow struct {
 	VMIP        string
 	DefaultPort int32
 	PublicPorts []int32
+	SessionUser string
 }
 
 func (q *Queries) ListCustomDomainRoutesByClient(ctx context.Context, clientID pgtype.UUID) ([]ListCustomDomainRoutesByClientRow, error) {
@@ -278,6 +280,7 @@ func (q *Queries) ListCustomDomainRoutesByClient(ctx context.Context, clientID p
 			&i.VMIP,
 			&i.DefaultPort,
 			&i.PublicPorts,
+			&i.SessionUser,
 		); err != nil {
 			return nil, err
 		}

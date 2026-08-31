@@ -54,7 +54,7 @@ func TestAuthKeyTargets(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			got, err := authKeyTargets(root)
+			got, err := authKeyTargets(root, authKeyAccounts)
 			if err != nil {
 				t.Fatalf("authKeyTargets: %v", err)
 			}
@@ -76,7 +76,7 @@ func TestAuthKeyTargets(t *testing.T) {
 }
 
 func TestAuthKeyTargetsNeedAPasswd(t *testing.T) {
-	if _, err := authKeyTargets(t.TempDir()); err == nil {
+	if _, err := authKeyTargets(t.TempDir(), authKeyAccounts); err == nil {
 		t.Error("expected an error for an image with no /etc/passwd")
 	}
 }
@@ -142,10 +142,10 @@ func TestInjectAuthorizedKeyAppends(t *testing.T) {
 	}
 
 	const key = "ssh-ed25519 AAAA dpipe"
-	if err := injectAuthorizedKey(root, key); err != nil {
+	if err := injectAuthorizedKey(root, key, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := injectAuthorizedKey(root, key); err != nil {
+	if err := injectAuthorizedKey(root, key, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -175,5 +175,22 @@ func TestInjectAuthorizedKeyAppends(t *testing.T) {
 	}
 	if n := strings.Count(string(rb), key); n != 1 {
 		t.Errorf("the dpipe key appears %d times in root's authorized_keys, want 1:\n%s", n, rb)
+	}
+}
+
+func TestAuthKeyAccountsForAddsTheImageUser(t *testing.T) {
+	// dproxy routes a session to the image's user, and an image with its own
+	// sshd checks that account's authorized_keys.
+	got := authKeyAccountsFor("appuser")
+	if len(got) != len(authKeyAccounts)+1 || got[len(got)-1] != "appuser" {
+		t.Errorf("authKeyAccountsFor(appuser) = %v, want the defaults plus appuser", got)
+	}
+	if got := authKeyAccountsFor("appuser:appgroup"); got[len(got)-1] != "appuser" {
+		t.Errorf("the group was not stripped: %v", got)
+	}
+	for _, same := range []string{"", "root", "ubuntu"} {
+		if got := authKeyAccountsFor(same); len(got) != len(authKeyAccounts) {
+			t.Errorf("authKeyAccountsFor(%q) = %v, want no duplicate", same, got)
+		}
 	}
 }

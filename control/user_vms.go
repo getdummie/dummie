@@ -607,6 +607,11 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			CreatedBy:   owner,
 			DefaultPort: defaultPort,
 			PublicPorts: publicPorts,
+			// Copied rather than left to fall back, so the vm shows the account
+			// its sessions land in by name and the owner can edit it from there.
+			// Anything that cannot be a login name is left empty and resolves to
+			// root, which is also what the check constraint on the column allows.
+			DefaultUser: loginName(osImage.ConfigUser),
 		})
 		if err != nil {
 			return err
@@ -937,6 +942,69 @@ func (h *UserHandler) UpdatePorts(c *echo.Context) error {
 			return echo.NewHTTPError(http.StatusNotFound, "no such vm")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the ports")
+	}
+
+	pushProxyConfig(ctx, h.q, h.hub, h.proxy, vm.ClientID)
+	d := toVMDTO(row)
+	d.URL = h.vmURL(ctx, row)
+	d.ConsoleURL = h.consoleURL(ctx, row)
+	d.DesktopURL = h.desktopURL(ctx, row)
+	return c.JSON(http.StatusOK, d)
+}
+
+type updateVMDefaultUserReq struct {
+	DefaultUser string `json:"default_user"`
+}
+
+// @Summary     Set the account a VM's sessions land in
+// @Description default_user is the account an SSH or console session logs into. Send an empty string to follow whatever the OS image declared, which is the default. It does not change the user the VM's workload runs as: that is fixed when the VM is created.
+// @Tags        vms
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id   path string true "vm id" format(uuid)
+// @Param       body body updateVMDefaultUserReq true "user"
+// @Success     200 {object} vmDTO
+// @Failure     400 {object} apiError "not a usable login name"
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Router      /vms/{id}/user [put]
+func (h *UserHandler) UpdateDefaultUser(c *echo.Context) error {
+	vm, err := h.ownedVM(c)
+	if err != nil {
+		return err
+	}
+
+	var req updateVMDefaultUserReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	user := strings.TrimSpace(req.DefaultUser)
+	// A group is not part of a login name, and a numeric uid names no account in
+	// the guest's /etc/passwd, which is the only place the guest init looks.
+	if user != "" && !posixLoginName.MatchString(user) {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			"default_user must be a login name: letters, digits, dot, underscore and dash, not starting with a dash")
+	}
+	if len(user) > 32 {
+		return echo.NewHTTPError(http.StatusBadRequest, "default_user is too long")
+	}
+
+	owner, err := callerID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
+	}
+	ctx := c.Request().Context()
+	row, err := h.q.UpdateVMDefaultUserForOwner(ctx, db.UpdateVMDefaultUserForOwnerParams{
+		ID:          vm.ID,
+		CreatedBy:   owner,
+		DefaultUser: user,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "no such vm")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the default user")
 	}
 
 	pushProxyConfig(ctx, h.q, h.hub, h.proxy, vm.ClientID)

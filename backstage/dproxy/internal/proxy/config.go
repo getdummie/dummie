@@ -87,6 +87,12 @@ type HTTPHost struct {
 	Host                 string `yaml:"host"`
 	UnauthenticatedPorts []int  `yaml:"unauthenticated_ports"`
 	DefaultPort          int    `yaml:"default_port"`
+
+	// RemoteUser is the account a console or desktop session lands in on this
+	// VM, which is the user its OS image declared. It is here rather than in the
+	// console block because that block is one setting for the whole host, and
+	// this varies per VM. Empty falls back to the host-wide default.
+	RemoteUser string `yaml:"remote_user"`
 }
 
 func (h HTTPHost) Target() string {

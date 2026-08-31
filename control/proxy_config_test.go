@@ -37,6 +37,7 @@ type parsedProxyConfig struct {
 			Host string `yaml:"host"`
 			UnauthPorts []int `yaml:"unauthenticated_ports"`
 			DefaultPort int   `yaml:"default_port"`
+			RemoteUser  string `yaml:"remote_user"`
 		} `yaml:"hosts"`
 		Default string `yaml:"default"`
 	} `yaml:"http"`
@@ -500,5 +501,94 @@ func TestGenerateProxyConfigAlwaysPublishesTheACMEChallenge(t *testing.T) {
 	if got.ACME.ChallengeTarget != proxyACMEChallengeTarget {
 		t.Errorf("acme.challenge_target = %q, want %q: a first order has to be answerable",
 			got.ACME.ChallengeTarget, proxyACMEChallengeTarget)
+	}
+}
+
+func TestGenerateProxyConfigUsesTheSessionUser(t *testing.T) {
+	rows := []db.ListProxySSHUsersByClientRow{
+		{VMIP: "10.64.0.2", HostVMID: "a", VMName: "marimo", PublicKey: "ssh-ed25519 AAAAC3Nz one",
+			SessionUser: "appuser"},
+		{VMIP: "10.64.0.3", HostVMID: "b", VMName: "plain", PublicKey: "ssh-ed25519 AAAAC3Ny two"},
+		{VMIP: "10.64.0.4", HostVMID: "c", VMName: "grouped", PublicKey: "ssh-ed25519 AAAAC3Nx three",
+			SessionUser: "appuser:appgroup"},
+	}
+
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, rows, nil, nil, nil))
+	if len(got.SSH.Users) != 3 {
+		t.Fatalf("got %d users, want 3", len(got.SSH.Users))
+	}
+	for i, want := range []string{"appuser", proxyRemoteUser, "appuser"} {
+		if u := got.SSH.Users[i]; u.RemoteUser != want {
+			t.Errorf("user %d (%s) remote_user is %q, want %q", i, u.VMName, u.RemoteUser, want)
+		}
+	}
+}
+
+func TestGuestLoginName(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", proxyRemoteUser},
+		{"root", "root"},
+		{"appuser", "appuser"},
+		{"appuser:appgroup", "appuser"},
+		{"app.user_1-x", "app.user_1-x"},
+		// dinit matches /etc/passwd by name, so a uid names no account there.
+		{"1000", proxyRemoteUser},
+		{"1000:1000", proxyRemoteUser},
+		// Nothing that could break out of the yaml or the login name.
+		{"bad user", proxyRemoteUser},
+		{"-flag", proxyRemoteUser},
+		{"a\nb", proxyRemoteUser},
+		{":appgroup", proxyRemoteUser},
+	} {
+		if got := guestLoginName(tc.in); got != tc.want {
+			t.Errorf("guestLoginName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// The console finds its VM in the http host table, so that is where the account
+// it lands in has to be recorded: the console block itself is one setting for
+// the whole host.
+func TestGenerateProxyConfigPutsTheSessionUserOnHTTPHosts(t *testing.T) {
+	httpRows := []db.ListProxyHTTPRoutesByClientRow{
+		{VMName: "marimo", VMIP: "10.64.0.2", HostVMID: "a", DefaultPort: 8080,
+			DomainTLD: "example.com", SessionUser: "appuser"},
+		{VMName: "plain", VMIP: "10.64.0.3", HostVMID: "b", DefaultPort: 8000,
+			DomainTLD: "example.com"},
+	}
+
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, httpRows, nil, nil))
+
+	if u := got.HTTP.Hosts["marimo.example.com"].RemoteUser; u != "appuser" {
+		t.Errorf("marimo remote_user = %q, want appuser", u)
+	}
+	// An image that names no user keeps root, so the console behaves as before.
+	if u := got.HTTP.Hosts["plain.example.com"].RemoteUser; u != proxyRemoteUser {
+		t.Errorf("plain remote_user = %q, want %q", u, proxyRemoteUser)
+	}
+}
+
+// loginName is what gets copied into vms.default_user at creation, so it must
+// only ever return something the column's check constraint accepts.
+func TestLoginName(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"appuser", "appuser"},
+		{"appuser:appgroup", "appuser"},
+		{"app.user_1-x", "app.user_1-x"},
+		{"", ""},
+		{"1000", ""},
+		{"1000:1000", ""},
+		{"bad user", ""},
+		{"-flag", ""},
+		{"a\nb", ""},
+		{":appgroup", ""},
+	} {
+		got := loginName(tc.in)
+		if got != tc.want {
+			t.Errorf("loginName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+		if got != "" && !posixLoginName.MatchString(got) {
+			t.Errorf("loginName(%q) = %q, which the default_user constraint rejects", tc.in, got)
+		}
 	}
 }

@@ -228,6 +228,7 @@ type Vm struct {
 	DefaultPort int32
 	PublicPorts []int32
 	RdpNonce    string
+	DefaultUser string
 }
 
 type VmCustomDomain struct {

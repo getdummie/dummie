@@ -33,6 +33,10 @@ type vmDTO struct {
 	DefaultPort int32   `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
 
+	// DefaultUser is the account a session lands in, empty when the VM follows
+	// whatever its OS image declared.
+	DefaultUser string `json:"default_user"`
+
 	Spec      json.RawMessage `json:"spec" swaggertype:"object"`
 	LastError string          `json:"last_error"`
 	CreatedAt string          `json:"created_at"`
@@ -65,6 +69,7 @@ func toVMDTO(v db.Vm) vmDTO {
 		IP:          v.IP,
 		DefaultPort: v.DefaultPort,
 		PublicPorts: v.PublicPorts,
+		DefaultUser: v.DefaultUser,
 		Spec:        json.RawMessage(v.Spec),
 		LastError:   v.LastError,
 		CreatedAt:   v.CreatedAt.Time.Format(time.RFC3339),
