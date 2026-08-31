@@ -2,7 +2,7 @@ default: build
 
 # Build the dproxy binary.
 build:
-    go build -o bin/dproxy ./cmd/dproxy
+    go build -o dproxy ./cmd/dproxy
 
 # Unit + integration tests.
 test:

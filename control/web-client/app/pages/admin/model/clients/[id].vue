@@ -56,8 +56,11 @@ interface Client {
   dpipe_download_url: string
   proxy_version: string
   proxy_download_url: string
+  dinit_version: string
+  dinit_download_url: string
   dpipe_installed_version: string
   proxy_installed_version: string
+  dinit_installed_version: string
   metrics: ClientMetrics
 }
 
@@ -229,6 +232,8 @@ const services = reactive({
   dpipe_download_url: '',
   proxy_version: '',
   proxy_download_url: '',
+  dinit_version: '',
+  dinit_download_url: '',
 })
 const savingServices = ref(false)
 const servicesError = ref<string | null>(null)
@@ -244,6 +249,8 @@ function serverServices() {
     dpipe_download_url: c?.dpipe_download_url ?? '',
     proxy_version: c?.proxy_version ?? '',
     proxy_download_url: c?.proxy_download_url ?? '',
+    dinit_version: c?.dinit_version ?? '',
+    dinit_download_url: c?.dinit_download_url ?? '',
   }
 }
 
@@ -531,14 +538,20 @@ async function confirmDelete() {
           a binary that is already there — nothing does that on its own, not a reconnect and not a
           control server deploy. <span class="text-foreground">Upgrade now</span> is what moves it.
         </p>
+        <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
+          dinit is the odd one out: not a service on the host, but the init copied into each rootfs
+          built from an OS image tar, so that an image needs no init, DHCP client or sshd of its own.
+          Moving it rebuilds those images as VMs are created from them.
+        </p>
 
         <form class="mt-4 space-y-4" :aria-busy="savingServices" @submit.prevent="saveServices">
-          <div class="grid gap-4 lg:grid-cols-3">
+          <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <div
               v-for="svc in [
                 { key: 'dclient', label: 'dclient', version: 'dclient_version', url: 'dclient_download_url', running: 'client_version' },
                 { key: 'dpipe', label: 'dpipe', version: 'dpipe_version', url: 'dpipe_download_url', running: 'dpipe_installed_version' },
                 { key: 'dproxy', label: 'dproxy', version: 'proxy_version', url: 'proxy_download_url', running: 'proxy_installed_version' },
+                { key: 'dinit', label: 'dinit', version: 'dinit_version', url: 'dinit_download_url', running: 'dinit_installed_version' },
               ] as const"
               :key="svc.key"
               class="space-y-2 rounded-md border border-border p-3"

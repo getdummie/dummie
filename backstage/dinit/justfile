@@ -1,0 +1,22 @@
+default: build
+
+# Build dinit. Two things are load-bearing, not hygiene:
+#   CGO_ENABLED=0 -- this runs as pid 1 inside an arbitrary guest rootfs, so it
+#     cannot depend on the host's libc. dclient refuses a dynamic build.
+#   -o dinit      -- the module root is the path served to hosts, matching
+#     dproxy/dproxy and dpipe/dpipe.
+build:
+    CGO_ENABLED=0 go build -o dinit ./cmd/dinit
+    file dinit
+
+test:
+    go test ./...
+
+race:
+    go test -race ./...
+
+lint:
+    go vet ./...
+
+clean:
+    rm -f dinit

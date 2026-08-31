@@ -43,6 +43,23 @@ builds:
       - -X main.commit={{ .Commit }}
       - -X main.date={{ .CommitDate }}
 
+  - id: dinit
+    dir: backstage/dinit
+    main: ./cmd/dinit
+    binary: dinit
+    # This binary is copied into a guest rootfs and run as its pid 1, so it must
+    # not depend on any libc: CGO_ENABLED=0 is load-bearing, not hygiene.
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .CommitDate }}
+
   - id: dclient
     dir: control
     main: ./cmd/dclient
@@ -77,6 +94,12 @@ archives:
     formats: [tar.gz]
     files: [none*]
     name_template: "dproxy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: dinit
+    ids: [dinit]
+    formats: [tar.gz]
+    files: [none*]
+    name_template: "dinit_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
   - id: dclient
     ids: [dclient]

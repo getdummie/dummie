@@ -183,7 +183,7 @@ func TestConsoleConfigValidation(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("console with auth: %v", err)
 	}
-	if cfg.Console.remoteUser() != "ubuntu" {
+	if cfg.Console.remoteUser() != "root" {
 		t.Errorf("remoteUser = %q", cfg.Console.remoteUser())
 	}
 

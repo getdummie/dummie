@@ -2,7 +2,7 @@ default: build
 
 # Build the dpipe binary.
 build:
-    go build -o bin/dpipe ./cmd/dpipe
+    go build -o dpipe ./cmd/dpipe
 
 # Unit + integration tests.
 test:

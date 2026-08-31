@@ -20,7 +20,9 @@ import (
 
 const proxySSHListen = "0.0.0.0:22"
 
-const proxyRemoteUser = "ubuntu"
+// root is the only account every image has, and the one dclient installs the
+// dpipe key for. RDP keeps its own user: that is a desktop image's own account.
+const proxyRemoteUser = "root"
 
 const proxyGuestSSHPort = 22
 

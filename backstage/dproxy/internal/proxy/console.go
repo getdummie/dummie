@@ -17,7 +17,7 @@ const consoleSSHPort = 22
 
 const desktopRDPPort = 3389
 
-const defaultConsoleRemoteUser = "ubuntu"
+const defaultConsoleRemoteUser = "root"
 
 // sessionKind describes one hostname-labelled websocket entry point onto a VM.
 // The console and the browser desktop differ only in the label they answer on,

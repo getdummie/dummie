@@ -33,3 +33,4 @@ sql:
           dclient_download_url: "DclientDownloadURL"
           dpipe_download_url: "DpipeDownloadURL"
           proxy_download_url: "ProxyDownloadURL"
+          dinit_download_url: "DinitDownloadURL"

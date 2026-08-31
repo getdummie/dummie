@@ -44,6 +44,9 @@ type Client struct {
 	ProxyDownloadURL      string
 	DpipeInstalledVersion string
 	ProxyInstalledVersion string
+	DinitVersion          string
+	DinitDownloadURL      string
+	DinitInstalledVersion string
 }
 
 type ClientEnrollmentKey struct {

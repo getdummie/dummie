@@ -118,21 +118,28 @@ func cacheURL(u *url.URL) string {
 
 const tarSlack = 256 << 20
 
-func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, sizeBytes int64) (string, error) {
+func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, sizeBytes int64, logf func(string, ...any)) (string, bool, error) {
 	digest, err := fileDigest(tarPath)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	digest = keyedDigest(digest, imageRecipe(pubKey, resolver))
+
+	guestInit, guestInitDigest, guestInitErr := guestInitSource()
+	if guestInitErr != nil {
+		logf("WARNING: this rootfs will be built without %s: %v", guestInitService, guestInitErr)
+		logf("WARNING: the image must then bring up its own init, network and sshd")
+	}
+
+	digest = keyedDigest(digest, imageRecipe(pubKey, resolver, guestInitDigest))
 	dst := filepath.Join(cache, digest[:32]+"-rootfs.ext4")
 	if _, err := os.Stat(dst); err == nil {
-		return dst, nil
+		return dst, guestInit != "", nil
 	}
 
 	if sizeBytes == 0 {
 		info, err := os.Stat(tarPath)
 		if err != nil {
-			return "", err
+			return "", false, err
 		}
 		sizeBytes = info.Size() + info.Size()/2 + tarSlack
 	}
@@ -145,60 +152,93 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, s
 
 	work, err := os.MkdirTemp(cache, ".extract-*")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
 	out, err := exec.CommandContext(ctx, "tar", "-xpf", tarPath, "-C", work, "--numeric-owner").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("could not extract %s: %v: %s", tarPath, err, strings.TrimSpace(string(out)))
+		return "", false, fmt.Errorf("could not extract %s: %v: %s", tarPath, err, strings.TrimSpace(string(out)))
 	}
 
 	if err := stripContainerMarkers(work); err != nil {
-		return "", fmt.Errorf("could not strip the container markers from the rootfs: %w", err)
+		return "", false, fmt.Errorf("could not strip the container markers from the rootfs: %w", err)
 	}
 
 	if err := ensureResolvConf(work, resolver); err != nil {
-		return "", fmt.Errorf("could not point the rootfs at the resolver: %w", err)
+		return "", false, fmt.Errorf("could not point the rootfs at the resolver: %w", err)
 	}
 
 	if pubKey != "" {
 		if err := injectAuthorizedKey(work, pubKey); err != nil {
-			return "", fmt.Errorf("could not install the dpipe key into the rootfs: %w", err)
+			return "", false, fmt.Errorf("could not install the dpipe key into the rootfs: %w", err)
 		}
+	}
+
+	if guestInit != "" {
+		if err := injectGuestInit(work, guestInit); err != nil {
+			return "", false, fmt.Errorf("could not install %s into the rootfs: %w", guestInitService, err)
+		}
+	} else if init := imageInit(work); init == "" {
+		// Without an init of its own the kernel falls back to /bin/sh: the vm
+		// looks like it booted, with no network, no sshd and no pid 1 worth the
+		// name. Better to refuse than to hand over that.
+		return "", false, fmt.Errorf("this image has no init of its own and %s is not installed on this host, so the vm would boot into a bare shell: %w",
+			guestInitService, guestInitErr)
+	} else {
+		logf("the image brings its own init (%s)", init)
 	}
 
 	tmp, err := os.CreateTemp(cache, ".rootfs-*.ext4")
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	tmpName := tmp.Name()
 	_ = tmp.Close()
 	defer func() { _ = os.Remove(tmpName) }()
 
 	if err := os.Truncate(tmpName, sizeBytes); err != nil {
-		return "", err
+		return "", false, err
 	}
 	out, err = exec.CommandContext(ctx, "mkfs.ext4", "-F", "-q", "-d", work, tmpName).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("mkfs.ext4: %v: %s\n(if the image is too small for the tar, pass a larger --rootfs-size)",
+		return "", false, fmt.Errorf("mkfs.ext4: %v: %s\n(if the image is too small for the tar, pass a larger --rootfs-size)",
 			err, strings.TrimSpace(string(out)))
 	}
 
 	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := os.Rename(tmpName, dst); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return dst, nil
+	return dst, guestInit != "", nil
 }
 
-func imageRecipe(pubKey, resolver string) string {
-	r := "recipe=3;strip=" + strings.Join(containerMarkers, ",") + ";" +
+// imageInit reports what would run as pid 1 if dinit were not installed. The
+// kernel's own fallbacks past these are /bin/init and /bin/sh, neither of which
+// is an init.
+func imageInit(root string) string {
+	for _, p := range []string{"/lib/systemd/systemd", "/usr/lib/systemd/systemd", "/sbin/init", "/etc/init"} {
+		full, err := imagePath(root, p)
+		if err != nil {
+			continue
+		}
+		if fi, err := os.Stat(full); err == nil && !fi.IsDir() && fi.Mode().Perm()&0o111 != 0 {
+			return p
+		}
+	}
+	return ""
+}
+
+func imageRecipe(pubKey, resolver, guestInitDigest string) string {
+	r := "recipe=4;strip=" + strings.Join(containerMarkers, ",") + ";" +
 		authKeyRecipe() + ";" + resolvConfRecipe(resolver)
 	if pubKey != "" {
 		r += ";key=" + pubKey
+	}
+	if guestInitDigest != "" {
+		r += ";dinit=" + guestInitDigest
 	}
 	return r
 }

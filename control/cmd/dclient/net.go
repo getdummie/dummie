@@ -22,6 +22,7 @@ type vmNet struct {
 	Tap     string `json:"tap"`
 	IP      string `json:"ip"`
 	Gateway string `json:"gateway"`
+	DNS     string `json:"dns,omitempty"`
 	MAC     string `json:"mac"`
 
 	Egress []string `json:"egress,omitempty"`

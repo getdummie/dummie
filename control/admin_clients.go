@@ -168,9 +168,12 @@ type clientDTO struct {
 	DpipeDownloadURL   string `json:"dpipe_download_url"`
 	ProxyVersion       string `json:"proxy_version"`
 	ProxyDownloadURL   string `json:"proxy_download_url"`
+	DinitVersion       string `json:"dinit_version"`
+	DinitDownloadURL   string `json:"dinit_download_url"`
 
 	DpipeInstalledVersion string `json:"dpipe_installed_version"`
 	ProxyInstalledVersion string `json:"proxy_installed_version"`
+	DinitInstalledVersion string `json:"dinit_installed_version"`
 
 	Metrics clientMetricsDTO `json:"metrics"`
 }
@@ -218,9 +221,12 @@ func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 		DpipeDownloadURL:   a.DpipeDownloadURL,
 		ProxyVersion:       a.ProxyVersion,
 		ProxyDownloadURL:   a.ProxyDownloadURL,
+		DinitVersion:       a.DinitVersion,
+		DinitDownloadURL:   a.DinitDownloadURL,
 
 		DpipeInstalledVersion: a.DpipeInstalledVersion,
 		ProxyInstalledVersion: a.ProxyInstalledVersion,
+		DinitInstalledVersion: a.DinitInstalledVersion,
 
 		Metrics: clientMetricsDTO{
 			CPUCount:       a.CPUCount,
@@ -370,6 +376,8 @@ type updateClientServicesReq struct {
 	DpipeDownloadURL   string `json:"dpipe_download_url"`
 	ProxyVersion       string `json:"proxy_version"`
 	ProxyDownloadURL   string `json:"proxy_download_url"`
+	DinitVersion       string `json:"dinit_version"`
+	DinitDownloadURL   string `json:"dinit_download_url"`
 }
 
 func (h *AdminHandler) UpdateClientServices(c *echo.Context) error {
@@ -391,6 +399,8 @@ func (h *AdminHandler) UpdateClientServices(c *echo.Context) error {
 		DpipeDownloadURL:   strings.TrimSpace(req.DpipeDownloadURL),
 		ProxyVersion:       strings.TrimSpace(req.ProxyVersion),
 		ProxyDownloadURL:   strings.TrimSpace(req.ProxyDownloadURL),
+		DinitVersion:       strings.TrimSpace(req.DinitVersion),
+		DinitDownloadURL:   strings.TrimSpace(req.DinitDownloadURL),
 	}
 	for _, f := range []struct {
 		label   string
@@ -400,6 +410,7 @@ func (h *AdminHandler) UpdateClientServices(c *echo.Context) error {
 		{"dclient", params.DclientVersion, params.DclientDownloadURL},
 		{"dpipe", params.DpipeVersion, params.DpipeDownloadURL},
 		{"dproxy", params.ProxyVersion, params.ProxyDownloadURL},
+		{"dinit", params.DinitVersion, params.DinitDownloadURL},
 	} {
 		if f.version != "" {
 			if err := validateReleaseVersion(f.version); err != nil {

@@ -19,6 +19,7 @@ const (
 	settingDclientDownloadURL = "dclient_download_url"
 	settingDpipeDownloadURL   = "dpipe_download_url"
 	settingProxyDownloadURL   = "dproxy_download_url"
+	settingDinitDownloadURL   = "dinit_download_url"
 
 	settingVectorVersion      = "vector_version"
 	settingClickHouseURL      = "clickhouse_url"
@@ -97,6 +98,17 @@ var settingDefs = []settingDef{
 		Label:       "dproxy download URL",
 		Description: "The same, for dproxy.",
 		Placeholder: "http://10.68.0.1:8081/backstage/dproxy/dproxy",
+		validate:    validateServiceDownloadURL,
+	},
+	{
+		Key:         settingDinitDownloadURL,
+		Kind:        settingString,
+		Label:       "dinit download URL",
+		Description: "The same, for dinit -- the guest init each host copies into the rootfs " +
+			"it builds from an OS image tar, so that an image needs no init, dhcp client or sshd " +
+			"of its own. A host installs it on its next connect; images already built are rebuilt " +
+			"the next time a VM is created from them.",
+		Placeholder: "http://10.68.0.1:8081/backstage/dinit/dinit",
 		validate:    validateServiceDownloadURL,
 	},
 	{

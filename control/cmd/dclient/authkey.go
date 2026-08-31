@@ -60,7 +60,9 @@ func lookupPasswdUser(root, name string) (passwdUser, bool) {
 	return passwdUser{}, false
 }
 
-var authKeyAccounts = []string{"ubuntu", "root"}
+// root first: it is the one account every image has, and the guest init's ssh
+// server reads its authorized_keys. ubuntu is only served if the image has it.
+var authKeyAccounts = []string{"root", "ubuntu"}
 
 func authKeyRecipe() string { return "authkeys=" + strings.Join(authKeyAccounts, ",") }
 

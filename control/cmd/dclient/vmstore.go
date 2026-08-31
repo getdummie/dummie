@@ -60,6 +60,10 @@ type vm struct {
 
 	Firmware string `json:"firmware,omitempty"`
 
+	// GuestInit is set when the rootfs carries /sbin/dinit, so the cmdline can
+	// boot it and hand it the address.
+	GuestInit bool `json:"guest_init,omitempty"`
+
 	Net *vmNet `json:"net,omitempty"`
 
 	Disk   string `json:"disk"`

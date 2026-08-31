@@ -57,6 +57,7 @@ type Hello struct {
 type ServicesState struct {
 	Dpipe string `json:"dpipe,omitempty"`
 	Proxy string `json:"dproxy,omitempty"`
+	Dinit string `json:"dinit,omitempty"`
 }
 
 type HelloAck struct {
@@ -119,6 +120,10 @@ type ServicesConfig struct {
 	Dclient ServiceRelease `json:"dclient"`
 	Dpipe   ServiceRelease `json:"dpipe"`
 	Proxy   ServiceRelease `json:"dproxy"`
+
+	// Dinit is not a service: it is the guest init dclient copies into every
+	// rootfs it builds from a container tar. It is delivered the same way.
+	Dinit ServiceRelease `json:"dinit"`
 
 	Force bool `json:"force,omitempty"`
 }

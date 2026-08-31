@@ -216,8 +216,8 @@ const exampleConfig = `# control_url: https://control.example.com
 #   dns: 1.1.1.1
 #   queues: 4               # the suricata service will spin up the same number of queues
 #
-# There is nothing here about dpipe, dproxy or vector. Which build of each one this
-# host runs is set per host in the control server, on the client's own page, next to
+# There is nothing here about dpipe, dproxy, dinit or vector. Which build of each
+# one this host runs is set per host in the control server, on the client's own page, next to
 # the version it reports. Leave a version empty there and the host tracks the
 # control server's own; set a download_url beside it to run a custom build on this
 # machine without cutting a release for it.

@@ -131,7 +131,7 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 			return vm{}, err
 		}
 		logf("building an ext4 rootfs from the tar (cached after the first time)")
-		if v.Backing, err = ext4FromTar(ctx, cache, v.Backing, pubKey, cfg.resolver(), rootfsSize); err != nil {
+		if v.Backing, v.GuestInit, err = ext4FromTar(ctx, cache, v.Backing, pubKey, cfg.resolver(), rootfsSize, logf); err != nil {
 			return vm{}, err
 		}
 	}

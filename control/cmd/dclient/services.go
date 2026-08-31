@@ -243,6 +243,7 @@ func installedServicesState(ctx context.Context) *proto.ServicesState {
 	return &proto.ServicesState{
 		Dpipe: installedServiceVersion(ctx, dpipeService),
 		Proxy: installedServiceVersion(ctx, proxyService),
+		Dinit: installedServiceVersion(ctx, guestInitService),
 	}
 }
 
@@ -433,4 +434,10 @@ func removeManagedServices(ctx context.Context) {
 		fmt.Println("removed " + serviceUnitPath(name))
 	}
 	_ = systemctl(ctx, "daemon-reload")
+
+	if err := os.Remove(serviceBinary(guestInitService)); err == nil {
+		fmt.Println("removed " + serviceBinary(guestInitService))
+	} else if !os.IsNotExist(err) {
+		fmt.Println(err)
+	}
 }

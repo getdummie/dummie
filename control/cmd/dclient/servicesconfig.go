@@ -35,6 +35,14 @@ func applyServicesConfig(ctx context.Context, data string, want proto.ServicesCo
 		}
 	}
 
+	// Not a service: no unit, nothing to start. dinit only has to be on disk for
+	// the next rootfs build to copy it into a guest.
+	switch err := ensureGuestInit(ctx, data, want.Dinit, want.Force); {
+	case err == nil, errors.Is(err, errNoRelease):
+	default:
+		errs = append(errs, fmt.Errorf("%s: %w", guestInitService, err))
+	}
+
 	switch staged, err := stageSelfUpgrade(ctx, data, want.Dclient, want.Force); {
 	case err == nil:
 		upgradeSelf = staged

@@ -453,6 +453,7 @@ func setupVMNetwork(data string, v *vm, opts netOptions) (*os.File, error) {
 	v.Net = &vmNet{
 		IP:        ip,
 		Gateway:   cfg.Gateway,
+		DNS:       cfg.resolver(),
 		MAC:       macForIP(ip),
 		Egress:    egress,
 		RateMbit:  opts.RateMbit,
@@ -475,6 +476,7 @@ func restoreVMNetwork(data string, v *vm) (*os.File, error) {
 		return nil, err
 	}
 	v.Net.Gateway = cfg.Gateway
+	v.Net.DNS = cfg.resolver()
 	if v.Net.Tap == "" {
 		v.Net.Tap = v.Net.tapName(v.ID)
 	}

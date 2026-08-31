@@ -127,7 +127,7 @@ func qemuArgs(data string, v vm, kvm bool) []string {
 		if v.Initrd != "" {
 			args = append(args, "-initrd", v.Initrd)
 		}
-		args = append(args, "-append", v.Append)
+		args = append(args, "-append", withGuestInit(v.Append, v))
 	}
 
 	return args
