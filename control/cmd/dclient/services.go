@@ -26,14 +26,16 @@ const (
 	proxyService = "dproxy"
 	dpipeService = "dpipe"
 
-	binDir = "/usr/local/bin"
-
 	serviceConfigDir = "/etc/dclient"
 
 	serviceRuntimeDir = "/run/dpipe"
 
 	downloadTimeout = 5 * time.Minute
 )
+
+// binDir is where the managed binaries are installed. It is a var only so a
+// test can point it somewhere writable.
+var binDir = "/usr/local/bin"
 
 const releaseURLTemplate = "https://github.com/getdummie/dummie/releases/download/v%s/%s_%s_linux_%s.tar.gz"
 
@@ -296,16 +298,18 @@ func ensureBinary(ctx context.Context, data, name, src string, force bool) (bool
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
+	// force means force: it is only ever set by "Upgrade now" on a host's own
+	// page, and the marker records where a binary came from, not what was in it.
+	// A dev artifact server hands out a stable url whose contents change on every
+	// build, so skipping the download because the url matches makes that button
+	// do nothing at all.
 	_, statErr := os.Stat(serviceBinary(name))
-	if statErr == nil {
-		if strings.TrimSpace(string(installed)) == src {
-			return false, nil
-		}
-		if !force {
+	if statErr == nil && !force {
+		if strings.TrimSpace(string(installed)) != src {
 			log.Printf("%s is installed from a different build than %s; upgrade it from the control server to move it",
 				name, src)
-			return false, nil
 		}
+		return false, nil
 	}
 
 	if err := downloadBinary(ctx, src, serviceBinary(name), name); err != nil {

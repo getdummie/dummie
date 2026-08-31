@@ -721,12 +721,13 @@ async function confirmDelete() {
         <DialogHeader>
           <DialogTitle>Upgrade managed binaries</DialogTitle>
           <DialogDescription>
-            Installs the recorded builds on
-            <span class="font-mono text-foreground">{{ client?.hostname || client?.machine_id }}</span>,
-            replacing anything already there. dproxy restarts, which drops the SSH sessions this host is
-            carrying; dpipe hands its own over. If the dclient version moved, dclient replaces itself and
-            restarts, so this page shows the host offline for a few seconds before it reports back on the
-            new version. VMs already running keep running throughout.
+            Fetches the recorded builds on
+            <span class="font-mono text-foreground">{{ client?.hostname || client?.machine_id }}</span>
+            and installs them, replacing anything already there — including a build fetched from the same
+            URL, since a URL says where a binary came from and not what was in it. dproxy restarts, which
+            drops the SSH sessions this host is carrying; dpipe hands its own over. dclient replaces
+            itself and restarts, so this page shows the host offline for a few seconds before it reports
+            back. VMs already running keep running throughout.
           </DialogDescription>
         </DialogHeader>
         <FormError id="upgrade-client-error" :message="servicesError" />

@@ -65,10 +65,15 @@ func stageSelfUpgrade(ctx context.Context, data string, rel proto.ServiceRelease
 	if err != nil && !os.IsNotExist(err) {
 		return false, err
 	}
-	if strings.TrimSpace(string(installed)) == src {
+	// As in ensureBinary: the marker says where this build came from, not what
+	// was in it, so a forced upgrade has to fetch it again regardless.
+	if strings.TrimSpace(string(installed)) == src && !force {
 		return false, nil
 	}
 
+	// Nothing to fetch and nothing to prove: this is already the named version,
+	// and no url overrides it. Left ahead of the forced download so pressing
+	// upgrade on an up-to-date host does not restart it for no reason.
 	if len(installed) == 0 && rel.DownloadURL == "" && rel.Version == version {
 		return false, writeSourceMarker(marker, src)
 	}
