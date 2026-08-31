@@ -387,7 +387,7 @@ func parseSizeMiB(s string) (int32, error) {
 }
 
 // @Summary     Create a VM
-// @Description Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. Your SSH public key has to be on your account first -- it is built into the image at boot, so it cannot be added afterwards. The size is charged against your quota; disk_size takes the client's syntax ("2G", "512M", or plain bytes).
+// @Description Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. An SSH public key on your account is optional: without one the VM is still created and reachable through the web console, only SSH is unavailable. The size is charged against your quota; disk_size takes the client's syntax ("2G", "512M", or plain bytes).
 // @Description
 // @Description Set ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.
 // @Description
@@ -402,7 +402,7 @@ func parseSizeMiB(s string) (int32, error) {
 // @Success     202 {object} vmDTO "accepted and pending; the host has not reported yet"
 // @Failure     400 {object} apiError "bad size, bad port count, cpus under 1, memory under 64 MiB, or a destination that is not allowable"
 // @Failure     401 {object} apiError
-// @Failure     403 {object} apiError "no public key on your account, or over quota"
+// @Failure     403 {object} apiError "over quota"
 // @Failure     404 {object} apiError "no such host, kernel or os image"
 // @Failure     409 {object} apiError "host revoked or disconnected, artifact withdrawn, name taken, or the job could not be delivered"
 // @Failure     502 {object} apiError "could not prepare an artifact download"
@@ -491,11 +491,6 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	u, err := h.q.GetUserByID(ctx, owner)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read your account")
-	}
-
-	if u.PublicKey == "" {
-		return echo.NewHTTPError(http.StatusForbidden,
-			"add an SSH public key to your profile in Settings before creating a VM")
 	}
 
 	used, err := h.q.SumActiveVMUsageByOwner(ctx, owner)

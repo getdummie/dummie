@@ -771,7 +771,7 @@
                 ]
             },
             "put": {
-                "description": "Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it, which blocks creating new VMs.",
+                "description": "Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it; VMs can still be created without one, they are only reachable through the web console.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -1471,7 +1471,7 @@
                 ]
             },
             "post": {
-                "description": "Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. Your SSH public key has to be on your account first -- it is built into the image at boot, so it cannot be added afterwards. The size is charged against your quota; disk_size takes the client's syntax (\"2G\", \"512M\", or plain bytes).\n\nSet ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.\n\ntargets is the egress allowlist to give the VM at birth — each entry takes exactly the shape `POST /vms/{id}/targets` accepts, including its own ttl_seconds. At most 32; add the rest afterwards. The whole list is validated before anything is written and inserted in the same transaction as the VM, so a bad entry is a 400 with no VM created rather than a VM with a partial allowlist. Omit it for a VM that may reach nothing until you allow something.\n\nThe response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'. The allowlist reaches the host with the guest's address, so it is in force by the time the VM is up.",
+                "description": "Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. An SSH public key on your account is optional: without one the VM is still created and reachable through the web console, only SSH is unavailable. The size is charged against your quota; disk_size takes the client's syntax (\"2G\", \"512M\", or plain bytes).\n\nSet ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.\n\ntargets is the egress allowlist to give the VM at birth — each entry takes exactly the shape `POST /vms/{id}/targets` accepts, including its own ttl_seconds. At most 32; add the rest afterwards. The whole list is validated before anything is written and inserted in the same transaction as the VM, so a bad entry is a 400 with no VM created rather than a VM with a partial allowlist. Omit it for a VM that may reach nothing until you allow something.\n\nThe response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'. The allowlist reaches the host with the guest's address, so it is in force by the time the VM is up.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -1531,7 +1531,7 @@
                                 }
                             }
                         },
-                        "description": "no public key on your account, or over quota"
+                        "description": "over quota"
                     },
                     "404": {
                         "content": {

@@ -47,7 +47,7 @@ type updateProfileReq struct {
 }
 
 // @Summary     Update your account
-// @Description Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it, which blocks creating new VMs.
+// @Description Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it; VMs can still be created without one, they are only reachable through the web console.
 // @Tags        me
 // @Accept      json
 // @Produce     json

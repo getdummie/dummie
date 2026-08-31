@@ -234,8 +234,11 @@ async function save() {
           </p>
 
           <Alert v-if="!profile.public_key" class="mt-4">
-            <AlertTitle>You cannot create VMs yet</AlertTitle>
-            <AlertDescription>Add your public key below to create your first VM.</AlertDescription>
+            <AlertTitle>No key on file</AlertTitle>
+            <AlertDescription>
+              VMs you create are reachable through the web console. Add your public key below to SSH
+              into new ones.
+            </AlertDescription>
           </Alert>
 
           <div class="mt-4 space-y-2">

@@ -241,7 +241,6 @@ const atCapacity = computed(() =>
   cpuRemaining.value < 1 || memRemaining.value < 64 || diskRemaining.value < 1)
 
 const blockedReason = computed(() => {
-  if (!hasPublicKey.value) return 'Cannot create a VM: add an SSH public key in Settings first'
   if (atCapacity.value) return 'Cannot create a VM: your allowance is fully used'
   return null
 })
@@ -1017,7 +1016,7 @@ async function confirmDelete() {
     <Alert v-if="!hasPublicKey && !loading" class="mt-4">
       <AlertTitle>No SSH public key on your profile</AlertTitle>
       <AlertDescription>
-        A VM is built to accept your key before it boots, so one has to be on file first.
+        You can still create VMs and reach them through the web console. SSH needs a key on file.
         <NuxtLink
           to="/settings"
           class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
