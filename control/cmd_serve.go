@@ -170,7 +170,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	blobs := loadBlobStore(context.Background())
 	certs := newCertIssuer(q, blobs, hub, proxyCfg)
 
-	tasks := newTaskRunner(q, hub, certs)
+	tasks := newTaskRunner(q, hub, certs, blobs)
 	if pool != nil {
 		runnerCtx, stopRunner := context.WithCancel(context.Background())
 		defer stopRunner()
@@ -233,7 +233,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/osimages", adminH.ListOSImages)
 	admin.POST("/osimages", adminH.CreateOSImage)
 	admin.GET("/osimages/:id", adminH.GetOSImage)
-	admin.PUT("/osimages/:id/description", adminH.UpdateOSImageDescription)
+	admin.PUT("/osimages/:id", adminH.UpdateOSImage)
 	admin.DELETE("/osimages/:id", adminH.DeleteOSImage)
 	admin.GET("/settings", adminH.ListSettings)
 	admin.PUT("/settings/:key", adminH.UpdateSetting)

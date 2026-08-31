@@ -225,6 +225,10 @@ type userArtifactDTO struct {
 	Description string `json:"description"`
 	SizeBytes   int64  `json:"size_bytes"`
 	CreatedAt   string `json:"created_at"`
+
+	// Only set for os images: the port the image says it listens on, offered as
+	// the default_port of a vm created from it.
+	DefaultPort int32 `json:"default_port,omitempty"`
 }
 
 const maxArtifactChoices = 100
@@ -256,7 +260,7 @@ func (h *UserHandler) ListKernels(c *echo.Context) error {
 }
 
 // @Summary     List available OS images
-// @Description The root-filesystem catalogue, on the same terms as the kernel one. The id is what you pass as osimage_id.
+// @Description The root-filesystem catalogue, on the same terms as the kernel one, limited to images that have finished building. The id is what you pass as osimage_id.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
@@ -264,7 +268,7 @@ func (h *UserHandler) ListKernels(c *echo.Context) error {
 // @Failure     401 {object} apiError
 // @Router      /vms/osimages [get]
 func (h *UserHandler) ListOSImages(c *echo.Context) error {
-	rows, err := h.q.ListOSImages(c.Request().Context(), db.ListOSImagesParams{Limit: maxArtifactChoices})
+	rows, err := h.q.ListReadyOSImages(c.Request().Context(), maxArtifactChoices)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not list os images")
 	}
@@ -276,6 +280,7 @@ func (h *UserHandler) ListOSImages(c *echo.Context) error {
 			Description: o.Description,
 			SizeBytes:   o.SizeBytes,
 			CreatedAt:   o.CreatedAt.Time.Format(time.RFC3339),
+			DefaultPort: o.DefaultPort.Int32,
 		})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
@@ -538,6 +543,14 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	}
 	if osImage.SoftDeletedAt.Valid {
 		return echo.NewHTTPError(http.StatusConflict, "that os image has been withdrawn; choose another")
+	}
+	if osImage.Status != osImageReady {
+		return echo.NewHTTPError(http.StatusConflict, "that os image is still being built; try again once it is ready")
+	}
+	// The image's own exposed port is the better default than the fleet-wide one,
+	// but only when the caller did not name a port of their own.
+	if req.DefaultPort == 0 && osImage.DefaultPort.Valid {
+		defaultPort = osImage.DefaultPort.Int32
 	}
 	kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
 	if err != nil {

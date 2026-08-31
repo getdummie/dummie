@@ -62,7 +62,11 @@ SET status     = 'pending',
     locked_at  = NULL,
     updated_at = now()
 WHERE status = 'running'
-  AND locked_at < now() - make_interval(secs => sqlc.arg(lease_seconds)::double precision);
+  AND locked_at < now() - make_interval(secs => CASE
+        WHEN kind = ANY(sqlc.arg(long_kinds)::text[])
+        THEN sqlc.arg(long_lease_seconds)::double precision
+        ELSE sqlc.arg(lease_seconds)::double precision
+      END);
 
 -- name: CancelLiveScheduledTasksForSubject :exec
 UPDATE scheduled_tasks

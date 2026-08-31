@@ -4,6 +4,12 @@ WHERE soft_deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2;
 
+-- name: ListReadyOSImages :many
+SELECT * FROM osimages
+WHERE soft_deleted_at IS NULL AND status = 'ready'
+ORDER BY created_at DESC
+LIMIT $1;
+
 -- name: CountOSImages :one
 SELECT count(*) FROM osimages
 WHERE soft_deleted_at IS NULL;
@@ -13,14 +19,48 @@ SELECT * FROM osimages
 WHERE id = $1;
 
 -- name: CreateOSImage :one
-INSERT INTO osimages (name, description, object_key, file_name, size_bytes)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO osimages (name, description, object_key, file_name, size_bytes, source, status)
+VALUES ($1, $2, $3, $4, $5, 'upload', 'ready')
 RETURNING *;
 
--- name: UpdateOSImageDescription :one
+-- name: CreateOCIOSImage :one
+INSERT INTO osimages (name, description, oci_ref, source, status)
+VALUES ($1, $2, $3, 'oci', 'pending')
+RETURNING *;
+
+-- name: MarkOSImageBuilding :one
 UPDATE osimages
-SET description = $2
-WHERE id = $1 AND soft_deleted_at IS NULL
+SET status = 'building', status_detail = ''
+WHERE id = $1 AND soft_deleted_at IS NULL AND status IN ('pending', 'building', 'failed')
+RETURNING *;
+
+-- name: FinishOSImageBuild :one
+UPDATE osimages
+SET status = 'ready',
+    status_detail = '',
+    object_key = sqlc.arg(object_key),
+    file_name = sqlc.arg(file_name),
+    size_bytes = sqlc.arg(size_bytes),
+    oci_digest = sqlc.arg(oci_digest),
+    config_user = sqlc.arg(config_user),
+    config_entrypoint = sqlc.arg(config_entrypoint)::text[],
+    config_cmd = sqlc.arg(config_cmd)::text[],
+    config_env = sqlc.arg(config_env)::text[],
+    config_exposed_ports = sqlc.arg(config_exposed_ports)::integer[],
+    default_port = COALESCE(default_port, sqlc.narg(default_port)::integer)
+WHERE id = sqlc.arg(id) AND soft_deleted_at IS NULL AND status <> 'ready'
+RETURNING *;
+
+-- name: FailOSImageBuild :exec
+UPDATE osimages
+SET status = 'failed', status_detail = sqlc.arg(status_detail)
+WHERE id = sqlc.arg(id) AND soft_deleted_at IS NULL AND status <> 'ready';
+
+-- name: UpdateOSImage :one
+UPDATE osimages
+SET description = sqlc.arg(description),
+    default_port = COALESCE(sqlc.narg(default_port)::integer, default_port)
+WHERE id = sqlc.arg(id) AND soft_deleted_at IS NULL
 RETURNING *;
 
 -- name: SoftDeleteOSImage :one

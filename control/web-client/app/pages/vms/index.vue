@@ -276,6 +276,8 @@ interface Kernel {
   description: string
   size_bytes: number
   created_at: string
+  // OS images only: the port the container image exposes.
+  default_port?: number
 }
 
 const kernels = ref<Kernel[]>([])
@@ -357,6 +359,8 @@ function pickKernel(id: string) {
 function pickOSImage(id: string) {
   form.osimage_id = id
   osImageOpen.value = false
+  const port = osImages.value.find(o => o.id === id)?.default_port
+  if (port) form.default_port = String(port)
 }
 
 function resetForm() {

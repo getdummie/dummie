@@ -305,3 +305,87 @@ func handleCertRenew(ctx context.Context, r *taskRunner, t db.ScheduledTask) tas
 	}
 	return taskDone("started %d certificate renewal(s)", started)
 }
+
+const osImageBuildRetry = time.Minute
+
+const osImageBuildAttempts = 5
+
+// handleOSImageBuild pulls the container image an os image row names, flattens it
+// into a rootfs tar and stores it. The row is the state machine, not the task: the
+// task retries, and each attempt starts over from the registry.
+func handleOSImageBuild(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome {
+	if r.blobs == nil {
+		return taskFailed("%s", errNoBlobStore.Error())
+	}
+
+	row, err := r.q.GetOSImage(ctx, t.SubjectID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return taskCancelled("the os image had already been removed")
+		}
+		return taskRetry(osImageBuildRetry, "could not read the os image: %v", err)
+	}
+	if row.SoftDeletedAt.Valid {
+		return taskCancelled("the os image was withdrawn before it was built")
+	}
+	if row.Status == "ready" {
+		return taskDone("%s was already built", row.Name)
+	}
+
+	if _, err := r.q.MarkOSImageBuilding(ctx, row.ID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return taskCancelled("the os image is no longer waiting to be built")
+		}
+		return taskRetry(osImageBuildRetry, "could not mark %s as building: %v", row.Name, err)
+	}
+
+	build, err := buildOSImageFromOCI(ctx, r.blobs, row.Name, row.OCIRef)
+	if err != nil {
+		noteOSImageFailed(ctx, r, row.ID, err.Error())
+		// A malformed reference or an image that flattens too large will fail the
+		// same way on every attempt, so there is nothing to come back for.
+		if errors.Is(err, errOSImageTooLarge) || t.Attempts+1 >= t.MaxAttempts {
+			return taskFailed("could not build %s: %v", row.Name, err)
+		}
+		return taskRetry(osImageBuildRetry, "could not build %s: %v", row.Name, err)
+	}
+
+	var defaultPort pgtype.Int4
+	if len(build.Config.ExposedPorts) > 0 {
+		defaultPort = pgtype.Int4{Int32: build.Config.ExposedPorts[0], Valid: true}
+	}
+	// Detached for the same reason as noteOSImageFailed: the tar is already in
+	// object storage, so losing the row to a deadline would only orphan it.
+	saveCtx, cancelSave := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancelSave()
+	if _, err := r.q.FinishOSImageBuild(saveCtx, db.FinishOSImageBuildParams{
+		ID:                 row.ID,
+		ObjectKey:          build.ObjectKey,
+		FileName:           build.FileName,
+		SizeBytes:          build.SizeBytes,
+		OCIDigest:          build.Digest,
+		ConfigUser:         build.Config.User,
+		ConfigEntrypoint:   build.Config.Entrypoint,
+		ConfigCmd:          build.Config.Cmd,
+		ConfigEnv:          build.Config.Env,
+		ConfigExposedPorts: build.Config.ExposedPorts,
+		DefaultPort:        defaultPort,
+	}); err != nil {
+		r.blobs.deleteQuietly(ctx, build.ObjectKey)
+		return taskRetry(osImageBuildRetry, "built %s but could not record it: %v", row.Name, err)
+	}
+
+	log.Printf("task: built os image %s from %s (%s, %d MiB)",
+		row.Name, row.OCIRef, build.Digest, build.SizeBytes>>20)
+	return taskDone("built %s from %s (%s)", row.Name, row.OCIRef, build.Digest)
+}
+
+// noteOSImageFailed runs outside the task's context on purpose: a build that ran
+// out of time is exactly the case where the row still has to be told about it.
+func noteOSImageFailed(ctx context.Context, r *taskRunner, id pgtype.UUID, detail string) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if err := r.q.FailOSImageBuild(ctx, db.FailOSImageBuildParams{ID: id, StatusDetail: detail}); err != nil {
+		log.Printf("could not record the os image build failure: %v", err)
+	}
+}

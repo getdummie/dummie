@@ -547,6 +547,10 @@
                     "created_at": {
                         "type": "string"
                     },
+                    "default_port": {
+                        "description": "Only set for os images: the port the image says it listens on, offered as\nthe default_port of a vm created from it.",
+                        "type": "integer"
+                    },
                     "description": {
                         "type": "string"
                     },
@@ -1643,7 +1647,7 @@
         },
         "/vms/osimages": {
             "get": {
-                "description": "The root-filesystem catalogue, on the same terms as the kernel one. The id is what you pass as osimage_id.",
+                "description": "The root-filesystem catalogue, on the same terms as the kernel one, limited to images that have finished building. The id is what you pass as osimage_id.",
                 "responses": {
                     "200": {
                         "content": {

@@ -26,6 +26,8 @@ const (
 	taskCertRenew = "cert.renew"
 
 	taskCustomDomainIssue = "custom_domain.issue"
+
+	taskOSImageBuild = "osimage.build"
 )
 
 const (
@@ -33,16 +35,29 @@ const (
 	subjectVMTarget = "vm_network_target"
 
 	subjectCustomDomain = "vm_custom_domain"
+
+	subjectOSImage = "osimage"
 )
 
 const (
 	taskTick = time.Second
 
-	taskWorkers = 4
+	// Raised from four when os image builds arrived: a build holds a worker for
+	// as long as the pull takes, and with four slots two of them would stall
+	// certificate renewals and vm expiry behind them.
+	taskWorkers = 8
 
 	taskTimeout = 30 * time.Second
 
+	// An os image build is a registry pull and a multi-gigabyte upload; it is
+	// nothing like the second-scale tasks the defaults were written for.
+	taskOSImageBuildTimeout = 30 * time.Minute
+
 	taskLease = 2 * time.Minute
+
+	// The lease has to outlast the timeout, or the reclaim sweep would queue a
+	// second copy of a build that is still running.
+	taskLongLease = taskOSImageBuildTimeout + 2*time.Minute
 
 	taskReclaimEvery = 30 * time.Second
 
@@ -105,12 +120,34 @@ func taskRetry(after time.Duration, format string, args ...any) taskOutcome {
 	return taskOutcome{after: after, detail: fmt.Sprintf(format, args...)}
 }
 
+// taskKindTimeouts holds the kinds that need longer than taskTimeout. Every kind
+// listed here is also leased for taskLongLease by the reclaim sweep.
+var taskKindTimeouts = map[string]time.Duration{
+	taskOSImageBuild: taskOSImageBuildTimeout,
+}
+
+func taskKindTimeout(kind string) time.Duration {
+	if d, ok := taskKindTimeouts[kind]; ok {
+		return d
+	}
+	return taskTimeout
+}
+
+func taskLongKinds() []string {
+	kinds := make([]string, 0, len(taskKindTimeouts))
+	for k := range taskKindTimeouts {
+		kinds = append(kinds, k)
+	}
+	return kinds
+}
+
 type taskHandler func(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome
 
 type taskRunner struct {
 	q   *db.Queries
 	hub *Hub
 	certs *certIssuer
+	blobs *blobStore
 
 	instance string
 
@@ -121,11 +158,12 @@ type taskRunner struct {
 	lastTick atomic.Int64
 }
 
-func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer) *taskRunner {
+func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore) *taskRunner {
 	r := &taskRunner{
 		q:        q,
 		hub:      hub,
 		certs:    certs,
+		blobs:    blobs,
 		instance: uuid.NewString(),
 	}
 	r.handlers = map[string]taskHandler{
@@ -134,12 +172,13 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer) *taskRunner {
 		taskCleanup:        handleTaskCleanup,
 		taskCertRenew:      handleCertRenew,
 		taskCustomDomainIssue: handleCustomDomainIssue,
+		taskOSImageBuild:      handleOSImageBuild,
 	}
 	return r
 }
 
 func (r *taskRunner) run(ctx context.Context) {
-	r.reclaim(ctx, 0)
+	r.reclaim(ctx, 0, 0)
 	if err := r.q.CreateSingletonScheduledTask(ctx, db.CreateSingletonScheduledTaskParams{
 		Kind:         taskCleanup,
 		Reason:       "prune settled scheduled tasks older than the retention window",
@@ -167,7 +206,7 @@ func (r *taskRunner) run(ctx context.Context) {
 			log.Print("scheduled task runner stopping")
 			return
 		case <-reclaim.C:
-			r.reclaim(ctx, taskLease)
+			r.reclaim(ctx, taskLease, taskLongLease)
 		case <-tick.C:
 			r.poll(ctx)
 		}
@@ -209,7 +248,7 @@ func (r *taskRunner) execute(parent context.Context, t db.ScheduledTask) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(parent, taskTimeout)
+	ctx, cancel := context.WithTimeout(parent, taskKindTimeout(t.Kind))
 	defer cancel()
 
 	out := func() (out taskOutcome) {
@@ -265,8 +304,12 @@ func taskBackoff(attempts int32) time.Duration {
 	return min(d, 2*time.Minute)
 }
 
-func (r *taskRunner) reclaim(ctx context.Context, lease time.Duration) {
-	n, err := r.q.ReclaimStaleScheduledTasks(ctx, lease.Seconds())
+func (r *taskRunner) reclaim(ctx context.Context, lease, longLease time.Duration) {
+	n, err := r.q.ReclaimStaleScheduledTasks(ctx, db.ReclaimStaleScheduledTasksParams{
+		LongKinds:        taskLongKinds(),
+		LongLeaseSeconds: longLease.Seconds(),
+		LeaseSeconds:     lease.Seconds(),
+	})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
 			log.Printf("could not reclaim stale scheduled tasks: %v", err)

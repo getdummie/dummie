@@ -428,11 +428,21 @@ SET status     = 'pending',
     locked_at  = NULL,
     updated_at = now()
 WHERE status = 'running'
-  AND locked_at < now() - make_interval(secs => $1::double precision)
+  AND locked_at < now() - make_interval(secs => CASE
+        WHEN kind = ANY($1::text[])
+        THEN $2::double precision
+        ELSE $3::double precision
+      END)
 `
 
-func (q *Queries) ReclaimStaleScheduledTasks(ctx context.Context, leaseSeconds float64) (int64, error) {
-	result, err := q.db.Exec(ctx, reclaimStaleScheduledTasks, leaseSeconds)
+type ReclaimStaleScheduledTasksParams struct {
+	LongKinds        []string
+	LongLeaseSeconds float64
+	LeaseSeconds     float64
+}
+
+func (q *Queries) ReclaimStaleScheduledTasks(ctx context.Context, arg ReclaimStaleScheduledTasksParams) (int64, error) {
+	result, err := q.db.Exec(ctx, reclaimStaleScheduledTasks, arg.LongKinds, arg.LongLeaseSeconds, arg.LeaseSeconds)
 	if err != nil {
 		return 0, err
 	}

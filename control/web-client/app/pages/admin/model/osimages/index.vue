@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Plus, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -14,15 +15,17 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { TableCell, TableRow } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import type { DataTableColumn } from '@/lib/table'
 
 const columns: DataTableColumn[] = [
   { key: 'name', label: 'Name' },
-  { key: 'file', label: 'File' },
+  { key: 'source', label: 'Source' },
+  { key: 'status', label: 'Status' },
   { key: 'size', label: 'Size' },
   { key: 'description', label: 'Description' },
-  { key: 'created', label: 'Uploaded' },
+  { key: 'created', label: 'Added' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
 
@@ -37,6 +40,10 @@ interface OSImageRow {
   size_bytes: number
   created_at: string
   soft_deleted_at: string
+  source: string
+  oci_ref: string
+  status: string
+  status_detail: string
 }
 
 const { authFetch } = useAuth()
@@ -103,13 +110,38 @@ async function load() {
 onMounted(load)
 watch(offset, load)
 
+// A queued image settles on its own in the background, so the table keeps looking
+// until nothing is in flight rather than making an admin reload the page.
+const settling = computed(() => items.value.some(o => o.status === 'pending' || o.status === 'building'))
+let poll: ReturnType<typeof setInterval> | null = null
+watch(settling, (on) => {
+  if (on && !poll) poll = setInterval(load, 5000)
+  else if (!on && poll) {
+    clearInterval(poll)
+    poll = null
+  }
+}, { immediate: true })
+onUnmounted(() => poll && clearInterval(poll))
+
+type BadgeVariant = 'default' | 'secondary' | 'outline' | 'destructive'
+
+function statusVariant(s: string): BadgeVariant {
+  switch (s) {
+    case 'ready': return 'default'
+    case 'building': return 'secondary'
+    case 'failed': return 'destructive'
+    default: return 'outline'
+  }
+}
+
 const page = computed(() => Math.floor(offset.value / limit.value) + 1)
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / limit.value)))
 
 const createOpen = ref(false)
 const creating = ref(false)
 const createError = ref<string | null>(null)
-const form = reactive({ name: '', description: '' })
+const form = reactive({ name: '', description: '', ociRef: '' })
+const source = ref<'oci' | 'upload'>('oci')
 const file = ref<File | null>(null)
 const fileKey = ref(0)
 
@@ -120,24 +152,39 @@ function onFile(e: Event) {
 function resetForm() {
   form.name = ''
   form.description = ''
+  form.ociRef = ''
+  source.value = 'oci'
   file.value = null
   fileKey.value++
   createError.value = null
 }
 
+const canCreate = computed(() =>
+  !!form.name.trim() && (source.value === 'oci' ? !!form.ociRef.trim() : !!file.value))
+
 async function create() {
-  if (!file.value) {
-    createError.value = 'Choose an image to upload.'
-    return
-  }
+  if (!canCreate.value) return
   creating.value = true
   createError.value = null
   try {
-    const body = new FormData()
-    body.set('name', form.name.trim())
-    body.set('description', form.description.trim())
-    body.set('file', file.value)
-    const res = await authFetch('/admin/osimages', { method: 'POST', body })
+    const init: RequestInit = source.value === 'oci'
+      ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: form.name.trim(),
+            description: form.description.trim(),
+            oci_ref: form.ociRef.trim(),
+          }),
+        }
+      : (() => {
+          const body = new FormData()
+          body.set('name', form.name.trim())
+          body.set('description', form.description.trim())
+          body.set('file', file.value as File)
+          return { method: 'POST', body }
+        })()
+    const res = await authFetch('/admin/osimages', init)
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     createOpen.value = false
     resetForm()
@@ -145,7 +192,7 @@ async function create() {
     await load()
   }
   catch (e) {
-    createError.value = e instanceof Error ? e.message : 'Could not upload the OS image'
+    createError.value = e instanceof Error ? e.message : 'Could not create the OS image'
   }
   finally {
     creating.value = false
@@ -182,8 +229,10 @@ async function confirmDelete() {
         <p class="eyebrow mb-2 text-primary-text">// admin · os images</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">OS images</h1>
         <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Operating system images a guest can be built from. Once uploaded, neither an entry's name
-          nor its file can be changed by anyone; only its description can be edited.
+          Operating system images a guest can be built from — either a container image this server
+          pulls and flattens for you, or a root filesystem tar you upload. Once an entry is built,
+          neither its name nor its file can be changed by anyone; only the description and the
+          default port can be edited.
         </p>
       </div>
       <Dialog v-model:open="createOpen" @update:open="(v: boolean) => !v && resetForm()">
@@ -193,10 +242,10 @@ async function confirmDelete() {
         </Button>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Upload OS image</DialogTitle>
+            <DialogTitle>New OS image</DialogTitle>
             <DialogDescription>
-              The name and the file are permanent — a mistake in either is fixed by uploading another
-              image and withdrawing this one. The description can be edited later.
+              The name and the image itself are permanent — a mistake in either is fixed by adding
+              another image and withdrawing this one. The description can be edited later.
             </DialogDescription>
           </DialogHeader>
           <form class="space-y-4" :aria-busy="creating" @submit.prevent="create">
@@ -207,21 +256,45 @@ async function confirmDelete() {
                 v-model="form.name"
                 required
                 maxlength="128"
-                placeholder="debian-13-rootfs"
+                placeholder="marimo"
                 autocomplete="off"
                 spellcheck="false"
               />
             </div>
+
+            <Tabs v-model="source">
+              <TabsList class="w-full">
+                <TabsTrigger value="oci" class="font-mono text-xs">Container image</TabsTrigger>
+                <TabsTrigger value="upload" class="font-mono text-xs">Upload tar</TabsTrigger>
+              </TabsList>
+              <TabsContent value="oci" class="mt-4 space-y-2">
+                <Label for="oi-ref">Image reference</Label>
+                <Input
+                  id="oi-ref"
+                  v-model="form.ociRef"
+                  maxlength="512"
+                  placeholder="ghcr.io/marimo-team/marimo:latest-sql"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-describedby="oi-ref-hint"
+                />
+                <p id="oi-ref-hint" class="text-xs text-muted-foreground">
+                  Pulled and flattened into a root filesystem in the background. The tag is resolved
+                  to a digest, so the stored image never changes under you.
+                </p>
+              </TabsContent>
+              <TabsContent value="upload" class="mt-4 space-y-2">
+                <Label for="oi-file">Image file</Label>
+                <Input id="oi-file" :key="fileKey" type="file" aria-describedby="oi-file-hint" @change="onFile" />
+                <p id="oi-file-hint" class="text-xs text-muted-foreground">
+                  {{ file ? `${file.name} · ${fmtBytes(file.size)}` : 'Stored in object storage; large uploads take a while.' }}
+                </p>
+              </TabsContent>
+            </Tabs>
+
             <div class="space-y-2">
               <Label for="oi-desc">Description <span class="text-muted-foreground">(optional)</span></Label>
               <Textarea id="oi-desc" v-model="form.description" rows="3" placeholder="what this image is for" />
-            </div>
-            <div class="space-y-2">
-              <Label for="oi-file">Image file</Label>
-              <Input id="oi-file" :key="fileKey" type="file" required aria-describedby="oi-file-hint" @change="onFile" />
-              <p id="oi-file-hint" class="text-xs text-muted-foreground">
-                {{ file ? `${file.name} · ${fmtBytes(file.size)}` : 'Stored in object storage; large uploads take a while.' }}
-              </p>
             </div>
 
             <FormError id="create-osimage-error" :message="createError" />
@@ -230,8 +303,8 @@ async function confirmDelete() {
               <DialogClose as-child>
                 <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
               </DialogClose>
-              <Button type="submit" class="font-mono text-xs" :disabled="creating || !form.name.trim() || !file">
-                {{ creating ? 'Uploading…' : 'Upload' }}
+              <Button type="submit" class="font-mono text-xs" :disabled="creating || !canCreate">
+                {{ creating ? 'Saving…' : source === 'oci' ? 'Add' : 'Upload' }}
               </Button>
             </DialogFooter>
           </form>
@@ -270,7 +343,14 @@ async function confirmDelete() {
             {{ o.name }}
           </NuxtLink>
         </TableCell>
-        <TableCell class="font-mono text-xs break-all text-muted-foreground">{{ o.file_name }}</TableCell>
+        <TableCell class="max-w-xs font-mono text-xs break-all text-muted-foreground">
+          {{ o.source === 'oci' ? o.oci_ref : o.file_name }}
+        </TableCell>
+        <TableCell>
+          <Badge :variant="statusVariant(o.status)" class="font-mono text-xs" :title="o.status_detail">
+            {{ o.status }}
+          </Badge>
+        </TableCell>
         <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(o.size_bytes) }}</TableCell>
         <TableCell class="max-w-xs truncate text-muted-foreground" :title="o.description">
           {{ o.description || '—' }}

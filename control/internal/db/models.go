@@ -120,14 +120,25 @@ type OidcProvider struct {
 }
 
 type Osimage struct {
-	ID            pgtype.UUID
-	Name          string
-	Description   string
-	ObjectKey     string
-	FileName      string
-	SizeBytes     int64
-	CreatedAt     pgtype.Timestamptz
-	SoftDeletedAt pgtype.Timestamptz
+	ID                 pgtype.UUID
+	Name               string
+	Description        string
+	ObjectKey          string
+	FileName           string
+	SizeBytes          int64
+	CreatedAt          pgtype.Timestamptz
+	SoftDeletedAt      pgtype.Timestamptz
+	Source             string
+	OCIRef             string
+	OCIDigest          string
+	Status             string
+	StatusDetail       string
+	ConfigUser         string
+	ConfigEntrypoint   []string
+	ConfigCmd          []string
+	ConfigEnv          []string
+	ConfigExposedPorts []int32
+	DefaultPort        pgtype.Int4
 }
 
 type PersonalAccessToken struct {
