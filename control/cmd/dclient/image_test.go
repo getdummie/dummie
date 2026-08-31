@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"control/internal/proto"
 )
 
 func TestStripContainerMarkers(t *testing.T) {
@@ -43,6 +45,33 @@ func TestImageRecipeKeysEveryBuild(t *testing.T) {
 	}
 	if imageRecipe("", "", "aaaa") == imageRecipe("", "", "bbbb") {
 		t.Error("the guest init is not in the recipe, so an upgraded dclient reuses the old rootfs")
+	}
+}
+
+func TestImageConfigRecipeKeysTheCache(t *testing.T) {
+	if imageConfigRecipe(nil) != "" {
+		t.Error("an image with no config should not change the cache key of every existing rootfs")
+	}
+	base := &proto.ImageConfig{User: "appuser", Cmd: []string{"/app"}, Env: []string{"PORT=8080"}}
+	if imageConfigRecipe(base) == "" || imageConfigRecipe(base) == imageConfigRecipe(nil) {
+		t.Error("a config is not in the recipe, so an edited image is never rebuilt")
+	}
+	for name, other := range map[string]*proto.ImageConfig{
+		"user":       {User: "root", Cmd: base.Cmd, Env: base.Env},
+		"cmd":        {User: base.User, Cmd: []string{"/other"}, Env: base.Env},
+		"env":        {User: base.User, Cmd: base.Cmd, Env: []string{"PORT=9000"}},
+		"entrypoint": {User: base.User, Entrypoint: []string{"sh"}, Cmd: base.Cmd, Env: base.Env},
+	} {
+		if imageConfigRecipe(base) == imageConfigRecipe(other) {
+			t.Errorf("a changed %s does not change the cache key, so the old rootfs is reused", name)
+		}
+	}
+	// The same config has to key the same way every time, or every create
+	// rebuilds a rootfs it already had.
+	if imageConfigRecipe(base) != imageConfigRecipe(&proto.ImageConfig{
+		User: "appuser", Cmd: []string{"/app"}, Env: []string{"PORT=8080"},
+	}) {
+		t.Error("an identical config keyed differently, so rootfs images are never reused")
 	}
 }
 

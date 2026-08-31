@@ -197,6 +197,74 @@ async function saveDesc() {
   }
 }
 
+const configOpen = ref(false)
+const savingConfig = ref(false)
+const configError = ref<string | null>(null)
+const configDraft = reactive({ user: '', entrypoint: '', cmd: '', env: '', exposed_ports: '' })
+
+function openConfig() {
+  const c = image.value?.config
+  configDraft.user = c?.user ?? ''
+  configDraft.entrypoint = (c?.entrypoint ?? []).join('\n')
+  configDraft.cmd = (c?.cmd ?? []).join('\n')
+  configDraft.env = (c?.env ?? []).join('\n')
+  configDraft.exposed_ports = (c?.exposed_ports ?? []).join(', ')
+  configError.value = null
+  configOpen.value = true
+}
+
+function lines(s: string): string[] {
+  return s.split('\n').map(l => l.trim()).filter(l => l !== '')
+}
+
+async function saveConfig() {
+  const user = configDraft.user.trim()
+  if (user !== '' && !/^[^\s:]+(:[^\s:]+)?$/.test(user)) {
+    configError.value = 'The user must be a name or uid, optionally followed by one colon and a group.'
+    return
+  }
+  const ports: number[] = []
+  for (const p of configDraft.exposed_ports.split(',').map(s => s.trim()).filter(s => s !== '')) {
+    const n = Number(p)
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      configError.value = `"${p}" is not a port between 1 and 65535.`
+      return
+    }
+    ports.push(n)
+  }
+  const env = lines(configDraft.env)
+  const bad = env.find(e => !/^[^\s=]+=/.test(e))
+  if (bad) {
+    configError.value = `Every environment line must be KEY=VALUE: "${bad}"`
+    return
+  }
+
+  savingConfig.value = true
+  configError.value = null
+  try {
+    const res = await authFetch(`/admin/osimages/${id.value}/config`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user,
+        entrypoint: lines(configDraft.entrypoint),
+        cmd: lines(configDraft.cmd),
+        env,
+        exposed_ports: ports,
+      }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    image.value = await res.json()
+    configOpen.value = false
+  }
+  catch (e) {
+    configError.value = e instanceof Error ? e.message : 'Could not save the image configuration'
+  }
+  finally {
+    savingConfig.value = false
+  }
+}
+
 const deleteOpen = ref(false)
 const deleting = ref(false)
 
@@ -298,9 +366,10 @@ async function confirmDelete() {
       <p class="mt-6 flex items-start gap-2 text-sm text-muted-foreground">
         <Lock class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
         <span>
-          The name and the image are permanent: neither can be changed by anyone, including an admin,
-          so a correction to either means adding a new image and withdrawing this one. Only the
-          description and the default port can be edited.
+          The name, the file and the container image it came from are permanent: none of them can be
+          changed by anyone, including an admin, so a correction to any of them means adding a new
+          image and withdrawing this one. Everything else — the description, the default port and the
+          image configuration — can be edited.
         </span>
       </p>
 
@@ -365,10 +434,24 @@ async function confirmDelete() {
         aria-labelledby="config-heading"
         class="mt-4 rounded-lg border border-border p-4 sm:p-6"
       >
-        <h2 id="config-heading" class="text-sm font-semibold">Image configuration</h2>
+        <div class="flex items-start justify-between gap-4">
+          <h2 id="config-heading" class="text-sm font-semibold">Image configuration</h2>
+          <Button
+            v-if="!withdrawn"
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs"
+            @click="openConfig"
+          >
+            <Pencil class="size-3.5" aria-hidden="true" />
+            Edit
+          </Button>
+        </div>
         <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
           What the container image itself declares. The root filesystem alone does not carry any of
-          this, so it is recorded here when the image is built.
+          this, so it is recorded here when the image is built — and it is what the guest init runs
+          the VM's workload with. A change applies to VMs created from this image afterwards; VMs
+          that already exist keep the configuration they were built with.
         </p>
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
           <div>
@@ -445,6 +528,115 @@ async function confirmDelete() {
             </DialogClose>
             <Button type="submit" class="font-mono text-xs" :disabled="savingDesc">
               {{ savingDesc ? 'Saving…' : 'Save' }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="configOpen">
+      <DialogContent class="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>Edit image configuration</DialogTitle>
+          <DialogDescription>
+            What the guest init runs a VM's workload as, and with. This starts as what
+            <span class="font-mono text-foreground">{{ image?.oci_ref }}</span> declared; editing it
+            makes it diverge from the container image, which is the point of it being editable.
+          </DialogDescription>
+        </DialogHeader>
+        <form class="space-y-4" :aria-busy="savingConfig" @submit.prevent="saveConfig">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="space-y-2">
+              <Label for="oi-user">User</Label>
+              <Input
+                id="oi-user"
+                v-model="configDraft.user"
+                placeholder="root"
+                autocomplete="off"
+                spellcheck="false"
+                class="font-mono text-sm"
+                aria-describedby="oi-user-hint"
+              />
+              <p id="oi-user-hint" class="text-xs text-muted-foreground">
+                A name, a uid, or either with a group after a colon. Empty means root.
+              </p>
+            </div>
+            <div class="space-y-2">
+              <Label for="oi-ports">Exposed ports</Label>
+              <Input
+                id="oi-ports"
+                v-model="configDraft.exposed_ports"
+                inputmode="numeric"
+                placeholder="8080, 9000"
+                autocomplete="off"
+                class="font-mono text-sm"
+                aria-describedby="oi-ports-hint"
+              />
+              <p id="oi-ports-hint" class="text-xs text-muted-foreground">
+                Comma-separated. A record of what the image listens on; it does not itself publish
+                anything.
+              </p>
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <Label for="oi-entrypoint">Entrypoint</Label>
+            <Textarea
+              id="oi-entrypoint"
+              v-model="configDraft.entrypoint"
+              rows="2"
+              spellcheck="false"
+              class="font-mono text-sm"
+              placeholder="/usr/bin/app"
+              aria-describedby="oi-argv-hint"
+            />
+          </div>
+          <div class="space-y-2">
+            <Label for="oi-cmd">Command</Label>
+            <Textarea
+              id="oi-cmd"
+              v-model="configDraft.cmd"
+              rows="3"
+              spellcheck="false"
+              class="font-mono text-sm"
+              placeholder="--listen 0.0.0.0"
+              aria-describedby="oi-argv-hint"
+            />
+            <p id="oi-argv-hint" class="text-xs text-muted-foreground">
+              One argument per line, not a shell command line: the entrypoint is run with the command
+              as its arguments, and nothing splits on spaces or expands a variable. To use a shell,
+              make it the entrypoint —
+              <span class="font-mono">sh</span>, then <span class="font-mono">-c</span>, then the
+              script as one argument.
+            </p>
+          </div>
+
+          <div class="space-y-2">
+            <Label for="oi-env">Environment</Label>
+            <Textarea
+              id="oi-env"
+              v-model="configDraft.env"
+              rows="8"
+              spellcheck="false"
+              class="font-mono text-xs"
+              placeholder="PORT=8080"
+              aria-describedby="oi-env-hint"
+            />
+            <p id="oi-env-hint" class="text-xs text-muted-foreground">
+              One <span class="font-mono">KEY=VALUE</span> per line. These reach the workload, the
+              serial console and every SSH session. A
+              <span class="font-mono">PATH</span> here replaces the guest init's own.
+            </p>
+          </div>
+
+          <FormError id="osimage-config-error" :message="configError" />
+
+          <DialogFooter>
+            <DialogClose as-child>
+              <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+            </DialogClose>
+            <Button type="submit" class="font-mono text-xs" :disabled="savingConfig">
+              {{ savingConfig ? 'Saving…' : 'Save' }}
             </Button>
           </DialogFooter>
         </form>

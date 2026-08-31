@@ -275,6 +275,126 @@ func (h *AdminHandler) UpdateOSImage(c *echo.Context) error {
 	return c.JSON(http.StatusOK, toOSImageDTO(o))
 }
 
+type updateOSImageConfigReq struct {
+	User         string   `json:"user"`
+	Entrypoint   []string `json:"entrypoint"`
+	Cmd          []string `json:"cmd"`
+	Env          []string `json:"env"`
+	ExposedPorts []int32  `json:"exposed_ports"`
+}
+
+// UpdateOSImageConfig overwrites what the build recorded from the container
+// image. It is a correction, not a merge: the console sends the whole config
+// back. It is copied into a vm's spec when the vm is created, so an edit reaches
+// vms created after it and not ones that already exist.
+func (h *AdminHandler) UpdateOSImageConfig(c *echo.Context) error {
+	pgID, err := parseUUID(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid os image id")
+	}
+	var req updateOSImageConfigReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	user := strings.TrimSpace(req.User)
+	if err := validateImageUser(user); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	entrypoint := trimArgs(req.Entrypoint)
+	cmd := trimArgs(req.Cmd)
+	env, err := validateEnv(req.Env)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+	ports := make([]int32, 0, len(req.ExposedPorts))
+	seen := map[int32]bool{}
+	for _, p := range req.ExposedPorts {
+		if p < 1 || p > 65535 {
+			return echo.NewHTTPError(http.StatusBadRequest, "exposed ports must be between 1 and 65535")
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		ports = append(ports, p)
+	}
+
+	o, err := h.q.UpdateOSImageConfig(c.Request().Context(), db.UpdateOSImageConfigParams{
+		ID:                 pgID,
+		ConfigUser:         user,
+		ConfigEntrypoint:   entrypoint,
+		ConfigCmd:          cmd,
+		ConfigEnv:          env,
+		ConfigExposedPorts: ports,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusNotFound, "os image not found, or withdrawn")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the image configuration")
+	}
+	return c.JSON(http.StatusOK, toOSImageDTO(o))
+}
+
+// validateImageUser accepts what dinit can resolve, which is what docker
+// accepts: a name or uid, optionally with a group after a single colon. Empty
+// means root.
+func validateImageUser(user string) error {
+	if user == "" {
+		return nil
+	}
+	if len(user) > 256 {
+		return errors.New("user is too long")
+	}
+	parts := strings.Split(user, ":")
+	if len(parts) > 2 {
+		return errors.New("user can have at most one colon, as user:group")
+	}
+	for _, p := range parts {
+		if p == "" {
+			return errors.New("neither side of the colon in user can be empty")
+		}
+		if strings.ContainsAny(p, " \t\n\r") {
+			return errors.New("user cannot contain whitespace")
+		}
+	}
+	return nil
+}
+
+// trimArgs drops blank entries so a textarea that ends in a newline does not add
+// an empty argv element, which would break an exec.
+func trimArgs(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// validateEnv keeps the list in the KEY=VALUE shape dinit writes into the guest
+// environment; a name with an '=' or whitespace in it cannot be exported.
+func validateEnv(in []string) ([]string, error) {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		name, _, ok := strings.Cut(s, "=")
+		if !ok {
+			return nil, errors.New("each environment entry must be KEY=VALUE: " + s)
+		}
+		if name == "" || strings.ContainsAny(name, " \t") {
+			return nil, errors.New("invalid environment variable name in: " + s)
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 func (h *AdminHandler) DeleteOSImage(c *echo.Context) error {
 	ctx := c.Request().Context()
 	pgID, err := parseUUID(c.Param("id"))

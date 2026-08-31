@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"debug/elf"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -25,6 +28,11 @@ import (
 const (
 	guestInitService = "dinit"
 	guestInitPath    = "/sbin/dinit"
+
+	// The image's configuration is too large and too quote-hostile for the
+	// kernel command line, so it is written into the rootfs instead and dinit
+	// reads it from there. Absent, it runs as it always did: root, no workload.
+	guestImageConfigPath = "/etc/dclient/image.json"
 
 	paramIP      = "dclient.ip"
 	paramGateway = "dclient.gw"
@@ -118,6 +126,51 @@ func injectGuestInit(root, src string) error {
 	}
 	log.Printf("installed %s in the rootfs at %s", guestInitService, guestInitPath)
 	return nil
+}
+
+// injectImageConfig writes the image's declared user, entrypoint, command and
+// environment into the rootfs for dinit to read at boot. It is canonicalised
+// json so the same config always produces the same bytes, and the same rootfs
+// cache key.
+func injectImageConfig(root string, cfg *proto.ImageConfig) error {
+	if cfg == nil {
+		return nil
+	}
+	dst, err := imagePath(root, guestImageConfigPath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	// The environment can carry tokens the image was built with, so it is
+	// readable only by root; dinit reads it as pid 1 before dropping privilege.
+	if err := os.WriteFile(dst, imageConfigJSON(cfg), 0o600); err != nil {
+		return err
+	}
+	log.Printf("recorded the image configuration in the rootfs at %s (user %q, %d env)",
+		guestImageConfigPath, cfg.User, len(cfg.Env))
+	return nil
+}
+
+func imageConfigJSON(cfg *proto.ImageConfig) []byte {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		// ImageConfig is strings and string slices, so this cannot fail.
+		return []byte("{}")
+	}
+	return b
+}
+
+// imageConfigRecipe keys the rootfs cache on the config, so editing an image's
+// user or entrypoint rebuilds the images built from it instead of reusing a
+// cached ext4 that still has the old one baked in.
+func imageConfigRecipe(cfg *proto.ImageConfig) string {
+	if cfg == nil {
+		return ""
+	}
+	sum := sha256.Sum256(imageConfigJSON(cfg))
+	return ";imageconfig=" + hex.EncodeToString(sum[:])
 }
 
 // withGuestInit boots the injected init and hands it the address on the

@@ -234,6 +234,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.POST("/osimages", adminH.CreateOSImage)
 	admin.GET("/osimages/:id", adminH.GetOSImage)
 	admin.PUT("/osimages/:id", adminH.UpdateOSImage)
+	admin.PUT("/osimages/:id/config", adminH.UpdateOSImageConfig)
 	admin.DELETE("/osimages/:id", adminH.DeleteOSImage)
 	admin.GET("/settings", adminH.ListSettings)
 	admin.PUT("/settings/:key", adminH.UpdateSetting)

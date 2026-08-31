@@ -32,7 +32,8 @@ const (
 	// authorized keys for images where root's home is managed elsewhere.
 	StateDir = "/etc/dclient"
 
-	ifaceName = "eth0"
+	ifaceName    = "eth0"
+	loopbackName = "lo"
 
 	pathEnv = "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 )
@@ -61,6 +62,11 @@ func Run(version string) {
 	mount(earlyMounts)
 
 	p := readParams("/proc/cmdline")
+	// Before the ethernet link, and regardless of whether there is one: a vm with
+	// no network at all still needs to be able to talk to itself.
+	if err := configureLoopback(); err != nil {
+		log.Printf("could not bring up the loopback interface: %v", err)
+	}
 	if err := configureNet(p); err != nil {
 		log.Printf("could not configure %s: %v", ifaceName, err)
 	}
@@ -71,6 +77,12 @@ func Run(version string) {
 	}
 
 	mount(agentMounts)
+
+	// Only the agent acts on the image's configuration: a handoff image runs its
+	// own services under its own init, and dinit is gone before any of this
+	// would apply.
+	image = readImageConfig(ImageConfigPath)
+	writeEnvironment(image)
 	runAgent()
 }
 
@@ -134,6 +146,37 @@ func readParams(path string) params {
 	return p
 }
 
+// configureLoopback brings up lo. The kernel creates it but leaves it down, and
+// on an image with a real init it is systemd or ifup that raises it -- in agent
+// mode nothing did, so 127.0.0.1 was assigned to no interface and anything that
+// talked to itself over tcp failed to bind with EADDRNOTAVAIL. That is most
+// databases, and python's multiprocessing, so it is not an edge case.
+func configureLoopback() error {
+	lo, err := netlink.LinkByName(loopbackName)
+	if err != nil {
+		return err
+	}
+	if err := netlink.LinkSetUp(lo); err != nil {
+		return err
+	}
+	// Raising it is normally enough: the kernel gives loopback 127.0.0.1/8 when
+	// it initialises the interface's inet device. Only add it if that did not
+	// happen, so a guest that already has it is left alone.
+	addrs, err := netlink.AddrList(lo, netlink.FAMILY_V4)
+	if err != nil {
+		return err
+	}
+	if len(addrs) > 0 {
+		return nil
+	}
+	addr := &netlink.Addr{IPNet: &net.IPNet{IP: net.IPv4(127, 0, 0, 1), Mask: net.CIDRMask(8, 32)}}
+	if err := netlink.AddrReplace(lo, addr); err != nil {
+		return err
+	}
+	log.Printf("%s: 127.0.0.1/8", loopbackName)
+	return nil
+}
+
 func configureNet(p params) error {
 	if p.ip == "" {
 		return nil
@@ -189,7 +232,7 @@ func ethernetLink() (netlink.Link, error) {
 		return nil, err
 	}
 	for _, l := range links {
-		if l.Attrs().Name != "lo" && len(l.Attrs().HardwareAddr) > 0 {
+		if l.Attrs().Name != loopbackName && len(l.Attrs().HardwareAddr) > 0 {
 			return l, nil
 		}
 	}
@@ -274,6 +317,7 @@ func runAgent() {
 
 	go serveSSH(r)
 	go superviseConsole(r)
+	go superviseWorkload(r, image)
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, unix.SIGTERM, unix.SIGINT)
@@ -302,6 +346,9 @@ func superviseConsole(r *reaper) {
 	}
 }
 
+// startConsoleShell puts an operator in the same place the workload runs: as the
+// image's user, with the image's environment. The console stays privileged only
+// for an image that declares no user of its own.
 func startConsoleShell(r *reaper, shell string) (int, error) {
 	con, err := os.OpenFile("/dev/console", os.O_RDWR|unix.O_NOCTTY, 0)
 	if err != nil {
@@ -309,12 +356,29 @@ func startConsoleShell(r *reaper, shell string) (int, error) {
 	}
 	defer con.Close()
 
-	return r.spawn(shell, shellArgv(shell, nil), &syscall.ProcAttr{
-		Dir:   "/root",
-		Env:   []string{pathEnv, "TERM=vt220", "HOME=/root", "USER=root"},
+	u := image.defaultUser()
+	dir := u.home
+	if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+		dir = "/"
+	}
+	attr := &syscall.ProcAttr{
+		Dir:   dir,
+		Env:   image.env(u, "TERM=vt220"),
 		Files: []uintptr{con.Fd(), con.Fd(), con.Fd()},
 		Sys:   &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0},
-	})
+	}
+	if u.uid != 0 {
+		attr.Sys.Credential = &syscall.Credential{Uid: uint32(u.uid), Gid: uint32(u.gid)}
+		if err := chownConsole(u); err != nil {
+			log.Printf("could not hand /dev/console to %s: %v", u.name, err)
+		}
+	}
+	return r.spawn(shell, shellArgv(shell, nil), attr)
+}
+
+// chownConsole lets a non-root console shell read and write its own tty.
+func chownConsole(u user) error {
+	return os.Chown("/dev/console", u.uid, u.gid)
 }
 
 func findShell() string {

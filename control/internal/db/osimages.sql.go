@@ -435,3 +435,57 @@ func (q *Queries) UpdateOSImage(ctx context.Context, arg UpdateOSImageParams) (O
 	)
 	return i, err
 }
+
+const updateOSImageConfig = `-- name: UpdateOSImageConfig :one
+UPDATE osimages
+SET config_user = $1,
+    config_entrypoint = $2::text[],
+    config_cmd = $3::text[],
+    config_env = $4::text[],
+    config_exposed_ports = $5::integer[]
+WHERE id = $6 AND soft_deleted_at IS NULL
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+`
+
+type UpdateOSImageConfigParams struct {
+	ConfigUser         string
+	ConfigEntrypoint   []string
+	ConfigCmd          []string
+	ConfigEnv          []string
+	ConfigExposedPorts []int32
+	ID                 pgtype.UUID
+}
+
+func (q *Queries) UpdateOSImageConfig(ctx context.Context, arg UpdateOSImageConfigParams) (Osimage, error) {
+	row := q.db.QueryRow(ctx, updateOSImageConfig,
+		arg.ConfigUser,
+		arg.ConfigEntrypoint,
+		arg.ConfigCmd,
+		arg.ConfigEnv,
+		arg.ConfigExposedPorts,
+		arg.ID,
+	)
+	var i Osimage
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.ObjectKey,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.SoftDeletedAt,
+		&i.Source,
+		&i.OCIRef,
+		&i.OCIDigest,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ConfigUser,
+		&i.ConfigEntrypoint,
+		&i.ConfigCmd,
+		&i.ConfigEnv,
+		&i.ConfigExposedPorts,
+		&i.DefaultPort,
+	)
+	return i, err
+}

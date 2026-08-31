@@ -201,6 +201,18 @@ type VMSpec struct {
 	EgressAny bool     `json:"egress_any,omitempty"`
 	RateMbit  int      `json:"rate_mbit,omitempty"`
 	BurstKbit int      `json:"burst_kbit,omitempty"`
+
+	Image *ImageConfig `json:"image,omitempty"`
+}
+
+// ImageConfig is what the container image declared, carried from the os image
+// row to the guest: `docker export` keeps none of it, so a rootfs tar alone
+// cannot tell dinit who to run the workload as or what to run.
+type ImageConfig struct {
+	User       string   `json:"user,omitempty"`
+	Entrypoint []string `json:"entrypoint,omitempty"`
+	Cmd        []string `json:"cmd,omitempty"`
+	Env        []string `json:"env,omitempty"`
 }
 
 type JobResult struct {

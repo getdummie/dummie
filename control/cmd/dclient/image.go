@@ -15,6 +15,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"control/internal/proto"
 )
 
 type artifact struct {
@@ -118,7 +120,7 @@ func cacheURL(u *url.URL) string {
 
 const tarSlack = 256 << 20
 
-func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, sizeBytes int64, logf func(string, ...any)) (string, bool, error) {
+func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, image *proto.ImageConfig, sizeBytes int64, logf func(string, ...any)) (string, bool, error) {
 	digest, err := fileDigest(tarPath)
 	if err != nil {
 		return "", false, err
@@ -130,7 +132,7 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, s
 		logf("WARNING: the image must then bring up its own init, network and sshd")
 	}
 
-	digest = keyedDigest(digest, imageRecipe(pubKey, resolver, guestInitDigest))
+	digest = keyedDigest(digest, imageRecipe(pubKey, resolver, guestInitDigest)+imageConfigRecipe(image))
 	dst := filepath.Join(cache, digest[:32]+"-rootfs.ext4")
 	if _, err := os.Stat(dst); err == nil {
 		return dst, guestInit != "", nil
@@ -178,6 +180,9 @@ func ext4FromTar(ctx context.Context, cache, tarPath, pubKey, resolver string, s
 	if guestInit != "" {
 		if err := injectGuestInit(work, guestInit); err != nil {
 			return "", false, fmt.Errorf("could not install %s into the rootfs: %w", guestInitService, err)
+		}
+		if err := injectImageConfig(work, image); err != nil {
+			return "", false, fmt.Errorf("could not record the image configuration in the rootfs: %w", err)
 		}
 	} else if init := imageInit(work); init == "" {
 		// Without an init of its own the kernel falls back to /bin/sh: the vm

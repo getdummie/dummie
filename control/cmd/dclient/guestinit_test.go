@@ -1,11 +1,61 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"control/internal/proto"
 )
+
+func TestInjectImageConfig(t *testing.T) {
+	root := t.TempDir()
+	cfg := &proto.ImageConfig{
+		User: "appuser",
+		Cmd:  []string{"sh", "-c", "exec marimo edit -p $PORT"},
+		Env:  []string{"PORT=8080", "HOST=0.0.0.0"},
+	}
+	if err := injectImageConfig(root, cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	p := filepath.Join(root, strings.TrimPrefix(guestImageConfigPath, "/"))
+	fi, err := os.Stat(p)
+	if err != nil {
+		t.Fatalf("the config was not written into the rootfs: %v", err)
+	}
+	// The environment can carry build-time tokens, so it must not be readable
+	// by the guest's own unprivileged users.
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Errorf("%s is mode %o, want 600", guestImageConfigPath, perm)
+	}
+
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got proto.ImageConfig
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatalf("dinit could not parse what dclient wrote: %v", err)
+	}
+	if got.User != cfg.User || strings.Join(got.Cmd, "\x00") != strings.Join(cfg.Cmd, "\x00") {
+		t.Errorf("round-tripped to %+v, want %+v", got, cfg)
+	}
+}
+
+func TestInjectImageConfigWithNothingToRecord(t *testing.T) {
+	root := t.TempDir()
+	if err := injectImageConfig(root, nil); err != nil {
+		t.Fatal(err)
+	}
+	// An image with no config must leave the rootfs exactly as it was, so a
+	// guest on an older dinit is unaffected.
+	if _, err := os.Stat(filepath.Join(root, strings.TrimPrefix(guestImageConfigPath, "/"))); !os.IsNotExist(err) {
+		t.Errorf("a nil config still wrote %s", guestImageConfigPath)
+	}
+}
 
 func TestWithGuestInit(t *testing.T) {
 	base := "console=ttyS0 root=/dev/vda rw"

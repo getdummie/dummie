@@ -307,6 +307,22 @@ const maxCreateTargets = 32
 
 const defaultVMPort = 8000
 
+// osImageConfigSpec carries the image's declared configuration into the spec so
+// dinit can run the workload as the right user with the right environment. A
+// rootfs tar has none of it, and an image with nothing declared -- an uploaded
+// tar, say -- sends nothing rather than an empty object.
+func osImageConfigSpec(o db.Osimage) *proto.ImageConfig {
+	if o.ConfigUser == "" && len(o.ConfigEntrypoint) == 0 && len(o.ConfigCmd) == 0 && len(o.ConfigEnv) == 0 {
+		return nil
+	}
+	return &proto.ImageConfig{
+		User:       o.ConfigUser,
+		Entrypoint: o.ConfigEntrypoint,
+		Cmd:        o.ConfigCmd,
+		Env:        o.ConfigEnv,
+	}
+}
+
 const maxPublicPorts = 32
 
 func normalizePorts(defaultPort int32, public []int32) (int32, []int32, error) {
@@ -571,6 +587,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		CPUs:      int(req.CPUs),
 		Memory:    int(req.MemoryMiB),
 		EgressAny: true,
+		Image:     osImageConfigSpec(osImage),
 	}
 	var row db.Vm
 	insert := func(ctx context.Context, q *db.Queries, name string) error {

@@ -63,6 +63,16 @@ SET description = sqlc.arg(description),
 WHERE id = sqlc.arg(id) AND soft_deleted_at IS NULL
 RETURNING *;
 
+-- name: UpdateOSImageConfig :one
+UPDATE osimages
+SET config_user = sqlc.arg(config_user),
+    config_entrypoint = sqlc.arg(config_entrypoint)::text[],
+    config_cmd = sqlc.arg(config_cmd)::text[],
+    config_env = sqlc.arg(config_env)::text[],
+    config_exposed_ports = sqlc.arg(config_exposed_ports)::integer[]
+WHERE id = sqlc.arg(id) AND soft_deleted_at IS NULL
+RETURNING *;
+
 -- name: SoftDeleteOSImage :one
 UPDATE osimages
 SET soft_deleted_at = now()

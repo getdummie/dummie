@@ -232,16 +232,14 @@ func (s *session) start(args []string) error {
 		}
 	}
 
-	env := append([]string{
-		pathEnv,
-		"HOME=" + u.home,
-		"USER=" + u.name,
-		"LOGNAME=" + u.name,
-		"SHELL=" + shell,
-	}, s.env...)
+	// The image's environment comes first so a session sees what the workload
+	// sees; what the client pushed still wins over it, as does the pty's TERM.
+	u.shell = shell
+	extra := s.env
 	if term != "" {
-		env = append(env, "TERM="+term)
+		extra = append(append([]string{}, s.env...), "TERM="+term)
 	}
+	env := image.env(u, extra...)
 
 	attr := &syscall.ProcAttr{Dir: u.home, Env: env, Sys: &syscall.SysProcAttr{Setsid: true}}
 	if u.uid != 0 {
