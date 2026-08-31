@@ -80,3 +80,31 @@ func TestValidateOCIRef(t *testing.T) {
 		}
 	}
 }
+
+func TestValidateUserOCIRef(t *testing.T) {
+	for _, ref := range []string{"alpine", "ghcr.io/x/y:1", "docker.io/library/debian:13"} {
+		if err := validateUserOCIRef(ref); err != nil {
+			t.Errorf("validateUserOCIRef(%q) = %v, want nil", ref, err)
+		}
+	}
+	// A host outside the allowlist is the case that matters: it would otherwise
+	// make the server fetch from anything reachable from it.
+	for _, ref := range []string{
+		"registry.internal:5000/x/y:1",
+		"169.254.169.254/latest:1",
+		"localhost:5000/x:1",
+		"NOT AN IMAGE",
+	} {
+		if err := validateUserOCIRef(ref); err == nil {
+			t.Errorf("validateUserOCIRef(%q) = nil, want an error", ref)
+		}
+	}
+
+	t.Setenv("USER_OSIMAGE_REGISTRIES", "registry.internal:5000")
+	if err := validateUserOCIRef("registry.internal:5000/x/y:1"); err != nil {
+		t.Errorf("an allowlisted registry was rejected: %v", err)
+	}
+	if err := validateUserOCIRef("ghcr.io/x/y:1"); err == nil {
+		t.Error("ghcr.io was accepted while the allowlist named only one other registry")
+	}
+}

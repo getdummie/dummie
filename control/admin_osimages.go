@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -40,6 +41,7 @@ type osImageDTO struct {
 	Status       string `json:"status"`
 	StatusDetail string `json:"status_detail"`
 	DefaultPort  int32  `json:"default_port"`
+	CreatedBy    string `json:"created_by"`
 
 	Config osImageConfigDTO `json:"config"`
 }
@@ -69,6 +71,9 @@ func toOSImageDTO(o db.Osimage) osImageDTO {
 	}
 	if o.DefaultPort.Valid {
 		d.DefaultPort = o.DefaultPort.Int32
+	}
+	if o.CreatedBy.Valid {
+		d.CreatedBy = uuid.UUID(o.CreatedBy.Bytes).String()
 	}
 	if o.SoftDeletedAt.Valid {
 		d.SoftDeletedAt = o.SoftDeletedAt.Time.Format(time.RFC3339)
@@ -153,44 +158,62 @@ func (h *AdminHandler) CreateOSImage(c *echo.Context) error {
 }
 
 func (h *AdminHandler) createOCIOSImage(c *echo.Context) error {
-	ctx := c.Request().Context()
-	if h.blobs == nil {
-		return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
-	}
-
 	var req createOCIOSImageReq
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
+	o, err := queueOCIOSImage(c.Request().Context(), h.q, h.blobs, req, pgtype.UUID{})
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusCreated, toOSImageDTO(o))
+}
+
+// queueOCIOSImage validates a container reference, writes the pending row and
+// queues the build. owner is the user who asked for it, or the zero uuid for an
+// image an admin is adding to the catalogue -- which is also what decides how
+// strictly the reference is checked, since only an admin is trusted with a
+// registry outside the allowlist.
+func queueOCIOSImage(ctx context.Context, q *db.Queries, blobs *blobStore, req createOCIOSImageReq, owner pgtype.UUID) (db.Osimage, error) {
+	var zero db.Osimage
+	if blobs == nil {
+		return zero, echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
+	}
+
 	req.Name = strings.TrimSpace(req.Name)
 	req.OCIRef = strings.TrimSpace(req.OCIRef)
 	if req.Name == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "name is required")
+		return zero, echo.NewHTTPError(http.StatusBadRequest, "name is required")
 	}
 	if len(req.Name) > 128 {
-		return echo.NewHTTPError(http.StatusBadRequest, "name is too long")
+		return zero, echo.NewHTTPError(http.StatusBadRequest, "name is too long")
 	}
 	if req.OCIRef == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "oci_ref is required")
+		return zero, echo.NewHTTPError(http.StatusBadRequest, "oci_ref is required")
 	}
-	if err := validateOCIRef(req.OCIRef); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	validate := validateOCIRef
+	if owner.Valid {
+		validate = validateUserOCIRef
+	}
+	if err := validate(req.OCIRef); err != nil {
+		return zero, echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	o, err := h.q.CreateOCIOSImage(ctx, db.CreateOCIOSImageParams{
+	o, err := q.CreateOCIOSImage(ctx, db.CreateOCIOSImageParams{
 		Name:        req.Name,
 		Description: strings.TrimSpace(req.Description),
 		OCIRef:      req.OCIRef,
+		CreatedBy:   owner,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-			return echo.NewHTTPError(http.StatusConflict, "an os image with that name already exists")
+			return zero, echo.NewHTTPError(http.StatusConflict, "an os image with that name already exists")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the os image")
+		return zero, echo.NewHTTPError(http.StatusInternalServerError, "could not save the os image")
 	}
 
-	if _, err := scheduleTask(ctx, h.q, scheduleTaskParams{
+	if _, err := scheduleTask(ctx, q, scheduleTaskParams{
 		Kind:        taskOSImageBuild,
 		SubjectKind: subjectOSImage,
 		SubjectID:   o.ID,
@@ -198,15 +221,14 @@ func (h *AdminHandler) createOCIOSImage(c *echo.Context) error {
 		MaxAttempts: osImageBuildAttempts,
 	}); err != nil {
 		log.Printf("could not queue the build for os image %s: %v", req.Name, err)
-		if err := h.q.FailOSImageBuild(ctx, db.FailOSImageBuildParams{
+		if err := q.FailOSImageBuild(ctx, db.FailOSImageBuildParams{
 			ID: o.ID, StatusDetail: "the build could not be queued",
 		}); err != nil {
 			log.Printf("could not mark os image %s as failed: %v", req.Name, err)
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not queue the image build")
+		return zero, echo.NewHTTPError(http.StatusInternalServerError, "could not queue the image build")
 	}
-
-	return c.JSON(http.StatusCreated, toOSImageDTO(o))
+	return o, nil
 }
 
 func (h *AdminHandler) createUploadedOSImage(c *echo.Context) error {

@@ -339,7 +339,7 @@ func handleOSImageBuild(ctx context.Context, r *taskRunner, t db.ScheduledTask) 
 		return taskRetry(osImageBuildRetry, "could not mark %s as building: %v", row.Name, err)
 	}
 
-	build, err := buildOSImageFromOCI(ctx, r.blobs, row.Name, row.OCIRef)
+	build, err := buildOSImageFromOCI(ctx, r.blobs, row.Name, row.OCIRef, !row.CreatedBy.Valid)
 	if err != nil {
 		noteOSImageFailed(ctx, r, row.ID, err.Error())
 		// A malformed reference or an image that flattens too large will fail the

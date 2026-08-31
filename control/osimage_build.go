@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -52,12 +53,54 @@ func validateOCIRef(ref string) error {
 	return nil
 }
 
+// defaultUserOCIRegistries is where a build a normal user asked for may pull
+// from. Any host would otherwise do, which turns the endpoint into a way to make
+// the control server open connections to whatever is reachable from it.
+const defaultUserOCIRegistries = "docker.io,index.docker.io,ghcr.io,gcr.io,quay.io,registry.k8s.io,public.ecr.aws,mcr.microsoft.com"
+
+func userOCIRegistries() []string {
+	list := strings.TrimSpace(os.Getenv("USER_OSIMAGE_REGISTRIES"))
+	if list == "" {
+		list = defaultUserOCIRegistries
+	}
+	out := make([]string, 0, 8)
+	for _, s := range strings.Split(list, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// validateUserOCIRef is validateOCIRef plus the registry allowlist. An admin is
+// trusted with any host; a user is not.
+func validateUserOCIRef(ref string) error {
+	r, err := name.ParseReference(strings.TrimSpace(ref))
+	if err != nil {
+		return fmt.Errorf("%q is not a container image reference", ref)
+	}
+	allowed := userOCIRegistries()
+	reg := r.Context().RegistryStr()
+	for _, a := range allowed {
+		if strings.EqualFold(reg, a) {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is not a registry this server pulls from; use one of %s",
+		reg, strings.Join(allowed, ", "))
+}
+
 // buildOSImageFromOCI pulls ref, flattens its layers into one rootfs tar and
 // streams that to object storage. It is the in-process equivalent of
 // `docker create` + `docker export`, minus the docker daemon: mutate.Extract
 // applies the layers in order and resolves whiteouts, so the result is the same
 // shape dclient's ext4FromTar already consumes.
-func buildOSImageFromOCI(ctx context.Context, blobs *blobStore, imageName, ref string) (osImageBuild, error) {
+//
+// serverCreds decides whose registry credentials the pull uses. The keychain
+// holds this server's, which reach private repositories nobody outside the
+// installation should be able to read, so a build a user asked for pulls
+// anonymously.
+func buildOSImageFromOCI(ctx context.Context, blobs *blobStore, imageName, ref string, serverCreds bool) (osImageBuild, error) {
 	var out osImageBuild
 
 	r, err := name.ParseReference(strings.TrimSpace(ref))
@@ -65,10 +108,14 @@ func buildOSImageFromOCI(ctx context.Context, blobs *blobStore, imageName, ref s
 		return out, fmt.Errorf("%q is not a container image reference: %w", ref, err)
 	}
 
+	auth := remote.WithAuth(authn.Anonymous)
+	if serverCreds {
+		auth = remote.WithAuthFromKeychain(authn.DefaultKeychain)
+	}
 	img, err := remote.Image(r,
 		remote.WithContext(ctx),
 		remote.WithPlatform(osImagePlatform),
-		remote.WithAuthFromKeychain(authn.DefaultKeychain),
+		auth,
 	)
 	if err != nil {
 		return out, fmt.Errorf("could not pull %s: %w", r, err)

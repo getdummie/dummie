@@ -76,6 +76,20 @@
                 },
                 "type": "object"
             },
+            "main.createOCIOSImageReq": {
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "oci_ref": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.createPATReq": {
                 "properties": {
                     "expires_in_days": {
@@ -309,6 +323,21 @@
                 },
                 "type": "object"
             },
+            "main.myOSImageList": {
+                "properties": {
+                    "items": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.osImageDTO"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "limit": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
             "main.oidcProviderPublicDTO": {
                 "properties": {
                     "display_name": {
@@ -318,6 +347,95 @@
                         "type": "string"
                     },
                     "start_url": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "main.osImageConfigDTO": {
+                "properties": {
+                    "cmd": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "entrypoint": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "env": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "exposed_ports": {
+                        "items": {
+                            "type": "integer"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "user": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "main.osImageDTO": {
+                "properties": {
+                    "config": {
+                        "$ref": "#/components/schemas/main.osImageConfigDTO"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "created_by": {
+                        "type": "string"
+                    },
+                    "default_port": {
+                        "type": "integer"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "download_url": {
+                        "type": "string"
+                    },
+                    "file_name": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "oci_digest": {
+                        "type": "string"
+                    },
+                    "oci_ref": {
+                        "type": "string"
+                    },
+                    "size_bytes": {
+                        "type": "integer"
+                    },
+                    "soft_deleted_at": {
+                        "type": "string"
+                    },
+                    "source": {
+                        "type": "string"
+                    },
+                    "status": {
+                        "type": "string"
+                    },
+                    "status_detail": {
                         "type": "string"
                     }
                 },
@@ -562,14 +680,24 @@
                     "description": {
                         "type": "string"
                     },
+                    "file_name": {
+                        "type": "string"
+                    },
                     "id": {
                         "type": "string"
                     },
                     "name": {
                         "type": "string"
                     },
+                    "oci_ref": {
+                        "type": "string"
+                    },
                     "size_bytes": {
                         "type": "integer"
+                    },
+                    "source": {
+                        "description": "Also os images only: where the rootfs came from. 'oci' carries the\ncontainer reference it was built from, 'upload' the name of the tar.",
+                        "type": "string"
                     }
                 },
                 "type": "object"
@@ -1659,7 +1787,7 @@
         },
         "/vms/osimages": {
             "get": {
-                "description": "The root-filesystem catalogue, on the same terms as the kernel one, limited to images that have finished building. The id is what you pass as osimage_id.",
+                "description": "The root-filesystem catalogue, on the same terms as the kernel one, limited to images that have finished building. The id is what you pass as osimage_id. source says where each one came from: 'oci' carries the container reference in oci_ref, 'upload' the name of the tar in file_name.",
                 "responses": {
                     "200": {
                         "content": {
@@ -1688,6 +1816,203 @@
                     }
                 ],
                 "summary": "List available OS images",
+                "tags": [
+                    "vms"
+                ]
+            },
+            "post": {
+                "description": "Name a container image and the server pulls it, flattens its layers into one rootfs and records what the image declared -- its user, entrypoint, command, environment and exposed ports -- so a VM built from it starts the same thing the container would have. The pull is anonymous and only from the registries this installation allows, so a private repository needs an admin.\n\nThe response is the row at status 'pending'; the build runs in the background. Poll GET /vms/osimages/mine until it is 'ready', then pass its id as osimage_id to POST /vms. Every user sees a ready image, so the name has to be free across the whole installation.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.createOCIOSImageReq",
+                                        "summary": "body",
+                                        "description": "name and oci_ref are required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "name and oci_ref are required",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.osImageDTO"
+                                }
+                            }
+                        },
+                        "description": "queued; the build has not run yet"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "no name, no reference, a reference that does not parse, or a registry this server does not pull from"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "at your image limit, or a build of yours is already running"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "an os image with that name already exists"
+                    },
+                    "503": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "no blob store is configured on this installation"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Add an OS image from a container image",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/osimages/mine": {
+            "get": {
+                "description": "Every image you built from a container reference, at any status: 'pending' and 'building' are still on their way, 'failed' carries the reason in status_detail, 'ready' is usable in POST /vms. The shared catalogue an admin curates is not in here -- that is GET /vms/osimages, which lists everything ready, yours included.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.myOSImageList"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List the OS images you added",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/osimages/{id}": {
+            "delete": {
+                "description": "Only an image you added yourself. It leaves the catalogue for everyone, so VMs created from it keep running -- the rootfs is already on their host -- but nobody can create a new VM from it. A build still queued is cancelled.",
+                "parameters": [
+                    {
+                        "description": "os image id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.osImageDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "invalid os image id"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "not yours, not found, or already withdrawn"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Withdraw an OS image you added",
                 "tags": [
                     "vms"
                 ]

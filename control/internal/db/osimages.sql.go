@@ -11,6 +11,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countBuildingOSImagesByOwner = `-- name: CountBuildingOSImagesByOwner :one
+SELECT count(*) FROM osimages
+WHERE soft_deleted_at IS NULL AND created_by = $1
+  AND status IN ('pending', 'building')
+`
+
+func (q *Queries) CountBuildingOSImagesByOwner(ctx context.Context, createdBy pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countBuildingOSImagesByOwner, createdBy)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countLiveOSImagesByOwner = `-- name: CountLiveOSImagesByOwner :one
+SELECT count(*) FROM osimages
+WHERE soft_deleted_at IS NULL AND created_by = $1
+`
+
+func (q *Queries) CountLiveOSImagesByOwner(ctx context.Context, createdBy pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveOSImagesByOwner, createdBy)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countOSImages = `-- name: CountOSImages :one
 SELECT count(*) FROM osimages
 WHERE soft_deleted_at IS NULL
@@ -24,19 +49,25 @@ func (q *Queries) CountOSImages(ctx context.Context) (int64, error) {
 }
 
 const createOCIOSImage = `-- name: CreateOCIOSImage :one
-INSERT INTO osimages (name, description, oci_ref, source, status)
-VALUES ($1, $2, $3, 'oci', 'pending')
-RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+INSERT INTO osimages (name, description, oci_ref, created_by, source, status)
+VALUES ($1, $2, $3, $4, 'oci', 'pending')
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
 `
 
 type CreateOCIOSImageParams struct {
 	Name        string
 	Description string
 	OCIRef      string
+	CreatedBy   pgtype.UUID
 }
 
 func (q *Queries) CreateOCIOSImage(ctx context.Context, arg CreateOCIOSImageParams) (Osimage, error) {
-	row := q.db.QueryRow(ctx, createOCIOSImage, arg.Name, arg.Description, arg.OCIRef)
+	row := q.db.QueryRow(ctx, createOCIOSImage,
+		arg.Name,
+		arg.Description,
+		arg.OCIRef,
+		arg.CreatedBy,
+	)
 	var i Osimage
 	err := row.Scan(
 		&i.ID,
@@ -58,6 +89,7 @@ func (q *Queries) CreateOCIOSImage(ctx context.Context, arg CreateOCIOSImagePara
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }
@@ -65,7 +97,7 @@ func (q *Queries) CreateOCIOSImage(ctx context.Context, arg CreateOCIOSImagePara
 const createOSImage = `-- name: CreateOSImage :one
 INSERT INTO osimages (name, description, object_key, file_name, size_bytes, source, status)
 VALUES ($1, $2, $3, $4, $5, 'upload', 'ready')
-RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
 `
 
 type CreateOSImageParams struct {
@@ -105,6 +137,7 @@ func (q *Queries) CreateOSImage(ctx context.Context, arg CreateOSImageParams) (O
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }
@@ -140,7 +173,7 @@ SET status = 'ready',
     config_exposed_ports = $9::integer[],
     default_port = COALESCE(default_port, $10::integer)
 WHERE id = $11 AND soft_deleted_at IS NULL AND status <> 'ready'
-RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
 `
 
 type FinishOSImageBuildParams struct {
@@ -192,12 +225,13 @@ func (q *Queries) FinishOSImageBuild(ctx context.Context, arg FinishOSImageBuild
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }
 
 const getOSImage = `-- name: GetOSImage :one
-SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port FROM osimages
+SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by FROM osimages
 WHERE id = $1
 `
 
@@ -224,12 +258,13 @@ func (q *Queries) GetOSImage(ctx context.Context, id pgtype.UUID) (Osimage, erro
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }
 
 const listOSImages = `-- name: ListOSImages :many
-SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port FROM osimages
+SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by FROM osimages
 WHERE soft_deleted_at IS NULL
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
@@ -269,6 +304,60 @@ func (q *Queries) ListOSImages(ctx context.Context, arg ListOSImagesParams) ([]O
 			&i.ConfigEnv,
 			&i.ConfigExposedPorts,
 			&i.DefaultPort,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listOSImagesByOwner = `-- name: ListOSImagesByOwner :many
+SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by FROM osimages
+WHERE soft_deleted_at IS NULL AND created_by = $1
+ORDER BY created_at DESC
+LIMIT $2
+`
+
+type ListOSImagesByOwnerParams struct {
+	CreatedBy pgtype.UUID
+	Limit     int32
+}
+
+func (q *Queries) ListOSImagesByOwner(ctx context.Context, arg ListOSImagesByOwnerParams) ([]Osimage, error) {
+	rows, err := q.db.Query(ctx, listOSImagesByOwner, arg.CreatedBy, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Osimage
+	for rows.Next() {
+		var i Osimage
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.ObjectKey,
+			&i.FileName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.SoftDeletedAt,
+			&i.Source,
+			&i.OCIRef,
+			&i.OCIDigest,
+			&i.Status,
+			&i.StatusDetail,
+			&i.ConfigUser,
+			&i.ConfigEntrypoint,
+			&i.ConfigCmd,
+			&i.ConfigEnv,
+			&i.ConfigExposedPorts,
+			&i.DefaultPort,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -281,7 +370,7 @@ func (q *Queries) ListOSImages(ctx context.Context, arg ListOSImagesParams) ([]O
 }
 
 const listReadyOSImages = `-- name: ListReadyOSImages :many
-SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port FROM osimages
+SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by FROM osimages
 WHERE soft_deleted_at IS NULL AND status = 'ready'
 ORDER BY created_at DESC
 LIMIT $1
@@ -316,6 +405,7 @@ func (q *Queries) ListReadyOSImages(ctx context.Context, limit int32) ([]Osimage
 			&i.ConfigEnv,
 			&i.ConfigExposedPorts,
 			&i.DefaultPort,
+			&i.CreatedBy,
 		); err != nil {
 			return nil, err
 		}
@@ -331,7 +421,7 @@ const markOSImageBuilding = `-- name: MarkOSImageBuilding :one
 UPDATE osimages
 SET status = 'building', status_detail = ''
 WHERE id = $1 AND soft_deleted_at IS NULL AND status IN ('pending', 'building', 'failed')
-RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
 `
 
 func (q *Queries) MarkOSImageBuilding(ctx context.Context, id pgtype.UUID) (Osimage, error) {
@@ -357,6 +447,7 @@ func (q *Queries) MarkOSImageBuilding(ctx context.Context, id pgtype.UUID) (Osim
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }
@@ -365,7 +456,7 @@ const softDeleteOSImage = `-- name: SoftDeleteOSImage :one
 UPDATE osimages
 SET soft_deleted_at = now()
 WHERE id = $1 AND soft_deleted_at IS NULL
-RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
 `
 
 func (q *Queries) SoftDeleteOSImage(ctx context.Context, id pgtype.UUID) (Osimage, error) {
@@ -391,6 +482,47 @@ func (q *Queries) SoftDeleteOSImage(ctx context.Context, id pgtype.UUID) (Osimag
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const softDeleteOSImageForOwner = `-- name: SoftDeleteOSImageForOwner :one
+UPDATE osimages
+SET soft_deleted_at = now()
+WHERE id = $1 AND created_by = $2 AND soft_deleted_at IS NULL
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
+`
+
+type SoftDeleteOSImageForOwnerParams struct {
+	ID        pgtype.UUID
+	CreatedBy pgtype.UUID
+}
+
+func (q *Queries) SoftDeleteOSImageForOwner(ctx context.Context, arg SoftDeleteOSImageForOwnerParams) (Osimage, error) {
+	row := q.db.QueryRow(ctx, softDeleteOSImageForOwner, arg.ID, arg.CreatedBy)
+	var i Osimage
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.ObjectKey,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.SoftDeletedAt,
+		&i.Source,
+		&i.OCIRef,
+		&i.OCIDigest,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ConfigUser,
+		&i.ConfigEntrypoint,
+		&i.ConfigCmd,
+		&i.ConfigEnv,
+		&i.ConfigExposedPorts,
+		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }
@@ -400,7 +532,7 @@ UPDATE osimages
 SET description = $1,
     default_port = COALESCE($2::integer, default_port)
 WHERE id = $3 AND soft_deleted_at IS NULL
-RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
 `
 
 type UpdateOSImageParams struct {
@@ -432,6 +564,7 @@ func (q *Queries) UpdateOSImage(ctx context.Context, arg UpdateOSImageParams) (O
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }
@@ -444,7 +577,7 @@ SET config_user = $1,
     config_env = $4::text[],
     config_exposed_ports = $5::integer[]
 WHERE id = $6 AND soft_deleted_at IS NULL
-RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
 `
 
 type UpdateOSImageConfigParams struct {
@@ -486,6 +619,7 @@ func (q *Queries) UpdateOSImageConfig(ctx context.Context, arg UpdateOSImageConf
 		&i.ConfigEnv,
 		&i.ConfigExposedPorts,
 		&i.DefaultPort,
+		&i.CreatedBy,
 	)
 	return i, err
 }

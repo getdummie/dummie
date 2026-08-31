@@ -24,8 +24,29 @@ VALUES ($1, $2, $3, $4, $5, 'upload', 'ready')
 RETURNING *;
 
 -- name: CreateOCIOSImage :one
-INSERT INTO osimages (name, description, oci_ref, source, status)
-VALUES ($1, $2, $3, 'oci', 'pending')
+INSERT INTO osimages (name, description, oci_ref, created_by, source, status)
+VALUES ($1, $2, $3, sqlc.narg(created_by), 'oci', 'pending')
+RETURNING *;
+
+-- name: ListOSImagesByOwner :many
+SELECT * FROM osimages
+WHERE soft_deleted_at IS NULL AND created_by = $1
+ORDER BY created_at DESC
+LIMIT $2;
+
+-- name: CountLiveOSImagesByOwner :one
+SELECT count(*) FROM osimages
+WHERE soft_deleted_at IS NULL AND created_by = $1;
+
+-- name: CountBuildingOSImagesByOwner :one
+SELECT count(*) FROM osimages
+WHERE soft_deleted_at IS NULL AND created_by = $1
+  AND status IN ('pending', 'building');
+
+-- name: SoftDeleteOSImageForOwner :one
+UPDATE osimages
+SET soft_deleted_at = now()
+WHERE id = $1 AND created_by = $2 AND soft_deleted_at IS NULL
 RETURNING *;
 
 -- name: MarkOSImageBuilding :one

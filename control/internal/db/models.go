@@ -139,6 +139,7 @@ type Osimage struct {
 	ConfigEnv          []string
 	ConfigExposedPorts []int32
 	DefaultPort        pgtype.Int4
+	CreatedBy          pgtype.UUID
 }
 
 type PersonalAccessToken struct {

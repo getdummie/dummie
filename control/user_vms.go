@@ -229,6 +229,12 @@ type userArtifactDTO struct {
 	// Only set for os images: the port the image says it listens on, offered as
 	// the default_port of a vm created from it.
 	DefaultPort int32 `json:"default_port,omitempty"`
+
+	// Also os images only: where the rootfs came from. 'oci' carries the
+	// container reference it was built from, 'upload' the name of the tar.
+	Source   string `json:"source,omitempty"`
+	OCIRef   string `json:"oci_ref,omitempty"`
+	FileName string `json:"file_name,omitempty"`
 }
 
 const maxArtifactChoices = 100
@@ -260,7 +266,7 @@ func (h *UserHandler) ListKernels(c *echo.Context) error {
 }
 
 // @Summary     List available OS images
-// @Description The root-filesystem catalogue, on the same terms as the kernel one, limited to images that have finished building. The id is what you pass as osimage_id.
+// @Description The root-filesystem catalogue, on the same terms as the kernel one, limited to images that have finished building. The id is what you pass as osimage_id. source says where each one came from: 'oci' carries the container reference in oci_ref, 'upload' the name of the tar in file_name.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
@@ -281,6 +287,9 @@ func (h *UserHandler) ListOSImages(c *echo.Context) error {
 			SizeBytes:   o.SizeBytes,
 			CreatedAt:   o.CreatedAt.Time.Format(time.RFC3339),
 			DefaultPort: o.DefaultPort.Int32,
+			Source:      o.Source,
+			OCIRef:      o.OCIRef,
+			FileName:    o.FileName,
 		})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": items})

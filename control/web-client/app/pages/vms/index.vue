@@ -275,8 +275,16 @@ interface Kernel {
   description: string
   size_bytes: number
   created_at: string
-  // OS images only: the port the container image exposes.
+  // OS images only: the port the container image exposes, and where the rootfs
+  // came from.
   default_port?: number
+  source?: string
+  oci_ref?: string
+  file_name?: string
+}
+
+function imageSource(o: Kernel) {
+  return o.source === 'oci' ? o.oci_ref : o.file_name
 }
 
 const kernels = ref<Kernel[]>([])
@@ -362,11 +370,102 @@ function pickOSImage(id: string) {
   if (port) form.default_port = String(port)
 }
 
+interface OwnedOSImage {
+  id: string
+  name: string
+  status: string
+  status_detail: string
+}
+
+const addImageOpen = ref(false)
+const addImage = reactive({ name: '', ociRef: '' })
+const addingImage = ref(false)
+const addImageError = ref<string | null>(null)
+const buildingImage = ref<OwnedOSImage | null>(null)
+let buildPoll: ReturnType<typeof setInterval> | null = null
+
+function stopBuildPoll() {
+  if (buildPoll) {
+    clearInterval(buildPoll)
+    buildPoll = null
+  }
+}
+onBeforeUnmount(stopBuildPoll)
+
+function openAddImage() {
+  osImageOpen.value = false
+  addImageError.value = null
+  addImageOpen.value = true
+}
+
+function cancelAddImage() {
+  addImageOpen.value = false
+  addImage.name = ''
+  addImage.ociRef = ''
+  addImageError.value = null
+}
+
+const canAddImage = computed(() => !!addImage.name.trim() && !!addImage.ociRef.trim())
+
+async function queueImage() {
+  if (!canAddImage.value) return
+  addingImage.value = true
+  addImageError.value = null
+  try {
+    const res = await authFetch('/vms/osimages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: addImage.name.trim(), oci_ref: addImage.ociRef.trim() }),
+    })
+    const body = await res.json().catch(() => null)
+    if (!res.ok) throw new Error(typeof body?.message === 'string' ? body.message : `HTTP ${res.status}`)
+    buildingImage.value = body as OwnedOSImage
+    cancelAddImage()
+    stopBuildPoll()
+    buildPoll = setInterval(pollBuild, 5000)
+  }
+  catch (e) {
+    addImageError.value = e instanceof Error ? e.message : 'Could not add the Docker image'
+  }
+  finally {
+    addingImage.value = false
+  }
+}
+
+// The build runs on the server and takes minutes, so the dialog watches for it
+// and selects the image the moment it is usable.
+async function pollBuild() {
+  const want = buildingImage.value
+  if (!want) return stopBuildPoll()
+  try {
+    const res = await authFetch('/vms/osimages/mine')
+    if (!res.ok) return
+    const rows: OwnedOSImage[] = (await res.json()).items ?? []
+    const row = rows.find(o => o.id === want.id)
+    if (!row) return stopBuildPoll()
+    buildingImage.value = row
+    if (row.status === 'ready') {
+      stopBuildPoll()
+      await loadOSImages()
+      pickOSImage(row.id)
+    }
+    else if (row.status === 'failed') {
+      stopBuildPoll()
+    }
+  }
+  catch {
+    // A blip is not worth surfacing; the next tick tries again.
+  }
+}
+
 function resetForm() {
   Object.assign(form, blankForm)
   targets.value = []
   createError.value = null
   copiedFrom.value = null
+  cancelAddImage()
+  buildingImage.value = null
+  stopBuildPoll()
 }
 
 const copiedFrom = ref<string | null>(null)
@@ -666,37 +765,137 @@ async function confirmDelete() {
                   </PopoverTrigger>
                   <PopoverContent class="w-(--reka-popover-trigger-width) p-0">
                     <Command>
-                      <CommandInput placeholder="Search OS images…" />
+                      <CommandInput placeholder="Search by name or image…" />
                       <CommandList>
                         <CommandEmpty>No OS image matches that.</CommandEmpty>
                         <CommandGroup>
                           <CommandItem
                             v-for="o in osImages"
                             :key="o.id"
-                            :value="o.name"
-                            class="gap-2"
+                            :value="`${o.name} ${imageSource(o) ?? ''}`"
+                            class="items-start gap-2"
                             @select="pickOSImage(o.id)"
                           >
                             <Check
-                              class="size-4 shrink-0"
+                              class="mt-0.5 size-4 shrink-0"
                               :class="o.id === form.osimage_id ? 'opacity-100' : 'opacity-0'"
                               aria-hidden="true"
                             />
-                            <span class="truncate font-mono text-xs">{{ o.name }}</span>
-                            <span class="ml-auto shrink-0 font-mono text-xs text-muted-foreground">
+                            <span class="min-w-0 flex-1">
+                              <span class="block truncate font-mono text-xs">{{ o.name }}</span>
+                              <span
+                                v-if="imageSource(o)"
+                                class="block truncate font-mono text-[0.7rem] text-muted-foreground"
+                              >
+                                {{ imageSource(o) }}
+                              </span>
+                            </span>
+                            <span class="mt-0.5 shrink-0 font-mono text-xs text-muted-foreground">
                               {{ fmtBytes(o.size_bytes) }}
                             </span>
                           </CommandItem>
                         </CommandGroup>
                       </CommandList>
                     </Command>
+                    <div class="border-t border-border p-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        class="w-full justify-start gap-2 font-mono text-xs font-normal"
+                        @click="openAddImage"
+                      >
+                        <Plus class="size-4 shrink-0" aria-hidden="true" />
+                        Add a Docker image
+                      </Button>
+                    </div>
                   </PopoverContent>
                 </Popover>
+
+                <Button
+                  v-if="!osImages.length && !osImagesError"
+                  type="button"
+                  variant="outline"
+                  class="w-full justify-start gap-2 font-mono text-xs font-normal"
+                  @click="openAddImage"
+                >
+                  <Plus class="size-4 shrink-0" aria-hidden="true" />
+                  Add a Docker image
+                </Button>
+
+                <div v-if="addImageOpen" class="space-y-3 rounded-md border border-border bg-muted/30 p-3">
+                  <div class="space-y-2">
+                    <Label for="vm-img-name">Image name</Label>
+                    <Input
+                      id="vm-img-name"
+                      v-model="addImage.name"
+                      maxlength="128"
+                      placeholder="marimo"
+                      autocomplete="off"
+                      spellcheck="false"
+                    />
+                  </div>
+                  <div class="space-y-2">
+                    <Label for="vm-img-ref">Docker image</Label>
+                    <Input
+                      id="vm-img-ref"
+                      v-model="addImage.ociRef"
+                      maxlength="512"
+                      placeholder="ghcr.io/marimo-team/marimo:latest-sql"
+                      autocomplete="off"
+                      spellcheck="false"
+                      class="font-mono text-xs"
+                      aria-describedby="vm-img-ref-hint"
+                    />
+                    <p id="vm-img-ref-hint" class="text-xs text-muted-foreground">
+                      Pulled and flattened into a root filesystem, which takes a few minutes. It has
+                      to be public, and it joins the catalogue for everyone.
+                    </p>
+                  </div>
+                  <FormError id="vm-add-image-error" :message="addImageError" />
+                  <div class="flex justify-end gap-2">
+                    <Button type="button" variant="outline" class="font-mono text-xs" @click="cancelAddImage">
+                      Cancel
+                    </Button>
+                    <Button
+                      type="button"
+                      class="font-mono text-xs"
+                      :disabled="addingImage || !canAddImage"
+                      @click="queueImage"
+                    >
+                      {{ addingImage ? 'Queueing…' : 'Build it' }}
+                    </Button>
+                  </div>
+                </div>
+
+                <p
+                  v-if="buildingImage && buildingImage.status !== 'ready'"
+                  class="text-xs"
+                  :class="buildingImage.status === 'failed' ? 'text-destructive' : 'text-muted-foreground'"
+                  aria-live="polite"
+                >
+                  <template v-if="buildingImage.status === 'failed'">
+                    {{ buildingImage.name }} could not be built{{ buildingImage.status_detail ? `: ${buildingImage.status_detail}` : '' }}
+                  </template>
+                  <template v-else>
+                    Building {{ buildingImage.name }}… it is selected here as soon as it is ready, and
+                    it keeps building if you close this dialog.
+                  </template>
+                </p>
+
+                <p
+                  v-if="selectedOSImage && imageSource(selectedOSImage)"
+                  class="font-mono text-xs break-all text-muted-foreground"
+                >
+                  {{ imageSource(selectedOSImage) }}
+                </p>
                 <p v-if="selectedOSImage?.description" class="text-xs text-muted-foreground">
                   {{ selectedOSImage.description }}
                 </p>
+                <p v-else-if="osImagesError" class="text-xs text-muted-foreground">
+                  {{ osImagesError }}
+                </p>
                 <p v-else-if="!osImages.length" class="text-xs text-muted-foreground">
-                  {{ osImagesError ?? 'No OS images have been uploaded yet. Ask an admin to add one.' }}
+                  No OS images yet. Name a Docker image above and this server builds one from it.
                 </p>
               </div>
 
