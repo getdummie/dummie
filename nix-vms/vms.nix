@@ -14,7 +14,7 @@
     netmask = "255.255.0.0";
     dns = "1.1.1.1";
 
-    kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-v7.1.4/arch/x86/boot/bzImage";
+    kernel = "/home/cc/Projects/.personal/dummie-v2/kernel/linux-host-v7.2.2/arch/x86/boot/bzImage";
     rootfsTar = "/home/cc/Projects/.personal/dummie-v2/images/debian-vm-host/rootfs.tar";
 
     shares = [

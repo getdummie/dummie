@@ -207,20 +207,30 @@ image-build target:
   docker export "$cid" -o rootfs.tar
   docker rm "$cid"
 
-kernel-setup version:
-  #!/usr/bin/env bash
-  cd kernel
-  git clone --depth 1 --branch "{{version}}" https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git "{{version}}"
+# Find kernel versions here: https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
 
-kernel-build version:
+kernel-setup variant version:
   #!/usr/bin/env bash
+  case "{{ variant }}" in
+    host|guest) ;;
+    *) echo "error: variant must be 'host' or 'guest', got '{{ variant }}'" >&2; exit 1 ;;
+  esac
+  cd kernel
+  git clone --depth 1 --branch "{{version}}" https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git "linux-{{variant}}-{{version}}"
+
+kernel-build variant version:
+  #!/usr/bin/env bash
+  case "{{ variant }}" in
+    host|guest) ;;
+    *) echo "error: variant must be 'host' or 'guest', got '{{ variant }}'" >&2; exit 1 ;;
+  esac
   cd kernel
   nix-shell --run '
     set -euo pipefail
-    cd "linux-{{version}}"
+    cd "linux-{{variant}}-{{version}}"
     make kernelversion
     make defconfig
-    ../optimize.sh
+    ../{{variant}}/optimize.sh
     make olddefconfig
     make -j"$(nproc)" bzImage
   '
