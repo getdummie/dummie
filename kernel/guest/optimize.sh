@@ -143,7 +143,6 @@ scripts/config --enable  CONFIG_NETFILTER_NETLINK_QUEUE
 scripts/config --enable  CONFIG_NETFILTER_NETLINK_QUEUE_CT      # optional, gives Suricata conntrack info
 scripts/config --enable  CONFIG_NFT_QUEUE      # the `queue` verdict itself
 scripts/config --enable  CONFIG_NFT_COUNTER    # counters on the drop rules
-scripts/config --enable  CONFIG_IFB
 scripts/config --enable  CONFIG_NET_SCH_HTB
 scripts/config --enable  CONFIG_NET_SCH_INGRESS
 scripts/config --enable  CONFIG_NET_CLS_U32
