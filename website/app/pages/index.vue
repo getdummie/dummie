@@ -5,102 +5,104 @@ import { Button } from '@/components/ui/button'
 const { consoleUrl } = useRuntimeConfig().public
 
 useHead({
-  title: 'dummie — secure sandbox runtime',
+  title: 'dummie — secure computers for everyone',
   meta: [
     {
       name: 'description',
       content:
-        'dummie boots secure, isolated cloud sandboxes in milliseconds for running untrusted and AI-generated code.',
+        'dummie gives you your own computer in the cloud. Ready in seconds, sealed off from everything else, and yours to keep running for as long as you need it.',
     },
   ],
 })
-
-const stats = [
-  { value: '142ms', label: 'cold boot' },
-  { value: '10k+', label: 'concurrent sandboxes' },
-  { value: '<200ms', label: 'snapshot restore' },
-  { value: '99.99%', label: 'run isolation' },
-]
 </script>
 
 <template>
   <div>
-    <section aria-labelledby="hero-heading" class="relative overflow-hidden border-b border-border">
+    <section aria-labelledby="hero-heading" class="panel relative overflow-hidden border-b border-border">
       <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-60" />
-      <div class="relative mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28 lg:py-32">
+      <div class="relative mx-auto w-full max-w-6xl px-4 py-16 sm:px-6 sm:py-20">
         <div class="grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
           <div>
-            <p class="eyebrow mb-5 flex items-center gap-2 text-primary-text">
-              <span aria-hidden="true" class="inline-block size-1.5 bg-primary" />
-              Secure sandbox runtime
+            <p class="eyebrow anim-rise mb-5 flex items-center gap-2 text-primary-text">
+              <span aria-hidden="true" class="inline-block size-1.5 animate-pulse bg-primary" />
+              Isolated by default
             </p>
-            <h1 id="hero-heading" class="text-balance text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl">
-              Run untrusted code like you own the box.
+            <h1
+              id="hero-heading"
+              class="anim-rise text-balance text-4xl font-semibold leading-[1.05] tracking-tight sm:text-5xl lg:text-6xl"
+              style="animation-delay: 0.08s"
+            >
+              Secure computers
+              <span class="block text-muted-foreground">for everyone</span>
             </h1>
-            <p class="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
-              dummie boots hardware-isolated microVMs in milliseconds. Give your
-              agents a real machine to work on — files, network, a full shell —
-              without ever risking your own.
-            </p>
-            <div id="start" class="mt-8 flex flex-col gap-3 sm:flex-row">
-              <Button as-child size="lg" class="font-mono text-sm">
-                <a :href="`${consoleUrl}/signin`">Start building <ArrowRight class="size-4" aria-hidden="true" /></a>
+            <div class="anim-rise mt-8 flex flex-col gap-3 sm:flex-row" style="animation-delay: 0.26s">
+              <Button as-child size="lg" class="group font-mono text-sm">
+                <a :href="`${consoleUrl}/signin`">
+                  Boot a machine
+                  <ArrowRight class="size-4 transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true" />
+                </a>
               </Button>
               <Button as-child size="lg" variant="outline" class="font-mono text-sm">
-                <a href="#runtime">See it in action</a>
+                <a href="#usecases">What it's for</a>
               </Button>
             </div>
-            <p class="eyebrow mt-8 text-muted-foreground/70">
-              $ curl -fsSL dummie.sh | sh
-            </p>
           </div>
 
-          <div id="runtime" tabindex="-1" class="lg:pl-4">
-            <TerminalMock />
+          <div class="anim-rise lg:pl-4" style="animation-delay: 0.34s">
+            <MachineVisual />
           </div>
         </div>
       </div>
     </section>
 
-    <section aria-label="Runtime performance figures" class="border-b border-border">
-      <ul class="mx-auto grid max-w-6xl grid-cols-2 divide-x divide-border border-x border-border sm:grid-cols-4">
-        <li v-for="s in stats" :key="s.label" class="px-4 py-8 sm:px-6">
-          <span class="block font-mono text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            {{ s.value }}
-          </span>
-          <span class="eyebrow mt-2 block text-muted-foreground">
-            {{ s.label }}
-          </span>
-        </li>
-      </ul>
-    </section>
-
-    <section id="product" aria-labelledby="product-heading" class="border-b border-border">
-      <div class="mx-auto max-w-6xl px-4 pt-16 sm:px-6 sm:pt-20">
-        <p class="eyebrow mb-4 text-primary-text">// Built for agents</p>
-        <h2 id="product-heading" class="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
-          A production runtime for code you didn't write.
+    <section id="usecases" aria-labelledby="usecases-heading" class="panel border-b border-border">
+      <div class="mx-auto w-full max-w-6xl px-4 pt-14 sm:px-6">
+        <p v-reveal class="eyebrow mb-4 text-primary-text">// What it's for</p>
+        <h2
+          id="usecases-heading"
+          v-reveal="60"
+          class="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl"
+        >
+          One computer, plenty of uses.
         </h2>
-        <p class="mt-4 max-w-xl text-muted-foreground">
-          Isolation, speed, and control as primitives — not add-ons.
-        </p>
       </div>
-      <div class="mx-auto mt-12 max-w-6xl px-4 sm:px-6">
-        <FeatureGrid />
+      <div v-reveal="120" class="mx-auto mt-8 w-full max-w-6xl px-4 pb-14 sm:px-6">
+        <UseCaseGrid />
       </div>
-      <div class="h-16 sm:h-20" />
     </section>
 
-    <section aria-labelledby="cta-heading" class="relative overflow-hidden">
+    <section id="security" aria-labelledby="security-heading" class="panel border-b border-border">
+      <div class="mx-auto w-full max-w-6xl px-4 pt-14 sm:px-6">
+        <p v-reveal class="eyebrow mb-4 text-primary-text">// The deal</p>
+        <h2
+          id="security-heading"
+          v-reveal="60"
+          class="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl"
+        >
+          You build. We handle the walls.
+        </h2>
+      </div>
+      <div v-reveal="120" class="mx-auto mt-10 w-full max-w-6xl px-4 pb-14 sm:px-6">
+        <SecurityPanels />
+      </div>
+    </section>
+
+    <section aria-labelledby="cta-heading" class="panel relative overflow-hidden">
       <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-40" />
-      <div class="relative mx-auto max-w-6xl px-4 py-20 text-center sm:px-6 sm:py-28">
-        <p class="eyebrow mb-5 text-primary-text">// Ship it</p>
-        <h2 id="cta-heading" class="mx-auto max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-5xl">
-          Your first sandbox is one command away.
+      <div class="relative mx-auto w-full max-w-6xl px-4 py-16 text-center sm:px-6">
+        <h2
+          id="cta-heading"
+          v-reveal
+          class="mx-auto max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-5xl"
+        >
+          Try now.
         </h2>
-        <div class="mt-8 flex justify-center">
-          <Button as-child size="lg" class="font-mono text-sm">
-            <a :href="`${consoleUrl}/signin`">Open the console <ArrowRight class="size-4" aria-hidden="true" /></a>
+        <div v-reveal="80" class="mt-8 flex justify-center">
+          <Button as-child size="lg" class="group font-mono text-sm">
+            <a :href="`${consoleUrl}/signin`">
+              Open the console
+              <ArrowRight class="size-4 transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true" />
+            </a>
           </Button>
         </div>
       </div>

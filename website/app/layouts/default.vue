@@ -39,12 +39,12 @@ const { consoleUrl } = useRuntimeConfig().public
       <slot />
     </main>
 
-    <footer class="border-t border-border/80">
+    <footer class="panel-end border-t border-border/80">
       <div class="mx-auto flex max-w-6xl flex-col items-start justify-between gap-4 px-4 py-8 sm:flex-row sm:items-center sm:px-6">
         <div class="flex items-center gap-2.5">
           <img src="/logo.svg" alt="" aria-hidden="true" class="size-5">
           <span class="font-mono text-xs text-muted-foreground">
-            dummie — secure sandbox runtime
+            dummie — secure isolated computers
           </span>
         </div>
         <p class="eyebrow text-muted-foreground">
