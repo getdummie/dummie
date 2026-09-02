@@ -34,7 +34,8 @@ const corednsHeader = `# Written by the control server and installed by dclient.
 #
 # Every guest on this host is pointed here by dhcp, and this file is the whole
 # list of names any of them may resolve. A guest with no allowances gets no block
-# of its own and falls through to the refuse-everything server at the bottom.
+# of its own and falls through to the refuse-everything server at the bottom, and
+# a guest allowed the whole address space gets a block that forwards every name.
 #
 # Blocks are matched by zone first and then by view, and coredns consults the
 # blocks that have a view before the ones that do not -- which is what makes the
@@ -46,6 +47,18 @@ func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream s
 	b.WriteString(corednsHeader)
 
 	for _, vm := range groupByVM(rows) {
+		if vm.allowAll {
+			fmt.Fprintf(&b, "\n# --- %s (%s) at %s may resolve anything (%s is allowed) ---\n",
+				corefileText(vm.name), corefileText(vm.hostID), vm.ip, targetEverywhere)
+			fmt.Fprintf(&b, ".:53 {\n    view %s {\n        expr client_ip() == '%s'\n    }\n",
+				viewName(vm.ip, "allow"), vm.ip)
+			fmt.Fprintf(&b, "    forward . %s\n", upstream)
+			b.WriteString("    cache 30\n")
+			b.WriteString(corednsLogDirective)
+			b.WriteString("    errors\n}\n")
+			continue
+		}
+
 		zones := vmZones(vm)
 		if len(zones) == 0 {
 			fmt.Fprintf(&b, "\n# %s (%s) at %s may resolve nothing\n",

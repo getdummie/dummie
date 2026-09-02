@@ -95,6 +95,50 @@ func TestGenerateCoreDNSConfigAnswersLookupOnlyDomains(t *testing.T) {
 	}
 }
 
+func TestGenerateCoreDNSConfigForwardsEveryNameWhenEverythingIsAllowed(t *testing.T) {
+	rows := []db.ListVMNetworkTargetsByClientRow{
+		row("10.0.0.2", "alpha", "ip", targetEverywhere, "any", ""),
+		row("10.0.0.3", "beta", "domain", "example.com", "", ""),
+	}
+	out := generateCoreDNSConfig(rows, "1.1.1.1")
+
+	if !strings.Contains(out, ".:53 {\n    view vm_10_0_0_2_allow {") {
+		t.Errorf("the open vm did not get a forwarder for the root zone:\n%s", out)
+	}
+	if strings.Contains(out, "vm_10_0_0_2_deny") {
+		t.Errorf("the open vm still has a refusal view:\n%s", out)
+	}
+	if !strings.Contains(out, "example.com:53 {") {
+		t.Errorf("another vm's allowlist was disturbed:\n%s", out)
+	}
+	if !strings.Contains(out, corednsRefuseAll) {
+		t.Errorf("the fleet-wide refusal is missing:\n%s", out)
+	}
+}
+
+func TestGenerateSuricataRulesPassesEverythingWhenEverythingIsAllowed(t *testing.T) {
+	out := generateSuricataRules([]db.ListVMNetworkTargetsByClientRow{
+		row("10.0.0.2", "alpha", "ip", targetEverywhere, "any", ""),
+	})
+
+	if !strings.Contains(out, "pass ip 10.0.0.2 any -> "+targetEverywhere+" any") {
+		t.Errorf("no blanket pass rule was written:\n%s", out)
+	}
+	if strings.Contains(out, "no name-based allowances") {
+		t.Errorf("the open vm still got its own blanket deny:\n%s", out)
+	}
+}
+
+func TestGenerateCoreDNSConfigKeepsTheAllowlistForANarrowerCIDR(t *testing.T) {
+	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
+		row("10.0.0.2", "alpha", "ip", targetEverywhere, "tcp", "443"),
+	}, "1.1.1.1")
+
+	if strings.Contains(out, "forward .") {
+		t.Errorf("everything on one port opened the resolver:\n%s", out)
+	}
+}
+
 func TestGenerateCoreDNSConfigGroupsAndSortsZones(t *testing.T) {
 	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", "443"),

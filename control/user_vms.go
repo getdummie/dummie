@@ -1199,6 +1199,8 @@ func insertTarget(ctx context.Context, q *db.Queries, vm db.Vm, nt normalizedTar
 // @Description
 // @Description Only tls and http carry the destination name in the traffic, so ssh or postgres to a hostname is not expressible: use /vms/{id}/targets/resolve and record the addresses.
 // @Description
+// @Description A destination of `0.0.0.0/0` with transport `any` and no ports takes the guest off the allowlist entirely: everything passes and the resolver answers for every name. Give it a ttl_seconds -- the console's "Allow everything" button will not write one without.
+// @Description
 // @Description Set ttl_seconds for a temporary allowance the control plane withdraws on its own.
 // @Tags        egress
 // @Accept      json

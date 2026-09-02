@@ -31,6 +31,12 @@ export interface TargetRecord {
   expires_at: string
 }
 
+export const everywhere = '0.0.0.0/0'
+
+export function isEverywhere(t: TargetRecord) {
+  return t.kind === 'ip' && t.destination === everywhere && t.transport === 'any' && !t.ports
+}
+
 export interface DeniedAttempt {
   kind: 'lookup' | 'packet'
   domain: string
@@ -174,6 +180,7 @@ function transportCovers(spec: string, proto: string) {
 // A denied attempt matched against the current allowlist: a name resolves if it
 // is listed at all, everything else has to match address, transport and port.
 export function deniedCovered(d: DeniedAttempt, targets: TargetRecord[]) {
+  if (targets.some(isEverywhere)) return true
   const name = normalizeName(d.domain)
   if (d.kind === 'lookup') {
     return targets.some(t => t.kind === 'domain' && normalizeName(t.destination) === name)

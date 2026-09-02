@@ -96,7 +96,10 @@ func generateSuricataRules(rows []db.ListVMNetworkTargetsByClientRow) string {
 	sid := suricataPassSidBase
 	for _, vm := range groupByVM(rows) {
 		what := "allowed for"
-		if len(vm.targets) == 0 {
+		switch {
+		case vm.allowAll:
+			what = "everything allowed for"
+		case len(vm.targets) == 0:
 			what = "nothing allowed for"
 		}
 		fmt.Fprintf(&b, "\n# --- %s %s (%s) at %s ---\n",
@@ -108,7 +111,7 @@ func generateSuricataRules(rows []db.ListVMNetworkTargetsByClientRow) string {
 				b.WriteByte('\n')
 			}
 		}
-		if !vm.needsHandshake {
+		if !vm.needsHandshake && !vm.allowAll {
 			b.WriteString(vmDenyRule(vm, &sid))
 			b.WriteByte('\n')
 		}
@@ -124,6 +127,18 @@ type vmTargets struct {
 	targets          []db.ListVMNetworkTargetsByClientRow
 
 	needsHandshake bool
+
+	allowAll bool
+}
+
+// The whole address space allowed on every transport: the pass rule it compiles
+// to matches everything, so the guest is off the allowlist entirely and the
+// resolver has to answer for every name too.
+const targetEverywhere = "0.0.0.0/0"
+
+func isEverywhere(r db.ListVMNetworkTargetsByClientRow) bool {
+	return r.Kind == "ip" && r.Destination == targetEverywhere &&
+		r.Transport == "any" && r.Ports == ""
 }
 
 func groupByVM(rows []db.ListVMNetworkTargetsByClientRow) []vmTargets {
@@ -137,6 +152,9 @@ func groupByVM(rows []db.ListVMNetworkTargetsByClientRow) []vmTargets {
 			continue
 		}
 		g.targets = append(g.targets, r)
+		if isEverywhere(r) {
+			g.allowAll = true
+		}
 		if r.Kind == "domain" {
 			if tls, http := domainPorts(r.Ports); tls || http {
 				g.needsHandshake = true

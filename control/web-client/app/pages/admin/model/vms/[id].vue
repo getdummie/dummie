@@ -60,6 +60,9 @@ const targetColumns: DataTableColumn[] = [
 ]
 
 function matchedOn(t: Target) {
+  if (t.kind === 'ip' && t.destination === '0.0.0.0/0' && t.transport === 'any' && !t.ports) {
+    return 'everything — every name and address'
+  }
   if (t.kind !== 'domain') return 'address'
   return t.ports === 'none' ? 'name — resolves only' : 'tls sni · http host'
 }

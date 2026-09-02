@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Monitor, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Globe, Monitor, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -34,6 +34,8 @@ import {
   deniedCovered,
   destinationPlaceholder as destinationPlaceholderFor,
   domainPortChoices,
+  everywhere,
+  isEverywhere,
   matchSummary as matchSummaryFor,
   portPresets,
   presetWarning as presetWarningFor,
@@ -668,6 +670,7 @@ function allowDenied(d: DeniedAttempt) {
 }
 
 function matchedOn(t: TargetRecord) {
+  if (isEverywhere(t)) return 'everything — every name and address'
   if (t.kind !== 'domain') return 'address'
   return t.ports === 'none' ? 'name — resolves only' : 'tls sni · http host'
 }
@@ -675,6 +678,50 @@ function matchedOn(t: TargetRecord) {
 function portsLabel(t: TargetRecord) {
   if (t.kind !== 'domain') return t.ports || 'any'
   return t.ports === 'none' ? 'none' : (t.ports || '443, 80')
+}
+
+const allowAll = computed(() => targets.value.find(isEverywhere) ?? null)
+const openAllOpen = ref(false)
+const openAllTTL = ref('3600')
+const openAllNote = ref('')
+const openingAll = ref(false)
+const openAllError = ref<string | null>(null)
+
+function resetOpenAllForm() {
+  openAllTTL.value = '3600'
+  openAllNote.value = ''
+  openAllError.value = null
+}
+
+async function openEverything() {
+  const ttl = Number(openAllTTL.value)
+  const problem = ttlProblem(openAllTTL.value)
+  if (problem || ttl === 0) {
+    openAllError.value = problem
+      ?? 'An open door needs a TTL. Add 0.0.0.0/0 by hand if you really want it to stay.'
+    return
+  }
+  openingAll.value = true
+  openAllError.value = null
+  try {
+    await postTarget({
+      kind: 'ip',
+      destination: everywhere,
+      transport: 'any',
+      ports: '',
+      note: openAllNote.value.trim() || 'temporarily allowed everything',
+      ttl_seconds: ttl,
+    })
+    openAllOpen.value = false
+    resetOpenAllForm()
+    await loadTargets()
+  }
+  catch (e) {
+    openAllError.value = e instanceof Error ? e.message : 'Could not open the policy'
+  }
+  finally {
+    openingAll.value = false
+  }
 }
 
 const resolveOpen = ref(false)
@@ -1610,6 +1657,58 @@ async function removeDomain() {
             </p>
           </div>
           <div class="flex flex-wrap items-center gap-2">
+          <Dialog v-if="!allowAll" v-model:open="openAllOpen" @update:open="(v: boolean) => !v && resetOpenAllForm()">
+            <Button size="sm" variant="outline" class="font-mono text-xs" @click="resetOpenAllForm(); openAllOpen = true">
+              <Globe class="size-4" aria-hidden="true" />
+              Allow everything
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Allow everything for a while</DialogTitle>
+                <DialogDescription>
+                  Records {{ everywhere }} on every transport, which takes this VM off the allowlist
+                  altogether: every address is reachable and every name resolves, DNS included. It is
+                  withdrawn automatically when the TTL runs out.
+                </DialogDescription>
+              </DialogHeader>
+
+              <form class="space-y-4" :aria-busy="openingAll" @submit.prevent="openEverything">
+                <div class="space-y-2">
+                  <Label for="oa-ttl">TTL (seconds)</Label>
+                  <Input
+                    id="oa-ttl"
+                    v-model="openAllTTL"
+                    type="number"
+                    min="10"
+                    step="1"
+                    inputmode="numeric"
+                    required
+                    aria-describedby="oa-ttl-hint"
+                  />
+                  <p id="oa-ttl-hint" class="text-xs text-muted-foreground">
+                    Required here — this button will not leave a VM open forever. Removing the
+                    {{ everywhere }} row closes it again sooner.
+                  </p>
+                </div>
+                <div class="space-y-2">
+                  <Label for="oa-note">Note</Label>
+                  <Input id="oa-note" v-model="openAllNote" placeholder="why this is needed" />
+                </div>
+
+                <FormError id="open-all-error" :message="openAllError" />
+
+                <DialogFooter>
+                  <DialogClose as-child>
+                    <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                  </DialogClose>
+                  <Button type="submit" class="font-mono text-xs" :disabled="openingAll">
+                    {{ openingAll ? 'Opening…' : 'Allow everything' }}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+
           <Dialog v-model:open="resolveOpen" @update:open="(v: boolean) => !v && resetResolveForm()">
             <Button size="sm" variant="outline" class="font-mono text-xs" @click="resolveOpen = true">
               From a hostname
@@ -1866,6 +1965,15 @@ async function removeDomain() {
           </Dialog>
           </div>
         </div>
+
+        <Alert v-if="allowAll" variant="destructive" class="mx-4 mb-4 w-auto">
+          <AlertTitle>Everything is allowed right now</AlertTitle>
+          <AlertDescription>
+            This VM can reach any address and resolve any name for another
+            {{ timeLeft(allowAll.expires_at) || 'unknown amount of time' }}. The rest of this list is
+            not being enforced. Remove the {{ everywhere }} row to close it now.
+          </AlertDescription>
+        </Alert>
 
         <DataTable label="Allowed destinations" :columns="targetColumns" :empty="!targets.length" :frame="false">
           <template #empty>
