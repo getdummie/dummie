@@ -25,6 +25,8 @@ const taskCleanupEvery = 24 * time.Hour
 
 const taskCertRenewEvery = 24 * time.Hour
 
+const taskCustomCertPurgeEvery = 24 * time.Hour
+
 type vmTargetExpirePayload struct {
 	VMID        string `json:"vm_id"`
 	VMName      string `json:"vm_name"`
@@ -304,6 +306,38 @@ func handleCertRenew(ctx context.Context, r *taskRunner, t db.ScheduledTask) tas
 		return taskDone("started %d certificate renewal(s), skipped %d already in progress", started, skipped)
 	}
 	return taskDone("started %d certificate renewal(s)", started)
+}
+
+// handleCustomCertPurge is the only thing that removes a custom domain
+// certificate on its own. Deleting a vm leaves its certificate behind so the
+// owner can rebuild under the same name; once it has expired and nothing is
+// bound to the name any more, there is nothing left to reuse.
+func handleCustomCertPurge(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome {
+	rows, err := r.q.ListReclaimableCustomDomainCerts(ctx)
+	if err != nil {
+		return taskRetry(taskExpireRetry, "could not list the expired custom domain certificates: %v", err)
+	}
+	purged := 0
+	for _, row := range rows {
+		if r.blobs != nil {
+			_ = r.blobs.Delete(ctx, row.CertObjectKey)
+			_ = r.blobs.Delete(ctx, row.KeyObjectKey)
+		}
+		if err := r.q.DeleteCustomDomainCert(ctx, row.ID); err != nil {
+			log.Printf("could not purge the stored certificate for %s: %v", row.Domain, err)
+			continue
+		}
+		purged++
+	}
+
+	if _, err := scheduleTask(ctx, r.q, scheduleTaskParams{
+		Kind:   taskCustomCertPurge,
+		Reason: "reclaim expired custom domain certificates no vm is bound to",
+		After:  taskCustomCertPurgeEvery,
+	}); err != nil {
+		return taskRetry(taskExpireRetry, "purged %d certificate(s) but could not schedule the next sweep: %v", purged, err)
+	}
+	return taskDone("purged %d expired custom domain certificate(s)", purged)
 }
 
 const osImageBuildRetry = time.Minute

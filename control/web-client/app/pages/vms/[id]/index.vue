@@ -910,9 +910,11 @@ interface CustomDomain {
   last_error?: string
   url?: string
   cert_not_after?: string
+  cert_reused?: boolean
 }
 
 const domain = ref<CustomDomain | null>(null)
+const domainReused = ref(false)
 const domainInput = ref('')
 const domainBusy = ref(false)
 const domainError = ref<string | null>(null)
@@ -976,6 +978,7 @@ async function saveDomain() {
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     domain.value = await res.json()
+    domainReused.value = domain.value?.cert_reused === true
     domainInput.value = ''
   }
   catch (e) {
@@ -1010,6 +1013,7 @@ async function removeDomain() {
     const res = await authFetch(`/vms/${id.value}/domain`, { method: 'DELETE' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     domain.value = null
+    domainReused.value = false
     stopDomainPoll()
   }
   catch (e) {
@@ -1601,11 +1605,18 @@ async function removeDomain() {
             </div>
           </dl>
 
-          <div v-if="domain.status !== 'active'" class="mt-3 rounded-md border border-border bg-muted/40 p-3">
-            <p class="text-xs text-muted-foreground">
+          <div class="mt-3 rounded-md border border-border bg-muted/40 p-3">
+            <p v-if="domainReused" class="text-xs text-muted-foreground">
+              You already had a certificate for this name and it has not expired, so it was reused —
+              nothing has to be issued. Point the CNAME at the target below and the name is live.
+            </p>
+            <p v-else-if="domain.status !== 'active'" class="text-xs text-muted-foreground">
               Create this record at whoever holds your domain, then confirm it below. It has to be a
               CNAME: an A record pointing at the same address is not accepted, because the CNAME is
               what keeps the name following this VM if it moves.
+            </p>
+            <p v-else class="text-xs text-muted-foreground">
+              This name is live. Its CNAME has to keep pointing here, or it stops resolving to this VM.
             </p>
             <dl class="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-3">
               <div>

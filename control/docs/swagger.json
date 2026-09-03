@@ -186,6 +186,10 @@
                     "cert_not_after": {
                         "type": "string"
                     },
+                    "cert_reused": {
+                        "description": "Set when this claim was served by a certificate already held for the\nname, so the page can say the CNAME is the only thing left to do.",
+                        "type": "boolean"
+                    },
                     "cname_name": {
                         "description": "The record the owner has to create at their registrar, and what it has\nto point at. Both are echoed back at every status so the page can keep\nshowing the instructions while an order runs.",
                         "type": "string"
@@ -2642,7 +2646,7 @@
                 ]
             },
             "post": {
-                "description": "Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds one custom domain, so this replaces any earlier one.",
+                "description": "Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds one custom domain, so this replaces any earlier one. If you already obtained a certificate for this name and it has not expired, it is reused: the domain comes back active at once and pointing the CNAME at the new VM is all that is left to do.",
                 "parameters": [
                     {
                         "description": "vm id",

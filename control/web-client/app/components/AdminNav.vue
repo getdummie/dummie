@@ -7,6 +7,7 @@ import {
   Globe,
   HardDrive,
   KeyRound,
+  Link2,
   Server,
   Settings,
   Ticket,
@@ -31,6 +32,7 @@ const groups: AdminLink[][] = [
     { label: 'Enrollment keys', to: '/admin/model/client-keys', icon: KeyRound },
     { label: 'Clients', to: '/admin/model/clients', icon: Server },
     { label: 'Domains', to: '/admin/model/domains', icon: Globe },
+    { label: 'Custom domains', to: '/admin/model/custom-domains', icon: Link2 },
     { label: 'Scheduled tasks', to: '/admin/model/scheduled-tasks', icon: Clock },
   ],
   [

@@ -67,6 +67,19 @@ type ControlMetum struct {
 	CreatedAt pgtype.Timestamptz
 }
 
+type CustomDomainCert struct {
+	ID              pgtype.UUID
+	Domain          string
+	OwnerID         pgtype.UUID
+	CertObjectKey   string
+	KeyObjectKey    string
+	CertFingerprint string
+	CertNotAfter    pgtype.Timestamptz
+	CertIssuedAt    pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+}
+
 type Domain struct {
 	ID              pgtype.UUID
 	TLD             string

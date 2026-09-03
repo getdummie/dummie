@@ -93,6 +93,32 @@ func (q *Queries) GetCustomDomain(ctx context.Context, id pgtype.UUID) (VmCustom
 	return i, err
 }
 
+const getCustomDomainByDomain = `-- name: GetCustomDomainByDomain :one
+SELECT id, vm_id, domain, status, last_error, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_issued_at, ordered_at, created_at, updated_at FROM vm_custom_domains
+WHERE domain = $1
+`
+
+func (q *Queries) GetCustomDomainByDomain(ctx context.Context, domain string) (VmCustomDomain, error) {
+	row := q.db.QueryRow(ctx, getCustomDomainByDomain, domain)
+	var i VmCustomDomain
+	err := row.Scan(
+		&i.ID,
+		&i.VMID,
+		&i.Domain,
+		&i.Status,
+		&i.LastError,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertIssuedAt,
+		&i.OrderedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getCustomDomainByVM = `-- name: GetCustomDomainByVM :one
 SELECT id, vm_id, domain, status, last_error, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_issued_at, ordered_at, created_at, updated_at FROM vm_custom_domains
 WHERE vm_id = $1
@@ -117,6 +143,20 @@ func (q *Queries) GetCustomDomainByVM(ctx context.Context, vmID pgtype.UUID) (Vm
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const getCustomDomainClient = `-- name: GetCustomDomainClient :one
+SELECT v.client_id
+FROM vm_custom_domains cd
+JOIN vms v ON v.id = cd.vm_id
+WHERE cd.id = $1
+`
+
+func (q *Queries) GetCustomDomainClient(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getCustomDomainClient, id)
+	var client_id pgtype.UUID
+	err := row.Scan(&client_id)
+	return client_id, err
 }
 
 const getCustomDomainForIssue = `-- name: GetCustomDomainForIssue :one
@@ -181,6 +221,20 @@ func (q *Queries) GetCustomDomainForIssue(ctx context.Context, id pgtype.UUID) (
 		&i.AcmeDirectory,
 	)
 	return i, err
+}
+
+const getCustomDomainOwner = `-- name: GetCustomDomainOwner :one
+SELECT v.created_by
+FROM vm_custom_domains cd
+JOIN vms v ON v.id = cd.vm_id
+WHERE cd.id = $1
+`
+
+func (q *Queries) GetCustomDomainOwner(ctx context.Context, id pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, getCustomDomainOwner, id)
+	var created_by pgtype.UUID
+	err := row.Scan(&created_by)
+	return created_by, err
 }
 
 const getVMForOwnerByCustomDomain = `-- name: GetVMForOwnerByCustomDomain :one
@@ -292,6 +346,80 @@ func (q *Queries) ListCustomDomainRoutesByClient(ctx context.Context, clientID p
 	return items, nil
 }
 
+const listCustomDomains = `-- name: ListCustomDomains :many
+SELECT cd.id, cd.vm_id, cd.domain, cd.status, cd.last_error, cd.cert_object_key, cd.key_object_key, cd.cert_fingerprint, cd.cert_not_after, cd.cert_issued_at, cd.ordered_at, cd.created_at, cd.updated_at,
+       v.name                          AS vm_name,
+       v.status                        AS vm_status,
+       COALESCE(u.username, '')::text  AS owner_username,
+       COALESCE(u.email, '')::text     AS owner_email,
+       COALESCE(cl.hostname, '')::text AS client_hostname
+FROM vm_custom_domains cd
+JOIN vms v ON v.id = cd.vm_id
+LEFT JOIN users u ON u.id = v.created_by
+LEFT JOIN clients cl ON cl.id = v.client_id
+ORDER BY cd.domain
+`
+
+type ListCustomDomainsRow struct {
+	ID              pgtype.UUID
+	VMID            pgtype.UUID
+	Domain          string
+	Status          string
+	LastError       string
+	CertObjectKey   string
+	KeyObjectKey    string
+	CertFingerprint string
+	CertNotAfter    pgtype.Timestamptz
+	CertIssuedAt    pgtype.Timestamptz
+	OrderedAt       pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	VMName          string
+	VmStatus        string
+	OwnerUsername   string
+	OwnerEmail      string
+	ClientHostname  string
+}
+
+func (q *Queries) ListCustomDomains(ctx context.Context) ([]ListCustomDomainsRow, error) {
+	rows, err := q.db.Query(ctx, listCustomDomains)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCustomDomainsRow
+	for rows.Next() {
+		var i ListCustomDomainsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.VMID,
+			&i.Domain,
+			&i.Status,
+			&i.LastError,
+			&i.CertObjectKey,
+			&i.KeyObjectKey,
+			&i.CertFingerprint,
+			&i.CertNotAfter,
+			&i.CertIssuedAt,
+			&i.OrderedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.VMName,
+			&i.VmStatus,
+			&i.OwnerUsername,
+			&i.OwnerEmail,
+			&i.ClientHostname,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCustomDomainsDueForRenewal = `-- name: ListCustomDomainsDueForRenewal :many
 SELECT id, vm_id, domain, status, last_error, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_issued_at, ordered_at, created_at, updated_at FROM vm_custom_domains
 WHERE status = 'active'
@@ -342,6 +470,58 @@ WHERE id = $1
 func (q *Queries) MarkCustomDomainOrdered(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, markCustomDomainOrdered, id)
 	return err
+}
+
+const reuseCustomDomainCert = `-- name: ReuseCustomDomainCert :one
+UPDATE vm_custom_domains
+SET status           = 'active',
+    last_error       = '',
+    cert_object_key  = $2,
+    key_object_key   = $3,
+    cert_fingerprint = $4,
+    cert_not_after   = $5,
+    cert_issued_at   = $6,
+    ordered_at       = NULL,
+    updated_at       = now()
+WHERE id = $1
+RETURNING id, vm_id, domain, status, last_error, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_issued_at, ordered_at, created_at, updated_at
+`
+
+type ReuseCustomDomainCertParams struct {
+	ID              pgtype.UUID
+	CertObjectKey   string
+	KeyObjectKey    string
+	CertFingerprint string
+	CertNotAfter    pgtype.Timestamptz
+	CertIssuedAt    pgtype.Timestamptz
+}
+
+func (q *Queries) ReuseCustomDomainCert(ctx context.Context, arg ReuseCustomDomainCertParams) (VmCustomDomain, error) {
+	row := q.db.QueryRow(ctx, reuseCustomDomainCert,
+		arg.ID,
+		arg.CertObjectKey,
+		arg.KeyObjectKey,
+		arg.CertFingerprint,
+		arg.CertNotAfter,
+		arg.CertIssuedAt,
+	)
+	var i VmCustomDomain
+	err := row.Scan(
+		&i.ID,
+		&i.VMID,
+		&i.Domain,
+		&i.Status,
+		&i.LastError,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertIssuedAt,
+		&i.OrderedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const setCustomDomainStatus = `-- name: SetCustomDomainStatus :one

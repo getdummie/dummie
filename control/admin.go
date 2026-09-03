@@ -80,6 +80,7 @@ type AdminHandler struct {
 	pool *pgxpool.Pool
 	tasks *taskRunner
 	certs *certIssuer
+	proxy proxyAuthConfig
 }
 
 func pageParams(c *echo.Context) (limit, offset int32) {

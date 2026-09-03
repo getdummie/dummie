@@ -6,6 +6,10 @@ WHERE vm_id = $1;
 SELECT * FROM vm_custom_domains
 WHERE id = $1;
 
+-- name: GetCustomDomainByDomain :one
+SELECT * FROM vm_custom_domains
+WHERE domain = $1;
+
 -- name: CreateCustomDomain :one
 INSERT INTO vm_custom_domains (vm_id, domain)
 VALUES ($1, $2)
@@ -41,6 +45,45 @@ SET status           = 'active',
     updated_at       = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: ReuseCustomDomainCert :one
+UPDATE vm_custom_domains
+SET status           = 'active',
+    last_error       = '',
+    cert_object_key  = $2,
+    key_object_key   = $3,
+    cert_fingerprint = $4,
+    cert_not_after   = $5,
+    cert_issued_at   = $6,
+    ordered_at       = NULL,
+    updated_at       = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: GetCustomDomainOwner :one
+SELECT v.created_by
+FROM vm_custom_domains cd
+JOIN vms v ON v.id = cd.vm_id
+WHERE cd.id = $1;
+
+-- name: GetCustomDomainClient :one
+SELECT v.client_id
+FROM vm_custom_domains cd
+JOIN vms v ON v.id = cd.vm_id
+WHERE cd.id = $1;
+
+-- name: ListCustomDomains :many
+SELECT cd.*,
+       v.name                          AS vm_name,
+       v.status                        AS vm_status,
+       COALESCE(u.username, '')::text  AS owner_username,
+       COALESCE(u.email, '')::text     AS owner_email,
+       COALESCE(cl.hostname, '')::text AS client_hostname
+FROM vm_custom_domains cd
+JOIN vms v ON v.id = cd.vm_id
+LEFT JOIN users u ON u.id = v.created_by
+LEFT JOIN clients cl ON cl.id = v.client_id
+ORDER BY cd.domain;
 
 -- name: GetCustomDomainForIssue :one
 SELECT cd.*,

@@ -183,6 +183,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 		q: q, pool: pool, cfg: cfg, hub: hub,
 		blobs: blobs, tasks: tasks, certs: certs,
 		controlURL: proxyCfg.controlURL,
+		proxy:      proxyCfg,
 	}
 	admin := api.Group("/admin", adminJWT(cfg))
 	admin.GET("/users", adminH.ListUsers)
@@ -227,6 +228,10 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.POST("/domains/:id/certificate/continue", adminH.ContinueCertificate)
 	admin.POST("/domains/:id/certificate/cancel", adminH.CancelCertificate)
 	admin.DELETE("/domains/:id/certificate", adminH.DeleteCertificate)
+	admin.GET("/custom-domains", adminH.ListCustomDomains)
+	admin.DELETE("/custom-domains/:id", adminH.DeleteCustomDomain)
+	admin.GET("/custom-domain-certs", adminH.ListCustomDomainCerts)
+	admin.DELETE("/custom-domain-certs/:id", adminH.DeleteCustomDomainCert)
 	admin.GET("/kernels", adminH.ListKernels)
 	admin.POST("/kernels", adminH.CreateKernel)
 	admin.GET("/kernels/:id", adminH.GetKernel)

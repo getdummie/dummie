@@ -797,8 +797,9 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusConflict, "this vm is still being created; try again once it has settled")
 	}
 
-	// The row itself goes with the VM, but the certificate it holds in object
-	// storage would outlive it.
+	// The binding goes with the VM so the host stops answering for the name.
+	// The certificate stays in the vault: rebuild a VM and claim the name again
+	// and it comes straight back.
 	if cd, err := h.q.GetCustomDomainByVM(ctx, row.ID); err == nil {
 		if err := h.dropCustomDomain(ctx, cd, row.ClientID); err != nil {
 			log.Printf("could not drop the custom domain of vm %s: %v", row.Name, err)

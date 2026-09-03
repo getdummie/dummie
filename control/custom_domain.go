@@ -40,6 +40,10 @@ type customDomainDTO struct {
 	LastError    string     `json:"last_error,omitempty"`
 	URL          string     `json:"url,omitempty"`
 	CertNotAfter *time.Time `json:"cert_not_after,omitempty"`
+
+	// Set when this claim was served by a certificate already held for the
+	// name, so the page can say the CNAME is the only thing left to do.
+	CertReused bool `json:"cert_reused,omitempty"`
 }
 
 func (h *UserHandler) customDomainDTO(ctx context.Context, vm db.Vm, row db.VmCustomDomain) customDomainDTO {
@@ -103,7 +107,7 @@ type customDomainReq struct {
 }
 
 // @Summary     Request a custom domain for this VM
-// @Description Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds one custom domain, so this replaces any earlier one.
+// @Description Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds one custom domain, so this replaces any earlier one. If you already obtained a certificate for this name and it has not expired, it is reused: the domain comes back active at once and pointing the CNAME at the new VM is all that is left to do.
 // @Tags        vms
 // @Accept      json
 // @Produce     json
@@ -155,7 +159,11 @@ func (h *UserHandler) SetCustomDomain(c *echo.Context) error {
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not record the custom domain")
 	}
-	return c.JSON(http.StatusCreated, h.customDomainDTO(ctx, vm, row))
+
+	row, reused := h.adoptStoredCert(ctx, vm, row)
+	dto := h.customDomainDTO(ctx, vm, row)
+	dto.CertReused = reused
+	return c.JSON(http.StatusCreated, dto)
 }
 
 // @Summary     Confirm the CNAME and start the certificate
@@ -227,18 +235,45 @@ func (h *UserHandler) DeleteCustomDomain(c *echo.Context) error {
 	return c.NoContent(http.StatusNoContent)
 }
 
+// dropCustomDomain stops serving a name. The certificate is left in the vault:
+// it belongs to the name and the user, not to the vm that happened to be
+// answering for it, and the expiry sweep is what eventually reclaims it.
 func (h *UserHandler) dropCustomDomain(ctx context.Context, row db.VmCustomDomain, clientID pgtype.UUID) error {
 	if err := h.q.DeleteCustomDomain(ctx, row.ID); err != nil {
 		return err
 	}
 	cancelTasksForSubject(ctx, h.q, subjectCustomDomain, row.ID, "the custom domain was removed")
-	if h.blobs != nil && row.CertObjectKey != "" {
-		_ = h.blobs.Delete(ctx, row.CertObjectKey)
-		_ = h.blobs.Delete(ctx, row.KeyObjectKey)
-	}
 	pushDpipeConfig(ctx, h.q, h.blobs, h.hub, clientID)
 	pushProxyConfig(ctx, h.q, h.hub, h.proxy, clientID)
 	return nil
+}
+
+// adoptStoredCert points a fresh claim at the certificate already held for the
+// name, sparing the owner an ACME round trip when they rebuild a vm. The name
+// goes live straight away; the CNAME still has to be moved to the new vm before
+// anything reaches it, which is what the caller tells them.
+func (h *UserHandler) adoptStoredCert(ctx context.Context, vm db.Vm, row db.VmCustomDomain) (db.VmCustomDomain, bool) {
+	stored, ok := reusableCustomCert(ctx, h.q, row.Domain, vm.CreatedBy)
+	if !ok {
+		return row, false
+	}
+	updated, err := h.q.ReuseCustomDomainCert(ctx, db.ReuseCustomDomainCertParams{
+		ID:              row.ID,
+		CertObjectKey:   stored.CertObjectKey,
+		KeyObjectKey:    stored.KeyObjectKey,
+		CertFingerprint: stored.CertFingerprint,
+		CertNotAfter:    stored.CertNotAfter,
+		CertIssuedAt:    stored.CertIssuedAt,
+	})
+	if err != nil {
+		log.Printf("could not reuse the stored certificate for %s: %v", row.Domain, err)
+		return row, false
+	}
+	log.Printf("reused the stored certificate for %s, valid until %s",
+		row.Domain, stored.CertNotAfter.Time.Format(time.RFC3339))
+	pushDpipeConfig(ctx, h.q, h.blobs, h.hub, vm.ClientID)
+	pushProxyConfig(ctx, h.q, h.hub, h.proxy, vm.ClientID)
+	return updated, true
 }
 
 func normalizeCustomDomain(raw, tld string) (string, error) {
@@ -311,10 +346,11 @@ func storeCustomCert(ctx context.Context, q *db.Queries, blobs *blobStore, hub *
 		return fmt.Errorf("could not record the certificate: %w", err)
 	}
 
-	if row.CertObjectKey != "" {
-		_ = blobs.Delete(ctx, row.CertObjectKey)
-		_ = blobs.Delete(ctx, row.KeyObjectKey)
+	owner, err := q.GetCustomDomainOwner(ctx, row.ID)
+	if err != nil {
+		log.Printf("could not read the owner of %s: %v", row.Domain, err)
 	}
+	vaultCustomCert(ctx, q, blobs, row.Domain, owner, certKey, keyKey, info.Fingerprint, info.NotAfter)
 
 	log.Printf("stored a certificate for the custom domain %s, valid until %s",
 		row.Domain, info.NotAfter.Format(time.RFC3339))

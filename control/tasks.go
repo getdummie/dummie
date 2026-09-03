@@ -27,6 +27,8 @@ const (
 
 	taskCustomDomainIssue = "custom_domain.issue"
 
+	taskCustomCertPurge = "custom_cert.purge"
+
 	taskOSImageBuild = "osimage.build"
 )
 
@@ -172,6 +174,7 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore)
 		taskCleanup:        handleTaskCleanup,
 		taskCertRenew:      handleCertRenew,
 		taskCustomDomainIssue: handleCustomDomainIssue,
+		taskCustomCertPurge:   handleCustomCertPurge,
 		taskOSImageBuild:      handleOSImageBuild,
 	}
 	return r
@@ -192,6 +195,13 @@ func (r *taskRunner) run(ctx context.Context) {
 		DelaySeconds: taskCertRenewEvery.Seconds(),
 	}); err != nil {
 		log.Printf("could not schedule the certificate renewal sweep: %v", err)
+	}
+	if err := r.q.CreateSingletonScheduledTask(ctx, db.CreateSingletonScheduledTaskParams{
+		Kind:         taskCustomCertPurge,
+		Reason:       "reclaim expired custom domain certificates no vm is bound to",
+		DelaySeconds: taskCustomCertPurgeEvery.Seconds(),
+	}); err != nil {
+		log.Printf("could not schedule the custom certificate purge: %v", err)
 	}
 
 	tick := time.NewTicker(taskTick)
