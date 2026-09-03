@@ -417,6 +417,9 @@
                     "name": {
                         "type": "string"
                     },
+                    "object_key": {
+                        "type": "string"
+                    },
                     "oci_digest": {
                         "type": "string"
                     },

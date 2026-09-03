@@ -33,6 +33,7 @@ type osImageDTO struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	CreatedAt   string `json:"created_at"`
 	SoftDeletedAt string `json:"soft_deleted_at"`
+	ObjectKey   string `json:"object_key"`
 	DownloadURL string `json:"download_url,omitempty"`
 
 	Source       string `json:"source"`
@@ -54,6 +55,7 @@ func toOSImageDTO(o db.Osimage) osImageDTO {
 		FileName:    o.FileName,
 		SizeBytes:   o.SizeBytes,
 		CreatedAt:   o.CreatedAt.Time.Format(time.RFC3339),
+		ObjectKey:   o.ObjectKey,
 
 		Source:       o.Source,
 		OCIRef:       o.OCIRef,
@@ -93,11 +95,21 @@ func emptySlice[T any](s []T) []T {
 func (h *AdminHandler) ListOSImages(c *echo.Context) error {
 	ctx := c.Request().Context()
 	limit, offset := pageParams(c)
-	total, err := h.q.CountOSImages(ctx)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not count os images")
+
+	var (
+		total int64
+		rows  []db.Osimage
+		err   error
+	)
+	if withdrawnParam(c) {
+		if total, err = h.q.CountWithdrawnOSImages(ctx); err == nil {
+			rows, err = h.q.ListWithdrawnOSImages(ctx, db.ListWithdrawnOSImagesParams{Limit: limit, Offset: offset})
+		}
+	} else {
+		if total, err = h.q.CountOSImages(ctx); err == nil {
+			rows, err = h.q.ListOSImages(ctx, db.ListOSImagesParams{Limit: limit, Offset: offset})
+		}
 	}
-	rows, err := h.q.ListOSImages(ctx, db.ListOSImagesParams{Limit: limit, Offset: offset})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not list os images")
 	}
@@ -432,4 +444,46 @@ func (h *AdminHandler) DeleteOSImage(c *echo.Context) error {
 	}
 	cancelTasksForSubject(ctx, h.q, subjectOSImage, pgID, "the os image was withdrawn")
 	return c.JSON(http.StatusOK, toOSImageDTO(o))
+}
+
+// PurgeOSImage is the second half of a delete: withdrawing takes an image out of
+// the catalogue but leaves the row and the rootfs tar, and this drops both. No vm
+// can be hurt by it -- a host downloads its rootfs once, from a link minted at
+// create time, and keeps its own copy from then on.
+func (h *AdminHandler) PurgeOSImage(c *echo.Context) error {
+	ctx := c.Request().Context()
+	if h.blobs == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
+	}
+	pgID, err := parseUUID(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid os image id")
+	}
+
+	o, err := h.q.GetOSImage(ctx, pgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusNotFound, "os image not found")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not load os image")
+	}
+	if !o.SoftDeletedAt.Valid {
+		return echo.NewHTTPError(http.StatusConflict, "withdraw the os image before purging it")
+	}
+
+	// An oci image withdrawn before its build finished never got an object, so
+	// there is nothing in the bucket to remove. The object otherwise goes first:
+	// a failure there leaves the row in place so the purge can be retried, where
+	// the reverse would lose track of the object for good.
+	if o.ObjectKey != "" {
+		if err := h.blobs.Delete(ctx, o.ObjectKey); err != nil {
+			log.Printf("could not delete os image object %q: %v", o.ObjectKey, err)
+			return echo.NewHTTPError(http.StatusBadGateway, "could not delete the os image from object storage")
+		}
+	}
+	if _, err := h.q.PurgeOSImage(ctx, pgID); err != nil {
+		log.Printf("os image object %q is gone but its row could not be deleted: %v", o.ObjectKey, err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "the object was deleted but the record could not be")
+	}
+	return c.NoContent(http.StatusNoContent)
 }

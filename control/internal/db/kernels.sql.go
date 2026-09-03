@@ -23,6 +23,18 @@ func (q *Queries) CountKernels(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countWithdrawnKernels = `-- name: CountWithdrawnKernels :one
+SELECT count(*) FROM kernels
+WHERE soft_deleted_at IS NOT NULL
+`
+
+func (q *Queries) CountWithdrawnKernels(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countWithdrawnKernels)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createKernel = `-- name: CreateKernel :one
 INSERT INTO kernels (name, description, object_key, file_name, size_bytes)
 VALUES ($1, $2, $3, $4, $5)
@@ -119,6 +131,71 @@ func (q *Queries) ListKernels(ctx context.Context, arg ListKernelsParams) ([]Ker
 		return nil, err
 	}
 	return items, nil
+}
+
+const listWithdrawnKernels = `-- name: ListWithdrawnKernels :many
+SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at FROM kernels
+WHERE soft_deleted_at IS NOT NULL
+ORDER BY soft_deleted_at DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListWithdrawnKernelsParams struct {
+	Limit  int32
+	Offset int32
+}
+
+func (q *Queries) ListWithdrawnKernels(ctx context.Context, arg ListWithdrawnKernelsParams) ([]Kernel, error) {
+	rows, err := q.db.Query(ctx, listWithdrawnKernels, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Kernel
+	for rows.Next() {
+		var i Kernel
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.ObjectKey,
+			&i.FileName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.SoftDeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const purgeKernel = `-- name: PurgeKernel :one
+DELETE FROM kernels
+WHERE id = $1 AND soft_deleted_at IS NOT NULL
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at
+`
+
+// Only a withdrawn kernel can go: the row is dropped for good so its name frees
+// up, and the caller deletes the object it returns from the bucket.
+func (q *Queries) PurgeKernel(ctx context.Context, id pgtype.UUID) (Kernel, error) {
+	row := q.db.QueryRow(ctx, purgeKernel, id)
+	var i Kernel
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.ObjectKey,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.SoftDeletedAt,
+	)
+	return i, err
 }
 
 const softDeleteKernel = `-- name: SoftDeleteKernel :one

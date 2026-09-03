@@ -14,6 +14,16 @@ LIMIT $1;
 SELECT count(*) FROM osimages
 WHERE soft_deleted_at IS NULL;
 
+-- name: ListWithdrawnOSImages :many
+SELECT * FROM osimages
+WHERE soft_deleted_at IS NOT NULL
+ORDER BY soft_deleted_at DESC
+LIMIT $1 OFFSET $2;
+
+-- name: CountWithdrawnOSImages :one
+SELECT count(*) FROM osimages
+WHERE soft_deleted_at IS NOT NULL;
+
 -- name: GetOSImage :one
 SELECT * FROM osimages
 WHERE id = $1;
@@ -98,4 +108,11 @@ RETURNING *;
 UPDATE osimages
 SET soft_deleted_at = now()
 WHERE id = $1 AND soft_deleted_at IS NULL
+RETURNING *;
+
+-- name: PurgeOSImage :one
+-- Only a withdrawn image can go: the row is dropped for good so its name frees
+-- up, and the caller deletes the object it returns from the bucket.
+DELETE FROM osimages
+WHERE id = $1 AND soft_deleted_at IS NOT NULL
 RETURNING *;

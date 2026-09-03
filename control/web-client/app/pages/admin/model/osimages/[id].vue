@@ -35,6 +35,7 @@ interface OSImage {
   size_bytes: number
   created_at: string
   soft_deleted_at: string
+  object_key: string
   download_url?: string
   source: string
   oci_ref: string
@@ -284,6 +285,25 @@ async function confirmDelete() {
     deleting.value = false
   }
 }
+
+const purgeOpen = ref(false)
+const purging = ref(false)
+
+async function confirmPurge() {
+  purging.value = true
+  actionError.value = null
+  try {
+    const res = await authFetch(`/admin/osimages/${id.value}/purge`, { method: 'DELETE' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await navigateTo('/admin/model/osimages')
+  }
+  catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Could not purge the OS image'
+  }
+  finally {
+    purging.value = false
+  }
+}
 </script>
 
 <template>
@@ -341,6 +361,16 @@ async function confirmDelete() {
           >
             <Trash2 class="size-4" aria-hidden="true" />
             Withdraw
+          </Button>
+          <Button
+            v-if="withdrawn"
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs text-destructive hover:text-destructive"
+            @click="purgeOpen = true"
+          >
+            <Trash2 class="size-4" aria-hidden="true" />
+            Purge
           </Button>
         </div>
       </div>
@@ -407,6 +437,10 @@ async function confirmDelete() {
           <div v-if="withdrawn">
             <dt class="eyebrow text-muted-foreground">Withdrawn</dt>
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(image.soft_deleted_at) }}</dd>
+          </div>
+          <div v-if="withdrawn" class="sm:col-span-2 lg:col-span-3">
+            <dt class="eyebrow text-muted-foreground">Object still in storage</dt>
+            <dd class="mt-1 font-mono text-sm break-all text-muted-foreground">{{ image.object_key || '—' }}</dd>
           </div>
           <div class="sm:col-span-2 lg:col-span-3">
             <dt class="eyebrow flex items-center gap-2 text-muted-foreground">
@@ -650,7 +684,8 @@ async function confirmDelete() {
           <DialogDescription>
             <span class="font-mono text-foreground">{{ image?.name }}</span>
             stops being listed and stops being downloadable. The record and the uploaded file are
-            both kept, and the name cannot be used again.
+            both kept, and the name cannot be used again — purge it from the Withdrawn tab to delete
+            the file from object storage and free the name up.
           </DialogDescription>
         </DialogHeader>
         <FormError id="delete-osimage-error" :message="actionError" />
@@ -660,6 +695,29 @@ async function confirmDelete() {
           </DialogClose>
           <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
             {{ deleting ? 'Withdrawing…' : 'Withdraw' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="purgeOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Purge OS image</DialogTitle>
+          <DialogDescription>
+            <span class="font-mono text-foreground">{{ image?.name }}</span>
+            is deleted from object storage and its record is dropped. This cannot be undone. Existing
+            VMs are unaffected — a host downloads its rootfs once and keeps its own copy — but the
+            image can never be downloaded from here again, and the name becomes available for reuse.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="purge-osimage-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="purging" @click="confirmPurge">
+            {{ purging ? 'Purging…' : 'Purge' }}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -100,6 +100,13 @@ func pageParams(c *echo.Context) (limit, offset int32) {
 	return limit, offset
 }
 
+// withdrawnParam asks a catalogue listing for its withdrawn side instead of its
+// live one, which is where an admin goes to purge what soft delete left behind.
+func withdrawnParam(c *echo.Context) bool {
+	v := c.Request().URL.Query().Get("withdrawn")
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
 func pageEnvelope(items any, total int64, limit, offset int32) map[string]any {
 	return map[string]any{"items": items, "total": total, "limit": limit, "offset": offset}
 }

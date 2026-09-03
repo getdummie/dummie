@@ -29,6 +29,15 @@ const columns: DataTableColumn[] = [
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
 
+const withdrawnColumns: DataTableColumn[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'object', label: 'Object' },
+  { key: 'size', label: 'Size' },
+  { key: 'created', label: 'Added' },
+  { key: 'withdrawn', label: 'Withdrawn' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
+
 definePageMeta({ middleware: ['auth', 'admin'] })
 useHead({ title: 'dummie — admin · os images' })
 
@@ -44,10 +53,12 @@ interface OSImageRow {
   oci_ref: string
   status: string
   status_detail: string
+  object_key: string
 }
 
 const { authFetch } = useAuth()
 
+const view = ref<'live' | 'withdrawn'>('live')
 const items = ref<OSImageRow[]>([])
 const total = ref(0)
 const limit = ref(20)
@@ -94,7 +105,8 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const res = await authFetch(`/admin/osimages?limit=${limit.value}&offset=${offset.value}`)
+    const withdrawn = view.value === 'withdrawn' ? '&withdrawn=1' : ''
+    const res = await authFetch(`/admin/osimages?limit=${limit.value}&offset=${offset.value}${withdrawn}`)
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const data = await res.json()
     items.value = data.items ?? []
@@ -109,10 +121,16 @@ async function load() {
 }
 onMounted(load)
 watch(offset, load)
+watch(view, () => {
+  actionError.value = null
+  if (offset.value === 0) load()
+  else offset.value = 0
+})
 
 // A queued image settles on its own in the background, so the table keeps looking
 // until nothing is in flight rather than making an admin reload the page.
-const settling = computed(() => items.value.some(o => o.status === 'pending' || o.status === 'building'))
+const settling = computed(() => view.value === 'live'
+  && items.value.some(o => o.status === 'pending' || o.status === 'building'))
 let poll: ReturnType<typeof setInterval> | null = null
 watch(settling, (on) => {
   if (on && !poll) poll = setInterval(load, 5000)
@@ -219,6 +237,27 @@ async function confirmDelete() {
     deleting.value = false
   }
 }
+
+const toPurge = ref<OSImageRow | null>(null)
+const purging = ref(false)
+
+async function confirmPurge() {
+  if (!toPurge.value) return
+  purging.value = true
+  actionError.value = null
+  try {
+    const res = await authFetch(`/admin/osimages/${toPurge.value.id}/purge`, { method: 'DELETE' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    toPurge.value = null
+    await load()
+  }
+  catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Could not purge the OS image'
+  }
+  finally {
+    purging.value = false
+  }
+}
 </script>
 
 <template>
@@ -322,52 +361,96 @@ async function confirmDelete() {
       <AlertDescription>{{ actionError }}</AlertDescription>
     </Alert>
 
+    <Tabs v-model="view" class="mt-6">
+      <TabsList>
+        <TabsTrigger value="live" class="font-mono text-xs">Live</TabsTrigger>
+        <TabsTrigger value="withdrawn" class="font-mono text-xs">Withdrawn</TabsTrigger>
+      </TabsList>
+    </Tabs>
+
+    <p v-if="view === 'withdrawn'" class="mt-4 max-w-2xl text-sm text-muted-foreground">
+      Images that were withdrawn from the catalogue, including ones users withdrew themselves. Their
+      rootfs tar is still sitting in object storage and nothing ever removes it on its own — purging
+      one deletes the object and the record for good, which also frees the name up for reuse.
+    </p>
+
     <DataTable
       label="OS images"
-      :columns="columns"
+      :columns="view === 'live' ? columns : withdrawnColumns"
       :loading="loading"
       :loading-rows="3"
       loading-label="Loading OS images…"
       :empty="!items.length"
-      class="mt-6"
+      class="mt-4"
     >
       <template #empty>
-        No OS images yet.
+        {{ view === 'live' ? 'No OS images yet.' : 'Nothing withdrawn.' }}
       </template>
-      <TableRow v-for="o in items" :key="o.id">
-        <TableCell class="font-mono">
-          <NuxtLink
-            :to="`/admin/model/osimages/${o.id}`"
-            class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          >
-            {{ o.name }}
-          </NuxtLink>
-        </TableCell>
-        <TableCell class="max-w-xs font-mono text-xs break-all text-muted-foreground">
-          {{ o.source === 'oci' ? o.oci_ref : o.file_name }}
-        </TableCell>
-        <TableCell>
-          <Badge :variant="statusVariant(o.status)" class="font-mono text-xs" :title="o.status_detail">
-            {{ o.status }}
-          </Badge>
-        </TableCell>
-        <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(o.size_bytes) }}</TableCell>
-        <TableCell class="max-w-xs truncate text-muted-foreground" :title="o.description">
-          {{ o.description || '—' }}
-        </TableCell>
-        <TableCell class="text-muted-foreground">{{ fmtDate(o.created_at) }}</TableCell>
-        <TableCell class="text-right">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="text-destructive hover:text-destructive"
-            :aria-label="`Withdraw OS image ${o.name}`"
-            @click="toDelete = o"
-          >
-            <Trash2 class="size-4" aria-hidden="true" />
-          </Button>
-        </TableCell>
-      </TableRow>
+      <template v-if="view === 'live'">
+        <TableRow v-for="o in items" :key="o.id">
+          <TableCell class="font-mono">
+            <NuxtLink
+              :to="`/admin/model/osimages/${o.id}`"
+              class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              {{ o.name }}
+            </NuxtLink>
+          </TableCell>
+          <TableCell class="max-w-xs font-mono text-xs break-all text-muted-foreground">
+            {{ o.source === 'oci' ? o.oci_ref : o.file_name }}
+          </TableCell>
+          <TableCell>
+            <Badge :variant="statusVariant(o.status)" class="font-mono text-xs" :title="o.status_detail">
+              {{ o.status }}
+            </Badge>
+          </TableCell>
+          <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(o.size_bytes) }}</TableCell>
+          <TableCell class="max-w-xs truncate text-muted-foreground" :title="o.description">
+            {{ o.description || '—' }}
+          </TableCell>
+          <TableCell class="text-muted-foreground">{{ fmtDate(o.created_at) }}</TableCell>
+          <TableCell class="text-right">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :aria-label="`Withdraw OS image ${o.name}`"
+              @click="toDelete = o"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+            </Button>
+          </TableCell>
+        </TableRow>
+      </template>
+      <template v-else>
+        <TableRow v-for="o in items" :key="o.id">
+          <TableCell class="font-mono">
+            <NuxtLink
+              :to="`/admin/model/osimages/${o.id}`"
+              class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              {{ o.name }}
+            </NuxtLink>
+          </TableCell>
+          <TableCell class="text-muted-foreground">
+            <span class="block max-w-[24rem] font-mono text-xs break-all">{{ o.object_key || '—' }}</span>
+          </TableCell>
+          <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(o.size_bytes) }}</TableCell>
+          <TableCell class="text-muted-foreground">{{ fmtDate(o.created_at) }}</TableCell>
+          <TableCell class="text-muted-foreground">{{ fmtDate(o.soft_deleted_at) }}</TableCell>
+          <TableCell class="text-right">
+            <Button
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs text-destructive hover:text-destructive"
+              :aria-label="`Purge OS image ${o.name}`"
+              @click="toPurge = o"
+            >
+              Purge
+            </Button>
+          </TableCell>
+        </TableRow>
+      </template>
     </DataTable>
 
     <nav aria-label="OS images pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
@@ -403,7 +486,8 @@ async function confirmDelete() {
           <DialogDescription>
             <span class="font-mono text-foreground">{{ toDelete?.name }}</span>
             stops being listed and stops being downloadable. The record and the uploaded file are
-            both kept, and the name cannot be used again.
+            both kept, and the name cannot be used again — purge it from the Withdrawn tab to delete
+            the file from object storage and free the name up.
           </DialogDescription>
         </DialogHeader>
         <FormError id="delete-osimage-error" :message="actionError" />
@@ -413,6 +497,29 @@ async function confirmDelete() {
           </DialogClose>
           <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
             {{ deleting ? 'Withdrawing…' : 'Withdraw' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog :open="!!toPurge" @update:open="(v: boolean) => { if (!v) toPurge = null }">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Purge OS image</DialogTitle>
+          <DialogDescription>
+            <span class="font-mono text-foreground">{{ toPurge?.name }}</span>
+            is deleted from object storage and its record is dropped. This cannot be undone. Existing
+            VMs are unaffected — a host downloads its rootfs once and keeps its own copy — but the
+            image can never be downloaded from here again, and the name becomes available for reuse.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="purge-osimage-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="purging" @click="confirmPurge">
+            {{ purging ? 'Purging…' : 'Purge' }}
           </Button>
         </DialogFooter>
       </DialogContent>

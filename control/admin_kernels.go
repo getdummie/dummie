@@ -23,6 +23,7 @@ type kernelDTO struct {
 	SizeBytes   int64  `json:"size_bytes"`
 	CreatedAt   string `json:"created_at"`
 	SoftDeletedAt string `json:"soft_deleted_at"`
+	ObjectKey   string `json:"object_key"`
 	DownloadURL string `json:"download_url,omitempty"`
 }
 
@@ -34,6 +35,7 @@ func toKernelDTO(k db.Kernel) kernelDTO {
 		FileName:    k.FileName,
 		SizeBytes:   k.SizeBytes,
 		CreatedAt:   k.CreatedAt.Time.Format(time.RFC3339),
+		ObjectKey:   k.ObjectKey,
 	}
 	if k.SoftDeletedAt.Valid {
 		d.SoftDeletedAt = k.SoftDeletedAt.Time.Format(time.RFC3339)
@@ -44,11 +46,21 @@ func toKernelDTO(k db.Kernel) kernelDTO {
 func (h *AdminHandler) ListKernels(c *echo.Context) error {
 	ctx := c.Request().Context()
 	limit, offset := pageParams(c)
-	total, err := h.q.CountKernels(ctx)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not count kernels")
+
+	var (
+		total int64
+		rows  []db.Kernel
+		err   error
+	)
+	if withdrawnParam(c) {
+		if total, err = h.q.CountWithdrawnKernels(ctx); err == nil {
+			rows, err = h.q.ListWithdrawnKernels(ctx, db.ListWithdrawnKernelsParams{Limit: limit, Offset: offset})
+		}
+	} else {
+		if total, err = h.q.CountKernels(ctx); err == nil {
+			rows, err = h.q.ListKernels(ctx, db.ListKernelsParams{Limit: limit, Offset: offset})
+		}
 	}
-	rows, err := h.q.ListKernels(ctx, db.ListKernelsParams{Limit: limit, Offset: offset})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not list kernels")
 	}
@@ -155,4 +167,42 @@ func (h *AdminHandler) DeleteKernel(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not withdraw the kernel")
 	}
 	return c.JSON(http.StatusOK, toKernelDTO(k))
+}
+
+// PurgeKernel is the second half of a delete: withdrawing takes a kernel out of
+// the catalogue but leaves the row and the object, and this drops both. No vm
+// can be hurt by it -- a host downloads its kernel once, from a link minted at
+// create time, and keeps its own copy from then on.
+func (h *AdminHandler) PurgeKernel(c *echo.Context) error {
+	ctx := c.Request().Context()
+	if h.blobs == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
+	}
+	pgID, err := parseUUID(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid kernel id")
+	}
+
+	k, err := h.q.GetKernel(ctx, pgID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusNotFound, "kernel not found")
+	}
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not load kernel")
+	}
+	if !k.SoftDeletedAt.Valid {
+		return echo.NewHTTPError(http.StatusConflict, "withdraw the kernel before purging it")
+	}
+
+	// The object goes first: a failure here leaves the row in place so the purge
+	// can be retried, where the reverse would lose track of the object for good.
+	if err := h.blobs.Delete(ctx, k.ObjectKey); err != nil {
+		log.Printf("could not delete kernel object %q: %v", k.ObjectKey, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "could not delete the kernel from object storage")
+	}
+	if _, err := h.q.PurgeKernel(ctx, pgID); err != nil {
+		log.Printf("kernel object %q is gone but its row could not be deleted: %v", k.ObjectKey, err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "the object was deleted but the record could not be")
+	}
+	return c.NoContent(http.StatusNoContent)
 }

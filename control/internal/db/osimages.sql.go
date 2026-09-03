@@ -48,6 +48,18 @@ func (q *Queries) CountOSImages(ctx context.Context) (int64, error) {
 	return count, err
 }
 
+const countWithdrawnOSImages = `-- name: CountWithdrawnOSImages :one
+SELECT count(*) FROM osimages
+WHERE soft_deleted_at IS NOT NULL
+`
+
+func (q *Queries) CountWithdrawnOSImages(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countWithdrawnOSImages)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createOCIOSImage = `-- name: CreateOCIOSImage :one
 INSERT INTO osimages (name, description, oci_ref, created_by, source, status)
 VALUES ($1, $2, $3, $4, 'oci', 'pending')
@@ -417,6 +429,59 @@ func (q *Queries) ListReadyOSImages(ctx context.Context, limit int32) ([]Osimage
 	return items, nil
 }
 
+const listWithdrawnOSImages = `-- name: ListWithdrawnOSImages :many
+SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by FROM osimages
+WHERE soft_deleted_at IS NOT NULL
+ORDER BY soft_deleted_at DESC
+LIMIT $1 OFFSET $2
+`
+
+type ListWithdrawnOSImagesParams struct {
+	Limit  int32
+	Offset int32
+}
+
+func (q *Queries) ListWithdrawnOSImages(ctx context.Context, arg ListWithdrawnOSImagesParams) ([]Osimage, error) {
+	rows, err := q.db.Query(ctx, listWithdrawnOSImages, arg.Limit, arg.Offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Osimage
+	for rows.Next() {
+		var i Osimage
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.ObjectKey,
+			&i.FileName,
+			&i.SizeBytes,
+			&i.CreatedAt,
+			&i.SoftDeletedAt,
+			&i.Source,
+			&i.OCIRef,
+			&i.OCIDigest,
+			&i.Status,
+			&i.StatusDetail,
+			&i.ConfigUser,
+			&i.ConfigEntrypoint,
+			&i.ConfigCmd,
+			&i.ConfigEnv,
+			&i.ConfigExposedPorts,
+			&i.DefaultPort,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markOSImageBuilding = `-- name: MarkOSImageBuilding :one
 UPDATE osimages
 SET status = 'building', status_detail = ''
@@ -426,6 +491,42 @@ RETURNING id, name, description, object_key, file_name, size_bytes, created_at, 
 
 func (q *Queries) MarkOSImageBuilding(ctx context.Context, id pgtype.UUID) (Osimage, error) {
 	row := q.db.QueryRow(ctx, markOSImageBuilding, id)
+	var i Osimage
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.ObjectKey,
+		&i.FileName,
+		&i.SizeBytes,
+		&i.CreatedAt,
+		&i.SoftDeletedAt,
+		&i.Source,
+		&i.OCIRef,
+		&i.OCIDigest,
+		&i.Status,
+		&i.StatusDetail,
+		&i.ConfigUser,
+		&i.ConfigEntrypoint,
+		&i.ConfigCmd,
+		&i.ConfigEnv,
+		&i.ConfigExposedPorts,
+		&i.DefaultPort,
+		&i.CreatedBy,
+	)
+	return i, err
+}
+
+const purgeOSImage = `-- name: PurgeOSImage :one
+DELETE FROM osimages
+WHERE id = $1 AND soft_deleted_at IS NOT NULL
+RETURNING id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by
+`
+
+// Only a withdrawn image can go: the row is dropped for good so its name frees
+// up, and the caller deletes the object it returns from the bucket.
+func (q *Queries) PurgeOSImage(ctx context.Context, id pgtype.UUID) (Osimage, error) {
+	row := q.db.QueryRow(ctx, purgeOSImage, id)
 	var i Osimage
 	err := row.Scan(
 		&i.ID,

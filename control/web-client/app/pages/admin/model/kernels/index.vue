@@ -14,6 +14,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { TableCell, TableRow } from '@/components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import type { DataTableColumn } from '@/lib/table'
 
@@ -23,6 +24,15 @@ const columns: DataTableColumn[] = [
   { key: 'size', label: 'Size' },
   { key: 'description', label: 'Description' },
   { key: 'created', label: 'Uploaded' },
+  { key: 'actions', label: 'Actions', align: 'right' },
+]
+
+const withdrawnColumns: DataTableColumn[] = [
+  { key: 'name', label: 'Name' },
+  { key: 'object', label: 'Object' },
+  { key: 'size', label: 'Size' },
+  { key: 'created', label: 'Uploaded' },
+  { key: 'withdrawn', label: 'Withdrawn' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
 
@@ -37,10 +47,12 @@ interface KernelRow {
   size_bytes: number
   created_at: string
   soft_deleted_at: string
+  object_key: string
 }
 
 const { authFetch } = useAuth()
 
+const view = ref<'live' | 'withdrawn'>('live')
 const items = ref<KernelRow[]>([])
 const total = ref(0)
 const limit = ref(20)
@@ -87,7 +99,8 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const res = await authFetch(`/admin/kernels?limit=${limit.value}&offset=${offset.value}`)
+    const withdrawn = view.value === 'withdrawn' ? '&withdrawn=1' : ''
+    const res = await authFetch(`/admin/kernels?limit=${limit.value}&offset=${offset.value}${withdrawn}`)
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const data = await res.json()
     items.value = data.items ?? []
@@ -102,6 +115,11 @@ async function load() {
 }
 onMounted(load)
 watch(offset, load)
+watch(view, () => {
+  actionError.value = null
+  if (offset.value === 0) load()
+  else offset.value = 0
+})
 
 const page = computed(() => Math.floor(offset.value / limit.value) + 1)
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / limit.value)))
@@ -170,6 +188,27 @@ async function confirmDelete() {
   }
   finally {
     deleting.value = false
+  }
+}
+
+const toPurge = ref<KernelRow | null>(null)
+const purging = ref(false)
+
+async function confirmPurge() {
+  if (!toPurge.value) return
+  purging.value = true
+  actionError.value = null
+  try {
+    const res = await authFetch(`/admin/kernels/${toPurge.value.id}/purge`, { method: 'DELETE' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    toPurge.value = null
+    await load()
+  }
+  catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Could not purge the kernel'
+  }
+  finally {
+    purging.value = false
   }
 }
 </script>
@@ -249,45 +288,89 @@ async function confirmDelete() {
       <AlertDescription>{{ actionError }}</AlertDescription>
     </Alert>
 
+    <Tabs v-model="view" class="mt-6">
+      <TabsList>
+        <TabsTrigger value="live" class="font-mono text-xs">Live</TabsTrigger>
+        <TabsTrigger value="withdrawn" class="font-mono text-xs">Withdrawn</TabsTrigger>
+      </TabsList>
+    </Tabs>
+
+    <p v-if="view === 'withdrawn'" class="mt-4 max-w-2xl text-sm text-muted-foreground">
+      Kernels that were withdrawn from the catalogue. Their file is still sitting in object storage
+      and nothing ever removes it on its own — purging one deletes the object and the record for
+      good, which also frees the name up for reuse.
+    </p>
+
     <DataTable
       label="Kernels"
-      :columns="columns"
+      :columns="view === 'live' ? columns : withdrawnColumns"
       :loading="loading"
       :loading-rows="3"
       loading-label="Loading kernels…"
       :empty="!items.length"
-      class="mt-6"
+      class="mt-4"
     >
       <template #empty>
-        No kernels yet.
+        {{ view === 'live' ? 'No kernels yet.' : 'Nothing withdrawn.' }}
       </template>
-      <TableRow v-for="k in items" :key="k.id">
-        <TableCell class="font-mono">
-          <NuxtLink
-            :to="`/admin/model/kernels/${k.id}`"
-            class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          >
-            {{ k.name }}
-          </NuxtLink>
-        </TableCell>
-        <TableCell class="font-mono text-xs break-all text-muted-foreground">{{ k.file_name }}</TableCell>
-        <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(k.size_bytes) }}</TableCell>
-        <TableCell class="max-w-xs truncate text-muted-foreground" :title="k.description">
-          {{ k.description || '—' }}
-        </TableCell>
-        <TableCell class="text-muted-foreground">{{ fmtDate(k.created_at) }}</TableCell>
-        <TableCell class="text-right">
-          <Button
-            variant="ghost"
-            size="icon"
-            class="text-destructive hover:text-destructive"
-            :aria-label="`Withdraw kernel ${k.name}`"
-            @click="toDelete = k"
-          >
-            <Trash2 class="size-4" aria-hidden="true" />
-          </Button>
-        </TableCell>
-      </TableRow>
+      <template v-if="view === 'live'">
+        <TableRow v-for="k in items" :key="k.id">
+          <TableCell class="font-mono">
+            <NuxtLink
+              :to="`/admin/model/kernels/${k.id}`"
+              class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              {{ k.name }}
+            </NuxtLink>
+          </TableCell>
+          <TableCell class="font-mono text-xs break-all text-muted-foreground">{{ k.file_name }}</TableCell>
+          <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(k.size_bytes) }}</TableCell>
+          <TableCell class="max-w-xs truncate text-muted-foreground" :title="k.description">
+            {{ k.description || '—' }}
+          </TableCell>
+          <TableCell class="text-muted-foreground">{{ fmtDate(k.created_at) }}</TableCell>
+          <TableCell class="text-right">
+            <Button
+              variant="ghost"
+              size="icon"
+              class="text-destructive hover:text-destructive"
+              :aria-label="`Withdraw kernel ${k.name}`"
+              @click="toDelete = k"
+            >
+              <Trash2 class="size-4" aria-hidden="true" />
+            </Button>
+          </TableCell>
+        </TableRow>
+      </template>
+      <template v-else>
+        <TableRow v-for="k in items" :key="k.id">
+          <TableCell class="font-mono">
+            <NuxtLink
+              :to="`/admin/model/kernels/${k.id}`"
+              class="text-primary-text underline decoration-primary-text/40 underline-offset-4 transition-colors hover:decoration-primary-text focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              {{ k.name }}
+            </NuxtLink>
+          </TableCell>
+          <TableCell class="text-muted-foreground">
+            <span class="block max-w-[24rem] font-mono text-xs break-all">{{ k.object_key || '—' }}</span>
+          </TableCell>
+          <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(k.size_bytes) }}</TableCell>
+          <TableCell class="text-muted-foreground">{{ fmtDate(k.created_at) }}</TableCell>
+          <TableCell class="text-muted-foreground">{{ fmtDate(k.soft_deleted_at) }}</TableCell>
+          <TableCell class="text-right">
+            <Button
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs text-destructive hover:text-destructive"
+              :aria-label="`Purge kernel ${k.name}`"
+              @click="toPurge = k"
+            >
+              Purge
+            </Button>
+          </TableCell>
+        </TableRow>
+      </template>
     </DataTable>
 
     <nav aria-label="Kernels pagination" class="mt-4 flex flex-wrap items-center justify-between gap-3 font-mono text-xs text-muted-foreground">
@@ -323,7 +406,8 @@ async function confirmDelete() {
           <DialogDescription>
             <span class="font-mono text-foreground">{{ toDelete?.name }}</span>
             stops being listed and stops being downloadable. The record and the uploaded file are
-            both kept, and the name cannot be used again.
+            both kept, and the name cannot be used again — purge it from the Withdrawn tab to delete
+            the file from object storage and free the name up.
           </DialogDescription>
         </DialogHeader>
         <FormError id="delete-kernel-error" :message="actionError" />
@@ -333,6 +417,29 @@ async function confirmDelete() {
           </DialogClose>
           <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
             {{ deleting ? 'Withdrawing…' : 'Withdraw' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog :open="!!toPurge" @update:open="(v: boolean) => { if (!v) toPurge = null }">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Purge kernel</DialogTitle>
+          <DialogDescription>
+            <span class="font-mono text-foreground">{{ toPurge?.name }}</span>
+            is deleted from object storage and its record is dropped. This cannot be undone. Existing
+            VMs are unaffected — a host downloads its kernel once and keeps its own copy — but the
+            file can never be downloaded from here again, and the name becomes available for reuse.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="purge-kernel-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="purging" @click="confirmPurge">
+            {{ purging ? 'Purging…' : 'Purge' }}
           </Button>
         </DialogFooter>
       </DialogContent>
