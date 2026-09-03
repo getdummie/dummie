@@ -24,6 +24,13 @@ LIMIT $1 OFFSET $2;
 SELECT count(*) FROM osimages
 WHERE soft_deleted_at IS NOT NULL;
 
+-- name: ListOSImageObjects :many
+-- Every image that has bytes in the bucket, withdrawn ones included, for naming
+-- what a host is holding in its image cache.
+SELECT id, name, object_key, file_name, soft_deleted_at FROM osimages
+WHERE object_key <> ''
+ORDER BY created_at DESC;
+
 -- name: GetOSImage :one
 SELECT * FROM osimages
 WHERE id = $1;

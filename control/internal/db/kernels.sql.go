@@ -92,6 +92,47 @@ func (q *Queries) GetKernel(ctx context.Context, id pgtype.UUID) (Kernel, error)
 	return i, err
 }
 
+const listKernelObjects = `-- name: ListKernelObjects :many
+SELECT id, name, object_key, file_name, soft_deleted_at FROM kernels
+ORDER BY created_at DESC
+`
+
+type ListKernelObjectsRow struct {
+	ID            pgtype.UUID
+	Name          string
+	ObjectKey     string
+	FileName      string
+	SoftDeletedAt pgtype.Timestamptz
+}
+
+// Every kernel that has bytes in the bucket, withdrawn ones included, for
+// naming what a host is holding in its image cache.
+func (q *Queries) ListKernelObjects(ctx context.Context) ([]ListKernelObjectsRow, error) {
+	rows, err := q.db.Query(ctx, listKernelObjects)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListKernelObjectsRow
+	for rows.Next() {
+		var i ListKernelObjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ObjectKey,
+			&i.FileName,
+			&i.SoftDeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listKernels = `-- name: ListKernels :many
 SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at FROM kernels
 WHERE soft_deleted_at IS NULL

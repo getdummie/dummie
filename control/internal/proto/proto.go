@@ -92,6 +92,9 @@ const (
 	KindServicesConfig JobKind = "services.config"
 
 	KindCustomCert JobKind = "cert.custom"
+
+	KindCacheReport JobKind = "cache.report"
+	KindCachePurge  JobKind = "cache.purge"
 )
 
 type Job struct {
@@ -105,6 +108,15 @@ type Job struct {
 	DpipeCerts *DpipeCerts `json:"dpipe_certs,omitempty"`
 	Services *ServicesConfig `json:"services,omitempty"`
 	CustomCert *CustomCertOrder `json:"custom_cert,omitempty"`
+	Cache *CachePurge `json:"cache,omitempty"`
+}
+
+// CachePurge names files in the host's image cache to delete. The names are
+// bare, relative to the cache directory; the host re-checks what its vms are
+// using before removing anything, so a name that has become busy since the
+// report is refused rather than acted on.
+type CachePurge struct {
+	Names []string `json:"names"`
 }
 
 // CustomCertOrder asks a host to obtain a certificate for one name over the
@@ -224,6 +236,22 @@ type JobResult struct {
 
 	Domain string `json:"domain,omitempty"`
 	Cert   *IssuedCert `json:"cert,omitempty"`
+	Cache *CachePurgeResult `json:"cache,omitempty"`
+}
+
+// CachePurgeResult answers both cache job kinds. Entries is what the cache
+// holds once the job is done, so a purge hands back the new state and the
+// caller never has to ask twice; a report is a purge of nothing.
+type CachePurgeResult struct {
+	Entries    []CacheEntry   `json:"entries"`
+	Removed    []string       `json:"removed,omitempty"`
+	FreedBytes int64          `json:"freed_bytes"`
+	Refused    []CacheRefusal `json:"refused,omitempty"`
+}
+
+type CacheRefusal struct {
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 type IssuedCert struct {
@@ -242,6 +270,31 @@ type VMInfo struct {
 
 type Inventory struct {
 	VMs []VMState `json:"vms"`
+}
+
+type CacheKind string
+
+const (
+	// CacheRootfs is an ext4 built from a tar. Every vm created from it overlays
+	// it as a qcow2 backing file, so one that is in use cannot be removed
+	// without breaking those vms.
+	CacheRootfs CacheKind = "rootfs"
+	// CacheTar is a downloaded rootfs tar: only an input to the ext4 build, and
+	// dead weight once that has happened.
+	CacheTar CacheKind = "tar"
+	// CacheDownload is any other downloaded artifact -- a kernel, an initrd, a
+	// prebuilt filesystem image.
+	CacheDownload CacheKind = "download"
+)
+
+type CacheEntry struct {
+	Name       string    `json:"name"`
+	Kind       CacheKind `json:"kind"`
+	SizeBytes  int64     `json:"size_bytes"`
+	ModifiedAt time.Time `json:"modified_at"`
+	// InUseBy lists the ids of vms on this host booting from this file. Empty
+	// means no vm references it, which is what makes it safe to remove.
+	InUseBy []string `json:"in_use_by,omitempty"`
 }
 
 type VMState struct {

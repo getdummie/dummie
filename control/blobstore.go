@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -174,6 +177,29 @@ func (b *blobStore) PresignGet(ctx context.Context, key, fileName string) (strin
 		return "", err
 	}
 	return req.URL, nil
+}
+
+// DownloadCacheKey is the prefix a host files this object under when it
+// downloads it: "url-" and the first 16 hex of the sha256 of the download URL
+// with its query stripped, which for a presigned link is the object's stable
+// address. Deriving it by presigning and stripping -- rather than rebuilding
+// the address by hand -- keeps it exact whatever the endpoint and path style
+// are. It has to agree with cacheURL and download in cmd/dclient/image.go.
+func (b *blobStore) DownloadCacheKey(ctx context.Context, key, fileName string) (string, error) {
+	raw, err := b.PresignGet(ctx, key, fileName)
+	if err != nil {
+		return "", err
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	u.RawFragment = ""
+	sum := sha256.Sum256([]byte(u.String()))
+	return "url-" + hex.EncodeToString(sum[:])[:16], nil
 }
 
 func sanitizeFileName(name string) string {

@@ -275,6 +275,48 @@ func (q *Queries) GetOSImage(ctx context.Context, id pgtype.UUID) (Osimage, erro
 	return i, err
 }
 
+const listOSImageObjects = `-- name: ListOSImageObjects :many
+SELECT id, name, object_key, file_name, soft_deleted_at FROM osimages
+WHERE object_key <> ''
+ORDER BY created_at DESC
+`
+
+type ListOSImageObjectsRow struct {
+	ID            pgtype.UUID
+	Name          string
+	ObjectKey     string
+	FileName      string
+	SoftDeletedAt pgtype.Timestamptz
+}
+
+// Every image that has bytes in the bucket, withdrawn ones included, for naming
+// what a host is holding in its image cache.
+func (q *Queries) ListOSImageObjects(ctx context.Context) ([]ListOSImageObjectsRow, error) {
+	rows, err := q.db.Query(ctx, listOSImageObjects)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListOSImageObjectsRow
+	for rows.Next() {
+		var i ListOSImageObjectsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.ObjectKey,
+			&i.FileName,
+			&i.SoftDeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listOSImages = `-- name: ListOSImages :many
 SELECT id, name, description, object_key, file_name, size_bytes, created_at, soft_deleted_at, source, oci_ref, oci_digest, status, status_detail, config_user, config_entrypoint, config_cmd, config_env, config_exposed_ports, default_port, created_by FROM osimages
 WHERE soft_deleted_at IS NULL

@@ -18,6 +18,12 @@ LIMIT $1 OFFSET $2;
 SELECT count(*) FROM kernels
 WHERE soft_deleted_at IS NOT NULL;
 
+-- name: ListKernelObjects :many
+-- Every kernel that has bytes in the bucket, withdrawn ones included, for
+-- naming what a host is holding in its image cache.
+SELECT id, name, object_key, file_name, soft_deleted_at FROM kernels
+ORDER BY created_at DESC;
+
 -- name: GetKernel :one
 SELECT * FROM kernels
 WHERE id = $1;

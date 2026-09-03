@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 
 	"control/internal/proto"
 )
@@ -82,12 +84,15 @@ type Hub struct {
 	mu    sync.RWMutex
 	conns map[string]*clientConn
 	purge map[string]struct{}
+
+	waiters map[string]chan proto.JobResult
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		conns: make(map[string]*clientConn),
-		purge: make(map[string]struct{}),
+		conns:   make(map[string]*clientConn),
+		purge:   make(map[string]struct{}),
+		waiters: make(map[string]chan proto.JobResult),
 	}
 }
 
@@ -167,6 +172,63 @@ func (h *Hub) ConnectedIDs() []string {
 		ids = append(ids, id)
 	}
 	return ids
+}
+
+// Ask sends a job and waits for the host's result. Most jobs here are told, not
+// asked -- their result lands in handleResult and is recorded -- but a job whose
+// whole point is the answer needs the answer back on the request that sent it.
+// The returned error says the host was not reachable or did not answer; whether
+// it managed what was asked is in the result.
+func (h *Hub) Ask(ctx context.Context, clientID string, job proto.Job, wait time.Duration) (proto.JobResult, error) {
+	id := uuid.New().String()
+	env, err := proto.NewEnvelope(proto.TypeJob, id, job)
+	if err != nil {
+		return proto.JobResult{}, err
+	}
+
+	// Registered before the send, so a host that answers immediately cannot
+	// reply into a waiter that is not there yet.
+	ch := make(chan proto.JobResult, 1)
+	h.mu.Lock()
+	h.waiters[id] = ch
+	h.mu.Unlock()
+	defer func() {
+		h.mu.Lock()
+		delete(h.waiters, id)
+		h.mu.Unlock()
+	}()
+
+	if err := h.Send(clientID, env); err != nil {
+		return proto.JobResult{}, err
+	}
+
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case res := <-ch:
+		return res, nil
+	case <-timer.C:
+		return proto.JobResult{}, fmt.Errorf("%s did not answer within %s", job.Kind, wait)
+	case <-ctx.Done():
+		return proto.JobResult{}, ctx.Err()
+	}
+}
+
+// Deliver hands a result to whoever is waiting on it, and reports whether
+// anyone was. A false means the result is nobody's reply and belongs to the
+// handler that records results.
+func (h *Hub) Deliver(jobID string, res proto.JobResult) bool {
+	h.mu.RLock()
+	ch, ok := h.waiters[jobID]
+	h.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	select {
+	case ch <- res:
+	default:
+	}
+	return true
 }
 
 func (h *Hub) MarkPurge(rowID string) {

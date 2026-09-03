@@ -403,6 +403,14 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.obtainCert(ctx, env.ID, *job.CustomCert)
+	case proto.KindCacheReport:
+		go l.reportImages(ctx, env.ID)
+	case proto.KindCachePurge:
+		if job.Cache == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no cache files"})
+			return
+		}
+		go l.purgeImages(ctx, env.ID, job.Cache.Names)
 	case proto.KindSuricataConfig, proto.KindDpipeConfig, proto.KindCoreDNSConfig:
 		if job.File == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
@@ -486,6 +494,34 @@ func (l *link) obtainCert(ctx context.Context, jobID string, order proto.CustomC
 		Kind: proto.KindCustomCert, OK: true, Domain: order.Domain,
 		Cert: &proto.IssuedCert{Cert: cert, Key: key},
 	})
+}
+
+func (l *link) reportImages(ctx context.Context, jobID string) {
+	ctx = context.WithoutCancel(ctx)
+	entries, err := cacheReport(l.data)
+	if err != nil {
+		log.Printf("job %s: could not read the image cache: %v", jobID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindCacheReport, Error: err.Error()})
+		return
+	}
+	l.reply(ctx, jobID, proto.JobResult{
+		Kind: proto.KindCacheReport, OK: true,
+		Cache: &proto.CachePurgeResult{Entries: entries},
+	})
+}
+
+func (l *link) purgeImages(ctx context.Context, jobID string, names []string) {
+	ctx = context.WithoutCancel(ctx)
+	log.Printf("job %s: purging %d file(s) from the image cache", jobID, len(names))
+
+	res, err := purgeCache(l.data, names)
+	if err != nil {
+		log.Printf("job %s: could not purge the image cache: %v", jobID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindCachePurge, Error: err.Error(), Cache: &res})
+		return
+	}
+	log.Printf("job %s: removed %d file(s), freeing %d MiB", jobID, len(res.Removed), res.FreedBytes>>20)
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindCachePurge, OK: true, Cache: &res})
 }
 
 func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.JobKind, config string, certs *proto.DpipeCerts) {

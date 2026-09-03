@@ -297,6 +297,11 @@ func (h *ClientHandler) handleResult(ctx context.Context, client db.Client, clie
 		log.Printf("client %s: could not decode the result for job %s: %v", clientID, env.ID, err)
 		return
 	}
+	// A job someone is still holding an http request open for is answered there
+	// rather than recorded here.
+	if h.hub.Deliver(env.ID, res) {
+		return
+	}
 	if res.Kind == proto.KindSuricataRules {
 		if !res.OK {
 			log.Printf("client %s: could not apply the suricata ruleset: %s", clientID, res.Error)

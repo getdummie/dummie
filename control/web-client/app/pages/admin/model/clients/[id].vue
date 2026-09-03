@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Ban, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Ban, RefreshCw, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -87,6 +88,26 @@ const vmColumns: DataTableColumn[] = [
   { key: 'resources', label: 'Resources' },
   { key: 'address', label: 'Address' },
   { key: 'created', label: 'Created' },
+]
+
+interface CacheRow {
+  name: string
+  kind: 'rootfs' | 'tar' | 'download'
+  size_bytes: number
+  modified_at: string
+  in_use_by: string[]
+  artifact: string
+  artifact_kind: string
+  artifact_withdrawn: boolean
+}
+
+const cacheColumns: DataTableColumn[] = [
+  { key: 'select', label: '' },
+  { key: 'file', label: 'File' },
+  { key: 'kind', label: 'What it is' },
+  { key: 'size', label: 'Size' },
+  { key: 'usage', label: 'In use by' },
+  { key: 'modified', label: 'Cached' },
 ]
 
 const route = useRoute()
@@ -332,10 +353,117 @@ async function loadVMs(quiet = false) {
   }
 }
 
+interface CacheReport {
+  items?: CacheRow[]
+  total_bytes?: number
+  reclaimable_bytes?: number
+  reported_at?: string
+}
+
+const cache = ref<CacheRow[]>([])
+const cacheBytes = ref(0)
+const cacheReclaimable = ref(0)
+const cacheReportedAt = ref('')
+const cacheLoading = ref(false)
+const cacheError = ref<string | null>(null)
+const selected = ref<string[]>([])
+
+function applyCacheReport(data: CacheReport) {
+  cache.value = data.items ?? []
+  cacheBytes.value = data.total_bytes ?? 0
+  cacheReclaimable.value = data.reclaimable_bytes ?? 0
+  cacheReportedAt.value = data.reported_at ?? ''
+  // Anything that has since become a vm's backing store, or that the host has
+  // already removed, drops out of the selection rather than sitting in it.
+  const free = new Set(cache.value.filter(purgeable).map(r => r.name))
+  selected.value = selected.value.filter(n => free.has(n))
+}
+
+// The cache is read straight off the host, so it is asked for rather than
+// polled: once on arrival, and again whenever an admin wants a fresh look.
+async function loadCache() {
+  cacheLoading.value = true
+  cacheError.value = null
+  purgeNote.value = null
+  try {
+    const res = await authFetch(`/admin/clients/${id.value}/cache`)
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    applyCacheReport(await res.json())
+  }
+  catch (e) {
+    cache.value = []
+    cacheError.value = e instanceof Error ? e.message : 'Failed to read the image cache'
+  }
+  finally {
+    cacheLoading.value = false
+  }
+}
+
+function purgeable(r: CacheRow) {
+  return r.in_use_by.length === 0
+}
+
+function cacheKindLabel(r: CacheRow) {
+  if (r.kind === 'rootfs') return 'Built rootfs'
+  if (r.kind === 'tar') return 'Downloaded tar'
+  return 'Download'
+}
+
+const reclaimableRows = computed(() => cache.value.filter(purgeable))
+const selectedBytes = computed(() =>
+  cache.value.filter(r => selected.value.includes(r.name)).reduce((n, r) => n + r.size_bytes, 0))
+
+function toggleSelected(name: string, on: boolean) {
+  if (on) {
+    if (!selected.value.includes(name)) selected.value = [...selected.value, name]
+  }
+  else {
+    selected.value = selected.value.filter(n => n !== name)
+  }
+}
+
+const purgeOpen = ref(false)
+const purging = ref(false)
+const purgeNote = ref<string | null>(null)
+
+async function confirmPurge() {
+  purging.value = true
+  cacheError.value = null
+  try {
+    const res = await authFetch(`/admin/clients/${id.value}/cache/purge`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ names: selected.value }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const data = await res.json()
+    purgeOpen.value = false
+    selected.value = []
+    // The host hands back the cache it is left with, so this is the real
+    // outcome and not a guess at one.
+    applyCacheReport(data)
+    const freed = fmtBytes(data.freed_bytes ?? 0)
+    const removed = (data.removed ?? []).length
+    purgeNote.value = removed
+      ? `Removed ${removed} file${removed === 1 ? '' : 's'}, freeing ${freed}.`
+      : 'The host removed nothing.'
+    for (const r of data.refused ?? []) {
+      purgeNote.value += ` Kept ${r.name}: ${r.reason}.`
+    }
+  }
+  catch (e) {
+    cacheError.value = e instanceof Error ? e.message : 'Could not purge the cache'
+  }
+  finally {
+    purging.value = false
+  }
+}
+
 let poll: ReturnType<typeof setInterval> | undefined
 onMounted(() => {
   load()
   loadVMs()
+  loadCache()
   poll = setInterval(() => {
     load(true)
     loadVMs(true)
@@ -668,6 +796,111 @@ async function confirmDelete() {
         </dl>
       </section>
 
+      <section aria-labelledby="cache-heading" class="mt-6 rounded-lg border border-border">
+        <div class="p-4 sm:p-6">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h2 id="cache-heading" class="text-sm font-semibold">Image cache</h2>
+              <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+                What this host keeps in the <span class="font-mono text-xs">images</span> directory of its
+                data dir so it need not fetch or rebuild an image twice. Nothing evicts itself. A downloaded tar
+                is only an input to the rootfs built from it and can go once that exists; a built rootfs
+                is the backing file of every VM overlaying it, so one in use cannot be removed without
+                breaking those VMs — the host refuses to. Read from the host when you ask, not stored here.
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                class="font-mono text-xs"
+                :disabled="cacheLoading || purging || !client.connected"
+                @click="loadCache"
+              >
+                <RefreshCw class="size-4" :class="cacheLoading && 'animate-spin'" aria-hidden="true" />
+                {{ cacheLoading ? 'Asking…' : 'Refresh' }}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                class="font-mono text-xs text-destructive hover:text-destructive"
+                :disabled="!selected.length || !client.connected || cacheLoading"
+                @click="purgeOpen = true"
+              >
+                <Trash2 class="size-4" aria-hidden="true" />
+                Purge {{ selected.length || '' }}
+              </Button>
+            </div>
+          </div>
+
+          <p v-if="cacheReportedAt" class="mt-3 font-mono text-xs text-muted-foreground">
+            {{ fmtBytes(cacheBytes) }} cached · {{ fmtBytes(cacheReclaimable) }} reclaimable
+            · read {{ fmtDate(cacheReportedAt) }}
+            <template v-if="selected.length"> · {{ fmtBytes(selectedBytes) }} selected</template>
+          </p>
+
+          <Button
+            v-if="reclaimableRows.length && selected.length !== reclaimableRows.length"
+            variant="outline"
+            size="sm"
+            class="mt-3 font-mono text-xs"
+            @click="selected = reclaimableRows.map(r => r.name)"
+          >
+            Select all {{ reclaimableRows.length }} reclaimable
+          </Button>
+
+          <Alert v-if="purgeNote" class="mt-4">
+            <AlertTitle>Purged</AlertTitle>
+            <AlertDescription>{{ purgeNote }}</AlertDescription>
+          </Alert>
+
+          <Alert v-if="cacheError" variant="destructive" class="mt-4">
+            <AlertTitle>Could not read the image cache</AlertTitle>
+            <AlertDescription>{{ cacheError }}</AlertDescription>
+          </Alert>
+        </div>
+        <DataTable
+          v-if="!cacheError"
+          label="Image cache"
+          :columns="cacheColumns"
+          :loading="cacheLoading"
+          :loading-rows="3"
+          loading-label="Loading the image cache…"
+          :empty="!cache.length"
+          :frame="false"
+        >
+          <template #empty>
+            Nothing in the image cache.
+          </template>
+          <TableRow v-for="r in cache" :key="r.name">
+            <TableCell>
+              <Checkbox
+                :model-value="selected.includes(r.name)"
+                :disabled="!purgeable(r)"
+                :aria-label="`Select ${r.name} for purging`"
+                @update:model-value="(v: boolean | 'indeterminate') => toggleSelected(r.name, v === true)"
+              />
+            </TableCell>
+            <TableCell class="text-muted-foreground">
+              <span class="block max-w-[22rem] font-mono text-xs break-all">{{ r.name }}</span>
+            </TableCell>
+            <TableCell class="text-muted-foreground">
+              <span class="whitespace-nowrap">{{ cacheKindLabel(r) }}</span>
+              <span v-if="r.artifact" class="mt-0.5 block font-mono text-xs break-all">
+                {{ r.artifact_kind }} {{ r.artifact }}
+                <Badge v-if="r.artifact_withdrawn" variant="outline" class="ml-1 font-mono text-xs">withdrawn</Badge>
+              </span>
+            </TableCell>
+            <TableCell class="font-mono text-muted-foreground whitespace-nowrap">{{ fmtBytes(r.size_bytes) }}</TableCell>
+            <TableCell class="text-muted-foreground">
+              <span v-if="!r.in_use_by.length" class="font-mono text-xs">nothing</span>
+              <span v-else class="block max-w-[14rem] font-mono text-xs break-all">{{ r.in_use_by.join(', ') }}</span>
+            </TableCell>
+            <TableCell class="text-muted-foreground whitespace-nowrap">{{ fmtDate(r.modified_at) }}</TableCell>
+          </TableRow>
+        </DataTable>
+      </section>
+
       <section aria-labelledby="vms-heading" class="mt-6 rounded-lg border border-border">
         <div class="p-4 sm:p-6">
           <h2 id="vms-heading" class="text-sm font-semibold">VMs on this host</h2>
@@ -737,6 +970,34 @@ async function confirmDelete() {
           </DialogClose>
           <Button class="font-mono text-xs" :disabled="upgrading" @click="confirmUpgrade">
             {{ upgrading ? 'Upgrading…' : 'Upgrade' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="purgeOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Purge from the image cache</DialogTitle>
+          <DialogDescription>
+            Deletes {{ selected.length }} file{{ selected.length === 1 ? '' : 's' }} on
+            <span class="font-mono text-foreground">{{ client?.hostname || client?.machine_id }}</span>,
+            freeing {{ fmtBytes(selectedBytes) }}. None of them is backing a VM, so nothing running is
+            affected — the host checks that again itself and refuses anything that has become busy
+            since. A purged tar is re-downloaded, and a purged rootfs rebuilt, the next time an image
+            needs it.
+          </DialogDescription>
+        </DialogHeader>
+        <ul class="max-h-40 space-y-1 overflow-y-auto font-mono text-xs break-all text-muted-foreground">
+          <li v-for="n in selected" :key="n">{{ n }}</li>
+        </ul>
+        <FormError id="purge-cache-error" :message="cacheError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="purging" @click="confirmPurge">
+            {{ purging ? 'Purging…' : 'Purge' }}
           </Button>
         </DialogFooter>
       </DialogContent>

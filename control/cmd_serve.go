@@ -206,6 +206,8 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.PUT("/clients/:id/domain", adminH.SetClientDomain)
 	admin.PUT("/clients/:id/services", adminH.UpdateClientServices)
 	admin.POST("/clients/:id/services/upgrade", adminH.UpgradeClientServices)
+	admin.GET("/clients/:id/cache", adminH.GetClientImageCache)
+	admin.POST("/clients/:id/cache/purge", adminH.PurgeClientImageCache)
 	admin.GET("/clients/:id/vms", adminH.ListClientVMs)
 	admin.POST("/clients/:id/vms", adminH.CreateVM)
 	admin.GET("/vms", adminH.ListVMs)
