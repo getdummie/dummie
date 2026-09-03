@@ -30,20 +30,31 @@ RUN set -ex \
     dbus-x11 \
     libgl1-mesa-dri \
     openssl \
-    neovim \
-    firefox \
-    chromium
+    neovim
 
 RUN set -ex \
-  && echo 'root:root' | chpasswd \
+  && apt install -y gnupg ca-certificates \
+  && install -d -m 0755 /etc/apt/keyrings \
+  && curl -fsSL https://packages.mozilla.org/apt/repo-signing-key.gpg \
+       -o /etc/apt/keyrings/packages.mozilla.org.asc \
+  && gpg -n -q --homedir "$(mktemp -d)" --import --import-options import-show \
+       /etc/apt/keyrings/packages.mozilla.org.asc \
+     | grep -q 35BAA0B33E9EB396F59CA838C0BA5CE6DC6315A3 \
+  && echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" \
+       > /etc/apt/sources.list.d/mozilla.list \
+  && printf 'Package: firefox*\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' \
+       > /etc/apt/preferences.d/mozilla \
+  && apt update \
+  && apt install -y firefox \
+  && apt policy firefox | grep -q packages.mozilla.org
+
+RUN set -ex \
   && apt clean \
   && systemctl enable ssh \
   && systemctl enable systemd-resolved \
   && systemctl enable systemd-networkd \
   && systemctl enable systemd-resolved \
   && systemctl set-default graphical.target \
-  && mkdir -p /root/.ssh \
-  && curl -sL https://github.com/codingcoffee.keys > /root/.ssh/authorized_keys \
   && (id ubuntu || adduser --disabled-password --gecos "" ubuntu) \
   && echo 'ubuntu:ubuntu' | chpasswd \
   && adduser ubuntu sudo \
@@ -72,15 +83,3 @@ RUN set -ex \
      > /etc/systemd/system/grd-config.service \
   && systemctl enable grd-config.service
 
-RUN cat > /etc/systemd/network/10-eth0.network <<'EOF'
-[Match]
-Name=eth0
-
-[Network]
-DHCP=ipv4
-EOF
-
-USER ubuntu
-RUN set -ex \
-  && mkdir -p /home/ubuntu/.ssh/ \
-  && curl -sL https://github.com/codingcoffee.keys > /home/ubuntu/.ssh/authorized_keys
