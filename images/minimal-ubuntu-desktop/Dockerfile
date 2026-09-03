@@ -77,13 +77,13 @@ RUN set -ex \
 
 RUN cat > /etc/systemd/user/gnome-headless.service <<'EOF'
 [Unit]
-Description=Headless GNOME Shell on a virtual monitor
+Description=Headless GNOME Shell
 Before=gnome-remote-desktop.service
 
 [Service]
 Type=simple
 Environment=XDG_SESSION_TYPE=wayland
-ExecStart=/usr/bin/gnome-shell --headless --virtual-monitor 1920x1080
+ExecStart=/usr/bin/gnome-shell --headless
 Restart=on-failure
 RestartSec=2
 
@@ -109,6 +109,11 @@ fi
 # that sets the certificate included.
 gsettings set org.gnome.desktop.remote-desktop.rdp tls-cert '/etc/gnome-remote-desktop-user/tls.crt'
 gsettings set org.gnome.desktop.remote-desktop.rdp tls-key '/etc/gnome-remote-desktop-user/tls.key'
+
+# extend, not the default mirror-primary: mutter creates the virtual monitor at
+# whatever size the client asks for and resizes it mid-session, instead of the
+# client being pinned to a monitor the compositor sized on its own.
+gsettings set org.gnome.desktop.remote-desktop.rdp screen-share-mode 'extend'
 
 # Bare grdctl is the user-session daemon; --system is the remote-login one this
 # image exists to avoid, and there is no --user flag.
