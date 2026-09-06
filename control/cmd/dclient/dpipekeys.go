@@ -1,23 +1,23 @@
 package main
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
-	"encoding/pem"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
-	"strings"
 
-	"golang.org/x/crypto/ssh"
+	"control/internal/proto"
 )
 
 const (
 	dpipeKeyDir = "/etc/dpipe/keys"
 
-	dpipeHostKeyPath   = dpipeKeyDir + "/dpipe_host_ed25519"
-	dpipeClientKeyPath = dpipeKeyDir + "/dpipe_client_ed25519"
+	dpipeHostKeyName   = "dpipe_host_ed25519"
+	dpipeClientKeyName = "dpipe_client_ed25519"
+
+	dpipeHostKeyPath   = dpipeKeyDir + "/" + dpipeHostKeyName
+	dpipeClientKeyPath = dpipeKeyDir + "/" + dpipeClientKeyName
 
 	dpipeCookieSecretPath = dpipeKeyDir + "/cookie_secret"
 
@@ -28,98 +28,61 @@ const (
 	dpipeNamedCertDir = dpipeCertDir + "/named"
 )
 
-func ensureDpipeKeys() error {
-	if err := os.MkdirAll(dpipeKeyDir, 0o700); err != nil {
-		return fmt.Errorf("could not create %s: %w", dpipeKeyDir, err)
+// writeDpipeKeys installs the ssh identities the control server issued. The
+// host never generates its own: the whole fleet serves one host key, so a
+// rebuilt host is the same host as far as a user's ssh client is concerned.
+func writeDpipeKeys(keys *proto.DpipeSSHKeys) (bool, error) {
+	return writeDpipeKeysTo(dpipeKeyDir, keys)
+}
+
+func writeDpipeKeysTo(dir string, keys *proto.DpipeSSHKeys) (bool, error) {
+	if keys == nil {
+		return false, nil
 	}
-	if err := os.Chmod(dpipeKeyDir, 0o700); err != nil {
-		return fmt.Errorf("could not tighten %s to 0700: %w", dpipeKeyDir, err)
+	if keys.HostKey == "" || keys.ClientKey == "" {
+		return false, errors.New("the control server sent an incomplete set of dpipe ssh keys")
 	}
-	for _, path := range []string{dpipeHostKeyPath, dpipeClientKeyPath} {
-		if err := ensureEd25519Keypair(path); err != nil {
-			return err
+
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return false, fmt.Errorf("could not create %s: %w", dir, err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return false, fmt.Errorf("could not tighten %s to 0700: %w", dir, err)
+	}
+
+	changed := false
+	for _, k := range []struct {
+		path, key, pub string
+	}{
+		{filepath.Join(dir, dpipeHostKeyName), keys.HostKey, keys.HostPub},
+		{filepath.Join(dir, dpipeClientKeyName), keys.ClientKey, keys.ClientPub},
+	} {
+		keyChanged, err := writeIfChanged(k.path, k.key, 0o600)
+		if err != nil {
+			return changed, err
+		}
+		pubChanged := false
+		if k.pub != "" {
+			pubChanged, err = writeIfChanged(k.path+".pub", k.pub, 0o644)
+			if err != nil {
+				return changed, err
+			}
+		}
+		if keyChanged || pubChanged {
+			log.Printf("installed the ssh key the control server issued in %s", k.path)
+			changed = true
 		}
 	}
-	return nil
+	return changed, nil
 }
 
-func ensureEd25519Keypair(path string) error {
-	pubPath := path + ".pub"
-
-	priv, err := readEd25519PrivateKey(path)
-	switch {
-	case err != nil:
-		return err
-	case priv != nil:
-		if _, err := os.Stat(pubPath); err == nil {
-			return nil
-		} else if !os.IsNotExist(err) {
-			return err
+func dpipeKeysPresent() bool {
+	for _, p := range []string{dpipeHostKeyPath, dpipeClientKeyPath} {
+		if _, err := os.Stat(p); err != nil {
+			return false
 		}
-		log.Printf("%s is missing; deriving it from %s", pubPath, path)
-		return writePublicKey(pubPath, priv.Public().(ed25519.PublicKey), keyComment(path))
 	}
-
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		return fmt.Errorf("could not generate an ed25519 key: %w", err)
-	}
-	comment := keyComment(path)
-
-	block, err := marshalEd25519PrivateKey(priv, comment)
-	if err != nil {
-		return fmt.Errorf("could not encode %s: %w", path, err)
-	}
-	if err := writeNewFile(path, pem.EncodeToMemory(block), 0o600); err != nil {
-		return err
-	}
-	if err := writePublicKey(pubPath, pub, comment); err != nil {
-		return err
-	}
-	log.Printf("generated %s (ed25519)", path)
-	return nil
-}
-
-func marshalEd25519PrivateKey(priv ed25519.PrivateKey, comment string) (*pem.Block, error) {
-	block, err := ssh.MarshalPrivateKey(priv, comment)
-	if err == nil {
-		return block, nil
-	}
-	if block, ptrErr := ssh.MarshalPrivateKey(&priv, comment); ptrErr == nil {
-		return block, nil
-	}
-	return nil, err
-}
-
-func readEd25519PrivateKey(path string) (ed25519.PrivateKey, error) {
-	b, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("could not read %s: %w", path, err)
-	}
-	key, err := ssh.ParseRawPrivateKey(b)
-	if err != nil {
-		return nil, fmt.Errorf("%s is not a usable private key (%w); move it aside to have a new one generated", path, err)
-	}
-	switch k := key.(type) {
-	case *ed25519.PrivateKey:
-		return *k, nil
-	case ed25519.PrivateKey:
-		return k, nil
-	default:
-		return nil, fmt.Errorf("%s is a %T, not an ed25519 key; move it aside to have a new one generated", path, key)
-	}
-}
-
-func writePublicKey(path string, pub ed25519.PublicKey, comment string) error {
-	signerPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		return fmt.Errorf("could not encode %s: %w", path, err)
-	}
-	line := fmt.Sprintf("%s %s\n", strings.TrimRight(string(ssh.MarshalAuthorizedKey(signerPub)), "\r\n"), comment)
-	return writeNewFile(path, []byte(line), 0o644)
+	return true
 }
 
 func writeNewFile(path string, content []byte, mode os.FileMode) error {
@@ -141,12 +104,4 @@ func writeNewFile(path string, content []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpName, path)
-}
-
-func keyComment(path string) string {
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		host = "dclient"
-	}
-	return filepath.Base(path) + "@" + host
 }

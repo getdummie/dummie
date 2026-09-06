@@ -92,7 +92,7 @@ func applyCoreDNSConfig(ctx context.Context, config string) (bool, error) {
 	return true, nil
 }
 
-func applyDpipeConfig(ctx context.Context, config string, certs *proto.DpipeCerts) (bool, error) {
+func applyDpipeConfig(ctx context.Context, config string, certs *proto.DpipeCerts, keys *proto.DpipeSSHKeys) (bool, error) {
 	if !strings.HasSuffix(config, "\n") {
 		config += "\n"
 	}
@@ -103,18 +103,20 @@ func applyDpipeConfig(ctx context.Context, config string, certs *proto.DpipeCert
 	}
 	configChanged := err != nil || string(existing) != config
 
+	keysChanged, err := writeDpipeKeys(keys)
+	if err != nil {
+		return false, err
+	}
+
 	certsChanged, err := writeDpipeCerts(certs)
 	if err != nil {
 		return false, err
 	}
-	if !configChanged && !certsChanged {
+	if !configChanged && !certsChanged && !keysChanged {
 		return false, nil
 	}
 
 	if configChanged {
-		if err := ensureDpipeKeys(); err != nil {
-			return false, err
-		}
 		if err := writeFileAtomic(path, []byte(config), 0o644); err != nil {
 			return false, err
 		}

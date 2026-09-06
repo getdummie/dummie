@@ -32,8 +32,10 @@ upgrade_socket: /run/dpipe/upgrade.sock
 drain_timeout: 0s
 log_level: info
 
-# The key files are the host's own, generated there on first start and never
-# sent anywhere. Only their location is decided here.
+# The key files are the fleet's, issued by the control server and written here
+# by dclient. They are deliberately not the host's own: a host that generated
+# its own would present a new identity every time it was rebuilt, and every
+# user's ssh client would report that the host key had changed.
 ssh:
   enabled: true
   host_key: /etc/dpipe/keys/dpipe_host_ed25519      # what the user's client pins
@@ -126,10 +128,19 @@ func pushDpipeConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hub *
 		certs = nil
 	}
 
+	// Without the keys the host has nothing to serve ssh with, so a failure
+	// here is not something to paper over by sending the config anyway.
+	keys, err := fleetSSHKeys(ctx, q)
+	if err != nil {
+		log.Printf("could not issue the dpipe ssh keys for client %s: %v", id, err)
+		return
+	}
+
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind:       proto.KindDpipeConfig,
 		File:       &proto.FileConfig{Config: generateDpipeConfig(certs)},
 		DpipeCerts: certs,
+		DpipeKeys:  keys,
 	})
 	if err != nil {
 		log.Printf("could not build the dpipe config job for client %s: %v", id, err)

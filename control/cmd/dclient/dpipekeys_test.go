@@ -1,137 +1,120 @@
 package main
 
 import (
-	"bytes"
-	"crypto/ed25519"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
-	"golang.org/x/crypto/ssh"
+	"control/internal/proto"
 )
 
-func pubOf(t *testing.T, path string) []byte {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("could not read %s: %v", path, err)
-	}
-	key, _, _, _, err := ssh.ParseAuthorizedKey(b)
-	if err != nil {
-		t.Fatalf("%s is not a valid authorized_keys line (%v): %q", path, err, b)
-	}
-	return key.Marshal()
-}
-
-func TestEnsureEd25519KeypairGenerates(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dpipe_host_ed25519")
-
-	if err := ensureEd25519Keypair(path); err != nil {
-		t.Fatalf("ensureEd25519Keypair: %v", err)
-	}
-
-	fi, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
-	if fi.Mode().Perm() != 0o600 {
-		t.Errorf("%s is %v, want 0600", path, fi.Mode().Perm())
-	}
-
-	priv, err := readEd25519PrivateKey(path)
-	if err != nil {
-		t.Fatalf("the key it just wrote does not parse: %v", err)
-	}
-	if priv == nil {
-		t.Fatal("no private key was written")
-	}
-
-	want, err := ssh.NewPublicKey(priv.Public().(ed25519.PublicKey))
-	if err != nil {
-		t.Fatalf("could not derive the public key: %v", err)
-	}
-	if !bytes.Equal(pubOf(t, path+".pub"), want.Marshal()) {
-		t.Error("the .pub does not match the private key beside it")
+func testKeys() *proto.DpipeSSHKeys {
+	return &proto.DpipeSSHKeys{
+		HostKey:   "-----BEGIN OPENSSH PRIVATE KEY-----\nhost\n-----END OPENSSH PRIVATE KEY-----\n",
+		HostPub:   "ssh-ed25519 AAAAhost dpipe-host\n",
+		ClientKey: "-----BEGIN OPENSSH PRIVATE KEY-----\nclient\n-----END OPENSSH PRIVATE KEY-----\n",
+		ClientPub: "ssh-ed25519 AAAAclient dpipe-client\n",
 	}
 }
 
-func TestEnsureEd25519KeypairLeavesAnExistingKeyAlone(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dpipe_client_ed25519")
+func TestWriteDpipeKeysInstallsWhatControlSent(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
 
-	if err := ensureEd25519Keypair(path); err != nil {
+	changed, err := writeDpipeKeysTo(dir, testKeys())
+	if err != nil {
+		t.Fatalf("writeDpipeKeysTo: %v", err)
+	}
+	if !changed {
+		t.Error("writing the keys for the first time did not report a change")
+	}
+
+	for path, want := range map[string]string{
+		filepath.Join(dir, dpipeHostKeyName):          testKeys().HostKey,
+		filepath.Join(dir, dpipeHostKeyName+".pub"):   testKeys().HostPub,
+		filepath.Join(dir, dpipeClientKeyName):        testKeys().ClientKey,
+		filepath.Join(dir, dpipeClientKeyName+".pub"): testKeys().ClientPub,
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("could not read %s: %v", path, err)
+		}
+		if string(b) != want {
+			t.Errorf("%s = %q, want %q", path, b, want)
+		}
+	}
+
+	for _, name := range []string{dpipeHostKeyName, dpipeClientKeyName} {
+		fi, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if fi.Mode().Perm() != 0o600 {
+			t.Errorf("%s is %v, want 0600", name, fi.Mode().Perm())
+		}
+	}
+}
+
+func TestWriteDpipeKeysIsQuietWhenNothingChanged(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
+
+	if _, err := writeDpipeKeysTo(dir, testKeys()); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
-	before, err := os.ReadFile(path)
+	changed, err := writeDpipeKeysTo(dir, testKeys())
 	if err != nil {
-		t.Fatal(err)
-	}
-	beforePub := pubOf(t, path+".pub")
-
-	if err := ensureEd25519Keypair(path); err != nil {
 		t.Fatalf("second call: %v", err)
 	}
-	after, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(before, after) {
-		t.Error("the private key was replaced on a second run")
-	}
-	if !bytes.Equal(beforePub, pubOf(t, path+".pub")) {
-		t.Error("the public key changed on a second run")
+	if changed {
+		t.Error("rewriting the same keys reported a change, which would restart dpipe for nothing")
 	}
 }
 
-func TestEnsureEd25519KeypairRederivesAMissingPub(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dpipe_client_ed25519")
+func TestWriteDpipeKeysReplacesAnOlderKey(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
 
-	if err := ensureEd25519Keypair(path); err != nil {
+	stale := testKeys()
+	stale.HostKey = "-----BEGIN OPENSSH PRIVATE KEY-----\nstale\n-----END OPENSSH PRIVATE KEY-----\n"
+	if _, err := writeDpipeKeysTo(dir, stale); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
-	privBefore, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantPub := pubOf(t, path+".pub")
-	if err := os.Remove(path + ".pub"); err != nil {
-		t.Fatal(err)
-	}
 
-	if err := ensureEd25519Keypair(path); err != nil {
+	changed, err := writeDpipeKeysTo(dir, testKeys())
+	if err != nil {
 		t.Fatalf("second call: %v", err)
 	}
-	if !bytes.Equal(wantPub, pubOf(t, path+".pub")) {
-		t.Error("the re-derived .pub is not the one that belongs to this private key")
+	if !changed {
+		t.Error("a new host key was not reported as a change")
 	}
-	after, err := os.ReadFile(path)
+	b, err := os.ReadFile(filepath.Join(dir, dpipeHostKeyName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(privBefore, after) {
-		t.Error("re-deriving the .pub rewrote the private key")
+	if string(b) != testKeys().HostKey {
+		t.Error("the stale host key was left in place")
 	}
 }
 
-func TestEnsureEd25519KeypairRefusesToClobberAnUnusableKey(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "dpipe_host_ed25519")
-	const junk = "this is not a private key\n"
-	if err := os.WriteFile(path, []byte(junk), 0o600); err != nil {
-		t.Fatal(err)
-	}
+func TestWriteDpipeKeysRefusesAnIncompleteSet(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
 
-	err := ensureEd25519Keypair(path)
-	if err == nil {
-		t.Fatal("an unparseable key was accepted")
+	keys := testKeys()
+	keys.ClientKey = ""
+	if _, err := writeDpipeKeysTo(dir, keys); err == nil {
+		t.Fatal("a set with no client key was accepted")
 	}
-	if !strings.Contains(err.Error(), path) {
-		t.Errorf("the error does not name the file: %v", err)
+}
+
+func TestWriteDpipeKeysWithoutKeysDoesNothing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keys")
+
+	changed, err := writeDpipeKeysTo(dir, nil)
+	if err != nil {
+		t.Fatalf("writeDpipeKeysTo(nil): %v", err)
 	}
-	b, readErr := os.ReadFile(path)
-	if readErr != nil {
-		t.Fatal(readErr)
+	if changed {
+		t.Error("a job carrying no keys reported a change")
 	}
-	if string(b) != junk {
-		t.Error("the existing file was overwritten")
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Error("a job carrying no keys created the key directory")
 	}
 }

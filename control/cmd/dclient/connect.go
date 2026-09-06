@@ -416,7 +416,7 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
 			return
 		}
-		go l.applyHostConfig(ctx, env.ID, job.Kind, job.File.Config, job.DpipeCerts)
+		go l.applyHostConfig(ctx, env.ID, job.Kind, job.File.Config, job.DpipeCerts, job.DpipeKeys)
 	default:
 		l.reply(ctx, env.ID, proto.JobResult{
 			Kind:  job.Kind,
@@ -524,7 +524,7 @@ func (l *link) purgeImages(ctx context.Context, jobID string, names []string) {
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindCachePurge, OK: true, Cache: &res})
 }
 
-func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.JobKind, config string, certs *proto.DpipeCerts) {
+func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.JobKind, config string, certs *proto.DpipeCerts, keys *proto.DpipeSSHKeys) {
 	ctx = context.WithoutCancel(ctx)
 
 	apply := applySuricataConfig
@@ -533,7 +533,7 @@ func (l *link) applyHostConfig(ctx context.Context, jobID string, kind proto.Job
 	case proto.KindDpipeConfig:
 		name = dpipeService
 		apply = func(ctx context.Context, config string) (bool, error) {
-			return applyDpipeConfig(ctx, config, certs)
+			return applyDpipeConfig(ctx, config, certs, keys)
 		}
 	case proto.KindCoreDNSConfig:
 		apply, name = applyCoreDNSConfig, corednsContainer

@@ -106,6 +106,8 @@ type Job struct {
 	Vector *VectorConfig `json:"vector,omitempty"`
 	File *FileConfig `json:"file,omitempty"`
 	DpipeCerts *DpipeCerts `json:"dpipe_certs,omitempty"`
+
+	DpipeKeys *DpipeSSHKeys `json:"dpipe_keys,omitempty"`
 	Services *ServicesConfig `json:"services,omitempty"`
 	CustomCert *CustomCertOrder `json:"custom_cert,omitempty"`
 	Cache *CachePurge `json:"cache,omitempty"`
@@ -158,6 +160,20 @@ type DpipeCerts struct {
 	// Named certificates, one per custom domain, selected by SNI. The pair
 	// above stays the fallback for everything under the fleet's own domain.
 	Named []DpipeNamedCert `json:"named,omitempty"`
+}
+
+// DpipeSSHKeys carries the fleet's ssh identities, issued once by the control
+// server and the same on every host. Hosts do not generate their own: a
+// rebuilt host would then present a new host key and every user's client
+// would report that the identity changed.
+type DpipeSSHKeys struct {
+	// HostKey is what the user's client pins; ClientKey is what a guest's
+	// authorized_keys holds. Both are OpenSSH private keys in PEM form, each
+	// with its authorized_keys line beside it.
+	HostKey   string `json:"host_key"`
+	HostPub   string `json:"host_pub"`
+	ClientKey string `json:"client_key"`
+	ClientPub string `json:"client_pub"`
 }
 
 type DpipeNamedCert struct {

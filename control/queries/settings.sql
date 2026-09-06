@@ -14,3 +14,10 @@ SET value = EXCLUDED.value,
     updated_at = now(),
     updated_by = EXCLUDED.updated_by
 RETURNING *;
+
+-- name: InsertSettingIfAbsent :one
+INSERT INTO settings (key, value)
+VALUES ($1, $2)
+ON CONFLICT (key) DO UPDATE
+SET value = settings.value
+RETURNING *;

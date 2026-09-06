@@ -28,6 +28,31 @@ func (q *Queries) GetSetting(ctx context.Context, key string) (Setting, error) {
 	return i, err
 }
 
+const insertSettingIfAbsent = `-- name: InsertSettingIfAbsent :one
+INSERT INTO settings (key, value)
+VALUES ($1, $2)
+ON CONFLICT (key) DO UPDATE
+SET value = settings.value
+RETURNING key, value, updated_at, updated_by
+`
+
+type InsertSettingIfAbsentParams struct {
+	Key   string
+	Value string
+}
+
+func (q *Queries) InsertSettingIfAbsent(ctx context.Context, arg InsertSettingIfAbsentParams) (Setting, error) {
+	row := q.db.QueryRow(ctx, insertSettingIfAbsent, arg.Key, arg.Value)
+	var i Setting
+	err := row.Scan(
+		&i.Key,
+		&i.Value,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
 const listSettings = `-- name: ListSettings :many
 SELECT key, value, updated_at, updated_by FROM settings
 ORDER BY key

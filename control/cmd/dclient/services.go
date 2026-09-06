@@ -178,10 +178,12 @@ func ensureManagedService(ctx context.Context, data, name string, rel proto.Serv
 		return fmt.Errorf("could not create %s: %w", serviceRuntimeDir, err)
 	}
 
-	if name == dpipeService {
-		if err := ensureDpipeKeys(); err != nil {
-			return err
-		}
+	// dpipe cannot serve ssh without the keys the control server issues, and
+	// they arrive with its config. Install it but leave it stopped until then,
+	// rather than starting a process that can only fail.
+	deferStart := name == dpipeService && !dpipeKeysPresent()
+	if deferStart {
+		log.Printf("%s has no ssh keys yet; installing it stopped until the control server sends them", name)
 	}
 
 	if err := writeIfAbsent(serviceConfigPath(name), defaultServiceConfig(name), 0o644); err != nil {
@@ -209,7 +211,11 @@ func ensureManagedService(ctx context.Context, data, name string, rel proto.Serv
 			return err
 		}
 	}
-	if err := systemctl(ctx, "enable", "--now", name+".service"); err != nil {
+	enable := []string{"enable", name + ".service"}
+	if !deferStart {
+		enable = []string{"enable", "--now", name + ".service"}
+	}
+	if err := systemctl(ctx, enable...); err != nil {
 		return err
 	}
 
@@ -261,6 +267,10 @@ func ensureManagedServicesRunning(ctx context.Context) {
 		}
 		if _, err := os.Stat(serviceBinary(name)); err != nil {
 			log.Printf("%s has a unit but no binary; it is reinstalled on the next connect", name)
+			continue
+		}
+		if name == dpipeService && !dpipeKeysPresent() {
+			log.Printf("%s has no ssh keys yet; it starts once the control server sends them", name)
 			continue
 		}
 		if err := systemctl(ctx, "enable", "--now", name+".service"); err != nil {
