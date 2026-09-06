@@ -433,7 +433,9 @@ async function confirmPurge() {
             </NuxtLink>
           </TableCell>
           <TableCell class="text-muted-foreground">
-            <span class="block max-w-[24rem] font-mono text-xs break-all">{{ o.object_key || '—' }}</span>
+            <span class="block max-w-[24rem] truncate font-mono text-xs" :title="o.object_key">
+              {{ o.object_key || '—' }}
+            </span>
           </TableCell>
           <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(o.size_bytes) }}</TableCell>
           <TableCell class="text-muted-foreground">{{ fmtDate(o.created_at) }}</TableCell>
