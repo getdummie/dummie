@@ -1,0 +1,20 @@
+default: build
+
+# Build the intproxy binary. The module root is the path served to hosts,
+# matching dproxy/dproxy and dpipe/dpipe.
+build:
+    go build -o intproxy ./cmd/intproxy
+
+# Unit + integration tests.
+test:
+    go test ./...
+
+# Tests under the race detector.
+race:
+    go test -race ./...
+
+lint:
+    go vet ./...
+
+clean:
+    rm -rf bin

@@ -1,7 +1,8 @@
 # yaml-language-server: $schema=https://goreleaser.com/static/schema.json
 #
-# Three separate Go modules live in this repo (backstage/dpipe, backstage/dproxy,
-# control) with no go.work, so every build names its own `dir`. One repo-wide
+# Separate Go modules live in this repo (backstage/dpipe, backstage/dproxy,
+# backstage/dinit, backstage/intproxy, control) with no go.work, so every build
+# names its own `dir`. One repo-wide
 # version covers all of them: the committed /VERSION file is the source of
 # truth, `just release` derives the git tag from it, and {{ .Version }} below is
 # that tag.
@@ -32,6 +33,21 @@ builds:
     dir: backstage/dproxy
     main: ./cmd/dproxy
     binary: dproxy
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    ldflags:
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .CommitDate }}
+
+  - id: intproxy
+    dir: backstage/intproxy
+    main: ./cmd/intproxy
+    binary: intproxy
     env: [CGO_ENABLED=0]
     goos: [linux]
     goarch: [amd64, arm64]
@@ -94,6 +110,12 @@ archives:
     formats: [tar.gz]
     files: [none*]
     name_template: "dproxy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+  - id: intproxy
+    ids: [intproxy]
+    formats: [tar.gz]
+    files: [none*]
+    name_template: "intproxy_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
   - id: dinit
     ids: [dinit]
