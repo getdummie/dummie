@@ -61,6 +61,10 @@ func Run(version string) {
 
 	mount(earlyMounts)
 
+	// Before anything writes: the overlay is the size the vm was created with, the
+	// ext4 in it is the size the image was built at.
+	growRootfs()
+
 	p := readParams("/proc/cmdline")
 	// Before the ethernet link, and regardless of whether there is one: a vm with
 	// no network at all still needs to be able to talk to itself.
