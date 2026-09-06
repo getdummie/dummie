@@ -21,19 +21,17 @@ import type { DataTableColumn } from '@/lib/table'
 
 const columns: DataTableColumn[] = [
   { key: 'name', label: 'Name' },
-  { key: 'source', label: 'Source' },
+  { key: 'source', label: 'Source', class: 'hidden md:table-cell' },
   { key: 'status', label: 'Status' },
-  { key: 'size', label: 'Size' },
-  { key: 'description', label: 'Description' },
-  { key: 'created', label: 'Added' },
+  { key: 'size', label: 'Size', class: 'hidden sm:table-cell' },
+  { key: 'created', label: 'Added', class: 'hidden lg:table-cell' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
 
 const withdrawnColumns: DataTableColumn[] = [
   { key: 'name', label: 'Name' },
-  { key: 'object', label: 'Object' },
-  { key: 'size', label: 'Size' },
-  { key: 'created', label: 'Added' },
+  { key: 'size', label: 'Size', class: 'hidden sm:table-cell' },
+  { key: 'created', label: 'Added', class: 'hidden lg:table-cell' },
   { key: 'withdrawn', label: 'Withdrawn' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
@@ -396,19 +394,21 @@ async function confirmPurge() {
               {{ o.name }}
             </NuxtLink>
           </TableCell>
-          <TableCell class="max-w-xs font-mono text-xs break-all text-muted-foreground">
-            {{ o.source === 'oci' ? o.oci_ref : o.file_name }}
+          <TableCell class="hidden text-muted-foreground md:table-cell">
+            <span
+              class="block max-w-[12rem] truncate font-mono text-xs lg:max-w-[16rem]"
+              :title="o.source === 'oci' ? o.oci_ref : o.file_name"
+            >
+              {{ o.source === 'oci' ? o.oci_ref : o.file_name }}
+            </span>
           </TableCell>
           <TableCell>
             <Badge :variant="statusVariant(o.status)" class="font-mono text-xs" :title="o.status_detail">
               {{ o.status }}
             </Badge>
           </TableCell>
-          <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(o.size_bytes) }}</TableCell>
-          <TableCell class="max-w-xs truncate text-muted-foreground" :title="o.description">
-            {{ o.description || '—' }}
-          </TableCell>
-          <TableCell class="text-muted-foreground">{{ fmtDate(o.created_at) }}</TableCell>
+          <TableCell class="hidden font-mono text-muted-foreground sm:table-cell">{{ fmtBytes(o.size_bytes) }}</TableCell>
+          <TableCell class="hidden text-muted-foreground lg:table-cell">{{ fmtDate(o.created_at) }}</TableCell>
           <TableCell class="text-right">
             <Button
               variant="ghost"
@@ -432,13 +432,8 @@ async function confirmPurge() {
               {{ o.name }}
             </NuxtLink>
           </TableCell>
-          <TableCell class="text-muted-foreground">
-            <span class="block max-w-[24rem] truncate font-mono text-xs" :title="o.object_key">
-              {{ o.object_key || '—' }}
-            </span>
-          </TableCell>
-          <TableCell class="font-mono text-muted-foreground">{{ fmtBytes(o.size_bytes) }}</TableCell>
-          <TableCell class="text-muted-foreground">{{ fmtDate(o.created_at) }}</TableCell>
+          <TableCell class="hidden font-mono text-muted-foreground sm:table-cell">{{ fmtBytes(o.size_bytes) }}</TableCell>
+          <TableCell class="hidden text-muted-foreground xl:table-cell">{{ fmtDate(o.created_at) }}</TableCell>
           <TableCell class="text-muted-foreground">{{ fmtDate(o.soft_deleted_at) }}</TableCell>
           <TableCell class="text-right">
             <Button

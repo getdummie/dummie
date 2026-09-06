@@ -464,7 +464,7 @@ async function confirmPurge() {
       </section>
 
       <section
-        v-if="image.source === 'oci' && ready"
+        v-if="ready"
         aria-labelledby="config-heading"
         class="mt-4 rounded-lg border border-border p-4 sm:p-6"
       >
@@ -481,11 +481,17 @@ async function confirmPurge() {
             Edit
           </Button>
         </div>
-        <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+        <p v-if="image.source === 'oci'" class="mt-1 max-w-2xl text-sm text-muted-foreground">
           What the container image itself declares. The root filesystem alone does not carry any of
           this, so it is recorded here when the image is built — and it is what the guest init runs
           the VM's workload with. A change applies to VMs created from this image afterwards; VMs
           that already exist keep the configuration they were built with.
+        </p>
+        <p v-else class="mt-1 max-w-2xl text-sm text-muted-foreground">
+          What the guest init runs the VM's workload with. An uploaded root filesystem does not
+          carry any of this on its own, so there is nothing here until you set it. A change applies
+          to VMs created from this image afterwards; VMs that already exist keep the configuration
+          they were built with.
         </p>
         <dl class="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2">
           <div>
@@ -572,10 +578,15 @@ async function confirmPurge() {
       <DialogContent class="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>Edit image configuration</DialogTitle>
-          <DialogDescription>
+          <DialogDescription v-if="image?.source === 'oci'">
             What the guest init runs a VM's workload as, and with. This starts as what
             <span class="font-mono text-foreground">{{ image?.oci_ref }}</span> declared; editing it
             makes it diverge from the container image, which is the point of it being editable.
+          </DialogDescription>
+          <DialogDescription v-else>
+            What the guest init runs a VM's workload as, and with. An uploaded root filesystem
+            declares none of this, so whatever you set here is all a VM built from
+            <span class="font-mono text-foreground">{{ image?.name }}</span> gets.
           </DialogDescription>
         </DialogHeader>
         <form class="space-y-4" :aria-busy="savingConfig" @submit.prevent="saveConfig">

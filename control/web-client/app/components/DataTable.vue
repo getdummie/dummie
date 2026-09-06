@@ -52,7 +52,7 @@ const headings = '[&_th]:font-mono [&_th]:text-xs [&_th]:font-normal [&_th]:trac
       <TableBody>
         <template v-if="props.loading">
           <TableRow v-for="n in props.loadingRows" :key="n" aria-hidden="true">
-            <TableCell v-for="col in props.columns" :key="col.key"><Skeleton class="h-4 w-full" /></TableCell>
+            <TableCell v-for="col in props.columns" :key="col.key" :class="col.class"><Skeleton class="h-4 w-full" /></TableCell>
           </TableRow>
         </template>
         <TableEmpty v-else-if="props.empty" :colspan="props.columns.length">
