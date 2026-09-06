@@ -23,8 +23,9 @@ import (
 )
 
 const (
-	proxyService = "dproxy"
-	dpipeService = "dpipe"
+	proxyService    = "dproxy"
+	dpipeService    = "dpipe"
+	intproxyService = "intproxy"
 
 	serviceConfigDir = "/etc/dclient"
 
@@ -79,7 +80,7 @@ Type=%s
 #
 # Preserved on stop because both units name the same directory: without this,
 # stopping proxy would delete the socket a running dpipe is still serving.
-RuntimeDirectory=dpipe
+RuntimeDirectory=%s
 RuntimeDirectoryPreserve=yes
 ExecStart=%s -config %s
 %sRestart=on-failure
@@ -98,7 +99,17 @@ func managedUnit(name string) string {
 			"RestartForceExitStatus=SIGHUP\n"
 	}
 	return fmt.Sprintf(managedUnitTemplate,
-		name, unitType, serviceBinary(name), serviceConfigPath(name), reload)
+		name, unitType, serviceRuntimeDirName(name), serviceBinary(name), serviceConfigPath(name), reload)
+}
+
+// serviceRuntimeDirName is the RuntimeDirectory= for a unit. dproxy and dpipe
+// share one because they pass file descriptors over a socket in it; intproxy
+// talks to nothing but dclient, so it gets its own.
+func serviceRuntimeDirName(name string) string {
+	if name == intproxyService {
+		return intproxyService
+	}
+	return "dpipe"
 }
 
 const defaultDpipeConfig = `control_socket: /run/dpipe/control.sock
@@ -152,8 +163,11 @@ log_level: info
 `
 
 func defaultServiceConfig(name string) string {
-	if name == dpipeService {
+	switch name {
+	case dpipeService:
 		return defaultDpipeConfig
+	case intproxyService:
+		return defaultIntproxyConfig
 	}
 	return defaultProxyConfig
 }
@@ -178,12 +192,25 @@ func ensureManagedService(ctx context.Context, data, name string, rel proto.Serv
 		return fmt.Errorf("could not create %s: %w", serviceRuntimeDir, err)
 	}
 
-	// dpipe cannot serve ssh without the keys the control server issues, and
-	// they arrive with its config. Install it but leave it stopped until then,
-	// rather than starting a process that can only fail.
-	deferStart := name == dpipeService && !dpipeKeysPresent()
-	if deferStart {
-		log.Printf("%s has no ssh keys yet; installing it stopped until the control server sends them", name)
+	// A service that cannot work until the control server sends it something is
+	// installed stopped, rather than started as a process that can only fail.
+	var deferStart bool
+	switch name {
+	case dpipeService:
+		// dpipe cannot serve ssh without the keys the control server issues,
+		// and they arrive with its config.
+		deferStart = !dpipeKeysPresent()
+		if deferStart {
+			log.Printf("%s has no ssh keys yet; installing it stopped until the control server sends them", name)
+		}
+	case intproxyService:
+		if err := os.MkdirAll(intproxyRuntimeDir, 0o700); err != nil {
+			return fmt.Errorf("could not create %s: %w", intproxyRuntimeDir, err)
+		}
+		deferStart = !intproxyCertPresent()
+		if deferStart {
+			log.Printf("%s has no certificate yet; installing it stopped until the control server sends one", name)
+		}
 	}
 
 	if err := writeIfAbsent(serviceConfigPath(name), defaultServiceConfig(name), 0o644); err != nil {
@@ -249,9 +276,10 @@ func installedServicesState(ctx context.Context) *proto.ServicesState {
 	defer cancel()
 
 	return &proto.ServicesState{
-		Dpipe: installedServiceVersion(ctx, dpipeService),
-		Proxy: installedServiceVersion(ctx, proxyService),
-		Dinit: installedServiceVersion(ctx, guestInitService),
+		Dpipe:    installedServiceVersion(ctx, dpipeService),
+		Proxy:    installedServiceVersion(ctx, proxyService),
+		Dinit:    installedServiceVersion(ctx, guestInitService),
+		Intproxy: installedServiceVersion(ctx, intproxyService),
 	}
 }
 
@@ -261,7 +289,7 @@ func serviceInstalled(name string) bool {
 }
 
 func ensureManagedServicesRunning(ctx context.Context) {
-	for _, name := range []string{proxyService, dpipeService} {
+	for _, name := range []string{proxyService, dpipeService, intproxyService} {
 		if !serviceInstalled(name) {
 			continue
 		}
@@ -271,6 +299,10 @@ func ensureManagedServicesRunning(ctx context.Context) {
 		}
 		if name == dpipeService && !dpipeKeysPresent() {
 			log.Printf("%s has no ssh keys yet; it starts once the control server sends them", name)
+			continue
+		}
+		if name == intproxyService && !intproxyCertPresent() {
+			log.Printf("%s has no certificate yet; it starts once the control server sends one", name)
 			continue
 		}
 		if err := systemctl(ctx, "enable", "--now", name+".service"); err != nil {
@@ -435,7 +467,7 @@ func systemctl(ctx context.Context, args ...string) error {
 }
 
 func removeManagedServices(ctx context.Context) {
-	for _, name := range []string{proxyService, dpipeService, vectorService} {
+	for _, name := range []string{proxyService, dpipeService, intproxyService, vectorService} {
 		if _, err := os.Stat(serviceUnitPath(name)); err != nil {
 			continue
 		}
@@ -454,4 +486,6 @@ func removeManagedServices(ctx context.Context) {
 	} else if !os.IsNotExist(err) {
 		fmt.Println(err)
 	}
+
+	removeIntproxyHost()
 }

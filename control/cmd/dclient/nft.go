@@ -181,23 +181,32 @@ func applyBaseRuleset(cfg netConfig) error {
 		&expr.Verdict{Kind: expr.VerdictAccept},
 	}})
 
+	// Host services a guest may reach, by destination address. Everything but
+	// intproxy answers on the gateway; intproxy has its own address because it
+	// binds :443 specifically, which is how it coexists with dproxy's wildcard.
 	for _, svc := range []struct {
+		daddr []byte
 		proto uint8
 		port  uint16
 	}{
-		{unix.IPPROTO_TCP, metadataPort},
-		{unix.IPPROTO_UDP, 53},
-		{unix.IPPROTO_TCP, 53},
+		{gw, unix.IPPROTO_TCP, metadataPort},
+		{gw, unix.IPPROTO_UDP, 53},
+		{gw, unix.IPPROTO_TCP, 53},
+		{net.ParseIP(intproxyAddr).To4(), unix.IPPROTO_TCP, 443},
 	} {
+		if svc.daddr == nil {
+			continue
+		}
 		c.AddRule(&nftables.Rule{Table: t, Chain: in, Exprs: []expr.Any{
 			&expr.Meta{Key: expr.MetaKeyIIF, Register: 1},
 			&expr.Lookup{SourceRegister: 1, SetName: setTaps, SetID: taps.ID},
 			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseNetworkHeader, Offset: 16, Len: 4},
-			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: gw},
+			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: svc.daddr},
 			&expr.Meta{Key: expr.MetaKeyL4PROTO, Register: 1},
 			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: []byte{svc.proto}},
 			&expr.Payload{DestRegister: 1, Base: expr.PayloadBaseTransportHeader, Offset: 2, Len: 2},
 			&expr.Cmp{Op: expr.CmpOpEq, Register: 1, Data: binaryutil.BigEndian.PutUint16(svc.port)},
+			&expr.Counter{},
 			&expr.Verdict{Kind: expr.VerdictAccept},
 		}})
 	}

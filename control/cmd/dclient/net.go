@@ -44,6 +44,9 @@ func allocateIP(data, pool, gateway string) (string, error) {
 	}
 
 	taken := map[uint32]bool{ipToU32(gw): true}
+	if ip := net.ParseIP(intproxyAddr); ip != nil && ipnet.Contains(ip) {
+		taken[ipToU32(ip)] = true
+	}
 	vms, err := listVMs(data)
 	if err != nil {
 		return "", err
@@ -82,6 +85,9 @@ func reserveIP(data, pool, gateway, want string) (string, error) {
 	}
 	if ip.Equal(net.ParseIP(gateway)) {
 		return "", fmt.Errorf("--ip %s is the gateway", want)
+	}
+	if ip.Equal(net.ParseIP(intproxyAddr)) {
+		return "", fmt.Errorf("--ip %s is the integration proxy", want)
 	}
 
 	vms, err := listVMs(data)

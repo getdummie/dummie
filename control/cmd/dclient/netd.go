@@ -98,6 +98,9 @@ func reconcile(data string, cfg netConfig) error {
 	}
 	ensureSuricata(cfg)
 	ensureCoreDNS(cfg)
+	if err := ensureIntproxyAddr(); err != nil {
+		log.Printf("WARNING: %v", err)
+	}
 
 	vms, err := listVMs(data)
 	if err != nil {

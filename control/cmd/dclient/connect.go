@@ -296,6 +296,15 @@ func connectOnce(ctx context.Context, client *http.Client, base *url.URL, st sta
 
 	go l.pushReports(ctx, cpu)
 
+	// intproxy has no credential of its own, so the broker only exists while
+	// this connection does -- which is also the only time it could be answered.
+	broker := &brokerServer{client: client, base: base, token: st.Token}
+	go func() {
+		if err := broker.serve(ctx); err != nil {
+			log.Printf("WARNING: the integration token broker stopped: %v", err)
+		}
+	}()
+
 	return l.readLoop(ctx)
 }
 
@@ -385,6 +394,12 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.applyProxy(ctx, env.ID, *job.Proxy)
+	case proto.KindIntproxyConfig:
+		if job.Intproxy == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no intproxy config"})
+			return
+		}
+		go l.applyIntproxy(ctx, env.ID, *job.Intproxy)
 	case proto.KindVectorConfig:
 		if job.Vector == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no vector config"})
@@ -475,6 +490,20 @@ func (l *link) applyProxy(ctx context.Context, jobID string, cfg proto.ProxyConf
 		log.Printf("job %s: installed a new proxy config or key and restarted %s", jobID, proxyService)
 	}
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindProxyConfig, OK: true})
+}
+
+func (l *link) applyIntproxy(ctx context.Context, jobID string, cfg proto.IntproxyConfig) {
+	ctx = context.WithoutCancel(ctx)
+	changed, err := applyIntproxyConfig(ctx, cfg)
+	if err != nil {
+		log.Printf("job %s: could not apply the intproxy config: %v", jobID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindIntproxyConfig, Error: err.Error()})
+		return
+	}
+	if changed {
+		log.Printf("job %s: installed a new intproxy config or certificate and restarted %s", jobID, intproxyService)
+	}
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindIntproxyConfig, OK: true})
 }
 
 func (l *link) obtainCert(ctx context.Context, jobID string, order proto.CustomCertOrder) {

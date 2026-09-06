@@ -61,6 +61,7 @@ var checks = []check{
 	{"the suricata container is running", checkSuricata},
 	{"the coredns container is running", checkCoreDNS},
 	{"vector is shipping suricata events", checkVector},
+	{"intproxy is serving integrations", checkIntproxy},
 	{"docker is not dropping vm traffic", checkDockerCompat},
 	{"data directory is writable", checkDataDir},
 }

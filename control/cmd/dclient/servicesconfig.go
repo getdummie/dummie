@@ -25,6 +25,7 @@ func applyServicesConfig(ctx context.Context, data string, want proto.ServicesCo
 	}{
 		{proxyService, want.Proxy},
 		{dpipeService, want.Dpipe},
+		{intproxyService, want.Intproxy},
 	} {
 		switch err := ensureManagedService(ctx, data, svc.name, svc.rel, want.Force); {
 		case err == nil:
