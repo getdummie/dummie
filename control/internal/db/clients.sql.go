@@ -33,7 +33,7 @@ func (q *Queries) DeleteClient(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getClientByID = `-- name: GetClientByID :one
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version FROM clients
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version, intproxy_version FROM clients
 WHERE id = $1
 `
 
@@ -79,12 +79,13 @@ func (q *Queries) GetClientByID(ctx context.Context, id pgtype.UUID) (Client, er
 		&i.DinitVersion,
 		&i.DinitDownloadURL,
 		&i.DinitInstalledVersion,
+		&i.IntproxyVersion,
 	)
 	return i, err
 }
 
 const getClientByMachineID = `-- name: GetClientByMachineID :one
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version FROM clients WHERE machine_id = $1
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version, intproxy_version FROM clients WHERE machine_id = $1
 `
 
 func (q *Queries) GetClientByMachineID(ctx context.Context, machineID string) (Client, error) {
@@ -129,12 +130,13 @@ func (q *Queries) GetClientByMachineID(ctx context.Context, machineID string) (C
 		&i.DinitVersion,
 		&i.DinitDownloadURL,
 		&i.DinitInstalledVersion,
+		&i.IntproxyVersion,
 	)
 	return i, err
 }
 
 const getClientByTokenHash = `-- name: GetClientByTokenHash :one
-SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version FROM clients
+SELECT id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version, intproxy_version FROM clients
 WHERE token_hash = $1
 LIMIT 1
 `
@@ -181,6 +183,7 @@ func (q *Queries) GetClientByTokenHash(ctx context.Context, tokenHash string) (C
 		&i.DinitVersion,
 		&i.DinitDownloadURL,
 		&i.DinitInstalledVersion,
+		&i.IntproxyVersion,
 	)
 	return i, err
 }
@@ -220,7 +223,7 @@ func (q *Queries) ListAvailableHosts(ctx context.Context) ([]ListAvailableHostsR
 }
 
 const listClients = `-- name: ListClients :many
-SELECT clients.id, clients.machine_id, clients.hostname, clients.token_hash, clients.status, clients.os, clients.os_version, clients.arch, clients.client_version, clients.last_seen_at, clients.last_ip, clients.enrolled_key_id, clients.revoked, clients.created_at, clients.updated_at, clients.cpu_count, clients.cpu_percent, clients.load1, clients.load5, clients.load15, clients.mem_total_bytes, clients.mem_used_bytes, clients.disk_total_bytes, clients.disk_used_bytes, clients.uptime_seconds, clients.metrics_at, clients.domain_id, clients.dclient_version, clients.dclient_download_url, clients.dpipe_version, clients.dpipe_download_url, clients.proxy_version, clients.proxy_download_url, clients.dpipe_installed_version, clients.proxy_installed_version, clients.dinit_version, clients.dinit_download_url, clients.dinit_installed_version, d.tld AS domain_tld
+SELECT clients.id, clients.machine_id, clients.hostname, clients.token_hash, clients.status, clients.os, clients.os_version, clients.arch, clients.client_version, clients.last_seen_at, clients.last_ip, clients.enrolled_key_id, clients.revoked, clients.created_at, clients.updated_at, clients.cpu_count, clients.cpu_percent, clients.load1, clients.load5, clients.load15, clients.mem_total_bytes, clients.mem_used_bytes, clients.disk_total_bytes, clients.disk_used_bytes, clients.uptime_seconds, clients.metrics_at, clients.domain_id, clients.dclient_version, clients.dclient_download_url, clients.dpipe_version, clients.dpipe_download_url, clients.proxy_version, clients.proxy_download_url, clients.dpipe_installed_version, clients.proxy_installed_version, clients.dinit_version, clients.dinit_download_url, clients.dinit_installed_version, clients.intproxy_version, d.tld AS domain_tld
 FROM clients
 LEFT JOIN domains d ON d.id = clients.domain_id
 ORDER BY clients.created_at DESC
@@ -285,6 +288,7 @@ func (q *Queries) ListClients(ctx context.Context, arg ListClientsParams) ([]Lis
 			&i.Client.DinitVersion,
 			&i.Client.DinitDownloadURL,
 			&i.Client.DinitInstalledVersion,
+			&i.Client.IntproxyVersion,
 			&i.DomainTLD,
 		); err != nil {
 			return nil, err
@@ -323,7 +327,7 @@ const setClientDomain = `-- name: SetClientDomain :one
 UPDATE clients
 SET domain_id = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version
+RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version, intproxy_version
 `
 
 type SetClientDomainParams struct {
@@ -373,6 +377,7 @@ func (q *Queries) SetClientDomain(ctx context.Context, arg SetClientDomainParams
 		&i.DinitVersion,
 		&i.DinitDownloadURL,
 		&i.DinitInstalledVersion,
+		&i.IntproxyVersion,
 	)
 	return i, err
 }
@@ -528,7 +533,7 @@ SET dclient_version      = $2,
     dinit_download_url   = $9,
     updated_at           = now()
 WHERE id = $1
-RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version
+RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version, intproxy_version
 `
 
 type UpdateClientServiceVersionsParams struct {
@@ -595,6 +600,7 @@ func (q *Queries) UpdateClientServiceVersions(ctx context.Context, arg UpdateCli
 		&i.DinitVersion,
 		&i.DinitDownloadURL,
 		&i.DinitInstalledVersion,
+		&i.IntproxyVersion,
 	)
 	return i, err
 }
@@ -613,7 +619,7 @@ SET hostname        = EXCLUDED.hostname,
     domain_id       = COALESCE(clients.domain_id, EXCLUDED.domain_id),
     revoked         = false,
     updated_at      = now()
-RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version
+RETURNING id, machine_id, hostname, token_hash, status, os, os_version, arch, client_version, last_seen_at, last_ip, enrolled_key_id, revoked, created_at, updated_at, cpu_count, cpu_percent, load1, load5, load15, mem_total_bytes, mem_used_bytes, disk_total_bytes, disk_used_bytes, uptime_seconds, metrics_at, domain_id, dclient_version, dclient_download_url, dpipe_version, dpipe_download_url, proxy_version, proxy_download_url, dpipe_installed_version, proxy_installed_version, dinit_version, dinit_download_url, dinit_installed_version, intproxy_version
 `
 
 type UpsertClientByMachineIDParams struct {
@@ -680,6 +686,7 @@ func (q *Queries) UpsertClientByMachineID(ctx context.Context, arg UpsertClientB
 		&i.DinitVersion,
 		&i.DinitDownloadURL,
 		&i.DinitInstalledVersion,
+		&i.IntproxyVersion,
 	)
 	return i, err
 }

@@ -8,6 +8,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -19,8 +20,11 @@ type certInfo struct {
 	DNSNames    []string
 }
 
+// validateCertificate checks the required names only. certificateNames may ask
+// for more than that, and a certificate issued before a name was added is still
+// perfectly usable for everything it does cover.
 func validateCertificate(certPEM, keyPEM, tld string) (certInfo, error) {
-	return validateCertificateFor(certPEM, keyPEM, certificateNames(tld)...)
+	return validateCertificateFor(certPEM, keyPEM, certificateRequiredNames(tld)...)
 }
 
 func validateCertificateFor(certPEM, keyPEM string, names ...string) (certInfo, error) {
@@ -67,11 +71,25 @@ func validateCertificateFor(certPEM, keyPEM string, names ...string) (certInfo, 
 	}, nil
 }
 
+// certificateNames is what we ask the CA for.
 func certificateNames(tld string) []string {
+	return append(certificateRequiredNames(tld), "*."+proxyIntLabel+"."+tld)
+}
+
+// certificateRequiredNames is what a certificate must cover to be usable at
+// all. Adding a name here breaks every certificate already issued without it,
+// so integrations key off what the leaf actually covers instead.
+func certificateRequiredNames(tld string) []string {
 	return []string{
 		"*." + tld,
 		"*." + proxyConsoleLabel + "." + tld,
 	}
+}
+
+// certificateCoversIntegrations reports whether a leaf can serve *.int.<tld>,
+// which is what decides whether intproxy is configured on a fleet's hosts.
+func certificateCoversIntegrations(names []string, tld string) bool {
+	return slices.Contains(names, "*."+proxyIntLabel+"."+tld)
 }
 
 func normalizePEM(s string) (string, error) {

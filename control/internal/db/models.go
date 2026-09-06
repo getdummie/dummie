@@ -47,6 +47,7 @@ type Client struct {
 	DinitVersion          string
 	DinitDownloadURL      string
 	DinitInstalledVersion string
+	IntproxyVersion       string
 }
 
 type ClientEnrollmentKey struct {
@@ -96,6 +97,48 @@ type Domain struct {
 	CertError       string
 	CertIssuedAt    pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+}
+
+type GithubApp struct {
+	ID         pgtype.UUID
+	AppID      int64
+	Slug       string
+	Name       string
+	PrivateKey string
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
+}
+
+type GithubInstallation struct {
+	ID                  pgtype.UUID
+	AppPk               pgtype.UUID
+	InstallationID      int64
+	AccountLogin        string
+	AccountType         string
+	RepositorySelection string
+	InstalledBy         pgtype.UUID
+	Suspended           bool
+	LastError           string
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+}
+
+type Integration struct {
+	ID             pgtype.UUID
+	OwnerID        pgtype.UUID
+	Name           string
+	Kind           string
+	InstallationPk pgtype.UUID
+	AllRepos       bool
+	Readonly       bool
+	CreatedAt      pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
+}
+
+type IntegrationRepo struct {
+	IntegrationID pgtype.UUID
+	RepoOwner     string
+	RepoName      string
 }
 
 type Kernel struct {
@@ -259,6 +302,12 @@ type VmCustomDomain struct {
 	OrderedAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+}
+
+type VmIntegration struct {
+	VMID          pgtype.UUID
+	IntegrationID pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
 }
 
 type VmNetworkTarget struct {

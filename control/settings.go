@@ -21,6 +21,8 @@ const (
 	settingProxyDownloadURL   = "dproxy_download_url"
 	settingDinitDownloadURL   = "dinit_download_url"
 
+	settingIntproxyDownloadURL = "intproxy_download_url"
+
 	settingVectorVersion      = "vector_version"
 	settingClickHouseURL      = "clickhouse_url"
 	settingClickHouseUser     = "clickhouse_user"
@@ -98,6 +100,16 @@ var settingDefs = []settingDef{
 		Label:       "dproxy download URL",
 		Description: "The same, for dproxy.",
 		Placeholder: "http://10.68.0.1:8081/backstage/dproxy/dproxy",
+		validate:    validateServiceDownloadURL,
+	},
+	{
+		Key:         settingIntproxyDownloadURL,
+		Kind:        settingString,
+		Label:       "intproxy download URL",
+		Description: "The same, for intproxy -- the integration proxy each host serves at " +
+			"github.int.<tld>, so a VM can clone a private repository without holding a " +
+			"credential of its own.",
+		Placeholder: "http://10.68.0.1:8081/backstage/intproxy/intproxy",
 		validate:    validateServiceDownloadURL,
 	},
 	{

@@ -107,6 +107,10 @@ const proxyConsoleLabel = "shell"
 
 const proxySiteLabel = "www"
 
+// proxyIntLabel namespaces the integration proxies. Nothing under it is served
+// by dproxy: intproxy owns the label on its own address.
+const proxyIntLabel = "int"
+
 const proxySiteListen = "127.0.0.1:8079"
 
 const proxySitePath = "/etc/dclient/dproxy-site.html"

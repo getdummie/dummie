@@ -44,9 +44,9 @@ func testFleetCert(t *testing.T, tld string) (string, string) {
 	return testCert(t, certificateNames(tld), time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour))
 }
 
-func TestCertificateNamesCoverConsoles(t *testing.T) {
+func TestCertificateNamesCoverConsolesAndIntegrations(t *testing.T) {
 	got := certificateNames("example.com")
-	want := []string{"*.example.com", "*.shell.example.com"}
+	want := []string{"*.example.com", "*.shell.example.com", "*.int.example.com"}
 	if len(got) != len(want) {
 		t.Fatalf("certificateNames = %v, want %v", got, want)
 	}
@@ -54,6 +54,40 @@ func TestCertificateNamesCoverConsoles(t *testing.T) {
 		if got[i] != want[i] {
 			t.Errorf("certificateNames[%d] = %q, want %q", i, got[i], want[i])
 		}
+	}
+}
+
+func TestCertificateRequiredNamesCoverConsoles(t *testing.T) {
+	got := certificateRequiredNames("example.com")
+	want := []string{"*.example.com", "*.shell.example.com"}
+	if len(got) != len(want) {
+		t.Fatalf("certificateRequiredNames = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("certificateRequiredNames[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// Adding *.int.<tld> to what we order must not invalidate a certificate issued
+// before it existed, or every fleet on an uploaded or manually-issued
+// certificate would be unable to renew or re-upload until it reissued.
+func TestValidateCertificateAcceptsACertIssuedBeforeIntegrations(t *testing.T) {
+	certPEM, keyPEM := testCert(t, certificateRequiredNames("example.com"),
+		time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour))
+
+	if _, err := validateCertificate(certPEM, keyPEM, "example.com"); err != nil {
+		t.Fatalf("a certificate predating the integration names was rejected: %v", err)
+	}
+}
+
+func TestCertificateCoversIntegrations(t *testing.T) {
+	if certificateCoversIntegrations(certificateRequiredNames("example.com"), "example.com") {
+		t.Error("a certificate without the integration wildcard was reported as covering it")
+	}
+	if !certificateCoversIntegrations(certificateNames("example.com"), "example.com") {
+		t.Error("a certificate with the integration wildcard was not recognised")
 	}
 }
 

@@ -34,5 +34,6 @@ sql:
           dpipe_download_url: "DpipeDownloadURL"
           proxy_download_url: "ProxyDownloadURL"
           dinit_download_url: "DinitDownloadURL"
+          intproxy_download_url: "IntproxyDownloadURL"
           oci_ref: "OCIRef"
           oci_digest: "OCIDigest"

@@ -42,9 +42,10 @@ const corednsHeader = `# Written by the control server and installed by dclient.
 # last block a fallback rather than a competitor.
 `
 
-func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream string) string {
+func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream, tld string) string {
 	var b strings.Builder
 	b.WriteString(corednsHeader)
+	writeCoreDNSIntegrationZone(&b, tld)
 
 	for _, vm := range groupByVM(rows) {
 		if vm.allowAll {
@@ -87,6 +88,29 @@ func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream s
 	b.WriteString("# Both the guests with no allowances and any client that is not a guest.\n")
 	b.WriteString(corednsRefuseAll)
 	return b.String()
+}
+
+// writeCoreDNSIntegrationZone answers *.int.<tld> for every guest. It carries no
+// view on purpose: resolving one of these names grants nothing, because intproxy
+// still asks the control server whether the calling vm is attached.
+//
+// It sits above the per-vm blocks, but placement is not what makes it win --
+// int.<tld> is a longer zone match than the .:53 blocks, and zone beats view.
+func writeCoreDNSIntegrationZone(b *strings.Builder, tld string) {
+	if tld == "" {
+		return
+	}
+	zone := proxyIntLabel + "." + tld
+	fmt.Fprintf(b, "\n# --- %s: this host's integration proxy ---\n", zone)
+	fmt.Fprintf(b, "%s:53 {\n", zone)
+	fmt.Fprintf(b, "    template IN A %s {\n", zone)
+	fmt.Fprintf(b, "        answer \"{{ .Name }} 60 IN A %s\"\n", intproxyAddr)
+	b.WriteString("    }\n")
+	// An empty NOERROR rather than no block at all: a dual-stack guest that gets
+	// REFUSED for AAAA can stall instead of falling back to A.
+	fmt.Fprintf(b, "    template IN AAAA %s {\n        rcode NOERROR\n    }\n", zone)
+	b.WriteString(corednsLogDirective)
+	b.WriteString("    errors\n}\n")
 }
 
 func vmZones(vm vmTargets) []string {
@@ -149,9 +173,13 @@ func pushCoreDNSConfig(ctx context.Context, q *db.Queries, hub *Hub, clientID pg
 		log.Printf("no resolver upstream is set, so no corefile was sent to client %s", id)
 		return
 	}
+	host, err := clientProxyHost(ctx, q, clientID)
+	if err != nil {
+		log.Printf("could not read the domain of client %s, writing its corefile without an integration zone: %v", id, err)
+	}
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindCoreDNSConfig,
-		File: &proto.FileConfig{Config: generateCoreDNSConfig(rows, upstream)},
+		File: &proto.FileConfig{Config: generateCoreDNSConfig(rows, upstream, host.tld)},
 	})
 	if err != nil {
 		log.Printf("could not build the corefile job for client %s: %v", id, err)

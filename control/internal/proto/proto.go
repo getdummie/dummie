@@ -55,9 +55,10 @@ type Hello struct {
 }
 
 type ServicesState struct {
-	Dpipe string `json:"dpipe,omitempty"`
-	Proxy string `json:"dproxy,omitempty"`
-	Dinit string `json:"dinit,omitempty"`
+	Dpipe    string `json:"dpipe,omitempty"`
+	Proxy    string `json:"dproxy,omitempty"`
+	Dinit    string `json:"dinit,omitempty"`
+	Intproxy string `json:"intproxy,omitempty"`
 }
 
 type HelloAck struct {
@@ -81,6 +82,8 @@ const (
 
 	KindProxyConfig JobKind = "proxy.config"
 
+	KindIntproxyConfig JobKind = "intproxy.config"
+
 	KindSuricataConfig JobKind = "suricata.config"
 
 	KindDpipeConfig JobKind = "dpipe.config"
@@ -102,7 +105,8 @@ type Job struct {
 	VM   *VMSpec `json:"vm,omitempty"`
 	VMID string `json:"vm_id,omitempty"`
 	Suricata *SuricataRules `json:"suricata,omitempty"`
-	Proxy *ProxyConfig `json:"proxy,omitempty"`
+	Proxy    *ProxyConfig    `json:"proxy,omitempty"`
+	Intproxy *IntproxyConfig `json:"intproxy,omitempty"`
 	Vector *VectorConfig `json:"vector,omitempty"`
 	File *FileConfig `json:"file,omitempty"`
 	DpipeCerts *DpipeCerts `json:"dpipe_certs,omitempty"`
@@ -131,9 +135,10 @@ type CustomCertOrder struct {
 }
 
 type ServicesConfig struct {
-	Dclient ServiceRelease `json:"dclient"`
-	Dpipe   ServiceRelease `json:"dpipe"`
-	Proxy   ServiceRelease `json:"dproxy"`
+	Dclient  ServiceRelease `json:"dclient"`
+	Dpipe    ServiceRelease `json:"dpipe"`
+	Proxy    ServiceRelease `json:"dproxy"`
+	Intproxy ServiceRelease `json:"intproxy"`
 
 	// Dinit is not a service: it is the guest init dclient copies into every
 	// rootfs it builds from a container tar. It is delivered the same way.
@@ -151,6 +156,33 @@ type ServiceRelease struct {
 type FileConfig struct {
 	Config string `json:"config"`
 }
+
+// IntproxyConfig carries the config and the fleet wildcard certificate. The
+// certificate is the same one dpipe serves; intproxy gets its own copy so the
+// two services stay independently installable.
+type IntproxyConfig struct {
+	Config string `json:"config"`
+	Cert   string `json:"cert,omitempty"`
+	Key    string `json:"key,omitempty"`
+}
+
+// IntegrationTokenRequest is what dclient relays to the control server on
+// intproxy's behalf. The vm is named by address; the control server matches it
+// against the vms it knows belong to the calling host.
+type IntegrationTokenRequest struct {
+	VMIP        string `json:"vm_ip"`
+	Integration string `json:"integration"`
+	Repo        string `json:"repo,omitempty"`
+	Write       bool   `json:"write"`
+}
+
+type IntegrationTokenResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Account   string    `json:"account,omitempty"`
+}
+
+const IntegrationTokenPath = "/api/v1/client/integration/token"
 
 type DpipeCerts struct {
 	Cert string `json:"cert"`
