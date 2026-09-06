@@ -34,6 +34,10 @@ type ClientHandler struct {
 	hub  *Hub
 	proxy proxyAuthConfig
 	blobs *blobStore
+
+	// tokens caches minted github installation tokens. Minting is rate limited
+	// by github, and this cache is shared across every host in the fleet.
+	tokens *tokenCache
 }
 
 func (h *ClientHandler) openEnrollment(ctx context.Context) bool {
@@ -127,25 +131,35 @@ func (h *ClientHandler) Enroll(c *echo.Context) error {
 	return c.JSON(http.StatusCreated, proto.EnrollResponse{ClientID: clientID, Token: secret})
 }
 
-func (h *ClientHandler) Connect(c *echo.Context) error {
+// authClient identifies the calling host by its bearer token. Every decision
+// made on a host's behalf is scoped by the client id this returns, never by
+// anything the request body claims.
+func (h *ClientHandler) authClient(c *echo.Context) (db.Client, error) {
 	raw := ""
 	if hdr := c.Request().Header.Get("Authorization"); strings.HasPrefix(hdr, "Bearer ") {
 		raw = strings.TrimPrefix(hdr, "Bearer ")
 	}
 	if raw == "" {
-		return echo.NewHTTPError(http.StatusUnauthorized, "missing client token")
+		return db.Client{}, echo.NewHTTPError(http.StatusUnauthorized, "missing client token")
 	}
 
-	reqCtx := c.Request().Context()
-	client, err := h.q.GetClientByTokenHash(reqCtx, hashRefresh(raw))
+	client, err := h.q.GetClientByTokenHash(c.Request().Context(), hashRefresh(raw))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid client token")
+			return db.Client{}, echo.NewHTTPError(http.StatusUnauthorized, "invalid client token")
 		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not authenticate client")
+		return db.Client{}, echo.NewHTTPError(http.StatusInternalServerError, "could not authenticate client")
 	}
 	if client.Revoked {
-		return echo.NewHTTPError(http.StatusUnauthorized, "client has been revoked")
+		return db.Client{}, echo.NewHTTPError(http.StatusUnauthorized, "client has been revoked")
+	}
+	return client, nil
+}
+
+func (h *ClientHandler) Connect(c *echo.Context) error {
+	client, err := h.authClient(c)
+	if err != nil {
+		return err
 	}
 
 	ws, err := websocket.Accept(c.Response(), c.Request(), &websocket.AcceptOptions{
@@ -210,6 +224,7 @@ func (h *ClientHandler) serveClient(client db.Client, clientID, remoteIP string,
 	pushVectorConfig(ctx, h.q, h.hub, client.ID)
 	pushSuricataConfig(ctx, h.hub, client.ID, hello.Pool)
 	pushDpipeConfig(ctx, h.q, h.blobs, h.hub, client.ID)
+	pushIntproxyConfig(ctx, h.q, h.blobs, h.hub, h.proxy.controlURL, client.ID)
 
 	h.readLoop(ctx, conn, client, clientID)
 }

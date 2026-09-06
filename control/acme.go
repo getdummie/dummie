@@ -324,6 +324,7 @@ func (ci *certIssuer) PushToClient(ctx context.Context, clientID pgtype.UUID) {
 	}
 	pushDpipeConfig(ctx, ci.q, ci.blobs, ci.hub, clientID)
 	pushProxyConfig(ctx, ci.q, ci.hub, ci.proxy, clientID)
+	pushIntproxyConfig(ctx, ci.q, ci.blobs, ci.hub, ci.proxy.controlURL, clientID)
 }
 
 func (ci *certIssuer) PushToDomain(ctx context.Context, domain db.Domain) {
@@ -339,6 +340,7 @@ func (ci *certIssuer) PushToDomain(ctx context.Context, domain db.Domain) {
 		}
 		pushDpipeConfig(ctx, ci.q, ci.blobs, ci.hub, clientID)
 		pushProxyConfig(ctx, ci.q, ci.hub, ci.proxy, clientID)
+		pushIntproxyConfig(ctx, ci.q, ci.blobs, ci.hub, ci.proxy.controlURL, clientID)
 		sent++
 	}
 	if sent > 0 {

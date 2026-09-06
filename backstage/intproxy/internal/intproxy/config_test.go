@@ -54,6 +54,23 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// A missing tls block must not be read as "plaintext is fine" -- this proxy
+// injects credentials, so the default has to be the closed one.
+func TestTLSDefaultsOn(t *testing.T) {
+	c := testConfig()
+	c.TLS.Cert = ""
+	c.TLS.Key = ""
+	if err := c.Validate(); err == nil {
+		t.Fatal("a config with no certificate and no explicit tls.enabled was accepted")
+	}
+
+	off := false
+	c.TLS.Enabled = &off
+	if err := c.Validate(); err != nil {
+		t.Fatalf("tls.enabled: false still demanded a certificate: %v", err)
+	}
+}
+
 func TestDefaults(t *testing.T) {
 	c := &Config{}
 	if c.label() != "int" {

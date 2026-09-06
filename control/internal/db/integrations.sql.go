@@ -27,6 +27,22 @@ func (q *Queries) AttachIntegrationToVM(ctx context.Context, arg AttachIntegrati
 	return err
 }
 
+const createGitHubInstallState = `-- name: CreateGitHubInstallState :exec
+INSERT INTO github_install_states (state_hash, owner_id, integration_id)
+VALUES ($1, $2, $3)
+`
+
+type CreateGitHubInstallStateParams struct {
+	StateHash     string
+	OwnerID       pgtype.UUID
+	IntegrationID pgtype.UUID
+}
+
+func (q *Queries) CreateGitHubInstallState(ctx context.Context, arg CreateGitHubInstallStateParams) error {
+	_, err := q.db.Exec(ctx, createGitHubInstallState, arg.StateHash, arg.OwnerID, arg.IntegrationID)
+	return err
+}
+
 const createIntegration = `-- name: CreateIntegration :one
 INSERT INTO integrations (owner_id, name, kind, readonly)
 VALUES ($1, $2, $3, $4)
@@ -60,6 +76,16 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const deleteExpiredGitHubInstallStates = `-- name: DeleteExpiredGitHubInstallStates :exec
+DELETE FROM github_install_states
+WHERE created_at < now() - make_interval(secs => $1::float)
+`
+
+func (q *Queries) DeleteExpiredGitHubInstallStates(ctx context.Context, withinSeconds float64) error {
+	_, err := q.db.Exec(ctx, deleteExpiredGitHubInstallStates, withinSeconds)
+	return err
 }
 
 const deleteGitHubApp = `-- name: DeleteGitHubApp :exec
@@ -668,6 +694,32 @@ type SetIntegrationInstallationParams struct {
 func (q *Queries) SetIntegrationInstallation(ctx context.Context, arg SetIntegrationInstallationParams) error {
 	_, err := q.db.Exec(ctx, setIntegrationInstallation, arg.ID, arg.InstallationPk)
 	return err
+}
+
+const takeGitHubInstallState = `-- name: TakeGitHubInstallState :one
+DELETE FROM github_install_states
+WHERE state_hash = $1
+  AND created_at > now() - make_interval(secs => $2::float)
+RETURNING owner_id, integration_id
+`
+
+type TakeGitHubInstallStateParams struct {
+	StateHash     string
+	WithinSeconds float64
+}
+
+type TakeGitHubInstallStateRow struct {
+	OwnerID       pgtype.UUID
+	IntegrationID pgtype.UUID
+}
+
+// Single use, and expired rows are never returned: a state is only good for the
+// redirect it was minted for.
+func (q *Queries) TakeGitHubInstallState(ctx context.Context, arg TakeGitHubInstallStateParams) (TakeGitHubInstallStateRow, error) {
+	row := q.db.QueryRow(ctx, takeGitHubInstallState, arg.StateHash, arg.WithinSeconds)
+	var i TakeGitHubInstallStateRow
+	err := row.Scan(&i.OwnerID, &i.IntegrationID)
+	return i, err
 }
 
 const updateIntegrationFlags = `-- name: UpdateIntegrationFlags :one

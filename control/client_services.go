@@ -71,6 +71,8 @@ func servicesConfigFor(ctx context.Context, q *db.Queries, c db.Client, force bo
 			setting(ctx, q, settingProxyDownloadURL)),
 		Dinit: serviceRelease(c.DinitVersion, c.DinitDownloadURL,
 			setting(ctx, q, settingDinitDownloadURL)),
+		Intproxy: serviceRelease(c.IntproxyVersion, c.IntproxyDownloadURL,
+			setting(ctx, q, settingIntproxyDownloadURL)),
 		Force: force,
 	}
 }
@@ -97,9 +99,10 @@ func recordInstalledVersions(ctx context.Context, q *db.Queries, id pgtype.UUID,
 	}
 	if err := q.UpdateClientInstalledVersions(ctx, db.UpdateClientInstalledVersionsParams{
 		ID:                    id,
-		DpipeInstalledVersion: st.Dpipe,
-		ProxyInstalledVersion: st.Proxy,
-		DinitInstalledVersion: st.Dinit,
+		DpipeInstalledVersion:    st.Dpipe,
+		ProxyInstalledVersion:    st.Proxy,
+		DinitInstalledVersion:    st.Dinit,
+		IntproxyInstalledVersion: st.Intproxy,
 	}); err != nil {
 		log.Printf("client %s: could not record the installed versions: %v", clientID, err)
 	}

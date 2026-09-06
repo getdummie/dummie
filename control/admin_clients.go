@@ -170,10 +170,13 @@ type clientDTO struct {
 	ProxyDownloadURL   string `json:"proxy_download_url"`
 	DinitVersion       string `json:"dinit_version"`
 	DinitDownloadURL   string `json:"dinit_download_url"`
+	IntproxyVersion     string `json:"intproxy_version"`
+	IntproxyDownloadURL string `json:"intproxy_download_url"`
 
-	DpipeInstalledVersion string `json:"dpipe_installed_version"`
-	ProxyInstalledVersion string `json:"proxy_installed_version"`
-	DinitInstalledVersion string `json:"dinit_installed_version"`
+	DpipeInstalledVersion    string `json:"dpipe_installed_version"`
+	ProxyInstalledVersion    string `json:"proxy_installed_version"`
+	DinitInstalledVersion    string `json:"dinit_installed_version"`
+	IntproxyInstalledVersion string `json:"intproxy_installed_version"`
 
 	Metrics clientMetricsDTO `json:"metrics"`
 }
@@ -223,10 +226,13 @@ func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 		ProxyDownloadURL:   a.ProxyDownloadURL,
 		DinitVersion:       a.DinitVersion,
 		DinitDownloadURL:   a.DinitDownloadURL,
+		IntproxyVersion:     a.IntproxyVersion,
+		IntproxyDownloadURL: a.IntproxyDownloadURL,
 
-		DpipeInstalledVersion: a.DpipeInstalledVersion,
-		ProxyInstalledVersion: a.ProxyInstalledVersion,
-		DinitInstalledVersion: a.DinitInstalledVersion,
+		DpipeInstalledVersion:    a.DpipeInstalledVersion,
+		ProxyInstalledVersion:    a.ProxyInstalledVersion,
+		DinitInstalledVersion:    a.DinitInstalledVersion,
+		IntproxyInstalledVersion: a.IntproxyInstalledVersion,
 
 		Metrics: clientMetricsDTO{
 			CPUCount:       a.CPUCount,
@@ -378,6 +384,8 @@ type updateClientServicesReq struct {
 	ProxyDownloadURL   string `json:"proxy_download_url"`
 	DinitVersion       string `json:"dinit_version"`
 	DinitDownloadURL   string `json:"dinit_download_url"`
+	IntproxyVersion     string `json:"intproxy_version"`
+	IntproxyDownloadURL string `json:"intproxy_download_url"`
 }
 
 func (h *AdminHandler) UpdateClientServices(c *echo.Context) error {
@@ -401,6 +409,8 @@ func (h *AdminHandler) UpdateClientServices(c *echo.Context) error {
 		ProxyDownloadURL:   strings.TrimSpace(req.ProxyDownloadURL),
 		DinitVersion:       strings.TrimSpace(req.DinitVersion),
 		DinitDownloadURL:   strings.TrimSpace(req.DinitDownloadURL),
+		IntproxyVersion:     strings.TrimSpace(req.IntproxyVersion),
+		IntproxyDownloadURL: strings.TrimSpace(req.IntproxyDownloadURL),
 	}
 	for _, f := range []struct {
 		label   string
@@ -411,6 +421,7 @@ func (h *AdminHandler) UpdateClientServices(c *echo.Context) error {
 		{"dpipe", params.DpipeVersion, params.DpipeDownloadURL},
 		{"dproxy", params.ProxyVersion, params.ProxyDownloadURL},
 		{"dinit", params.DinitVersion, params.DinitDownloadURL},
+		{"intproxy", params.IntproxyVersion, params.IntproxyDownloadURL},
 	} {
 		if f.version != "" {
 			if err := validateReleaseVersion(f.version); err != nil {

@@ -172,6 +172,22 @@ JOIN integration_repos r ON r.integration_id = vi.integration_id
 WHERE vi.vm_id = $1
 ORDER BY r.repo_owner, r.repo_name;
 
+-- name: CreateGitHubInstallState :exec
+INSERT INTO github_install_states (state_hash, owner_id, integration_id)
+VALUES ($1, $2, $3);
+
+-- name: TakeGitHubInstallState :one
+-- Single use, and expired rows are never returned: a state is only good for the
+-- redirect it was minted for.
+DELETE FROM github_install_states
+WHERE state_hash = $1
+  AND created_at > now() - make_interval(secs => sqlc.arg(within_seconds)::float)
+RETURNING owner_id, integration_id;
+
+-- name: DeleteExpiredGitHubInstallStates :exec
+DELETE FROM github_install_states
+WHERE created_at < now() - make_interval(secs => sqlc.arg(within_seconds)::float);
+
 -- name: ListClientIDsWithIntegrations :many
 SELECT DISTINCT v.client_id
 FROM vm_integrations vi

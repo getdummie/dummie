@@ -204,6 +204,9 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/clients/:id", adminH.GetClient)
 	admin.POST("/clients/:id/revoke", adminH.RevokeClient)
 	admin.DELETE("/clients/:id", adminH.DeleteClient)
+	admin.GET("/github-app", adminH.GetGitHubApp)
+	admin.PUT("/github-app", adminH.PutGitHubApp)
+	admin.DELETE("/github-app", adminH.DeleteGitHubApp)
 	admin.PUT("/clients/:id/domain", adminH.SetClientDomain)
 	admin.PUT("/clients/:id/services", adminH.UpdateClientServices)
 	admin.POST("/clients/:id/services/upgrade", adminH.UpgradeClientServices)
@@ -303,10 +306,29 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.PUT("/:id/targets/:target_id", userH.UpdateTarget)
 	vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 
-	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg, blobs: blobs}
+	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL}
+	integ := api.Group("/integrations", userJWT(cfg, q))
+	integ.GET("", integH.List)
+	integ.POST("", integH.Create)
+	integ.GET("/:id", integH.Get)
+	integ.PATCH("/:id", integH.Update)
+	integ.DELETE("/:id", integH.Delete)
+	integ.GET("/:id/available-repos", integH.ListAvailableRepos)
+	integ.PUT("/:id/repos", integH.SetRepos)
+	integ.GET("/:id/vms", integH.ListVMs)
+	integ.POST("/:id/vms/:vm_id", integH.Attach)
+	integ.DELETE("/:id/vms/:vm_id", integH.Detach)
+	integ.GET("/:id/github/install", integH.Install)
+
+	// Outside the group on purpose: github sends the browser here as a top-level
+	// redirect, which carries no access token. The single-use state authenticates it.
+	api.GET("/integrations/github/callback", integH.Callback)
+
+	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg, blobs: blobs, tokens: newTokenCache()}
 	ag := api.Group("/client")
 	ag.POST("/enroll", clientH.Enroll)
 	ag.GET("/connect", clientH.Connect)
+	ag.POST("/integration/token", clientH.IntegrationToken)
 
 	api.GET("/ht/", func(c *echo.Context) error {
 		apiOK := true

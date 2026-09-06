@@ -19,7 +19,13 @@ label: "int"
 
 console_url: "https://control.example.com"
 
+# enabled defaults to true, and cert and key are then required: a proxy that
+# injects credentials should not fall back to plaintext because a field was left
+# out. Set it to false for a fleet with no wildcard certificate, which serves
+# http on :80 instead -- the credential is added on the upstream leg either way,
+# so it is never exposed, but the git traffic on the host's bridge is readable.
 tls:
+  enabled: true
   cert: /etc/intproxy/certs/fullchain.pem
   key: /etc/intproxy/certs/privkey.pem
   min_version: "1.2"

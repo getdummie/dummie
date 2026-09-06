@@ -19,8 +19,10 @@ const (
 	// intproxyAddr is the last usable host in the vm pool, so a sequential
 	// allocator never reaches it. dclient reserves it and puts it on a dummy
 	// link; guests reach it through the default route they already have.
-	intproxyAddr   = "10.64.255.254"
-	intproxyListen = intproxyAddr + ":443"
+	intproxyAddr = "10.64.255.254"
+
+	intproxyTLSListen   = intproxyAddr + ":443"
+	intproxyPlainListen = intproxyAddr + ":80"
 
 	intproxyCertDir  = "/etc/intproxy/certs"
 	intproxyCertFile = intproxyCertDir + "/fullchain.pem"
@@ -65,17 +67,33 @@ shutdown_grace: 5m
 log_level: info
 `
 
-func generateIntproxyConfig(tld, controlURL string) string {
+func generateIntproxyConfig(tld, controlURL string, tls bool) string {
+	listen := intproxyPlainListen
+	if tls {
+		listen = intproxyTLSListen
+	}
+
 	var b strings.Builder
 	b.WriteString(intproxyConfigHeader)
-	fmt.Fprintf(&b, "\nlisten: %s\n", yamlString(intproxyListen))
+	fmt.Fprintf(&b, "\nlisten: %s\n", yamlString(listen))
 	fmt.Fprintf(&b, "tld: %s\n", yamlString(tld))
 	fmt.Fprintf(&b, "label: %s\n", yamlString(proxyIntLabel))
 	fmt.Fprintf(&b, "console_url: %s\n", yamlString(strings.TrimRight(strings.TrimSpace(controlURL), "/")))
+
 	b.WriteString("\ntls:\n")
-	fmt.Fprintf(&b, "  cert: %s\n", yamlString(intproxyCertFile))
-	fmt.Fprintf(&b, "  key: %s\n", yamlString(intproxyKeyFile))
-	b.WriteString("  min_version: \"1.2\"\n")
+	if tls {
+		b.WriteString("  enabled: true\n")
+		fmt.Fprintf(&b, "  cert: %s\n", yamlString(intproxyCertFile))
+		fmt.Fprintf(&b, "  key: %s\n", yamlString(intproxyKeyFile))
+		b.WriteString("  min_version: \"1.2\"\n")
+	} else {
+		// The fleet has no wildcard, so there is nothing to serve tls with and
+		// guests clone over http://. The credential is still never exposed --
+		// it is added on the upstream leg -- but the git traffic on the host's
+		// own bridge is readable, so this is a development shape.
+		b.WriteString("  enabled: false\n")
+	}
+
 	b.WriteString(intproxyStaticConfig)
 	return b.String()
 }
@@ -90,6 +108,8 @@ func pushIntproxyConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hu
 	tld, cert, key, err := intproxyCertForClient(ctx, q, blobs, clientID)
 	switch {
 	case errors.Is(err, errCertLacksIntegrations):
+		// The fleet has tls but its certificate predates the integration names.
+		// Refusing beats downgrading it to plaintext behind the operator's back.
 		log.Printf("client %s has no certificate for *.%s.%s, so intproxy was not configured; reissue the fleet certificate to turn integrations on",
 			id, proxyIntLabel, tld)
 		return
@@ -100,10 +120,15 @@ func pushIntproxyConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hu
 		return
 	}
 
+	tls := cert != "" && key != ""
+	if !tls {
+		log.Printf("client %s has no wildcard certificate, so intproxy serves integrations over plain http", id)
+	}
+
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindIntproxyConfig,
 		Intproxy: &proto.IntproxyConfig{
-			Config: generateIntproxyConfig(tld, controlURL),
+			Config: generateIntproxyConfig(tld, controlURL, tls),
 			Cert:   cert,
 			Key:    key,
 		},

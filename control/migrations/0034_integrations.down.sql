@@ -1,7 +1,7 @@
-ALTER TABLE clients DROP COLUMN intproxy_version;
+ALTER TABLE clients DROP COLUMN IF EXISTS intproxy_version;
 
-DROP TABLE vm_integrations;
-DROP TABLE integration_repos;
-DROP TABLE integrations;
-DROP TABLE github_installations;
-DROP TABLE github_apps;
+DROP TABLE IF EXISTS vm_integrations;
+DROP TABLE IF EXISTS integration_repos;
+DROP TABLE IF EXISTS integrations;
+DROP TABLE IF EXISTS github_installations;
+DROP TABLE IF EXISTS github_apps;

@@ -192,7 +192,10 @@ func applyBaseRuleset(cfg netConfig) error {
 		{gw, unix.IPPROTO_TCP, metadataPort},
 		{gw, unix.IPPROTO_UDP, 53},
 		{gw, unix.IPPROTO_TCP, 53},
+		// 443 when the fleet has a wildcard certificate, 80 when it does not.
+		// Which one intproxy binds is in its pushed config, not here.
 		{net.ParseIP(intproxyAddr).To4(), unix.IPPROTO_TCP, 443},
+		{net.ParseIP(intproxyAddr).To4(), unix.IPPROTO_TCP, 80},
 	} {
 		if svc.daddr == nil {
 			continue

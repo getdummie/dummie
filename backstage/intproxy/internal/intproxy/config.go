@@ -73,9 +73,16 @@ type Config struct {
 }
 
 type TLSConfig struct {
+	// Enabled defaults to true: a proxy that injects credentials should not
+	// fall back to plaintext because a field was left out of a file.
+	Enabled    *bool  `yaml:"enabled"`
 	Cert       string `yaml:"cert"`
 	Key        string `yaml:"key"`
 	MinVersion string `yaml:"min_version"`
+}
+
+func (t TLSConfig) enabled() bool {
+	return t.Enabled == nil || *t.Enabled
 }
 
 type BrokerConfig struct {
@@ -149,13 +156,15 @@ func (c *Config) Validate() error {
 	if !labelPattern.MatchString(c.label()) {
 		return fmt.Errorf("config: label %q must be a single hostname label", c.label())
 	}
-	if c.TLS.Cert == "" || c.TLS.Key == "" {
-		return errors.New("config: tls.cert and tls.key are both required")
-	}
-	switch c.TLS.MinVersion {
-	case "", "1.2", "1.3":
-	default:
-		return fmt.Errorf("config: tls.min_version %q must be 1.2 or 1.3", c.TLS.MinVersion)
+	if c.TLS.enabled() {
+		if c.TLS.Cert == "" || c.TLS.Key == "" {
+			return errors.New("config: tls.cert and tls.key are both required unless tls.enabled is false")
+		}
+		switch c.TLS.MinVersion {
+		case "", "1.2", "1.3":
+		default:
+			return fmt.Errorf("config: tls.min_version %q must be 1.2 or 1.3", c.TLS.MinVersion)
+		}
 	}
 	if c.Broker.Socket == "" {
 		return errors.New("config: broker.socket is required")

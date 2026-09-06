@@ -102,10 +102,11 @@ RETURNING *;
 
 -- name: UpdateClientInstalledVersions :exec
 UPDATE clients
-SET dpipe_installed_version = $2,
-    proxy_installed_version = $3,
-    dinit_installed_version = $4,
-    updated_at              = now()
+SET dpipe_installed_version    = $2,
+    proxy_installed_version    = $3,
+    dinit_installed_version    = $4,
+    intproxy_installed_version = $5,
+    updated_at                 = now()
 WHERE id = $1;
 
 -- name: UpdateClientServiceVersions :one
@@ -118,6 +119,8 @@ SET dclient_version      = $2,
     proxy_download_url   = $7,
     dinit_version        = $8,
     dinit_download_url   = $9,
+    intproxy_version     = $10,
+    intproxy_download_url = $11,
     updated_at           = now()
 WHERE id = $1
 RETURNING *;

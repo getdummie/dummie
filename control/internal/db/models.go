@@ -9,45 +9,47 @@ import (
 )
 
 type Client struct {
-	ID                    pgtype.UUID
-	MachineID             string
-	Hostname              string
-	TokenHash             string
-	Status                string
-	OS                    string
-	OSVersion             string
-	Arch                  string
-	ClientVersion         string
-	LastSeenAt            pgtype.Timestamptz
-	LastIP                string
-	EnrolledKeyID         pgtype.UUID
-	Revoked               bool
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	CPUCount              int32
-	CPUPercent            float64
-	Load1                 float64
-	Load5                 float64
-	Load15                float64
-	MemTotalBytes         int64
-	MemUsedBytes          int64
-	DiskTotalBytes        int64
-	DiskUsedBytes         int64
-	UptimeSeconds         int64
-	MetricsAt             pgtype.Timestamptz
-	DomainID              pgtype.UUID
-	DclientVersion        string
-	DclientDownloadURL    string
-	DpipeVersion          string
-	DpipeDownloadURL      string
-	ProxyVersion          string
-	ProxyDownloadURL      string
-	DpipeInstalledVersion string
-	ProxyInstalledVersion string
-	DinitVersion          string
-	DinitDownloadURL      string
-	DinitInstalledVersion string
-	IntproxyVersion       string
+	ID                       pgtype.UUID
+	MachineID                string
+	Hostname                 string
+	TokenHash                string
+	Status                   string
+	OS                       string
+	OSVersion                string
+	Arch                     string
+	ClientVersion            string
+	LastSeenAt               pgtype.Timestamptz
+	LastIP                   string
+	EnrolledKeyID            pgtype.UUID
+	Revoked                  bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	CPUCount                 int32
+	CPUPercent               float64
+	Load1                    float64
+	Load5                    float64
+	Load15                   float64
+	MemTotalBytes            int64
+	MemUsedBytes             int64
+	DiskTotalBytes           int64
+	DiskUsedBytes            int64
+	UptimeSeconds            int64
+	MetricsAt                pgtype.Timestamptz
+	DomainID                 pgtype.UUID
+	DclientVersion           string
+	DclientDownloadURL       string
+	DpipeVersion             string
+	DpipeDownloadURL         string
+	ProxyVersion             string
+	ProxyDownloadURL         string
+	DpipeInstalledVersion    string
+	ProxyInstalledVersion    string
+	DinitVersion             string
+	DinitDownloadURL         string
+	DinitInstalledVersion    string
+	IntproxyVersion          string
+	IntproxyDownloadURL      string
+	IntproxyInstalledVersion string
 }
 
 type ClientEnrollmentKey struct {
@@ -107,6 +109,13 @@ type GithubApp struct {
 	PrivateKey string
 	CreatedAt  pgtype.Timestamptz
 	UpdatedAt  pgtype.Timestamptz
+}
+
+type GithubInstallState struct {
+	StateHash     string
+	OwnerID       pgtype.UUID
+	IntegrationID pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
 }
 
 type GithubInstallation struct {

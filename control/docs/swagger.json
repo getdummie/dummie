@@ -304,6 +304,29 @@
                 },
                 "type": "object"
             },
+            "main.githubAppDTO": {
+                "properties": {
+                    "app_id": {
+                        "type": "integer"
+                    },
+                    "callback_url": {
+                        "type": "string"
+                    },
+                    "key_set": {
+                        "type": "boolean"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "slug": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.hostDTO": {
                 "properties": {
                     "hostname": {
@@ -870,6 +893,191 @@
         "url": ""
     },
     "paths": {
+        "/admin/github-app": {
+            "delete": {
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                },
+                "summary": "Forget the github app",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.githubAppDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "The github app backing integrations",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "put": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.githubAppDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "summary": "Configure the github app",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/integrations": {
+            "get": {
+                "responses": {},
+                "summary": "Integrations you own",
+                "tags": [
+                    "integrations"
+                ]
+            },
+            "post": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {},
+                "summary": "Create an integration",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/github/callback": {
+            "get": {
+                "responses": null,
+                "summary": "Finish a github app install",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/{id}": {
+            "delete": {
+                "responses": null,
+                "summary": "Delete an integration",
+                "tags": [
+                    "integrations"
+                ]
+            },
+            "get": {
+                "responses": {},
+                "summary": "One integration",
+                "tags": [
+                    "integrations"
+                ]
+            },
+            "patch": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {},
+                "summary": "Update an integration's flags",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/{id}/available-repos": {
+            "get": {
+                "responses": {},
+                "summary": "Repositories this installation could cover",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/{id}/github/install": {
+            "get": {
+                "responses": null,
+                "summary": "Start a github app install for an integration",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/{id}/repos": {
+            "put": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": null,
+                "summary": "Set which repositories an integration covers",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/{id}/vms": {
+            "get": {
+                "responses": {},
+                "summary": "VMs an integration is attached to",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/{id}/vms/{vm_id}": {
+            "delete": {
+                "responses": null,
+                "summary": "Detach an integration from a vm",
+                "tags": [
+                    "integrations"
+                ]
+            },
+            "post": {
+                "responses": null,
+                "summary": "Attach an integration to a vm",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
         "/me": {
             "get": {
                 "description": "The same shape the admin section shows for a user. Nothing secret is in it: no password hash, and a public key is public.",

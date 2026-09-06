@@ -225,6 +225,8 @@ function isDirty(row: SettingRow) {
 
       <AdminOIDCProviders />
 
+      <AdminGitHubApp />
+
       <p role="status" aria-live="polite" class="sr-only">
         {{ savedKey ? `${savedKey} saved` : '' }}
       </p>

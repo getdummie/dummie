@@ -207,9 +207,13 @@ func ensureManagedService(ctx context.Context, data, name string, rel proto.Serv
 		if err := os.MkdirAll(intproxyRuntimeDir, 0o700); err != nil {
 			return fmt.Errorf("could not create %s: %w", intproxyRuntimeDir, err)
 		}
-		deferStart = !intproxyCertPresent()
+		// The bootstrap config names no domain, so intproxy refuses it. Wait
+		// for the control server's rather than crash-looping on ours. A fleet
+		// with no tls has no certificate and is still serviceable, so the
+		// certificate is deliberately not what gates this.
+		deferStart = !intproxyConfigured()
 		if deferStart {
-			log.Printf("%s has no certificate yet; installing it stopped until the control server sends one", name)
+			log.Printf("%s has no configuration yet; installing it stopped until the control server sends one", name)
 		}
 	}
 
@@ -301,8 +305,8 @@ func ensureManagedServicesRunning(ctx context.Context) {
 			log.Printf("%s has no ssh keys yet; it starts once the control server sends them", name)
 			continue
 		}
-		if name == intproxyService && !intproxyCertPresent() {
-			log.Printf("%s has no certificate yet; it starts once the control server sends one", name)
+		if name == intproxyService && !intproxyConfigured() {
+			log.Printf("%s has no configuration yet; it starts once the control server sends one", name)
 			continue
 		}
 		if err := systemctl(ctx, "enable", "--now", name+".service"); err != nil {

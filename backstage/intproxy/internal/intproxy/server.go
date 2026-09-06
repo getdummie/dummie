@@ -30,8 +30,12 @@ type Server struct {
 
 func New(cfg *Config, log *slog.Logger, version string) (*Server, error) {
 	s := &Server{cfg: cfg, log: log, version: version, broker: newBroker(cfg)}
-	if err := s.loadCertificate(); err != nil {
-		return nil, err
+	if cfg.TLS.enabled() {
+		if err := s.loadCertificate(); err != nil {
+			return nil, err
+		}
+	} else {
+		log.Warn("tls is off, so guests reach this proxy over plain http")
 	}
 	s.rp = newReverseProxy(s)
 	return s, nil
@@ -60,15 +64,19 @@ func (s *Server) Run(ctx context.Context) error {
 
 	srv := &http.Server{
 		Handler:           s,
-		TLSConfig:         s.tlsConfig(),
 		ReadHeaderTimeout: s.cfg.ReadHeaderTimeout.Or(30 * time.Second),
 		IdleTimeout:       s.cfg.IdleTimeout.Or(120 * time.Second),
 		ErrorLog:          slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
 	}
+	if s.cfg.TLS.enabled() {
+		srv.TLSConfig = s.tlsConfig()
+	}
 	// No ReadTimeout or WriteTimeout on purpose: a clone of a large repository
 	// is one long request in each direction, and any deadline would cut it off.
 
-	go s.watchSIGHUP(ctx)
+	if s.cfg.TLS.enabled() {
+		go s.watchSIGHUP(ctx)
+	}
 
 	go func() {
 		<-ctx.Done()
@@ -77,7 +85,11 @@ func (s *Server) Run(ctx context.Context) error {
 		_ = srv.Shutdown(grace)
 	}()
 
-	if err := srv.ServeTLS(ln, "", ""); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	serve := srv.Serve
+	if s.cfg.TLS.enabled() {
+		serve = func(l net.Listener) error { return srv.ServeTLS(l, "", "") }
+	}
+	if err := serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
@@ -163,6 +175,15 @@ func (s *Server) getCertificate(hello *tls.ClientHelloInfo) (*tls.Certificate, e
 		return nil, errors.New("intproxy: no certificate is loaded")
 	}
 	return cert, nil
+}
+
+// selfURL is how a guest reaches this proxy, which is what upstream URLs in
+// Link and Location headers get rewritten to.
+func (s *Server) selfURL() string {
+	if s.cfg.TLS.enabled() {
+		return "https://" + s.ServerName()
+	}
+	return "http://" + s.ServerName()
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

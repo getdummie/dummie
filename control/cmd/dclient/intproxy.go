@@ -37,8 +37,11 @@ const (
 	intproxyLabel = "int"
 )
 
-const defaultIntproxyConfig = `# Bootstrap only. The control server replaces this whole file, and intproxy is
-# installed stopped until it does: without a certificate it can only crash-loop.
+// defaultIntproxyConfig is a placeholder, not a working configuration: it names
+// no domain, so intproxy refuses it. The unit is installed stopped until the
+// control server sends a real one, and intproxyConfigured compares against this
+// to tell the two apart.
+const defaultIntproxyConfig = `# Bootstrap only. The control server replaces this whole file.
 listen: "` + intproxyAddr + `:443"
 freebind: true
 reuseport: true
@@ -59,6 +62,19 @@ func intproxyCertPresent() bool {
 		}
 	}
 	return true
+}
+
+// intproxyConfigured reports whether the control server has pushed a real
+// config yet. The bootstrap one names no domain and intproxy refuses to start
+// on it, so this -- not the presence of a certificate -- is what decides
+// whether the unit may start: a fleet with no tls has no certificate and is
+// still perfectly serviceable over http.
+func intproxyConfigured() bool {
+	b, err := os.ReadFile(serviceConfigPath(intproxyService))
+	if err != nil {
+		return false
+	}
+	return string(b) != defaultIntproxyConfig
 }
 
 // ensureIntproxyAddr puts the integration proxy's address on a dummy link.
@@ -224,9 +240,9 @@ func checkIntproxy() (result, string) {
 	if !serviceInstalled(intproxyService) {
 		return pass, "intproxy is not installed on this host; integrations are off"
 	}
-	if !intproxyCertPresent() {
-		return warn, "intproxy has no certificate in " + intproxyCertDir +
-			"; reissue the fleet certificate so it covers *." + intproxyLabel + ".<tld>"
+	if !intproxyConfigured() {
+		return warn, "intproxy is installed but the control server has not configured it yet; " +
+			"give this host's fleet a domain to turn integrations on"
 	}
 	if !intproxyAddrPresent() {
 		return fail, intproxyAddr + " is not on " + intproxyLink + "; intproxy has nothing to bind"
@@ -236,10 +252,13 @@ func checkIntproxy() (result, string) {
 		return warn, "intproxy is configured but the unit is not active; no vm can reach an integration"
 	}
 
-	cfg, err := loadNetConfig(defaultDataDir())
-	if err == nil && !cfg.Suricata {
+	if cfg, err := loadNetConfig(defaultDataDir()); err == nil && !cfg.Suricata {
 		return warn, "intproxy is running but suricata mode is off, so coredns is not resolving *." +
 			intproxyLabel + ".<tld> for guests"
+	}
+	if !intproxyCertPresent() {
+		return warn, "intproxy is serving integrations over plain http on " + intproxyAddr +
+			":80; reissue the fleet certificate so it covers *." + intproxyLabel + ".<tld> to move it to tls"
 	}
 	return pass, "intproxy is serving integrations on " + intproxyAddr + ":443"
 }

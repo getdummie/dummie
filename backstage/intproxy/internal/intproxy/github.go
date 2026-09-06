@@ -116,7 +116,7 @@ func (p *reverseProxy) modifyResponse(resp *http.Response) error {
 }
 
 func (p *reverseProxy) rewriteURL(u string) string {
-	self := "https://" + p.s.ServerName()
+	self := p.s.selfURL()
 	if rest, ok := strings.CutPrefix(u, "https://"+p.s.cfg.GitHub.apiHost()); ok {
 		return self + "/api/v3" + rest
 	}
