@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -121,6 +122,11 @@ type certIssuer struct {
 }
 
 func newCertIssuer(q *db.Queries, blobs *blobStore, hub *Hub, proxy proxyAuthConfig) *certIssuer {
+	// every tld here has a wildcard cname for guest subdomains, and cloudflare answers
+	// cname queries for _acme-challenge names from it. lego would read that as a
+	// delegation and put the challenge at the apex, so never follow cnames.
+	os.Setenv("LEGO_DISABLE_CNAME_SUPPORT", "true")
+
 	return &certIssuer{q: q, blobs: blobs, hub: hub, proxy: proxy, inFlight: map[string]*pendingOrder{}}
 }
 
