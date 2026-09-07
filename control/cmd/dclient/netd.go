@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -72,6 +73,10 @@ func saveNetConfig(data string, cfg netConfig) error {
 	return os.WriteFile(filepath.Join(data, netConfigFile), b, 0o600)
 }
 
+// ensureRuleset installs the base ruleset when it is missing or was built by an
+// older dclient. Presence alone is not enough: the table outlives an upgrade,
+// so a host that is already running would otherwise keep a ruleset that no
+// longer matches the binary until it happened to reboot.
 func ensureRuleset(cfg netConfig) error {
 	c, err := nftables.New()
 	if err != nil {
@@ -81,12 +86,42 @@ func ensureRuleset(cfg netConfig) error {
 	if err != nil {
 		return err
 	}
+	present := false
 	for _, t := range tables {
 		if t.Name == nftTable {
-			return nil
+			present = true
+			break
 		}
 	}
-	return applyBaseRuleset(cfg)
+	if present && rulesetGenerationInstalled() {
+		return nil
+	}
+	if present {
+		log.Printf("the installed nftables ruleset predates this dclient; rebuilding it")
+	}
+	if err := applyBaseRuleset(cfg); err != nil {
+		return err
+	}
+	recordRulesetGeneration()
+	return nil
+}
+
+// The generation is kept in /run so it is forgotten on reboot, which is exactly
+// when the table is gone and the ruleset has to be rebuilt anyway.
+const rulesetGenerationPath = "/run/dclient-nft-generation"
+
+func rulesetGenerationInstalled() bool {
+	b, err := os.ReadFile(rulesetGenerationPath)
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(b)) == strconv.Itoa(nftRulesetGeneration)
+}
+
+func recordRulesetGeneration() {
+	if err := os.WriteFile(rulesetGenerationPath, []byte(strconv.Itoa(nftRulesetGeneration)), 0o644); err != nil {
+		log.Printf("WARNING: could not record the nftables ruleset generation: %v", err)
+	}
 }
 
 func reconcile(data string, cfg netConfig) error {
@@ -337,6 +372,7 @@ func runNetd(ctx context.Context, data string, cfg netConfig) error {
 	if err := applyBaseRuleset(cfg); err != nil {
 		return err
 	}
+	recordRulesetGeneration()
 	log.Printf("policy installed: pool %s, gateway %s, uplink %s", cfg.Pool, cfg.Gateway, cfg.Uplink)
 
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)

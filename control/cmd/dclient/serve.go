@@ -86,6 +86,7 @@ func runServe(ctx context.Context, cfg Config) error {
 		if err := applyBaseRuleset(nc); err != nil {
 			return err
 		}
+		recordRulesetGeneration()
 		log.Printf("policy installed: pool %s, gateway %s, uplink %s", nc.Pool, nc.Gateway, nc.Uplink)
 	}
 

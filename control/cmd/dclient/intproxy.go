@@ -32,7 +32,9 @@ const (
 	// intproxyAddr is the last usable host in the vm pool, so a sequential
 	// allocator never reaches it. Guests get there over the default route they
 	// already have, so nothing in the guest or in dhcp changes.
-	intproxyAddr  = "10.64.255.254"
+	intproxyAddr = "10.64.255.254"
+	// intproxyLink is only cleaned up now: older builds created it as a dummy
+	// interface, which needs a kernel module a stripped kernel may not have.
 	intproxyLink  = "dint0"
 	intproxyLabel = "int"
 )
@@ -77,40 +79,42 @@ func intproxyConfigured() bool {
 	return string(b) != defaultIntproxyConfig
 }
 
-// ensureIntproxyAddr puts the integration proxy's address on a dummy link.
-// intproxy binds it specifically so it can own :443 while dproxy holds the
-// wildcard, and IP_FREEBIND means the order the two come up in does not matter.
+// ensureIntproxyAddr makes the integration proxy's address local to the host,
+// which is what has the kernel deliver a guest's packets to the input chain
+// instead of trying to forward them.
+//
+// It goes on loopback rather than a dummy link on purpose: a dummy needs the
+// dummy module, which a stripped kernel may not have, and a non-127/8 address
+// on lo is delivered locally just the same with no module and no sysctl.
+// IP_FREEBIND means intproxy can bind it before this runs, which also means a
+// failure here shows up as a silent drop rather than a bind error -- hence the
+// doctor check.
 func ensureIntproxyAddr() error {
-	link, err := netlink.LinkByName(intproxyLink)
+	lo, err := netlink.LinkByName("lo")
 	if err != nil {
-		add := &netlink.Dummy{LinkAttrs: netlink.LinkAttrs{Name: intproxyLink}}
-		if err := netlink.LinkAdd(add); err != nil && !os.IsExist(err) {
-			return fmt.Errorf("could not create %s: %w", intproxyLink, err)
-		}
-		link, err = netlink.LinkByName(intproxyLink)
-		if err != nil {
-			return fmt.Errorf("%s vanished: %w", intproxyLink, err)
-		}
+		return fmt.Errorf("could not find the loopback interface: %w", err)
 	}
-
 	addr, err := netlink.ParseAddr(intproxyAddr + "/32")
 	if err != nil {
 		return err
 	}
-	if err := netlink.AddrReplace(link, addr); err != nil {
-		return fmt.Errorf("could not add %s to %s: %w", intproxyAddr, intproxyLink, err)
-	}
-	if err := netlink.LinkSetUp(link); err != nil {
-		return fmt.Errorf("could not bring %s up: %w", intproxyLink, err)
+	if err := netlink.AddrReplace(lo, addr); err != nil {
+		return fmt.Errorf("could not add %s to lo: %w", intproxyAddr, err)
 	}
 	return nil
 }
 
 func removeIntproxyHost() {
+	if lo, err := netlink.LinkByName("lo"); err == nil {
+		if addr, err := netlink.ParseAddr(intproxyAddr + "/32"); err == nil {
+			if err := netlink.AddrDel(lo, addr); err == nil {
+				fmt.Println("removed " + intproxyAddr + " from lo")
+			}
+		}
+	}
+	// Older builds put the address on a dummy link.
 	if link, err := netlink.LinkByName(intproxyLink); err == nil {
-		if err := netlink.LinkDel(link); err != nil {
-			fmt.Println(err)
-		} else {
+		if err := netlink.LinkDel(link); err == nil {
 			fmt.Println("removed " + intproxyLink)
 		}
 	}
@@ -244,8 +248,10 @@ func checkIntproxy() (result, string) {
 		return warn, "intproxy is installed but the control server has not configured it yet; " +
 			"give this host's fleet a domain to turn integrations on"
 	}
+	// Not a bind failure: IP_FREEBIND lets intproxy listen regardless, so a
+	// missing address shows up as guests' connections hanging.
 	if !intproxyAddrPresent() {
-		return fail, intproxyAddr + " is not on " + intproxyLink + "; intproxy has nothing to bind"
+		return fail, intproxyAddr + " is not a local address, so guest connections to it are dropped rather than delivered"
 	}
 	out, _ := exec.Command("systemctl", "is-active", intproxyService+".service").Output()
 	if strings.TrimSpace(string(out)) != "active" {
@@ -263,12 +269,10 @@ func checkIntproxy() (result, string) {
 	return pass, "intproxy is serving integrations on " + intproxyAddr + ":443"
 }
 
+// intproxyAddrPresent looks across every interface, not just loopback: what
+// matters is that the address is local somewhere, not which link holds it.
 func intproxyAddrPresent() bool {
-	link, err := netlink.LinkByName(intproxyLink)
-	if err != nil {
-		return false
-	}
-	addrs, err := netlink.AddrList(link, netlink.FAMILY_V4)
+	addrs, err := netlink.AddrList(nil, netlink.FAMILY_V4)
 	if err != nil {
 		return false
 	}

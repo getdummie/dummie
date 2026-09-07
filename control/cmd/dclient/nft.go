@@ -41,6 +41,13 @@ func (c netConfig) resolver() string {
 	return c.DNS
 }
 
+// nftRulesetGeneration is bumped whenever applyBaseRuleset changes, so an
+// upgraded dclient rebuilds a ruleset it would otherwise leave alone.
+//
+//	1: the original ruleset
+//	2: guests may reach the integration proxy on 10.64.255.254
+const nftRulesetGeneration = 2
+
 func applyBaseRuleset(cfg netConfig) error {
 	c, err := nftables.New()
 	if err != nil {
