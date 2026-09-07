@@ -349,6 +349,8 @@ interface VMIntegration {
   id: string
   name: string
   readonly: boolean
+  all_repos: boolean
+  repos: string[]
 }
 
 const vmIntegrations = ref<VMIntegration[]>([])
@@ -1598,7 +1600,10 @@ async function removeDomain() {
                 class="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-accent"
               >
                 {{ i.name }}
-                <span v-if="i.readonly" class="text-muted-foreground">read-only</span>
+                <span class="text-muted-foreground">
+                  {{ i.all_repos && !i.repos.length ? 'all repos' : `${i.repos.length} repo${i.repos.length === 1 ? '' : 's'}` }}
+                </span>
+                <span v-if="i.readonly" class="text-muted-foreground">· read-only</span>
               </NuxtLink>
             </li>
           </ul>

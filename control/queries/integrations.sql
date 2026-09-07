@@ -167,11 +167,50 @@ WHERE v.client_id = sqlc.arg(client_id)
   AND v.ip = sqlc.arg(vm_ip)
 ORDER BY i.name;
 
--- name: IntegrationAllowsRepo :one
-SELECT EXISTS (
-    SELECT 1 FROM integration_repos
-    WHERE integration_id = $1 AND repo_owner = $2 AND repo_name = $3
+-- name: VMIntegrationAllowsRepo :one
+-- An attachment with no scoping rows inherits the integration's whole list;
+-- one with them is limited to exactly those.
+SELECT (
+    NOT EXISTS (
+        SELECT 1 FROM vm_integration_repos scope
+        WHERE scope.vm_id = sqlc.arg(vm_id)
+          AND scope.integration_id = sqlc.arg(integration_id)
+    )
+    OR EXISTS (
+        SELECT 1 FROM vm_integration_repos hit
+        WHERE hit.vm_id = sqlc.arg(vm_id)
+          AND hit.integration_id = sqlc.arg(integration_id)
+          AND lower(hit.repo_owner) = lower(sqlc.arg(repo_owner)::text)
+          AND lower(hit.repo_name) = lower(sqlc.arg(repo_name)::text)
+    )
 )::boolean;
+
+-- name: ListVMIntegrationRepos :many
+SELECT repo_owner, repo_name FROM vm_integration_repos
+WHERE vm_id = $1 AND integration_id = $2
+ORDER BY repo_owner, repo_name;
+
+-- name: DeleteVMIntegrationRepos :exec
+DELETE FROM vm_integration_repos
+WHERE vm_id = $1 AND integration_id = $2;
+
+-- name: InsertVMIntegrationRepo :exec
+INSERT INTO vm_integration_repos (vm_id, integration_id, repo_owner, repo_name)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING;
+
+-- name: CountVMIntegrationRepos :one
+SELECT count(*) FROM vm_integration_repos
+WHERE vm_id = $1 AND integration_id = $2;
+
+-- name: FindIntegrationRepo :one
+-- Case-insensitive, because github is: codingcoffee/x and codingCoffee/x are
+-- the same repository. Returns the stored spelling so the minted token names
+-- the repository the way github does.
+SELECT repo_owner, repo_name FROM integration_repos
+WHERE integration_id = sqlc.arg(integration_id)
+  AND lower(repo_owner) = lower(sqlc.arg(repo_owner)::text)
+  AND lower(repo_name) = lower(sqlc.arg(repo_name)::text);
 
 -- name: ListIntegrationReposForVM :many
 SELECT DISTINCT r.repo_owner, r.repo_name

@@ -27,6 +27,23 @@ func (q *Queries) AttachIntegrationToVM(ctx context.Context, arg AttachIntegrati
 	return err
 }
 
+const countVMIntegrationRepos = `-- name: CountVMIntegrationRepos :one
+SELECT count(*) FROM vm_integration_repos
+WHERE vm_id = $1 AND integration_id = $2
+`
+
+type CountVMIntegrationReposParams struct {
+	VMID          pgtype.UUID
+	IntegrationID pgtype.UUID
+}
+
+func (q *Queries) CountVMIntegrationRepos(ctx context.Context, arg CountVMIntegrationReposParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countVMIntegrationRepos, arg.VMID, arg.IntegrationID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createGitHubInstallState = `-- name: CreateGitHubInstallState :exec
 INSERT INTO github_install_states (state_hash, owner_id, integration_id)
 VALUES ($1, $2, $3)
@@ -135,6 +152,21 @@ func (q *Queries) DeleteOtherGitHubApps(ctx context.Context, id pgtype.UUID) err
 	return err
 }
 
+const deleteVMIntegrationRepos = `-- name: DeleteVMIntegrationRepos :exec
+DELETE FROM vm_integration_repos
+WHERE vm_id = $1 AND integration_id = $2
+`
+
+type DeleteVMIntegrationReposParams struct {
+	VMID          pgtype.UUID
+	IntegrationID pgtype.UUID
+}
+
+func (q *Queries) DeleteVMIntegrationRepos(ctx context.Context, arg DeleteVMIntegrationReposParams) error {
+	_, err := q.db.Exec(ctx, deleteVMIntegrationRepos, arg.VMID, arg.IntegrationID)
+	return err
+}
+
 const detachIntegrationFromVM = `-- name: DetachIntegrationFromVM :exec
 DELETE FROM vm_integrations
 WHERE vm_id = $1 AND integration_id = $2
@@ -148,6 +180,34 @@ type DetachIntegrationFromVMParams struct {
 func (q *Queries) DetachIntegrationFromVM(ctx context.Context, arg DetachIntegrationFromVMParams) error {
 	_, err := q.db.Exec(ctx, detachIntegrationFromVM, arg.VMID, arg.IntegrationID)
 	return err
+}
+
+const findIntegrationRepo = `-- name: FindIntegrationRepo :one
+SELECT repo_owner, repo_name FROM integration_repos
+WHERE integration_id = $1
+  AND lower(repo_owner) = lower($2::text)
+  AND lower(repo_name) = lower($3::text)
+`
+
+type FindIntegrationRepoParams struct {
+	IntegrationID pgtype.UUID
+	RepoOwner     string
+	RepoName      string
+}
+
+type FindIntegrationRepoRow struct {
+	RepoOwner string
+	RepoName  string
+}
+
+// Case-insensitive, because github is: codingcoffee/x and codingCoffee/x are
+// the same repository. Returns the stored spelling so the minted token names
+// the repository the way github does.
+func (q *Queries) FindIntegrationRepo(ctx context.Context, arg FindIntegrationRepoParams) (FindIntegrationRepoRow, error) {
+	row := q.db.QueryRow(ctx, findIntegrationRepo, arg.IntegrationID, arg.RepoOwner, arg.RepoName)
+	var i FindIntegrationRepoRow
+	err := row.Scan(&i.RepoOwner, &i.RepoName)
+	return i, err
 }
 
 const getGitHubApp = `-- name: GetGitHubApp :one
@@ -294,24 +354,27 @@ func (q *Queries) InsertIntegrationRepo(ctx context.Context, arg InsertIntegrati
 	return err
 }
 
-const integrationAllowsRepo = `-- name: IntegrationAllowsRepo :one
-SELECT EXISTS (
-    SELECT 1 FROM integration_repos
-    WHERE integration_id = $1 AND repo_owner = $2 AND repo_name = $3
-)::boolean
+const insertVMIntegrationRepo = `-- name: InsertVMIntegrationRepo :exec
+INSERT INTO vm_integration_repos (vm_id, integration_id, repo_owner, repo_name)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
 `
 
-type IntegrationAllowsRepoParams struct {
+type InsertVMIntegrationRepoParams struct {
+	VMID          pgtype.UUID
 	IntegrationID pgtype.UUID
 	RepoOwner     string
 	RepoName      string
 }
 
-func (q *Queries) IntegrationAllowsRepo(ctx context.Context, arg IntegrationAllowsRepoParams) (bool, error) {
-	row := q.db.QueryRow(ctx, integrationAllowsRepo, arg.IntegrationID, arg.RepoOwner, arg.RepoName)
-	var column_1 bool
-	err := row.Scan(&column_1)
-	return column_1, err
+func (q *Queries) InsertVMIntegrationRepo(ctx context.Context, arg InsertVMIntegrationRepoParams) error {
+	_, err := q.db.Exec(ctx, insertVMIntegrationRepo,
+		arg.VMID,
+		arg.IntegrationID,
+		arg.RepoOwner,
+		arg.RepoName,
+	)
+	return err
 }
 
 const listClientIDsWithIntegrations = `-- name: ListClientIDsWithIntegrations :many
@@ -629,6 +692,42 @@ func (q *Queries) ListIntegrationsByOwner(ctx context.Context, ownerID pgtype.UU
 	return items, nil
 }
 
+const listVMIntegrationRepos = `-- name: ListVMIntegrationRepos :many
+SELECT repo_owner, repo_name FROM vm_integration_repos
+WHERE vm_id = $1 AND integration_id = $2
+ORDER BY repo_owner, repo_name
+`
+
+type ListVMIntegrationReposParams struct {
+	VMID          pgtype.UUID
+	IntegrationID pgtype.UUID
+}
+
+type ListVMIntegrationReposRow struct {
+	RepoOwner string
+	RepoName  string
+}
+
+func (q *Queries) ListVMIntegrationRepos(ctx context.Context, arg ListVMIntegrationReposParams) ([]ListVMIntegrationReposRow, error) {
+	rows, err := q.db.Query(ctx, listVMIntegrationRepos, arg.VMID, arg.IntegrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVMIntegrationReposRow
+	for rows.Next() {
+		var i ListVMIntegrationReposRow
+		if err := rows.Scan(&i.RepoOwner, &i.RepoName); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVMIntegrationsForOwner = `-- name: ListVMIntegrationsForOwner :many
 SELECT i.id, i.name, i.readonly, i.all_repos
 FROM vm_integrations vi
@@ -860,4 +959,42 @@ func (q *Queries) UpsertGitHubInstallation(ctx context.Context, arg UpsertGitHub
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const vMIntegrationAllowsRepo = `-- name: VMIntegrationAllowsRepo :one
+SELECT (
+    NOT EXISTS (
+        SELECT 1 FROM vm_integration_repos scope
+        WHERE scope.vm_id = $1
+          AND scope.integration_id = $2
+    )
+    OR EXISTS (
+        SELECT 1 FROM vm_integration_repos hit
+        WHERE hit.vm_id = $1
+          AND hit.integration_id = $2
+          AND lower(hit.repo_owner) = lower($3::text)
+          AND lower(hit.repo_name) = lower($4::text)
+    )
+)::boolean
+`
+
+type VMIntegrationAllowsRepoParams struct {
+	VMID          pgtype.UUID
+	IntegrationID pgtype.UUID
+	RepoOwner     string
+	RepoName      string
+}
+
+// An attachment with no scoping rows inherits the integration's whole list;
+// one with them is limited to exactly those.
+func (q *Queries) VMIntegrationAllowsRepo(ctx context.Context, arg VMIntegrationAllowsRepoParams) (bool, error) {
+	row := q.db.QueryRow(ctx, vMIntegrationAllowsRepo,
+		arg.VMID,
+		arg.IntegrationID,
+		arg.RepoOwner,
+		arg.RepoName,
+	)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
 }

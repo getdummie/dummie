@@ -319,6 +319,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	integ.GET("/:id/vms", integH.ListVMs)
 	integ.POST("/:id/vms/:vm_id", integH.Attach)
 	integ.DELETE("/:id/vms/:vm_id", integH.Detach)
+	integ.PUT("/:id/vms/:vm_id/repos", integH.SetVMRepos)
 	integ.GET("/:id/github/install", integH.Install)
 
 	// Outside the group on purpose: github sends the browser here as a top-level

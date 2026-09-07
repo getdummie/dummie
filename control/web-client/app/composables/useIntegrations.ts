@@ -18,6 +18,8 @@ export interface IntegrationVM {
   id: string
   name: string
   ip: string
+  // Empty means this VM inherits every repository the integration covers.
+  repos: string[]
 }
 
 export interface OwnedVM {
@@ -87,6 +89,8 @@ export function useIntegrations() {
       request<void>(`/integrations/${id}/vms/${vmID}`, { method: 'POST' }),
     detach: (id: string, vmID: string) =>
       request<void>(`/integrations/${id}/vms/${vmID}`, { method: 'DELETE' }),
+    setVMRepos: (id: string, vmID: string, repos: string[]) =>
+      request<void>(`/integrations/${id}/vms/${vmID}/repos`, json('PUT', { repos })),
 
     ownedVMs: () =>
       request<{ items: OwnedVM[] }>('/vms?limit=200').then(d => d.items ?? []),

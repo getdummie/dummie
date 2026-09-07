@@ -275,20 +275,9 @@ func (h *IntegrationHandler) SetRepos(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	type repo struct{ owner, name string }
-	seen := map[repo]bool{}
-	var repos []repo
-	for _, raw := range req.Repos {
-		parts := strings.Split(strings.TrimSpace(raw), "/")
-		if len(parts) != 2 || !githubNameRe.MatchString(parts[0]) || !githubNameRe.MatchString(parts[1]) {
-			return echo.NewHTTPError(http.StatusBadRequest, "each repository must be owner/name: "+raw)
-		}
-		r := repo{owner: parts[0], name: parts[1]}
-		if seen[r] {
-			continue
-		}
-		seen[r] = true
-		repos = append(repos, r)
+	repos, err := parseRepoList(req.Repos)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
 	ctx := c.Request().Context()
@@ -331,6 +320,9 @@ type integrationVMDTO struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	IP   string `json:"ip"`
+
+	// Repos empty means this attachment inherits the integration's whole list.
+	Repos []string `json:"repos"`
 }
 
 // @Summary     VMs an integration is attached to
@@ -353,9 +345,104 @@ func (h *IntegrationHandler) ListVMs(c *echo.Context) error {
 	}
 	items := make([]integrationVMDTO, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, integrationVMDTO{ID: domainIDString(r.ID), Name: r.Name, IP: r.IP})
+		scoped, err := h.q.ListVMIntegrationRepos(ctx, db.ListVMIntegrationReposParams{
+			VMID: r.ID, IntegrationID: id,
+		})
+		if err != nil {
+			log.Printf("could not read the repository scope of integration %s on vm %s: %v",
+				domainIDString(id), r.Name, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not read the attached vms")
+		}
+		repos := make([]string, 0, len(scoped))
+		for _, s := range scoped {
+			repos = append(repos, s.RepoOwner+"/"+s.RepoName)
+		}
+		items = append(items, integrationVMDTO{
+			ID: domainIDString(r.ID), Name: r.Name, IP: r.IP, Repos: repos,
+		})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
+// SetVMRepos narrows one attachment to a subset of the integration's
+// repositories. An empty list clears the scoping, which means the attachment
+// inherits the integration's whole list again.
+//
+// @Summary     Limit which of an integration's repositories one vm may reach
+// @Tags        integrations
+// @Accept      json
+// @Router      /integrations/{id}/vms/{vm_id}/repos [put]
+func (h *IntegrationHandler) SetVMRepos(c *echo.Context) error {
+	owner, id, vmID, err := h.ownedIntegrationAndVM(c)
+	if err != nil {
+		return err
+	}
+	var req setReposReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+
+	ctx := c.Request().Context()
+	row, err := h.q.GetIntegrationForOwner(ctx, db.GetIntegrationForOwnerParams{ID: id, OwnerID: owner})
+	if err != nil {
+		return notFoundOr(err, "no such integration", "could not read the integration")
+	}
+
+	repos, err := parseRepoList(req.Repos)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
+
+	// A scope naming something the integration itself does not cover would be
+	// silently ineffective, so refuse it rather than store a lie.
+	if !row.AllRepos {
+		covered, err := h.q.ListIntegrationRepos(ctx, id)
+		if err != nil {
+			log.Printf("could not read the repositories of integration %s: %v", domainIDString(id), err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not read the repositories")
+		}
+		allowed := map[string]bool{}
+		for _, r := range covered {
+			allowed[strings.ToLower(r.RepoOwner+"/"+r.RepoName)] = true
+		}
+		for _, r := range repos {
+			if !allowed[strings.ToLower(r.owner+"/"+r.name)] {
+				return echo.NewHTTPError(http.StatusBadRequest,
+					r.owner+"/"+r.name+" is not one of this integration's repositories")
+			}
+		}
+	}
+
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		log.Printf("could not begin a transaction to scope an attachment: %v", err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := h.q.WithTx(tx)
+
+	if err := qtx.DeleteVMIntegrationRepos(ctx, db.DeleteVMIntegrationReposParams{
+		VMID: vmID, IntegrationID: id,
+	}); err != nil {
+		log.Printf("could not clear the repository scope of integration %s: %v", domainIDString(id), err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
+	}
+	for _, r := range repos {
+		if err := qtx.InsertVMIntegrationRepo(ctx, db.InsertVMIntegrationRepoParams{
+			VMID:          vmID,
+			IntegrationID: id,
+			RepoOwner:     r.owner,
+			RepoName:      r.name,
+		}); err != nil {
+			log.Printf("could not scope %s/%s to a vm: %v", r.owner, r.name, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		log.Printf("could not commit the repository scope of integration %s: %v", domainIDString(id), err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
+	}
+	return c.NoContent(http.StatusNoContent)
 }
 
 // @Summary     Integrations attached to one of your VMs
@@ -386,12 +473,37 @@ func (h *IntegrationHandler) ListForVM(c *echo.Context) error {
 	}
 	items := make([]integrationDTO, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, integrationDTO{
+		dto := integrationDTO{
 			ID:       domainIDString(r.ID),
 			Name:     r.Name,
 			Readonly: r.Readonly,
 			AllRepos: r.AllRepos,
+		}
+		// This vm's own scope when it has one, otherwise the integration's
+		// list -- which is exactly what the vm can actually reach.
+		scoped, err := h.q.ListVMIntegrationRepos(ctx, db.ListVMIntegrationReposParams{
+			VMID: vmID, IntegrationID: r.ID,
 		})
+		if err != nil {
+			log.Printf("could not read the repository scope of integration %s: %v", dto.ID, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not list the integrations")
+		}
+		if len(scoped) > 0 {
+			for _, x := range scoped {
+				dto.Repos = append(dto.Repos, x.RepoOwner+"/"+x.RepoName)
+			}
+		} else if !r.AllRepos {
+			covered, err := h.q.ListIntegrationRepos(ctx, r.ID)
+			if err != nil {
+				log.Printf("could not read the repositories of integration %s: %v", dto.ID, err)
+				return echo.NewHTTPError(http.StatusInternalServerError, "could not list the integrations")
+			}
+			for _, x := range covered {
+				dto.Repos = append(dto.Repos, x.RepoOwner+"/"+x.RepoName)
+			}
+		}
+		dto.RepoCount = int64(len(dto.Repos))
+		items = append(items, dto)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
@@ -509,6 +621,29 @@ func validateIntegrationName(name string) error {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+type repoRef struct{ owner, name string }
+
+// parseRepoList keeps the spelling it was given -- github's own casing, when
+// the list came from the picker -- but dedupes case-insensitively, since
+// github treats two spellings of a name as one repository.
+func parseRepoList(raw []string) ([]repoRef, error) {
+	seen := map[string]bool{}
+	var out []repoRef
+	for _, s := range raw {
+		parts := strings.Split(strings.TrimSpace(s), "/")
+		if len(parts) != 2 || !githubNameRe.MatchString(parts[0]) || !githubNameRe.MatchString(parts[1]) {
+			return nil, errors.New("each repository must be owner/name: " + s)
+		}
+		key := strings.ToLower(parts[0] + "/" + parts[1])
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, repoRef{owner: parts[0], name: parts[1]})
+	}
+	return out, nil
 }
 
 func notFoundOr(err error, notFound, other string) error {

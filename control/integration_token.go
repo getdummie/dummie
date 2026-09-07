@@ -115,7 +115,7 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 		}
 	}
 
-	var sawUsable, sawReadonly bool
+	var sawUsable, sawReadonly, sawOutOfScope bool
 	for _, g := range grants {
 		if g.Suspended {
 			continue
@@ -126,21 +126,45 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 			continue
 		}
 
-		allowed := g.AllRepos
-		if !allowed && repo != "" {
-			ok, err := h.q.IntegrationAllowsRepo(ctx, db.IntegrationAllowsRepoParams{
+		// canonical is how github spells the repository, which is what the
+		// minted token has to name. It differs from what the guest typed
+		// whenever they used different casing.
+		canonical := repo
+
+		if repo != "" {
+			// Two independent bounds: what the integration covers, and what
+			// this attachment narrows it to. Both have to allow the repo.
+			if !g.AllRepos {
+				found, err := h.q.FindIntegrationRepo(ctx, db.FindIntegrationRepoParams{
+					IntegrationID: g.IntegrationID,
+					RepoOwner:     owner,
+					RepoName:      repo,
+				})
+				switch {
+				case errors.Is(err, pgx.ErrNoRows):
+					continue
+				case err != nil:
+					log.Printf("could not check the repositories of integration %s: %v", g.IntegrationName, err)
+					continue
+				}
+				canonical = found.RepoName
+			}
+
+			scoped, err := h.q.VMIntegrationAllowsRepo(ctx, db.VMIntegrationAllowsRepoParams{
+				VMID:          g.VmPk,
 				IntegrationID: g.IntegrationID,
 				RepoOwner:     owner,
 				RepoName:      repo,
 			})
 			if err != nil {
-				log.Printf("could not check the repositories of integration %s: %v", g.IntegrationName, err)
+				log.Printf("could not check the repository scope of integration %s on vm %s: %v",
+					g.IntegrationName, g.VMName, err)
 				continue
 			}
-			allowed = ok
-		}
-		if !allowed && repo != "" {
-			continue
+			if !scoped {
+				sawOutOfScope = true
+				continue
+			}
 		}
 
 		d := grantDecision{
@@ -152,12 +176,12 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 		}
 		switch {
 		case repo != "":
-			d.repos = []string{repo}
-		case g.AllRepos:
-			// No repositories field at all: the token covers the installation.
+			d.repos = []string{canonical}
 		default:
-			d.repos = h.reposForIntegration(ctx, g.IntegrationID)
-			if len(d.repos) == 0 {
+			// A request that names no repository -- graphql, or rest outside
+			// /repos -- gets a token scoped to this attachment's effective set.
+			d.repos = h.reposForAttachment(ctx, g)
+			if len(d.repos) == 0 && !g.AllRepos {
 				continue
 			}
 		}
@@ -170,6 +194,12 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 			reason: "every attached integration is suspended on github",
 			err: echo.NewHTTPError(http.StatusConflict,
 				"this vm's github integration was removed or suspended on github; reconnect it"),
+		}
+	case sawOutOfScope:
+		return grantDecision{
+			reason: "the repository is outside this vm's scope for the integration",
+			err: echo.NewHTTPError(http.StatusForbidden,
+				"this vm's integration covers that repository, but this vm has not been given access to it"),
 		}
 	case sawReadonly:
 		return grantDecision{
@@ -185,10 +215,29 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 	}
 }
 
-func (h *ClientHandler) reposForIntegration(ctx context.Context, id pgtype.UUID) []string {
-	rows, err := h.q.ListIntegrationRepos(ctx, id)
+// reposForAttachment is the effective set for one (vm, integration): the
+// attachment's own scoping when it has any, otherwise the integration's list.
+func (h *ClientHandler) reposForAttachment(ctx context.Context, g db.ListIntegrationGrantsForVMRow) []string {
+	scoped, err := h.q.ListVMIntegrationRepos(ctx, db.ListVMIntegrationReposParams{
+		VMID:          g.VmPk,
+		IntegrationID: g.IntegrationID,
+	})
 	if err != nil {
-		log.Printf("could not list the repositories of an integration: %v", err)
+		log.Printf("could not list the repository scope of integration %s on vm %s: %v",
+			g.IntegrationName, g.VMName, err)
+		return nil
+	}
+	if len(scoped) > 0 {
+		out := make([]string, 0, len(scoped))
+		for _, r := range scoped {
+			out = append(out, r.RepoName)
+		}
+		return out
+	}
+
+	rows, err := h.q.ListIntegrationRepos(ctx, g.IntegrationID)
+	if err != nil {
+		log.Printf("could not list the repositories of integration %s: %v", g.IntegrationName, err)
 		return nil
 	}
 	out := make([]string, 0, len(rows))

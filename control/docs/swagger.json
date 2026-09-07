@@ -1078,6 +1078,24 @@
                 ]
             }
         },
+        "/integrations/{id}/vms/{vm_id}/repos": {
+            "put": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": null,
+                "summary": "Limit which of an integration's repositories one vm may reach",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
         "/me": {
             "get": {
                 "description": "The same shape the admin section shows for a user. Nothing secret is in it: no password hash, and a public key is public.",

@@ -319,6 +319,13 @@ type VmIntegration struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type VmIntegrationRepo struct {
+	VMID          pgtype.UUID
+	IntegrationID pgtype.UUID
+	RepoOwner     string
+	RepoName      string
+}
+
 type VmNetworkTarget struct {
 	ID          pgtype.UUID
 	VMID        pgtype.UUID
