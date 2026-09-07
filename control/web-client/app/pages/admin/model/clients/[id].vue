@@ -59,9 +59,12 @@ interface Client {
   proxy_download_url: string
   dinit_version: string
   dinit_download_url: string
+  intproxy_version: string
+  intproxy_download_url: string
   dpipe_installed_version: string
   proxy_installed_version: string
   dinit_installed_version: string
+  intproxy_installed_version: string
   metrics: ClientMetrics
 }
 
@@ -255,6 +258,8 @@ const services = reactive({
   proxy_download_url: '',
   dinit_version: '',
   dinit_download_url: '',
+  intproxy_version: '',
+  intproxy_download_url: '',
 })
 const savingServices = ref(false)
 const servicesError = ref<string | null>(null)
@@ -272,6 +277,8 @@ function serverServices() {
     proxy_download_url: c?.proxy_download_url ?? '',
     dinit_version: c?.dinit_version ?? '',
     dinit_download_url: c?.dinit_download_url ?? '',
+    intproxy_version: c?.intproxy_version ?? '',
+    intproxy_download_url: c?.intproxy_download_url ?? '',
   }
 }
 
@@ -671,6 +678,10 @@ async function confirmDelete() {
           built from an OS image tar, so that an image needs no init, DHCP client or sshd of its own.
           Moving it rebuilds those images as VMs are created from them.
         </p>
+        <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
+          intproxy reports nothing running until this host's fleet has a domain: it is installed
+          stopped and starts once the control server sends it a configuration.
+        </p>
 
         <form class="mt-4 space-y-4" :aria-busy="savingServices" @submit.prevent="saveServices">
           <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -680,6 +691,7 @@ async function confirmDelete() {
                 { key: 'dpipe', label: 'dpipe', version: 'dpipe_version', url: 'dpipe_download_url', running: 'dpipe_installed_version' },
                 { key: 'dproxy', label: 'dproxy', version: 'proxy_version', url: 'proxy_download_url', running: 'proxy_installed_version' },
                 { key: 'dinit', label: 'dinit', version: 'dinit_version', url: 'dinit_download_url', running: 'dinit_installed_version' },
+                { key: 'intproxy', label: 'intproxy', version: 'intproxy_version', url: 'intproxy_download_url', running: 'intproxy_installed_version' },
               ] as const"
               :key="svc.key"
               class="space-y-2 rounded-md border border-border p-3"
@@ -958,7 +970,8 @@ async function confirmDelete() {
             <span class="font-mono text-foreground">{{ client?.hostname || client?.machine_id }}</span>
             and installs them, replacing anything already there — including a build fetched from the same
             URL, since a URL says where a binary came from and not what was in it. dproxy restarts, which
-            drops the SSH sessions this host is carrying; dpipe hands its own over. dclient replaces
+            drops the SSH sessions this host is carrying; dpipe hands its own over. intproxy restarts
+            too, which aborts any clone a VM has in flight through it. dclient replaces
             itself and restarts, so this page shows the host offline for a few seconds before it reports
             back. VMs already running keep running throughout.
           </DialogDescription>
