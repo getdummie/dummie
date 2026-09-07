@@ -17,13 +17,17 @@ RUN set -e \
   && rm "node-v$NODE_VERSION-linux-x64.tar.xz"
 
 RUN set -e \
-  && apt update \
   && apt-get install -y --no-install-recommends \
-    git\
+    tmux \
+    git
+
+RUN set -e \
+  && apt-get install -y --no-install-recommends \
     fd-find \
     ripgrep \
   && npm install -g --ignore-scripts \
     "@earendil-works/pi-coding-agent"
+
 
 USER ubuntu
 WORKDIR /home/ubuntu
