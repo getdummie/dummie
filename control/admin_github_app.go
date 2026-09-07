@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,6 +120,9 @@ func (h *AdminHandler) PutGitHubApp(c *echo.Context) error {
 	})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the github app")
+	}
+	if err := h.q.DeleteOtherGitHubApps(ctx, app.ID); err != nil {
+		log.Printf("could not remove the previously configured github app: %v", err)
 	}
 	return c.JSON(http.StatusOK, h.toGitHubAppDTO(app))
 }

@@ -3018,6 +3018,15 @@
                 ]
             }
         },
+        "/vms/{id}/integrations": {
+            "get": {
+                "responses": {},
+                "summary": "Integrations attached to one of your VMs",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
         "/vms/{id}/ports": {
             "put": {
                 "description": "default_port is where a request goes when nothing picks a port; omit it or send 0 for 8000. public_ports is every port the VM publishes -- send an empty list to publish nothing. The list is de-duplicated but not reordered, since its order is the order the generated config lists them in. At most 32 ports.",

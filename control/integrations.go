@@ -51,6 +51,7 @@ func (h *IntegrationHandler) List(c *echo.Context) error {
 	}
 	rows, err := h.q.ListIntegrationsByOwner(c.Request().Context(), owner)
 	if err != nil {
+		log.Printf("could not list the integrations of %s: %v", domainIDString(owner), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not list integrations")
 	}
 	items := make([]integrationDTO, 0, len(rows))
@@ -107,6 +108,7 @@ func (h *IntegrationHandler) Create(c *echo.Context) error {
 		if isUniqueViolation(err) {
 			return echo.NewHTTPError(http.StatusConflict, "you already have an integration with that name")
 		}
+		log.Printf("could not create an integration for %s: %v", domainIDString(owner), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not create the integration")
 	}
 
@@ -136,6 +138,7 @@ func (h *IntegrationHandler) Get(c *echo.Context) error {
 
 	repos, err := h.q.ListIntegrationRepos(ctx, id)
 	if err != nil {
+		log.Printf("could not read the repositories of integration %s: %v", domainIDString(id), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the repositories")
 	}
 	names := make([]string, 0, len(repos))
@@ -213,6 +216,7 @@ func (h *IntegrationHandler) Delete(c *echo.Context) error {
 	if err := h.q.DeleteIntegrationForOwner(c.Request().Context(), db.DeleteIntegrationForOwnerParams{
 		ID: id, OwnerID: owner,
 	}); err != nil {
+		log.Printf("could not delete integration %s: %v", domainIDString(id), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete the integration")
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -296,12 +300,14 @@ func (h *IntegrationHandler) SetRepos(c *echo.Context) error {
 	// what the attached VMs can reach.
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
+		log.Printf("could not begin a transaction to save repositories: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := h.q.WithTx(tx)
 
 	if err := qtx.DeleteIntegrationRepos(ctx, id); err != nil {
+		log.Printf("could not clear the repositories of integration %s: %v", domainIDString(id), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
 	}
 	for _, r := range repos {
@@ -310,10 +316,12 @@ func (h *IntegrationHandler) SetRepos(c *echo.Context) error {
 			RepoOwner:     r.owner,
 			RepoName:      r.name,
 		}); err != nil {
+			log.Printf("could not add %s/%s to integration %s: %v", r.owner, r.name, domainIDString(id), err)
 			return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
+		log.Printf("could not commit the repositories of integration %s: %v", domainIDString(id), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the repositories")
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -340,11 +348,50 @@ func (h *IntegrationHandler) ListVMs(c *echo.Context) error {
 	}
 	rows, err := h.q.ListIntegrationVMs(ctx, id)
 	if err != nil {
+		log.Printf("could not list the vms of integration %s: %v", domainIDString(id), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not list the attached vms")
 	}
 	items := make([]integrationVMDTO, 0, len(rows))
 	for _, r := range rows {
 		items = append(items, integrationVMDTO{ID: domainIDString(r.ID), Name: r.Name, IP: r.IP})
+	}
+	return c.JSON(http.StatusOK, map[string]any{"items": items})
+}
+
+// @Summary     Integrations attached to one of your VMs
+// @Tags        integrations
+// @Produce     json
+// @Router      /vms/{id}/integrations [get]
+func (h *IntegrationHandler) ListForVM(c *echo.Context) error {
+	owner, err := callerID(c)
+	if err != nil {
+		return err
+	}
+	vmID, err := parseUUID(c.Param("id"))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid vm id")
+	}
+
+	ctx := c.Request().Context()
+	if _, err := h.q.GetVMForOwner(ctx, db.GetVMForOwnerParams{ID: vmID, CreatedBy: owner}); err != nil {
+		return notFoundOr(err, "no such vm", "could not read the vm")
+	}
+
+	rows, err := h.q.ListVMIntegrationsForOwner(ctx, db.ListVMIntegrationsForOwnerParams{
+		VMID: vmID, OwnerID: owner,
+	})
+	if err != nil {
+		log.Printf("could not list the integrations of vm %s: %v", domainIDString(vmID), err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not list the integrations")
+	}
+	items := make([]integrationDTO, 0, len(rows))
+	for _, r := range rows {
+		items = append(items, integrationDTO{
+			ID:       domainIDString(r.ID),
+			Name:     r.Name,
+			Readonly: r.Readonly,
+			AllRepos: r.AllRepos,
+		})
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
@@ -372,6 +419,7 @@ func (h *IntegrationHandler) Attach(c *echo.Context) error {
 	if err := h.q.AttachIntegrationToVM(ctx, db.AttachIntegrationToVMParams{
 		VMID: vmID, IntegrationID: id,
 	}); err != nil {
+		log.Printf("could not attach integration %s to vm %s: %v", domainIDString(id), domainIDString(vmID), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not attach the integration")
 	}
 	// No config push: the pushed intproxy config carries no policy, so the next
@@ -390,6 +438,7 @@ func (h *IntegrationHandler) Detach(c *echo.Context) error {
 	if err := h.q.DetachIntegrationFromVM(c.Request().Context(), db.DetachIntegrationFromVMParams{
 		VMID: vmID, IntegrationID: id,
 	}); err != nil {
+		log.Printf("could not detach integration %s from vm %s: %v", domainIDString(id), domainIDString(vmID), err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not detach the integration")
 	}
 	return c.NoContent(http.StatusNoContent)
@@ -432,6 +481,7 @@ func (h *IntegrationHandler) githubApp(ctx context.Context) (*githubApp, error) 
 			"no github app is configured on this control server")
 	}
 	if err != nil {
+		log.Printf("could not read the github app: %v", err)
 		return nil, echo.NewHTTPError(http.StatusInternalServerError, "could not read the github app")
 	}
 	app, err := parseGitHubApp(row.AppID, row.PrivateKey)
@@ -465,5 +515,6 @@ func notFoundOr(err error, notFound, other string) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return echo.NewHTTPError(http.StatusNotFound, notFound)
 	}
+	log.Printf("%s: %v", other, err)
 	return echo.NewHTTPError(http.StatusInternalServerError, other)
 }

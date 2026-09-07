@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
-import { BookOpen, Boxes, LayoutDashboard, LogOut, Settings, Shield } from '@lucide/vue'
+import { BookOpen, Boxes, LayoutDashboard, LogOut, Plug, Settings, Shield } from '@lucide/vue'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -36,6 +36,7 @@ const initials = computed(() => {
 const main: NavItem[] = [
   { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
   { label: 'VMs', to: '/vms', icon: Boxes },
+  { label: 'Integrations', to: '/integrations', icon: Plug },
 ]
 
 const adminEntry: NavItem = { label: 'Admin Dashboard', to: '/admin/model/settings', icon: Shield }

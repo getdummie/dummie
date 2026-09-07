@@ -123,6 +123,18 @@ func (q *Queries) DeleteIntegrationRepos(ctx context.Context, integrationID pgty
 	return err
 }
 
+const deleteOtherGitHubApps = `-- name: DeleteOtherGitHubApps :exec
+DELETE FROM github_apps
+WHERE id <> $1
+`
+
+// One app per control plane. Replacing it leaves the old row unreachable, and
+// its installations along with it, so they go too.
+func (q *Queries) DeleteOtherGitHubApps(ctx context.Context, id pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteOtherGitHubApps, id)
+	return err
+}
+
 const detachIntegrationFromVM = `-- name: DetachIntegrationFromVM :exec
 DELETE FROM vm_integrations
 WHERE vm_id = $1 AND integration_id = $2
@@ -140,10 +152,12 @@ func (q *Queries) DetachIntegrationFromVM(ctx context.Context, arg DetachIntegra
 
 const getGitHubApp = `-- name: GetGitHubApp :one
 SELECT id, app_id, slug, name, private_key, created_at, updated_at FROM github_apps
-ORDER BY created_at
+ORDER BY updated_at DESC
 LIMIT 1
 `
 
+// Most recently saved wins: correcting a mistyped app id inserts a new row
+// rather than updating the old one, and the correction has to be the one used.
 func (q *Queries) GetGitHubApp(ctx context.Context) (GithubApp, error) {
 	row := q.db.QueryRow(ctx, getGitHubApp)
 	var i GithubApp

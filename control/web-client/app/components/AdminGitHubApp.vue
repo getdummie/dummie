@@ -199,9 +199,17 @@ const permissions = [
             </li>
             <li>
               Set <span class="font-medium">Setup URL</span> to the callback below and tick
-              <span class="font-medium">Redirect on update</span>.
+              <span class="font-medium">Redirect on update</span>. Without it GitHub has nowhere to
+              return after an install, so it leaves the user on its own settings page and the
+              integration never finishes connecting.
             </li>
             <li>Untick <span class="font-medium">Webhook → Active</span>; nothing here listens for them.</li>
+            <li>
+              Set <span class="font-medium">Where can this GitHub App be installed?</span> to
+              <span class="font-medium">Any account</span>. The default, "Only on this account",
+              locks it to whoever created it — users then cannot install it into their own account
+              and only ever see that one account's repositories.
+            </li>
             <li>
               Grant these repository permissions:
               <span class="mt-1.5 flex flex-wrap gap-1.5">

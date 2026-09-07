@@ -271,6 +271,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	pats.POST("/:id/revoke", profileH.RevokeToken)
 	pats.DELETE("/:id", profileH.DeleteToken)
 
+	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL}
 	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
 	vms := api.Group("/vms", userJWT(cfg, q))
 	vms.GET("", userH.ListVMs)
@@ -301,12 +302,12 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.DELETE("/:id/domain", userH.DeleteCustomDomain)
 	vms.GET("/:id/targets", userH.ListTargets)
 	vms.GET("/:id/denied", userH.ListDeniedEgress)
+	vms.GET("/:id/integrations", integH.ListForVM)
 	vms.POST("/:id/targets", userH.CreateTarget)
 	vms.POST("/:id/targets/resolve", userH.ResolveTargetHost)
 	vms.PUT("/:id/targets/:target_id", userH.UpdateTarget)
 	vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 
-	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL}
 	integ := api.Group("/integrations", userJWT(cfg, q))
 	integ.GET("", integH.List)
 	integ.POST("", integH.Create)

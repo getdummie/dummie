@@ -9,9 +9,17 @@ SET slug        = EXCLUDED.slug,
 RETURNING *;
 
 -- name: GetGitHubApp :one
+-- Most recently saved wins: correcting a mistyped app id inserts a new row
+-- rather than updating the old one, and the correction has to be the one used.
 SELECT * FROM github_apps
-ORDER BY created_at
+ORDER BY updated_at DESC
 LIMIT 1;
+
+-- name: DeleteOtherGitHubApps :exec
+-- One app per control plane. Replacing it leaves the old row unreachable, and
+-- its installations along with it, so they go too.
+DELETE FROM github_apps
+WHERE id <> $1;
 
 -- name: DeleteGitHubApp :exec
 DELETE FROM github_apps

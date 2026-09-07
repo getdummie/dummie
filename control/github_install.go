@@ -79,6 +79,13 @@ func (h *IntegrationHandler) Callback(c *echo.Context) error {
 	ctx := c.Request().Context()
 	state := c.QueryParam("state")
 	if state == "" {
+		// "Redirect on update" sends users here after they change an
+		// installation's repositories, with no state because no install link
+		// was involved. Nothing to record -- the repository list is read from
+		// github on demand -- so this is a benign bounce, not a failure.
+		if c.QueryParam("setup_action") == "update" {
+			return h.installRedirect(c, "", "")
+		}
 		return h.installRedirect(c, "", "missing_state")
 	}
 

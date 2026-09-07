@@ -14,7 +14,9 @@ import {
 const { user, isAuthenticated, signout } = useAuth()
 const route = useRoute()
 
-const appRoutes = ['/dashboard', '/vms', '/settings', '/admin']
+// Routes that get the app shell rather than the marketing header. A page linked
+// from AppSidebarNav has to be here too, or it loses the sidebar it links from.
+const appRoutes = ['/dashboard', '/vms', '/integrations', '/settings', '/admin']
 const showSidebar = computed(() =>
   isAuthenticated.value && appRoutes.some(p => route.path === p || route.path.startsWith(`${p}/`)),
 )
