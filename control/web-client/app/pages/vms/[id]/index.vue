@@ -676,24 +676,46 @@ const alreadyAllowed = computed(() => {
   return covered
 })
 
-function allowDenied(d: DeniedAttempt) {
-  resetTargetForm()
-  const byName = d.kind === 'lookup' || (!!d.domain && (d.port === 443 || d.port === 80))
+function deniedKey(d: DeniedAttempt) {
+  return `${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`
+}
 
-  if (byName) {
-    form.kind = 'domain'
-    form.destination = d.domain
-    form.domainPorts = d.kind === 'lookup' ? '80,443' : String(d.port)
+const tempAllowTTL = 300
+const allowingDenied = ref<string | null>(null)
+const allowDeniedError = ref<string | null>(null)
+
+async function allowDenied(d: DeniedAttempt) {
+  const byName = d.kind === 'lookup' || (!!d.domain && (d.port === 443 || d.port === 80))
+  const payload = byName
+    ? {
+        kind: 'domain',
+        destination: d.domain,
+        transport: 'tcp',
+        ports: d.kind === 'lookup' ? '80,443' : String(d.port),
+      }
+    : {
+        kind: 'ip',
+        destination: d.address,
+        transport: d.proto === 'icmp' ? 'icmp' : (d.proto || 'tcp'),
+        ports: d.proto === 'icmp' ? '' : String(d.port),
+      }
+
+  allowingDenied.value = deniedKey(d)
+  allowDeniedError.value = null
+  try {
+    await postTarget({
+      ...payload,
+      note: `temporarily allowed — ${deniedWhat(d)}`,
+      ttl_seconds: tempAllowTTL,
+    })
+    await loadTargets()
   }
-  else {
-    form.kind = 'ip'
-    form.destination = d.address
-    form.transport = d.proto === 'icmp' ? 'icmp' : (d.proto || 'tcp')
-    form.ports = d.proto === 'icmp' ? '' : String(d.port)
-    form.preset = portPresets.find(p => p.transport === form.transport && p.ports === form.ports)?.key ?? 'custom'
+  catch (e) {
+    allowDeniedError.value = e instanceof Error ? e.message : 'Could not allow the destination'
   }
-  form.note = `seen denied — ${deniedWhat(d)}`
-  addOpen.value = true
+  finally {
+    allowingDenied.value = null
+  }
 }
 
 function matchedOn(t: TargetRecord) {
@@ -2104,7 +2126,8 @@ async function removeDomain() {
             <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
               Lookups the resolver refused and connections the ruleset dropped, over
               {{ deniedWindowLabel }}. A row in green is already covered by the list above — it was
-              denied before that allowance existed.
+              denied before that allowance existed. Temporarily allow adds the destination for five
+              minutes, after which it is removed for you.
             </p>
           </div>
           <div class="flex items-center gap-2">
@@ -2158,13 +2181,14 @@ async function removeDomain() {
             Dropped connections are not being recorded, so only names the resolver refused are shown.
           </p>
 
+          <FormError v-if="allowDeniedError" id="allow-denied-error" :message="allowDeniedError" class="mx-4 mb-3" />
           <DataTable label="Denied" :columns="deniedColumns" :empty="!denied.length" :frame="false">
             <template #empty>
               Nothing has been denied.
             </template>
             <TableRow
               v-for="d in denied"
-              :key="`${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`"
+              :key="deniedKey(d)"
               :class="alreadyAllowed.has(d) && 'bg-primary/10 hover:bg-primary/15'"
             >
               <TableCell class="font-mono break-all">
@@ -2196,10 +2220,11 @@ async function removeDomain() {
                   variant="outline"
                   size="sm"
                   class="font-mono text-xs"
-                  :aria-label="`Allow ${deniedDestination(d)}`"
+                  :disabled="allowingDenied === deniedKey(d)"
+                  :aria-label="`Temporarily allow ${deniedDestination(d)} for 5 minutes`"
                   @click="allowDenied(d)"
                 >
-                  Allow
+                  {{ allowingDenied === deniedKey(d) ? 'Allowing…' : 'Temporarily allow' }}
                 </Button>
               </TableCell>
             </TableRow>
