@@ -1662,11 +1662,17 @@ async function removeDomain() {
       <section aria-labelledby="domain-heading" class="mt-4 rounded-lg border border-border p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h2 id="domain-heading" class="text-sm font-semibold">Custom domain</h2>
+            <h2 id="domain-heading" class="text-sm font-semibold">Deploy to your domain</h2>
             <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-              A domain of your own that answers to this VM, with its own certificate. This VM already
-              answers to <span class="font-mono text-foreground">{{ vm.name }}</span>; a custom domain
-              is served alongside that, not instead of it.
+              Use a domain you already own alongside
+              <a
+                v-if="vm.url"
+                :href="vm.url"
+                target="_blank"
+                rel="noopener"
+                class="font-mono text-foreground underline-offset-4 hover:underline"
+              >{{ sshHost || vm.name }}<span class="sr-only"> (opens in a new tab)</span></a>
+              <span v-else class="font-mono text-foreground">{{ vm.name }}</span>.
             </p>
           </div>
           <Badge v-if="domain" :variant="domainStatusVariant[domain.status]" class="font-mono text-xs">
@@ -1679,10 +1685,10 @@ async function removeDomain() {
         </Alert>
 
         <form v-if="!domain" class="mt-3 flex flex-wrap items-end gap-2" @submit.prevent="saveDomain">
-          <div class="min-w-0 flex-1 space-y-2">
-            <Label for="custom-domain">Domain</Label>
+          <div class="min-w-0 flex-1">
             <Input
               id="custom-domain"
+              aria-label="Domain"
               v-model="domainInput"
               class="font-mono"
               placeholder="www.example.com"
