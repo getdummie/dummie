@@ -175,7 +175,6 @@ async function load(quiet = false) {
     await loadTargets()
     loadDomain()
     loadDenied()
-    loadIntegrations()
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load this VM'
@@ -348,31 +347,10 @@ const sshDomain = computed(() => {
   return host.startsWith(`${name}.`) ? host.slice(name.length + 1) : host
 })
 
-interface VMIntegration {
-  id: string
-  name: string
-  readonly: boolean
-  all_repos: boolean
-  repos: string[]
-}
-
-const vmIntegrations = ref<VMIntegration[]>([])
-
 // The integration proxy lives under the same fleet domain the VM answers on.
 const integrationHostForVM = computed(() =>
   sshDomain.value ? `github.int.${sshDomain.value}` : '',
 )
-
-async function loadIntegrations() {
-  try {
-    const res = await authFetch(`/vms/${id.value}/integrations`)
-    if (!res.ok) return
-    const data = await res.json()
-    vmIntegrations.value = data.items ?? []
-  }
-  catch {
-  }
-}
 
 const sshDestination = computed(() =>
   vm.value?.name ? `${vm.value.name}@${sshDomain.value}` : sshDomain.value,
@@ -1618,46 +1596,11 @@ async function removeDomain() {
         </div>
       </section>
 
-      <section aria-labelledby="integrations-heading" class="mt-4 rounded-lg border border-border p-4">
-        <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 id="integrations-heading" class="text-sm font-semibold">Integrations</h2>
-            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-              Private GitHub repositories this VM can reach. The credential stays on the control
-              server, so nothing is stored on the machine.
-            </p>
-          </div>
-          <Button variant="outline" size="sm" as-child class="font-mono text-xs">
-            <NuxtLink to="/integrations">Manage</NuxtLink>
-          </Button>
-        </div>
-
-        <p v-if="!vmIntegrations.length" class="mt-3 text-xs text-muted-foreground">
-          None attached. Attach one from
-          <NuxtLink to="/integrations" class="underline underline-offset-2">Integrations</NuxtLink>
-          to clone a private repository from this VM.
-        </p>
-
-        <template v-else>
-          <ul class="mt-3 flex flex-wrap gap-2">
-            <li v-for="i in vmIntegrations" :key="i.id">
-              <NuxtLink
-                :to="`/integrations/${i.id}`"
-                class="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 font-mono text-xs hover:bg-accent"
-              >
-                {{ i.name }}
-                <span class="text-muted-foreground">
-                  {{ i.all_repos && !i.repos.length ? 'all repos' : `${i.repos.length} repo${i.repos.length === 1 ? '' : 's'}` }}
-                </span>
-                <span v-if="i.readonly" class="text-muted-foreground">· read-only</span>
-              </NuxtLink>
-            </li>
-          </ul>
-          <div v-if="integrationHostForVM" class="mt-4">
-            <IntegrationUsage :host="integrationHostForVM" />
-          </div>
-        </template>
-      </section>
+      <VmIntegrations
+        :vm-id="id"
+        :vm-name="vm.name || vm.vm_id"
+        :host="integrationHostForVM"
+      />
 
       <section aria-labelledby="domain-heading" class="mt-4 rounded-lg border border-border p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">

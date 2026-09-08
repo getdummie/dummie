@@ -52,10 +52,5 @@ async function copy(key: string, value: string) {
       </div>
       <pre class="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">{{ ghCmd }}</pre>
     </div>
-
-    <p class="text-xs text-muted-foreground">
-      Nothing to install or configure in the guest — the URL is the only difference from cloning
-      GitHub directly, and no credential is ever stored on the VM.
-    </p>
   </div>
 </template>
