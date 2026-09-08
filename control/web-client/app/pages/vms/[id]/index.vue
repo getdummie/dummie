@@ -78,7 +78,6 @@ interface VM {
 
 const deniedColumns: DataTableColumn[] = [
   { key: 'destination', label: 'Destination' },
-  { key: 'what', label: 'What it tried' },
   { key: 'attempts', label: 'Attempts', align: 'right' },
   { key: 'last_seen', label: 'Last attempt', align: 'right' },
   { key: 'actions', label: '', align: 'right' },
@@ -195,12 +194,6 @@ const deniedLoading = ref(true)
 const deniedFirstLoad = ref(true)
 
 const deniedSeconds = ref('')
-
-const deniedWindowLabel = computed(() => {
-  const n = Number(deniedSeconds.value)
-  if (!deniedSeconds.value || !Number.isFinite(n) || n < 1) return 'since this VM was created, 7 days at most'
-  return `the last ${n} second${n === 1 ? '' : 's'}`
-})
 
 async function loadDenied() {
   deniedLoading.value = true
@@ -801,7 +794,7 @@ function resetResolveForm() {
 const nowMs = ref(Date.now())
 let ttlClock: ReturnType<typeof setInterval> | null = null
 onMounted(() => {
-  ttlClock = setInterval(() => { nowMs.value = Date.now() }, 30_000)
+  ttlClock = setInterval(() => { nowMs.value = Date.now() }, 10_000)
 })
 onBeforeUnmount(() => {
   if (ttlClock) clearInterval(ttlClock)
@@ -825,6 +818,20 @@ function timeLeft(s: string) {
   if (mins < 60) return `${Math.max(1, mins)}m`
   const hours = Math.round(mins / 60)
   return hours < 24 ? `${hours}h` : `${Math.round(hours / 24)}d`
+}
+
+function timeAgo(s: string) {
+  if (!s) return '—'
+  const at = new Date(s).getTime()
+  if (Number.isNaN(at)) return s
+  const secs = Math.round((nowMs.value - at) / 1000)
+  if (secs < 0 || secs >= 86_400) return fmtShortDate(s)
+  if (secs < 10) return 'just now'
+  if (secs < 60) return `${secs} seconds ago`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60) return `${mins} ${mins === 1 ? 'min' : 'mins'} ago`
+  const hours = Math.floor(mins / 60)
+  return `${hours} ${hours === 1 ? 'hour' : 'hours'} ago`
 }
 
 const resolveSpec = computed(() => {
@@ -2122,13 +2129,7 @@ async function removeDomain() {
       <section aria-labelledby="denied-heading" class="mt-4 rounded-lg border border-border">
         <div class="flex flex-wrap items-start justify-between gap-3 p-4">
           <div>
-            <h2 id="denied-heading" class="text-sm font-semibold">Denied</h2>
-            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-              Lookups the resolver refused and connections the ruleset dropped, over
-              {{ deniedWindowLabel }}. A row in green is already covered by the list above — it was
-              denied before that allowance existed. Temporarily allow adds the destination for five
-              minutes, after which it is removed for you.
-            </p>
+            <h2 id="denied-heading" class="text-sm font-semibold">Denied destinations</h2>
           </div>
           <div class="flex items-center gap-2">
             <Label for="denied-seconds" class="font-mono text-xs whitespace-nowrap text-muted-foreground">
@@ -2182,7 +2183,7 @@ async function removeDomain() {
           </p>
 
           <FormError v-if="allowDeniedError" id="allow-denied-error" :message="allowDeniedError" class="mx-4 mb-3" />
-          <DataTable label="Denied" :columns="deniedColumns" :empty="!denied.length" :frame="false">
+          <DataTable label="Denied destinations" :columns="deniedColumns" :empty="!denied.length" :frame="false">
             <template #empty>
               Nothing has been denied.
             </template>
@@ -2197,19 +2198,9 @@ async function removeDomain() {
                   {{ d.address }}
                 </span>
               </TableCell>
-              <TableCell class="text-xs">
-                <span class="font-mono whitespace-nowrap">{{ deniedWhat(d) }}</span>
-                <span
-                  v-if="d.signature"
-                  class="block max-w-[22rem] truncate text-muted-foreground"
-                  :title="d.signature"
-                >
-                  {{ d.signature }}
-                </span>
-              </TableCell>
               <TableCell class="text-right font-mono tabular-nums">{{ d.attempts }}</TableCell>
               <TableCell class="text-right text-xs whitespace-nowrap text-muted-foreground">
-                {{ fmtShortDate(d.last_seen) }}
+                {{ alreadyAllowed.has(d) ? '' : timeAgo(d.last_seen) }}
               </TableCell>
               <TableCell class="text-right whitespace-nowrap">
                 <span v-if="alreadyAllowed.has(d)" class="font-mono text-xs text-primary-text">
