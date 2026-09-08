@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Globe, Monitor, Pencil, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Globe, Monitor, Pencil, Pin, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -49,6 +49,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DataTableColumn } from '@/lib/table'
 
 definePageMeta({ middleware: ['auth'] })
@@ -79,7 +80,7 @@ interface VM {
 const deniedColumns: DataTableColumn[] = [
   { key: 'destination', label: 'Destination' },
   { key: 'attempts', label: 'Attempts', align: 'right' },
-  { key: 'last_seen', label: 'Last attempt', align: 'right' },
+  { key: 'last_seen', label: 'Last blocked at', align: 'right' },
   { key: 'actions', label: '', align: 'right' },
 ]
 
@@ -657,19 +658,6 @@ function deniedDestination(d: DeniedAttempt) {
   return d.domain || d.address || '—'
 }
 
-function deniedWhat(d: DeniedAttempt) {
-  if (d.kind === 'lookup') return 'dns lookup'
-  if (d.proto === 'icmp') return 'ping (icmp)'
-
-  const preset = portPresets.find(p => p.transport === d.proto && p.ports === String(d.port))
-  const named = preset ? preset.label.replace(/ \(.*\)$/, '') : ''
-  const identified = d.app_proto && d.app_proto !== 'failed' ? d.app_proto : ''
-
-  const label = named || identified
-  const where = `${d.proto} ${d.port}`
-  return label ? `${label} — ${where}` : where
-}
-
 const alreadyAllowed = computed(() => {
   const covered = new Set<DeniedAttempt>()
   for (const d of denied.value) {
@@ -707,7 +695,7 @@ async function allowDenied(d: DeniedAttempt) {
   try {
     await postTarget({
       ...payload,
-      note: `temporarily allowed — ${deniedWhat(d)}`,
+      note: '',
       ttl_seconds: tempAllowTTL,
     })
     await loadTargets()
@@ -717,6 +705,29 @@ async function allowDenied(d: DeniedAttempt) {
   }
   finally {
     allowingDenied.value = null
+  }
+}
+
+const targetActionError = ref<string | null>(null)
+const makingPermanent = ref<string | null>(null)
+
+async function makePermanent(t: TargetRecord) {
+  makingPermanent.value = t.id
+  targetActionError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/targets/${t.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(toTargetPayload(targetToForm(t, 0))),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await loadTargets()
+  }
+  catch (e) {
+    targetActionError.value = e instanceof Error ? e.message : 'Could not make the allowance permanent'
+  }
+  finally {
+    makingPermanent.value = null
   }
 }
 
@@ -946,24 +957,21 @@ async function addResolved() {
   }
 }
 
-const toRemove = ref<TargetRecord | null>(null)
-const removing = ref(false)
+const removing = ref<string | null>(null)
 
-async function confirmRemove() {
-  if (!toRemove.value) return
-  removing.value = true
-  actionError.value = null
+async function removeTarget(t: TargetRecord) {
+  removing.value = t.id
+  targetActionError.value = null
   try {
-    const res = await authFetch(`/vms/${id.value}/targets/${toRemove.value.id}`, { method: 'DELETE' })
+    const res = await authFetch(`/vms/${id.value}/targets/${t.id}`, { method: 'DELETE' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    toRemove.value = null
     await loadTargets()
   }
   catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not remove the destination'
+    targetActionError.value = e instanceof Error ? e.message : 'Could not remove the destination'
   }
   finally {
-    removing.value = false
+    removing.value = null
   }
 }
 
@@ -1765,14 +1773,8 @@ async function removeDomain() {
       </section>
 
       <section aria-labelledby="targets-heading" class="mt-4 rounded-lg border border-border">
-        <div class="flex flex-wrap items-start justify-between gap-3 p-4">
-          <div>
-            <h2 id="targets-heading" class="text-sm font-semibold">Allowed destinations</h2>
-            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-              This list is the whole of what this VM can reach. Nothing else leaves it, and a
-              domain that is not here will not even resolve.
-            </p>
-          </div>
+        <div class="flex flex-wrap items-center justify-between gap-3 p-4">
+          <h2 id="targets-heading" class="text-sm font-semibold">Allowed destinations</h2>
           <div class="flex flex-wrap items-center gap-2">
           <Dialog v-if="!allowAll" v-model:open="openAllOpen" @update:open="(v: boolean) => !v && resetOpenAllForm()">
             <Button size="sm" variant="outline" class="font-mono text-xs" @click="resetOpenAllForm(); openAllOpen = true">
@@ -2092,6 +2094,8 @@ async function removeDomain() {
           </AlertDescription>
         </Alert>
 
+        <FormError v-if="targetActionError" id="target-action-error" :message="targetActionError" class="mx-4 mb-3" />
+        <TooltipProvider :delay-duration="150">
         <DataTable label="Allowed destinations" :columns="targetColumns" :empty="!targets.length" :frame="false">
           <template #empty>
             No destinations recorded.
@@ -2112,27 +2116,53 @@ async function removeDomain() {
             </TableCell>
             <TableCell class="text-right">
               <div class="flex items-center justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  :aria-label="`Edit destination ${t.destination}`"
-                  @click="openEditTarget(t)"
-                >
-                  <Pencil class="size-4" aria-hidden="true" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  class="text-destructive hover:text-destructive"
-                  :aria-label="`Remove destination ${t.destination}`"
-                  @click="toRemove = t"
-                >
-                  <Trash2 class="size-4" aria-hidden="true" />
-                </Button>
+                <Tooltip v-if="t.expires_at">
+                  <TooltipTrigger as-child>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      :disabled="makingPermanent === t.id"
+                      :aria-label="`Allow ${t.destination} permanently`"
+                      @click="makePermanent(t)"
+                    >
+                      <Pin :class="['size-4', makingPermanent === t.id && 'animate-pulse']" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Allow permanently</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger as-child>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      :aria-label="`Edit destination ${t.destination}`"
+                      @click="openEditTarget(t)"
+                    >
+                      <Pencil class="size-4" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Edit</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger as-child>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      class="text-destructive hover:text-destructive"
+                      :disabled="removing === t.id"
+                      :aria-label="`Remove destination ${t.destination}`"
+                      @click="removeTarget(t)"
+                    >
+                      <Trash2 :class="['size-4', removing === t.id && 'animate-pulse']" aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Remove</TooltipContent>
+                </Tooltip>
               </div>
             </TableCell>
           </TableRow>
         </DataTable>
+        </TooltipProvider>
       </section>
 
       <section aria-labelledby="denied-heading" class="mt-4 rounded-lg border border-border">
@@ -2140,7 +2170,7 @@ async function removeDomain() {
           <h2 id="denied-heading" class="text-sm font-semibold">Denied destinations</h2>
           <div class="flex items-center gap-2">
             <Select v-model="deniedSeconds" @update:model-value="refreshDenied">
-              <SelectTrigger id="denied-window" class="h-8 w-40 font-mono text-xs" aria-label="Time window">
+              <SelectTrigger id="denied-window" size="sm" class="w-40 font-mono text-xs" aria-label="Time window">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -2247,25 +2277,5 @@ async function removeDomain() {
       </DialogContent>
     </Dialog>
 
-    <Dialog :open="!!toRemove" @update:open="(v: boolean) => { if (!v) toRemove = null }">
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Remove destination</DialogTitle>
-          <DialogDescription>
-            <span class="font-mono text-foreground">{{ toRemove?.destination }}</span>
-            is removed from this VM's list.
-          </DialogDescription>
-        </DialogHeader>
-        <FormError id="remove-target-error" :message="actionError" />
-        <DialogFooter>
-          <DialogClose as-child>
-            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
-          </DialogClose>
-          <Button variant="destructive" class="font-mono text-xs" :disabled="removing" @click="confirmRemove">
-            {{ removing ? 'Removing…' : 'Remove' }}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   </div>
 </template>
