@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Globe, Monitor, Pencil, Pin, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Globe, Info, Monitor, Pencil, Pin, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1154,13 +1154,7 @@ async function removeDomain() {
 
       <section aria-labelledby="ports-heading" class="mt-4 rounded-lg border border-border p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 id="ports-heading" class="text-sm font-semibold">Access</h2>
-            <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-              Which ports inside this VM are reachable, where a request goes when it does not pick
-              one, and which account a session logs into. Changes reach the host straight away.
-            </p>
-          </div>
+          <h2 id="ports-heading" class="text-sm font-semibold">Access</h2>
           <div class="flex flex-wrap items-center gap-2">
             <Dialog v-model:open="portsOpen">
               <Button variant="outline" size="sm" class="font-mono text-xs" @click="openPorts">
@@ -1222,9 +1216,27 @@ async function removeDomain() {
           </div>
         </div>
 
+        <TooltipProvider :delay-duration="150">
         <dl class="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
           <div>
-            <dt class="eyebrow text-muted-foreground">Default port</dt>
+            <dt class="eyebrow flex items-center gap-1.5 text-muted-foreground">
+              Default port
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <button
+                    type="button"
+                    class="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    aria-label="What the default port is"
+                  >
+                    <Info class="size-3.5" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent class="max-w-xs">
+                  The port your app listens on inside the VM. Open this VM's link in a browser and
+                  it lands here.
+                </TooltipContent>
+              </Tooltip>
+            </dt>
             <dd class="mt-1 flex items-center gap-2 font-mono text-sm">
               {{ vm.default_port }}
               <a
@@ -1241,7 +1253,24 @@ async function removeDomain() {
             </dd>
           </div>
           <div>
-            <dt class="eyebrow text-muted-foreground">Public ports</dt>
+            <dt class="eyebrow flex items-center gap-1.5 text-muted-foreground">
+              Public ports
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <button
+                    type="button"
+                    class="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    aria-label="What public ports are"
+                  >
+                    <Info class="size-3.5" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent class="max-w-xs">
+                  Any other ports you want reachable from the internet, on top of the default one.
+                  Ports you do not list here stay private to the VM.
+                </TooltipContent>
+              </Tooltip>
+            </dt>
             <dd class="mt-1 font-mono text-sm">
               {{ vm.public_ports?.length ? vm.public_ports.join(', ') : 'none' }}
             </dd>
@@ -1306,6 +1335,7 @@ async function removeDomain() {
             </dd>
           </div>
         </dl>
+        </TooltipProvider>
 
 
         <div class="mt-4 flex flex-wrap items-center justify-between gap-2">
