@@ -130,6 +130,25 @@ export function targetToForm(t: TargetRecord, ttlSeconds: number): TargetForm {
   return form
 }
 
+const multiPartSuffixes = new Set([
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'co.in', 'ac.in', 'gov.in',
+  'co.jp', 'ne.jp', 'or.jp', 'com.au', 'net.au', 'org.au', 'co.nz', 'com.br',
+  'com.cn', 'com.mx', 'com.sg', 'com.tr', 'co.kr', 'co.il', 'co.za', 'com.ar',
+])
+
+// Splits a hostname into everything left of the registrable domain and the
+// registrable domain itself, so the latter can be emphasised.
+export function splitHostname(name: string) {
+  const trimmed = name.trim().replace(/\.$/, '')
+  const plain = { prefix: '', root: trimmed }
+  if (!trimmed.includes('.') || trimmed.includes(':') || /^[\d.]+(\/\d+)?$/.test(trimmed)) return plain
+
+  const labels = trimmed.split('.')
+  const take = labels.length > 2 && multiPartSuffixes.has(labels.slice(-2).join('.')) ? 3 : 2
+  if (labels.length <= take) return plain
+  return { prefix: `${labels.slice(0, -take).join('.')}.`, root: labels.slice(-take).join('.') }
+}
+
 function normalizeName(s: string) {
   return s.trim().toLowerCase().replace(/\.$/, '')
 }

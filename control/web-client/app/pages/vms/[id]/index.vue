@@ -2101,7 +2101,9 @@ async function removeDomain() {
             No destinations recorded.
           </template>
           <TableRow v-for="t in targets" :key="t.id">
-            <TableCell class="font-mono break-all">{{ t.destination }}</TableCell>
+            <TableCell class="font-mono break-all">
+              <Hostname :name="t.destination" />
+            </TableCell>
             <TableCell class="font-mono text-xs text-muted-foreground">
               {{ matchedOn(t) }}
             </TableCell>
@@ -2223,7 +2225,7 @@ async function removeDomain() {
               :class="alreadyAllowed.has(d) && 'bg-primary/10 hover:bg-primary/15'"
             >
               <TableCell class="font-mono break-all">
-                {{ deniedDestination(d) }}
+                <Hostname :name="deniedDestination(d)" />
                 <span v-if="d.domain && d.address" class="block text-xs text-muted-foreground">
                   {{ d.address }}
                 </span>
