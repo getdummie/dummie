@@ -1520,8 +1520,8 @@ async function removeDomain() {
           </div>
 
           <p v-if="!rdp && !rdpError" class="mt-2 text-xs text-muted-foreground">
-            Connect with any RDP client. The username and password are issued by this
-            server and reach only this VM &mdash; they are not the credentials inside it.
+            Open this VM's desktop in any RDP client. (Only works if remote desktop server is
+            already present in the VM)
           </p>
 
           <p v-if="rdpError" class="mt-2 text-xs text-destructive" role="alert">
