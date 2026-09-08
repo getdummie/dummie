@@ -1107,6 +1107,10 @@ async function removeDomain() {
               {{ vm.name || vm.vm_id || 'unnamed' }}
             </h1>
             <Badge :variant="statusVariant[vm.status]" class="font-mono">{{ vm.status }}</Badge>
+            <p class="font-mono text-xs text-muted-foreground">
+              {{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }} ·
+              {{ vm.disk_mib ? `${fmtMiB(vm.disk_mib)} disk` : 'disk not recorded' }}
+            </p>
           </div>
         </div>
         <div class="flex flex-wrap items-center gap-4">
@@ -1147,43 +1151,6 @@ async function removeDomain() {
         <AlertTitle>This VM failed</AlertTitle>
         <AlertDescription>{{ vm.last_error }}</AlertDescription>
       </Alert>
-
-      <section aria-labelledby="details-heading" class="mt-4 rounded-lg border border-border p-4">
-        <h2 id="details-heading" class="text-sm font-semibold">Details</h2>
-        <dl class="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2 lg:grid-cols-3">
-          <div>
-            <dt class="eyebrow text-muted-foreground">Size</dt>
-            <dd class="mt-1 font-mono text-sm">{{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }}</dd>
-          </div>
-          <div>
-            <dt class="eyebrow text-muted-foreground">Disk</dt>
-            <dd class="mt-1 font-mono text-sm">
-              {{ vm.disk_mib ? fmtMiB(vm.disk_mib) : 'not recorded' }}
-            </dd>
-          </div>
-          <div>
-            <dt class="eyebrow text-muted-foreground">Created</dt>
-            <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.created_at) }}</dd>
-          </div>
-          <div>
-            <dt class="eyebrow text-muted-foreground">Started</dt>
-            <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.started_at) }}</dd>
-          </div>
-          <div>
-            <dt class="eyebrow text-muted-foreground">Last confirmed by host</dt>
-            <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(vm.reported_at) }}</dd>
-          </div>
-          <div v-if="vm.expires_at">
-            <dt class="eyebrow text-muted-foreground">Destroyed</dt>
-            <dd class="mt-1 text-sm">
-              <span :class="timeLeft(vm.expires_at) === 'overdue' ? 'text-destructive' : ''">
-                {{ timeLeft(vm.expires_at) === 'overdue' ? 'overdue' : `in ${timeLeft(vm.expires_at)}` }}
-              </span>
-              <span class="text-muted-foreground"> · {{ fmtDate(vm.expires_at) }}</span>
-            </dd>
-          </div>
-        </dl>
-      </section>
 
       <section aria-labelledby="ports-heading" class="mt-4 rounded-lg border border-border p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
@@ -2203,6 +2170,28 @@ async function removeDomain() {
           </DataTable>
         </template>
       </section>
+
+      <dl class="mt-6 flex flex-wrap gap-x-6 gap-y-2 text-xs text-muted-foreground">
+        <div class="flex gap-1.5">
+          <dt>Created</dt>
+          <dd class="text-foreground">{{ fmtDate(vm.created_at) }}</dd>
+        </div>
+        <div class="flex gap-1.5">
+          <dt>Started</dt>
+          <dd class="text-foreground">{{ fmtDate(vm.started_at) }}</dd>
+        </div>
+        <div class="flex gap-1.5">
+          <dt>Last confirmed by host</dt>
+          <dd class="text-foreground">{{ fmtDate(vm.reported_at) }}</dd>
+        </div>
+        <div v-if="vm.expires_at" class="flex gap-1.5">
+          <dt>Destroyed</dt>
+          <dd :class="timeLeft(vm.expires_at) === 'overdue' ? 'text-destructive' : 'text-foreground'">
+            {{ timeLeft(vm.expires_at) === 'overdue' ? 'overdue' : `in ${timeLeft(vm.expires_at)}` }}
+            · {{ fmtDate(vm.expires_at) }}
+          </dd>
+        </div>
+      </dl>
     </template>
 
     <Dialog v-model:open="deleteOpen">
