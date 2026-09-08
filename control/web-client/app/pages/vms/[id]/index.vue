@@ -193,7 +193,16 @@ async function loadTargets() {
 const deniedLoading = ref(true)
 const deniedFirstLoad = ref(true)
 
-const deniedSeconds = ref('')
+const deniedWindows = [
+  { value: '300', label: 'Last 5 minutes' },
+  { value: '900', label: 'Last 15 minutes' },
+  { value: '3600', label: 'Last hour' },
+  { value: '21600', label: 'Last 6 hours' },
+  { value: '86400', label: 'Last 24 hours' },
+  { value: '604800', label: 'Last 7 days' },
+]
+
+const deniedSeconds = ref('604800')
 
 async function loadDenied() {
   deniedLoading.value = true
@@ -2127,28 +2136,19 @@ async function removeDomain() {
       </section>
 
       <section aria-labelledby="denied-heading" class="mt-4 rounded-lg border border-border">
-        <div class="flex flex-wrap items-start justify-between gap-3 p-4">
-          <div>
-            <h2 id="denied-heading" class="text-sm font-semibold">Denied destinations</h2>
-          </div>
+        <div class="flex flex-wrap items-center justify-between gap-3 p-4">
+          <h2 id="denied-heading" class="text-sm font-semibold">Denied destinations</h2>
           <div class="flex items-center gap-2">
-            <Label for="denied-seconds" class="font-mono text-xs whitespace-nowrap text-muted-foreground">
-              Last
-            </Label>
-            <Input
-              id="denied-seconds"
-              v-model="deniedSeconds"
-              type="number"
-              min="1"
-              step="1"
-              inputmode="numeric"
-              placeholder="all"
-              class="h-8 w-24 font-mono text-xs"
-              aria-label="Show denied attempts from the last n seconds"
-              @change="refreshDenied"
-              @keydown.enter.prevent="refreshDenied"
-            />
-            <span class="font-mono text-xs text-muted-foreground">s</span>
+            <Select v-model="deniedSeconds" @update:model-value="refreshDenied">
+              <SelectTrigger id="denied-window" class="h-8 w-40 font-mono text-xs" aria-label="Time window">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem v-for="w in deniedWindows" :key="w.value" :value="w.value" class="font-mono text-xs">
+                  {{ w.label }}
+                </SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               variant="outline"
               size="sm"
