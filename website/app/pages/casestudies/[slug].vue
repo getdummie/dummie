@@ -14,7 +14,12 @@ if (!page.value) {
 }
 
 useHead({ title: `dummie — ${page.value.title}` })
-useSeoMeta({ description: page.value.description })
+useSeoMeta({
+  description: page.value.description,
+  ogTitle: `dummie — ${page.value.title}`,
+  ogDescription: page.value.description,
+  ogType: 'article',
+})
 
 const published = computed(() =>
   page.value?.date

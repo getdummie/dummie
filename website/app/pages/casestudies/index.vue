@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ArrowRight } from '@lucide/vue'
 
+const description = 'Worked examples of running untrusted and AI-generated code on a throwaway machine.'
+
 useHead({ title: 'dummie — case studies' })
 useSeoMeta({
-  description:
-    'Worked examples of running untrusted and AI-generated code on dummie: the API calls, the script, and the things that bite.',
+  description,
+  ogTitle: 'dummie — case studies',
+  ogDescription: description,
 })
 
 const { data: studies } = await useAsyncData('casestudies', () =>

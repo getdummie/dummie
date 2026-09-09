@@ -3,10 +3,13 @@ import { ArrowRight, BookOpen } from '@lucide/vue'
 
 const { consoleUrl } = useRuntimeConfig().public
 
+const description = 'Self-host dummie and see how the control plane, hosts and microVMs fit together.'
+
 useHead({ title: 'dummie — docs' })
 useSeoMeta({
-  description:
-    'Self-host dummie, understand how the control plane, hosts and microVMs fit together, and read the concepts behind the runtime.',
+  description,
+  ogTitle: 'dummie — docs',
+  ogDescription: description,
 })
 
 const { data: pages } = await useAsyncData('docs-index', () =>

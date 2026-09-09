@@ -25,6 +25,7 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       consoleUrl: (process.env.CONSOLE_URL || 'http://localhost:1323').replace(/\/+$/, ''),
+      siteUrl: (process.env.SITE_URL || 'https://dummie.dev').replace(/\/+$/, ''),
     },
   },
 

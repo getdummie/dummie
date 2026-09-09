@@ -15,6 +15,9 @@ node_modules
 logs
 *.log
 
+# Rasterised from public/og.svg by the Dockerfile
+public/og.png
+
 # Misc
 .DS_Store
 .fleet

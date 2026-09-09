@@ -4,15 +4,13 @@ import { Button } from '@/components/ui/button'
 
 const { consoleUrl } = useRuntimeConfig().public
 
-useHead({
-  title: 'dummie — secure computers for everyone',
-  meta: [
-    {
-      name: 'description',
-      content:
-        'dummie gives you your own computer in the cloud. Ready in seconds, sealed off from everything else, and yours to keep running for as long as you need it.',
-    },
-  ],
+const description = 'Your own computer in the cloud. Ready in seconds, sealed off from everything else, and yours for as long as you need.'
+
+useHead({ title: 'dummie — secure computers for everyone' })
+useSeoMeta({
+  description,
+  ogTitle: 'dummie — secure computers for everyone',
+  ogDescription: description,
 })
 </script>
 

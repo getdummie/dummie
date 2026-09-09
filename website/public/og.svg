@@ -1,0 +1,45 @@
+<svg width="1200" height="630" viewBox="0 0 1200 630" xmlns="http://www.w3.org/2000/svg" fill="none">
+  <!-- Source for public/og.png. Crawlers do not accept SVG as og:image, so this
+       file is converted, not linked: rsvg-convert -w 1200 -h 630 og.svg > og.png -->
+  <defs>
+    <pattern id="grid" width="44" height="44" patternUnits="userSpaceOnUse">
+      <path d="M44 0H0V44" stroke="#E4E9E7" stroke-width="1"/>
+    </pattern>
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#fff" stop-opacity="1"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#FFFFFF"/>
+  <rect width="1200" height="630" fill="url(#grid)"/>
+  <rect y="240" width="1200" height="390" fill="url(#fade)"/>
+
+  <g transform="translate(80 74)">
+    <rect width="60" height="60" rx="13" fill="#48D597"/>
+    <g transform="translate(30 30) scale(0.516) translate(-50 -50)" stroke="#0B1A1E">
+      <circle cx="50" cy="50" r="44" stroke-width="5"/>
+      <line x1="28" y1="39" x2="72" y2="39" stroke-width="1.5"/>
+      <polygon points="50,27 72,39 50,51 28,39" fill="#0B1A1E" stroke="none"/>
+      <line x1="50" y1="27" x2="50" y2="51" stroke-width="1.5"/>
+    </g>
+    <text x="80" y="41" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="30" font-weight="600" fill="#0B1A1E">
+      dummie<tspan fill="#2F9E72">/</tspan>
+    </text>
+  </g>
+
+  <text x="80" y="300" font-family="Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#0B1A1E">Secure computers</text>
+  <text x="80" y="386" font-family="Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#6B7674">for everyone</text>
+
+  <g transform="translate(80 470)">
+    <rect width="440" height="1" fill="#DCE2E0"/>
+    <text y="52" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="24" letter-spacing="1" fill="#5A6664">
+      Your own machine, booted in seconds.
+    </text>
+  </g>
+
+  <g transform="translate(80 556)">
+    <rect width="14" height="14" rx="2" fill="#48D597"/>
+    <text x="30" y="13" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="19" letter-spacing="3" fill="#2F9E72">ISOLATED BY DEFAULT</text>
+  </g>
+</svg>
