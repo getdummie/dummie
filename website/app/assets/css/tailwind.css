@@ -491,6 +491,15 @@
     to { opacity: 1; transform: none; }
   }
 
+  .anim-line-glide {
+    animation: dm-line-glide 5s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+  }
+  @keyframes dm-line-glide {
+    0% { transform: translateY(-100%); opacity: 0; }
+    20%, 80% { opacity: 1; }
+    100% { transform: translateY(300%); opacity: 0; }
+  }
+
   .anim-float {
     animation: dm-float 4s ease-in-out infinite;
   }
@@ -509,6 +518,7 @@
     .anim-scan { display: none; }
     .anim-travel,
     .anim-travel-block,
+    .anim-line-glide,
     .anim-sweep::after { display: none; }
   }
 

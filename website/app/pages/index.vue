@@ -55,21 +55,7 @@ useHead({
       </div>
     </section>
 
-    <section id="usecases" aria-labelledby="usecases-heading" class="panel border-b border-border">
-      <div class="mx-auto w-full max-w-6xl px-4 pt-14 sm:px-6">
-        <p v-reveal class="eyebrow mb-4 text-primary-text">// What it's for</p>
-        <h2
-          id="usecases-heading"
-          v-reveal="60"
-          class="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl"
-        >
-          One computer, plenty of uses.
-        </h2>
-      </div>
-      <div v-reveal="120" class="mx-auto mt-8 w-full max-w-6xl px-4 pb-14 sm:px-6">
-        <UseCaseGrid />
-      </div>
-    </section>
+    <UseCaseSections />
 
     <section id="security" aria-labelledby="security-heading" class="panel border-b border-border">
       <div class="mx-auto w-full max-w-6xl px-4 pt-14 sm:px-6">
