@@ -1778,7 +1778,7 @@
         },
         "/vms": {
             "get": {
-                "description": "Scoped to you by the query itself. url, console_url and desktop_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.",
+                "description": "Scoped to you by the query itself. console_url and desktop_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.",
                 "parameters": [
                     {
                         "description": "1-100",

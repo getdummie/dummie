@@ -68,6 +68,40 @@ func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
 	return ""
 }
 
+// fillVMURLs resolves url for a whole page. The tld hangs off the vm's client,
+// not the vm, so the domain list is read once and each client only once.
+func (h *UserHandler) fillVMURLs(ctx context.Context, rows []db.Vm, items []vmDTO) {
+	domains, err := h.q.ListDomains(ctx)
+	if err != nil {
+		return
+	}
+	scheme := "http"
+	if h.prod {
+		scheme = "https"
+	}
+	tlds := make(map[pgtype.UUID]string, 1)
+	for i, v := range rows {
+		if v.Name == "" || i >= len(items) {
+			continue
+		}
+		tld, seen := tlds[v.ClientID]
+		if !seen {
+			if client, err := h.q.GetClientByID(ctx, v.ClientID); err == nil && client.DomainID.Valid {
+				for _, d := range domains {
+					if d.ID == client.DomainID {
+						tld = d.TLD
+						break
+					}
+				}
+			}
+			tlds[v.ClientID] = tld
+		}
+		if tld != "" {
+			items[i].URL = fmt.Sprintf("%s://%s.%s", scheme, v.Name, tld)
+		}
+	}
+}
+
 func callerID(c *echo.Context) (pgtype.UUID, error) {
 	uid, _ := c.Get("uid").(string)
 	if uid == "" {
@@ -77,7 +111,7 @@ func callerID(c *echo.Context) (pgtype.UUID, error) {
 }
 
 // @Summary     List your VMs
-// @Description Scoped to you by the query itself. url, console_url and desktop_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.
+// @Description Scoped to you by the query itself. console_url and desktop_url are empty here: resolving them would be a query per row, so ask for a single VM when you need them.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
@@ -107,6 +141,7 @@ func (h *UserHandler) ListVMs(c *echo.Context) error {
 	for _, v := range rows {
 		items = append(items, toVMDTO(v))
 	}
+	h.fillVMURLs(ctx, rows, items)
 	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }
