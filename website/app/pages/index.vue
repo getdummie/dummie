@@ -57,21 +57,7 @@ useHead({
 
     <UseCaseSections />
 
-    <section id="security" aria-labelledby="security-heading" class="panel border-b border-border">
-      <div class="mx-auto w-full max-w-6xl px-4 pt-14 sm:px-6">
-        <p v-reveal class="eyebrow mb-4 text-primary-text">// The deal</p>
-        <h2
-          id="security-heading"
-          v-reveal="60"
-          class="max-w-2xl text-balance text-3xl font-semibold tracking-tight sm:text-4xl"
-        >
-          You build. We handle the walls.
-        </h2>
-      </div>
-      <div v-reveal="120" class="mx-auto mt-10 w-full max-w-6xl px-4 pb-14 sm:px-6">
-        <SecurityPanels />
-      </div>
-    </section>
+    <SecurityPanels />
 
     <section aria-labelledby="cta-heading" class="panel relative overflow-hidden">
       <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-40" />
