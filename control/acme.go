@@ -43,6 +43,17 @@ const (
 
 const acmeChallengeTimeout = 30 * time.Minute
 
+// The host's resolver may sit behind a split-horizon zone whose NS records point
+// somewhere that knows nothing about the public zone, so resolve challenges publicly.
+var acmeDefaultResolvers = []string{"1.1.1.1:53", "8.8.8.8:53"}
+
+func acmeResolvers() []string {
+	if v := strings.TrimSpace(os.Getenv("ACME_DNS_RESOLVERS")); v != "" {
+		return dns01.ParseNameservers(strings.Split(v, ","))
+	}
+	return acmeDefaultResolvers
+}
+
 const certRenewBefore = 30 * 24 * time.Hour
 
 func validCertMode(s string) bool {
@@ -260,6 +271,11 @@ func (ci *certIssuer) obtain(ctx context.Context, domain db.Domain, p *pendingOr
 }
 
 func (ci *certIssuer) dnsProvider(domain db.Domain, p *pendingOrder) (challenge.Provider, []dns01.ChallengeOption, error) {
+	base := []dns01.ChallengeOption{
+		dns01.AddRecursiveNameservers(acmeResolvers()),
+		dns01.DisableAuthoritativeNssPropagationRequirement(),
+	}
+
 	switch domain.CertMode {
 	case certModeACMECloudflare:
 		var creds struct {
@@ -277,11 +293,11 @@ func (ci *certIssuer) dnsProvider(domain db.Domain, p *pendingOrder) (challenge.
 		if err != nil {
 			return nil, nil, fmt.Errorf("could not set up the cloudflare provider: %w", err)
 		}
-		return provider, nil, nil
+		return provider, base, nil
 
 	case certModeACMEManual:
 		m := &manualProvider{order: p}
-		return m, []dns01.ChallengeOption{dns01.WrapPreCheck(m.manualPreCheck)}, nil
+		return m, append(base, dns01.WrapPreCheck(m.manualPreCheck)), nil
 	}
 	return nil, nil, fmt.Errorf("%q is not a mode that asks a ca for anything", domain.CertMode)
 }
