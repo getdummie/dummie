@@ -6,7 +6,7 @@
 
 <p align="center">
   Secure computers for everyone.<br>
-  A real microVM of your own — booted in seconds, sealed off from everything else,<br>
+  VM booted in seconds, sealed off from everything else,<br>
   and yours for as long as you need it.
 </p>
 

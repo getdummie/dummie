@@ -112,3 +112,28 @@ Archlinux Setup
 pacman -Syyu ncdu neovim sudo btop htop qemu-base qemu-img docker
 sudo systemctl enable --now docker
 ```
+
+Ubuntu Setup
+
+```sh
+sudo apt install -y ncdu neovim sudo btop htop qemu-utils qemu-system-x86
+wget https://github.com/getdummie/dummie/releases/download/v0.0.26/dclient_0.0.26_linux_amd64.tar.gz
+tar -xvf dclient_0.0.26_linux_amd64.tar.gz
+sudo mv dclient /usr/local/bin/.
+
+# change default ssh port
+sudo tee /etc/systemd/system/ssh.socket.d/override.conf > /dev/null <<'EOF'
+[Socket]
+ListenStream=
+ListenStream=0.0.0.0:2202
+ListenStream=[::]:2202
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart ssh.socket
+
+# check doctor
+dclient doctor
+```
+
+dclient connect --control-url https://dummie-ww.zerodha.io --key 3bDZ-6kdPPDsStpnGQlOoikJ6LdVxVF_WJ1gVuTEjtw
