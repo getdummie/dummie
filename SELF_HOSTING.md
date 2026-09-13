@@ -86,3 +86,8 @@ EOF
 
 sudo dclient install
 ```
+
+## FAQ
+
+- Can I run systemd-resolved on the qemu-host?
+Yes. CoreDNS does not bind 0.0.0.0, it binds only the gateway address of the VM network (10.64.0.1:53), which is what guests are pointed at for DNS.
