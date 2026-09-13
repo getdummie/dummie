@@ -181,6 +181,39 @@ func removeTap(name string) error {
 	return netlink.LinkDel(link)
 }
 
+// ensureGatewayAddr keeps the gateway address on lo so it exists before any vm
+// does. configureTap adds the same address to every tap, which is what guests
+// route through; this copy exists only so coredns has something to bind at
+// startup on a host with nothing running yet.
+func ensureGatewayAddr(gateway string) error {
+	lo, err := netlink.LinkByName("lo")
+	if err != nil {
+		return fmt.Errorf("could not find the loopback interface: %w", err)
+	}
+	addr, err := netlink.ParseAddr(gateway + "/32")
+	if err != nil {
+		return err
+	}
+	if err := netlink.AddrReplace(lo, addr); err != nil {
+		return fmt.Errorf("could not add %s to lo: %w", gateway, err)
+	}
+	return nil
+}
+
+func removeGatewayAddr(gateway string) {
+	lo, err := netlink.LinkByName("lo")
+	if err != nil {
+		return
+	}
+	addr, err := netlink.ParseAddr(gateway + "/32")
+	if err != nil {
+		return
+	}
+	if err := netlink.AddrDel(lo, addr); err == nil {
+		fmt.Println("removed " + gateway + " from lo")
+	}
+}
+
 func defaultUplink() (string, error) {
 	probe := net.IPv4(1, 1, 1, 1)
 	if routes, err := netlink.RouteGet(probe); err == nil {

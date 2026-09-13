@@ -30,13 +30,19 @@ func TestGenerateCoreDNSConfigAlwaysRefuses(t *testing.T) {
 	}
 }
 
-func TestGenerateCoreDNSConfigBindsNothing(t *testing.T) {
+// Every block binds the gateway so the host's own resolver keeps 127.0.0.53:53.
+// A block that forgot to would take the wildcard and collide with it, and the
+// collision only shows up on a host where something else already holds :53.
+func TestGenerateCoreDNSConfigBindsEveryBlock(t *testing.T) {
 	out := generateCoreDNSConfig([]db.ListVMNetworkTargetsByClientRow{
 		row("10.0.0.2", "alpha", "domain", "example.com", "", ""),
+		row("10.0.0.3", "beta", "ip", targetEverywhere, "any", ""),
 	}, "1.1.1.1", "example.test")
 
-	if strings.Contains(out, "bind ") {
-		t.Errorf("a server block binds an address; the gateway does not exist until a vm does:\n%s", out)
+	blocks := strings.Count(out, ":53 {")
+	if got := strings.Count(out, corednsBindDirective); got != blocks {
+		t.Errorf("%d of %d server blocks bind the gateway; the rest take the wildcard:\n%s",
+			got, blocks, out)
 	}
 }
 
@@ -102,7 +108,7 @@ func TestGenerateCoreDNSConfigForwardsEveryNameWhenEverythingIsAllowed(t *testin
 	}
 	out := generateCoreDNSConfig(rows, "1.1.1.1", "example.test")
 
-	if !strings.Contains(out, ".:53 {\n    view vm_10_0_0_2_allow {") {
+	if !strings.Contains(out, ".:53 {\n"+corednsBindDirective+"    view vm_10_0_0_2_allow {") {
 		t.Errorf("the open vm did not get a forwarder for the root zone:\n%s", out)
 	}
 	if strings.Contains(out, "vm_10_0_0_2_deny") {

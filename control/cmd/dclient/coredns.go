@@ -21,6 +21,11 @@ const (
 
 	corednsConfigDir = "/etc/coredns"
 	corednsLogDir    = "/var/log/coredns"
+
+	// Every server block binds this rather than the wildcard, so the host's own
+	// resolver keeps 127.0.0.53:53. The control server writes the reference into
+	// the corefile without knowing the address; dclient supplies the value here.
+	corednsBindEnv = "COREDNS_BIND"
 )
 
 var corefilePath = filepath.Join(corednsConfigDir, "Corefile")
@@ -37,7 +42,7 @@ func ensureCoreDNS(cfg netConfig) {
 
 	switch state := containerState(docker, corednsContainer); state {
 	case "running":
-		drift := corednsDrift(docker)
+		drift := corednsDrift(docker, cfg.Gateway)
 		if drift == "" {
 			return
 		}
@@ -64,7 +69,7 @@ func ensureCoreDNS(cfg netConfig) {
 		return
 	}
 
-	args := corednsRunArgs(defaultCoreDNSImage)
+	args := corednsRunArgs(defaultCoreDNSImage, cfg.Gateway)
 	if out, err := exec.Command(docker, args...).CombinedOutput(); err != nil {
 		log.Printf("could not start coredns (docker %s): %v: %s",
 			strings.Join(args, " "), err, strings.TrimSpace(string(out)))
@@ -74,7 +79,7 @@ func ensureCoreDNS(cfg netConfig) {
 	time.Sleep(500 * time.Millisecond)
 	if state := containerState(docker, corednsContainer); state != "running" {
 		log.Printf("coredns was started but is already %q; run it in the foreground to see why: docker run --rm %s",
-			state, strings.Join(corednsForegroundArgs(defaultCoreDNSImage), " "))
+			state, strings.Join(corednsForegroundArgs(defaultCoreDNSImage, cfg.Gateway), " "))
 		return
 	}
 	log.Print("started the coredns container")
@@ -88,6 +93,7 @@ const bootstrapCorefile = `# Written by dclient when this file is missing. It is
 # Refuse everything. dclient does not know what any guest may resolve; only the
 # control server does. Until it says otherwise, no name resolves.
 .:53 {
+    bind {$` + corednsBindEnv + `}
     template ANY ANY {
         rcode REFUSED
     }
@@ -124,11 +130,12 @@ func reloadCoreDNS(ctx context.Context) error {
 	return nil
 }
 
-func corednsDrift(docker string) string {
+func corednsDrift(docker, bind string) string {
 	var got struct {
 		Config struct {
 			Image string
 			Cmd   []string
+			Env   []string
 		}
 	}
 	out, err := exec.Command(docker, "inspect", corednsContainer).Output()
@@ -150,6 +157,9 @@ func corednsDrift(docker string) string {
 	if got.Config.Image != defaultCoreDNSImage {
 		return fmt.Sprintf("is running %s but dclient expects %s", got.Config.Image, defaultCoreDNSImage)
 	}
+	if want := corednsBindEnv + "=" + bind; !slices.Contains(got.Config.Env, want) {
+		return fmt.Sprintf("was not started with %s", want)
+	}
 	return ""
 }
 
@@ -165,18 +175,19 @@ func corednsCmd() []string {
 	return []string{"-conf", corefilePath}
 }
 
-func corednsRunArgs(image string) []string {
+func corednsRunArgs(image, bind string) []string {
 	args := []string{
 		"run", "-d", "--rm",
 		"--name", corednsContainer,
 	}
-	return append(args, corednsForegroundArgs(image)...)
+	return append(args, corednsForegroundArgs(image, bind)...)
 }
 
-func corednsForegroundArgs(image string) []string {
+func corednsForegroundArgs(image, bind string) []string {
 	args := []string{
 		"--network", "host",
 		"--cap-add", "NET_BIND_SERVICE",
+		"-e", corednsBindEnv + "=" + bind,
 		"-v", corednsConfigDir + ":" + corednsConfigDir,
 		"-v", corednsLogDir + ":" + corednsLogDir,
 		image,

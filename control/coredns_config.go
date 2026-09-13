@@ -15,12 +15,17 @@ import (
 )
 
 const corednsRefuseAll = `.:53 {
-    template ANY ANY {
+` + corednsBindDirective + `    template ANY ANY {
         rcode REFUSED
     }
 ` + corednsLogDirective + `    errors
 }
 `
+
+// Binding the gateway rather than the wildcard leaves 127.0.0.53:53 to the
+// host's own resolver. dclient knows the address and passes it in as
+// COREDNS_BIND; coredns substitutes {$VAR} when it parses the corefile.
+const corednsBindDirective = "    bind {$COREDNS_BIND}\n"
 
 const corednsLogMarker = "dclientdns"
 
@@ -51,8 +56,8 @@ func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream, 
 		if vm.allowAll {
 			fmt.Fprintf(&b, "\n# --- %s (%s) at %s may resolve anything (%s is allowed) ---\n",
 				corefileText(vm.name), corefileText(vm.hostID), vm.ip, targetEverywhere)
-			fmt.Fprintf(&b, ".:53 {\n    view %s {\n        expr client_ip() == '%s'\n    }\n",
-				viewName(vm.ip, "allow"), vm.ip)
+			fmt.Fprintf(&b, ".:53 {\n%s    view %s {\n        expr client_ip() == '%s'\n    }\n",
+				corednsBindDirective, viewName(vm.ip, "allow"), vm.ip)
 			fmt.Fprintf(&b, "    forward . %s\n", upstream)
 			b.WriteString("    cache 30\n")
 			b.WriteString(corednsLogDirective)
@@ -71,14 +76,15 @@ func generateCoreDNSConfig(rows []db.ListVMNetworkTargetsByClientRow, upstream, 
 			corefileText(vm.name), corefileText(vm.hostID), vm.ip)
 
 		fmt.Fprintf(&b, "%s:53 {\n", strings.Join(zones, ":53 "))
+		b.WriteString(corednsBindDirective)
 		fmt.Fprintf(&b, "    view %s {\n        expr client_ip() == '%s'\n    }\n", viewName(vm.ip, "allow"), vm.ip)
 		fmt.Fprintf(&b, "    forward . %s\n", upstream)
 		b.WriteString("    cache 30\n")
 		b.WriteString(corednsLogDirective)
 		b.WriteString("    errors\n}\n")
 
-		fmt.Fprintf(&b, ".:53 {\n    view %s {\n        expr client_ip() == '%s'\n    }\n",
-			viewName(vm.ip, "deny"), vm.ip)
+		fmt.Fprintf(&b, ".:53 {\n%s    view %s {\n        expr client_ip() == '%s'\n    }\n",
+			corednsBindDirective, viewName(vm.ip, "deny"), vm.ip)
 		b.WriteString("    template ANY ANY {\n        rcode REFUSED\n    }\n")
 		b.WriteString(corednsLogDirective)
 		b.WriteString("    errors\n}\n")
@@ -103,6 +109,7 @@ func writeCoreDNSIntegrationZone(b *strings.Builder, tld string) {
 	zone := proxyIntLabel + "." + tld
 	fmt.Fprintf(b, "\n# --- %s: this host's integration proxy ---\n", zone)
 	fmt.Fprintf(b, "%s:53 {\n", zone)
+	b.WriteString(corednsBindDirective)
 	fmt.Fprintf(b, "    template IN A %s {\n", zone)
 	fmt.Fprintf(b, "        answer \"{{ .Name }} 60 IN A %s\"\n", intproxyAddr)
 	b.WriteString("    }\n")

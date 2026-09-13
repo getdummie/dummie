@@ -132,6 +132,11 @@ func reconcile(data string, cfg netConfig) error {
 		ensureDockerCompat()
 	}
 	ensureSuricata(cfg)
+	if cfg.Suricata {
+		if err := ensureGatewayAddr(cfg.Gateway); err != nil {
+			log.Printf("WARNING: %v; coredns will not be able to bind it", err)
+		}
+	}
 	ensureCoreDNS(cfg)
 	if err := ensureIntproxyAddr(); err != nil {
 		log.Printf("WARNING: %v", err)
@@ -306,6 +311,9 @@ func runTeardown(data string) error {
 	}
 	if msg := stopCoreDNS(); msg != "" {
 		fmt.Println(msg)
+	}
+	if cfg, err := loadNetConfig(data); err == nil {
+		removeGatewayAddr(cfg.Gateway)
 	}
 
 	taps, err := removeStrayTaps()
