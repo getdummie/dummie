@@ -65,6 +65,16 @@ stream:
 # Turning the other parsers off here would not make the rule safer; it would make
 # it blunt, and take every non-web protocol's identity out of the logs with it.
 app-layer:
+  # A gap is normal here and must not be fatal. Only one direction is queued and
+  # ips mode cannot wait for a retransmission, so a reordered packet inside a
+  # long flow is reported to the parser as a gap; at the default that kills the
+  # flow, in the app-layer stage -- before detection, so it overrides a pass.
+  #
+  # Nothing is lost by ignoring it. Every verdict this policy makes is reached in
+  # the first few packets of a flow: the sni in the clienthello, the host in the
+  # request line, or the port and address at the syn.
+  error-policy: ignore
+
   protocols:
     http:
       enabled: yes
@@ -80,6 +90,14 @@ app-layer:
       enabled: yes
       detection-ports:
         dp: 443
+      # Stop reassembling the flow once the cipher spec changes. The default
+      # waits for a handshake to complete, which needs the server's half --
+      # never queued here -- so it instead keeps reassembling every encrypted
+      # record a guest sends. In ips mode the stream engine cannot wait for a
+      # retransmission, so ordinary reordering inside a long upload reads as a
+      # permanent gap, and a gap is a parser error. The sni this policy matches
+      # on is in the clienthello, long before this point.
+      encryption-handling: bypass
     dns:
       tcp:
         enabled: yes
