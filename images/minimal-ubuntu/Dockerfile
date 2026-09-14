@@ -24,6 +24,7 @@ RUN set -ex \
     neovim \
     udev \
     rsync \
+    lsof \
   && apt clean \
   && systemctl enable ssh \
   && systemctl enable systemd-resolved \
