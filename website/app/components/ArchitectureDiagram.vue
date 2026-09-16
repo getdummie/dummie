@@ -60,9 +60,9 @@ const nodes: Node[] = [
     kind: 'client',
     sub: 'the only thing users address',
     where: 'anywhere',
-    summary: 'Everything a person or a program talks to is the control plane. Nothing outside ever addresses a host directly.',
+    summary: 'Everything a person or a program talks to is the control plane. No APIs ever addresses a host directly.',
     points: [
-      'The console, the SDKs and the CLI all speak the same public API.',
+      'The web console, the SDKs and the CLI all speak the same public API.',
       'Guest traffic is the one exception: ssh and https to a VM go straight to the host that runs it.',
     ],
   },
@@ -72,12 +72,10 @@ const nodes: Node[] = [
     kind: 'binary',
     sub: 'API · console · spec · migrations',
     where: 'control plane · Go binary',
-    summary: 'One binary that is the whole deployment: HTTP API, web console, OpenAPI document and both sets of database migrations are embedded in it.',
+    summary: 'One binary that is the main brain: HTTP API, web console, OpenAPI document and both sets of database migrations are embedded in it.',
     points: [
       'Serves the API at /api/v1 and the console at console.<your-domain>.',
-      'Decides what should exist and hands that intent to a host — it never runs a guest itself.',
-      'Holds the GitHub App private key, which never leaves it.',
-      'Stateless with respect to guests: hosts reconcile toward the records it keeps.',
+      'Hosts reconcile toward the records it keeps.',
     ],
   },
   {
@@ -119,10 +117,8 @@ const nodes: Node[] = [
     kind: 'host',
     sub: 'one of many · reconciles toward control',
     where: 'the fleet',
-    summary: 'A machine that actually boots sandboxes. Every host runs the same set of services, and a host that goes silent simply stops being given work.',
+    summary: 'A machine that actually boots sandboxes. Every host runs the same set of services',
     points: [
-      'The VMs on a silent host are reaped by their TTL — no manual cleanup.',
-      'Locally, a nested-virtualisation VM built from nix-vms/ stands in for a real host.',
     ],
   },
   {
@@ -133,10 +129,9 @@ const nodes: Node[] = [
     where: 'QEMU host · agent',
     summary: 'The host\'s agent. It registers with the control plane, receives the work assigned to it, and owns every local service that makes a sandbox work.',
     points: [
-      'Builds a rootfs from an ordinary OCI image and boots a QEMU microVM against the in-tree kernel.',
+      'Builds a rootfs from an ordinary OCI image and boots a QEMU microVM against the in-tree kernel',
       'Installs the nftables ruleset, runs CoreDNS and suricata, and writes the config for dproxy, dpipe and intproxy.',
       'Brokers integration tokens on behalf of intproxy, so the host\'s bearer token stays inside dclient.',
-      'That token is the host\'s whole identity — it can create and destroy VMs.',
     ],
   },
   {
@@ -163,7 +158,7 @@ const nodes: Node[] = [
     points: [
       'Byte-opaque for TCP and HTTP; terminates SSH and TLS, the two protocols that cannot be fd-passed once encrypted.',
       'Because it owns the descriptor rather than dproxy, a dproxy restart or crash does not drop a live session.',
-      'This is the split worth understanding: connection lifetime is decoupled from the lifetime of the process that accepted it.',
+      'dpipe restarts are also gracefully handled by creating a new dpipe process and reaping the old dpipe process only after all existing connections have been terminated',
     ],
   },
   {

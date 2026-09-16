@@ -7,16 +7,16 @@ const description = 'How the control plane, the QEMU hosts, the proxies and the 
 // Wrap anything in backticks to render it as inline code.
 const notes = [
   {
-    title: 'Restarts do not drop sessions',
+    title: 'Upgrades do not drop SSH',
     body: '`dpipe` owns the file descriptor, not `dproxy`. Connection lifetime is deliberately decoupled from the lifetime of the process that accepted it, so shipping a new `dproxy` disconnects nobody.',
   },
   {
-    title: 'A credential never reaches a guest',
-    body: '`intproxy` identifies a VM by the source address of its connection, which `nftables` makes trustworthy, then asks `dclient` for a token scoped to that one repository. The GitHub App private key never leaves the control server.',
+    title: 'Guest do not need any credentials',
+    body: 'Credentials are injected in realtime into requests by intproxy, so the guest VMs can operate without having any keys on them',
   },
   {
-    title: 'Hosts reconcile, they are not driven',
-    body: 'The control plane records what should exist. A host that goes silent simply stops being given work, and the VMs it was running are reaped by their TTL — there is no operator step in the middle.',
+    title: 'Restarts do not disconnect anyone',
+    body: 'Every single compoenet (with the obvious exception of microVMs) can be restarted without affecting workloads running on the VM',
   },
 ]
 
