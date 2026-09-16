@@ -50,7 +50,7 @@ const connection = computed(() => {
 
 const quickKeys = [
   { label: 'Tab', data: '\t' },
-  { label: 'Ctrl+C', data: '\x03' },
+  { label: 'Ctrl+c', data: '\x03' },
 ]
 
 const pasteError = ref<string | null>(null)
@@ -62,9 +62,43 @@ function showPasteError(msg: string) {
   pasteErrorTimer = setTimeout(() => (pasteError.value = null), 4000)
 }
 
-function sendKeys(data: string) {
-  terminal.value?.send(data)
+const modifiers = [
+  { label: 'Ctrl', key: 'ctrlArmed' },
+  { label: 'Shift', key: 'shiftArmed' },
+] as const
+
+function armed(key: 'ctrlArmed' | 'shiftArmed') {
+  return terminal.value?.[key] ?? false
+}
+
+function toggleModifier(key: 'ctrlArmed' | 'shiftArmed') {
+  const t = terminal.value
+  if (!t) return
+  t[key] = !t[key]
+  t.focus()
+}
+
+const flashed = ref<string | null>(null)
+let flashTimer: ReturnType<typeof setTimeout> | undefined
+
+function flashClass(label: string) {
+  // dark: variants too — the outline variant's own dark:bg-input/30 would
+  // otherwise win over an unprefixed background.
+  return flashed.value === label
+    ? 'border-emerald-500 bg-emerald-500 text-white dark:border-emerald-500 dark:bg-emerald-500'
+    : ''
+}
+
+function flash(label: string) {
+  flashed.value = label
+  clearTimeout(flashTimer)
+  flashTimer = setTimeout(() => (flashed.value = null), 100)
+}
+
+function sendKeys(key: { label: string, data: string }) {
+  terminal.value?.send(key.data)
   terminal.value?.focus()
+  flash(key.label)
 }
 
 async function paste() {
@@ -72,13 +106,17 @@ async function paste() {
     const text = await navigator.clipboard.readText()
     if (text) terminal.value?.send(text)
     terminal.value?.focus()
+    flash('Paste')
   }
   catch {
     showPasteError('The browser would not hand over the clipboard. Long-press the terminal to paste instead.')
   }
 }
 
-onBeforeUnmount(() => clearTimeout(pasteErrorTimer))
+onBeforeUnmount(() => {
+  clearTimeout(pasteErrorTimer)
+  clearTimeout(flashTimer)
+})
 </script>
 
 <template>
@@ -128,28 +166,43 @@ onBeforeUnmount(() => clearTimeout(pasteErrorTimer))
       <p v-if="pasteError" class="px-3 pt-2 font-mono text-xs text-muted-foreground">
         {{ pasteError }}
       </p>
-      <div class="flex items-center gap-2 px-3 py-2">
+      <div class="flex items-center gap-1.5 px-3 py-2">
         <Button
           v-for="key in quickKeys"
           :key="key.label"
           variant="outline"
           size="sm"
-          class="flex-1 font-mono text-xs"
+          class="flex-1 px-1 font-mono text-xs transition-colors"
+          :class="flashClass(key.label)"
           :disabled="phase !== 'open'"
           @mousedown.prevent
-          @click="sendKeys(key.data)"
+          @click="sendKeys(key)"
         >
           {{ key.label }}
         </Button>
         <Button
           variant="outline"
           size="sm"
-          class="flex-1 font-mono text-xs"
+          class="flex-1 px-1 font-mono text-xs transition-colors"
+          :class="flashClass('Paste')"
           :disabled="phase !== 'open'"
           @mousedown.prevent
           @click="paste()"
         >
           Paste
+        </Button>
+        <Button
+          v-for="mod in modifiers"
+          :key="mod.key"
+          :variant="armed(mod.key) ? 'default' : 'outline'"
+          size="sm"
+          class="flex-1 px-1 font-mono text-xs"
+          :disabled="phase !== 'open'"
+          :aria-pressed="armed(mod.key)"
+          @mousedown.prevent
+          @click="toggleModifier(mod.key)"
+        >
+          {{ mod.label }}
         </Button>
       </div>
     </div>

@@ -169,6 +169,29 @@ function focus() {
   term?.focus()
 }
 
+// Armed by the mobile modifier keys. Mapped over the data stream rather than
+// over keydown, because virtual keyboards report keydown as 229/Unidentified.
+const ctrlArmed = ref(false)
+const shiftArmed = ref(false)
+
+function applyModifiers(input: string): string {
+  const ctrl = ctrlArmed.value
+  const shift = shiftArmed.value
+  if (!ctrl && !shift) return input
+  ctrlArmed.value = false
+  shiftArmed.value = false
+  if (input.length !== 1) return input
+
+  const data = shift ? input.toUpperCase() : input
+  if (!ctrl) return data
+
+  const c = data.toUpperCase().charCodeAt(0)
+  if (c >= 0x40 && c <= 0x5F) return String.fromCharCode(c & 0x1F)
+  if (data === ' ') return '\x00'
+  if (data === '?') return '\x7F'
+  return data
+}
+
 onMounted(async () => {
   let vm: VM
   try {
@@ -201,9 +224,7 @@ onMounted(async () => {
   term.loadAddon(fit)
   term.open(termEl.value!)
 
-  term.onData((data) => {
-    if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data))
-  })
+  term.onData(data => send(applyModifiers(data)))
   term.onResize(() => sendResize())
 
   resizeObserver = new ResizeObserver(() => fitAndResize())
@@ -221,7 +242,7 @@ onBeforeUnmount(() => {
   term = null
 })
 
-defineExpose({ phase, message, connect, disconnect, send, focus })
+defineExpose({ phase, message, connect, disconnect, send, focus, ctrlArmed, shiftArmed })
 </script>
 
 <template>
