@@ -35,16 +35,25 @@ const statusLabel = computed(() => ({
   error: 'error',
 }[phase.value]))
 
-// One control carries both the state (dot) and the action that state affords.
 const connection = computed(() => {
   switch (phase.value) {
     case 'open':
-      return { dot: 'bg-emerald-500', label: 'Disconnect', action: () => terminal.value?.disconnect() }
+      return {
+        dot: 'bg-emerald-500',
+        label: 'Disconnect',
+        button: 'border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive',
+        action: () => terminal.value?.disconnect(),
+      }
     case 'closed':
     case 'error':
-      return { dot: 'bg-destructive', label: 'Reconnect', action: () => terminal.value?.connect() }
+      return {
+        dot: 'bg-destructive',
+        label: 'Reconnect',
+        button: 'border-emerald-500/40 text-emerald-600 hover:bg-emerald-500/10 hover:text-emerald-600 dark:text-emerald-400 dark:hover:text-emerald-400',
+        action: () => terminal.value?.connect(),
+      }
     default:
-      return { dot: 'bg-amber-500', label: statusLabel.value, action: null }
+      return { dot: 'bg-amber-500', label: statusLabel.value, button: '', action: null }
   }
 })
 
@@ -130,19 +139,22 @@ onBeforeUnmount(() => {
         <span class="max-sm:sr-only">Back to VM</span>
       </NuxtLink>
 
-      <h1 class="font-mono text-sm font-semibold">
-        {{ vm?.name || vm?.vm_id || 'console' }}
-      </h1>
+      <div class="flex items-center gap-2">
+        <span class="size-1.5 shrink-0 rounded-full" :class="connection.dot" aria-hidden="true" />
+        <h1 class="font-mono text-sm font-semibold">
+          {{ vm?.name || vm?.vm_id || 'console' }}
+        </h1>
+        <span class="sr-only">Console {{ statusLabel }}</span>
+      </div>
 
       <Button
         variant="outline"
         size="sm"
-        class="ml-auto gap-2 font-mono text-xs"
+        class="ml-auto font-mono text-xs"
+        :class="connection.button"
         :disabled="!connection.action || !vm?.console_url"
-        :aria-label="`Console ${statusLabel}`"
         @click="connection.action?.()"
       >
-        <span class="size-1.5 rounded-full" :class="connection.dot" aria-hidden="true" />
         {{ connection.label }}
       </Button>
     </header>
