@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ArrowLeft } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import VmTerminal from '@/components/VmTerminal.vue'
 
@@ -22,7 +21,6 @@ const id = computed(() => String(route.params.id))
 const vm = ref<VM | null>(null)
 const phase = ref<Phase>('loading')
 const message = ref<string | null>(null)
-const host = ref('')
 const terminal = useTemplateRef<InstanceType<typeof VmTerminal>>('terminal')
 
 useHead(() => ({
@@ -36,6 +34,19 @@ const statusLabel = computed(() => ({
   closed: 'disconnected',
   error: 'error',
 }[phase.value]))
+
+// One control carries both the state (dot) and the action that state affords.
+const connection = computed(() => {
+  switch (phase.value) {
+    case 'open':
+      return { dot: 'bg-emerald-500', label: 'Disconnect', action: () => terminal.value?.disconnect() }
+    case 'closed':
+    case 'error':
+      return { dot: 'bg-destructive', label: 'Reconnect', action: () => terminal.value?.connect() }
+    default:
+      return { dot: 'bg-amber-500', label: statusLabel.value, action: null }
+  }
+})
 
 const quickKeys = [
   { label: 'Tab', data: '\t' },
@@ -75,42 +86,27 @@ onBeforeUnmount(() => clearTimeout(pasteErrorTimer))
     <header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
       <NuxtLink
         :to="`/vms/${id}`"
-        class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring max-sm:-m-2 max-sm:p-2"
       >
         <ArrowLeft class="size-3.5" aria-hidden="true" />
-        Back to VM
+        <span class="max-sm:sr-only">Back to VM</span>
       </NuxtLink>
 
       <h1 class="font-mono text-sm font-semibold">
         {{ vm?.name || vm?.vm_id || 'console' }}
       </h1>
 
-      <span v-if="host" class="font-mono text-xs text-muted-foreground">{{ host }}</span>
-
-      <div class="ml-auto flex items-center gap-2">
-        <Badge :variant="phase === 'open' ? 'default' : 'secondary'" class="font-mono text-xs">
-          {{ statusLabel }}
-        </Badge>
-        <Button
-          v-if="phase === 'open'"
-          variant="outline"
-          size="sm"
-          class="font-mono text-xs"
-          @click="terminal?.disconnect()"
-        >
-          Disconnect
-        </Button>
-        <Button
-          v-else-if="phase === 'closed' || phase === 'error'"
-          variant="outline"
-          size="sm"
-          class="font-mono text-xs"
-          :disabled="!vm?.console_url"
-          @click="terminal?.connect()"
-        >
-          Reconnect
-        </Button>
-      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        class="ml-auto gap-2 font-mono text-xs"
+        :disabled="!connection.action || !vm?.console_url"
+        :aria-label="`Console ${statusLabel}`"
+        @click="connection.action?.()"
+      >
+        <span class="size-1.5 rounded-full" :class="connection.dot" aria-hidden="true" />
+        {{ connection.label }}
+      </Button>
     </header>
 
     <Alert v-if="message" :variant="phase === 'error' ? 'destructive' : 'default'" class="rounded-none border-x-0">
@@ -124,7 +120,6 @@ onBeforeUnmount(() => clearTimeout(pasteErrorTimer))
       @phase="phase = $event"
       @message="message = $event"
       @vm="vm = $event"
-      @host="host = $event"
     />
 
     <div

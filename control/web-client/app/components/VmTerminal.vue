@@ -27,7 +27,6 @@ const emit = defineEmits<{
   phase: [phase: Phase]
   message: [message: string | null]
   vm: [vm: VM]
-  host: [host: string]
 }>()
 
 const { authFetch } = useAuth()
@@ -129,7 +128,6 @@ async function connect() {
 
   const url = new URL(creds.url)
   url.searchParams.set('token', creds.token)
-  emit('host', url.host)
 
   const sock = new WebSocket(url.toString())
   sock.binaryType = 'arraybuffer'
