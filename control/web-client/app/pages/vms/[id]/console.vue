@@ -60,6 +60,7 @@ const connection = computed(() => {
 const quickKeys = [
   { label: 'Tab', data: '\t' },
   { label: 'Ctrl+c', data: '\x03' },
+  { label: 'Ctrl+r', data: '\x12' },
 ]
 
 const pasteError = ref<string | null>(null)
@@ -180,13 +181,15 @@ onBeforeUnmount(() => {
       <p v-if="pasteError" class="px-3 pt-2 font-mono text-xs text-muted-foreground">
         {{ pasteError }}
       </p>
-      <div class="flex items-center gap-1.5 px-3 py-2">
+      <div
+        class="flex items-center gap-1.5 overflow-x-auto overscroll-x-contain px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
         <Button
           v-for="key in quickKeys"
           :key="key.label"
           variant="outline"
           size="sm"
-          class="flex-1 px-1 font-mono text-xs transition-colors"
+          class="shrink-0 font-mono text-xs transition-colors"
           :class="flashClass(key.label)"
           :disabled="phase !== 'open'"
           @mousedown.prevent
@@ -197,7 +200,7 @@ onBeforeUnmount(() => {
         <Button
           variant="outline"
           size="sm"
-          class="flex-1 px-1 font-mono text-xs transition-colors"
+          class="shrink-0 font-mono text-xs transition-colors"
           :class="flashClass('Paste')"
           :disabled="phase !== 'open'"
           @mousedown.prevent
@@ -210,7 +213,7 @@ onBeforeUnmount(() => {
           :key="mod.key"
           :variant="armed(mod.key) ? 'default' : 'outline'"
           size="sm"
-          class="flex-1 px-1 font-mono text-xs"
+          class="shrink-0 font-mono text-xs"
           :disabled="phase !== 'open'"
           :aria-pressed="armed(mod.key)"
           @mousedown.prevent
