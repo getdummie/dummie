@@ -330,7 +330,7 @@ const blankForm = {
   memory_mib: '512',
   default_port: '8000',
   public_ports: '',
-  disk_size: '2G',
+  disk_size: '5G',
   kernel_id: '',
   osimage_id: '',
   ttl_seconds: '0',
@@ -496,7 +496,7 @@ async function openCopy(v: VM) {
   form.memory_mib = String(v.memory_mib || 512)
   form.default_port = String(v.default_port || 8000)
   form.public_ports = (v.public_ports ?? []).join(', ')
-  form.disk_size = specStr(v.spec, 'disk_size') || '2G'
+  form.disk_size = specStr(v.spec, 'disk_size') || '5G'
 
   createOpen.value = true
   await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
@@ -945,7 +945,7 @@ async function confirmDelete() {
 
               <div class="space-y-2">
                 <Label for="vm-disk">Disk size</Label>
-                <Input id="vm-disk" v-model="form.disk_size" placeholder="2G" aria-describedby="vm-disk-hint" />
+                <Input id="vm-disk" v-model="form.disk_size" placeholder="5G" aria-describedby="vm-disk-hint" />
                 <p id="vm-disk-hint" class="text-xs text-muted-foreground">
                   Size of this VM's disk. The guest still has to grow its own filesystem to use the space.
                 </p>
