@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowRight } from '@lucide/vue'
+import { ArrowRight, Terminal } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 
 const { consoleUrl } = useRuntimeConfig().public
@@ -45,10 +45,15 @@ useSeoMeta({
                   <a href="#usecases">What it's for</a>
                 </Button>
               </div>
-              <Button as-child size="lg" variant="outline" class="group font-mono text-sm sm:self-start">
+              <Button
+                as-child
+                size="lg"
+                variant="ghost"
+                class="border border-primary/45 bg-primary/5 font-mono text-sm text-primary-text hover:border-primary hover:bg-primary/10 hover:text-primary-text sm:self-start"
+              >
                 <NuxtLink to="/architecture">
+                  <Terminal class="size-4 text-primary" aria-hidden="true" />
                   Talk tech to me
-                  <ArrowRight class="size-4 transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true" />
                 </NuxtLink>
               </Button>
             </div>
@@ -75,12 +80,23 @@ useSeoMeta({
         >
           Try now.
         </h2>
-        <div v-reveal="80" class="mt-8 flex justify-center">
+        <div v-reveal="80" class="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
           <Button as-child size="lg" class="group font-mono text-sm">
             <a :href="`${consoleUrl}/signin`">
               Open the console
               <ArrowRight class="size-4 transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true" />
             </a>
+          </Button>
+          <Button
+            as-child
+            size="lg"
+            variant="ghost"
+            class="border border-primary/45 bg-primary/5 font-mono text-sm text-primary-text hover:border-primary hover:bg-primary/10 hover:text-primary-text"
+          >
+            <NuxtLink to="/architecture">
+              <Terminal class="size-4 text-primary" aria-hidden="true" />
+              Talk tech to me
+            </NuxtLink>
           </Button>
         </div>
       </div>
