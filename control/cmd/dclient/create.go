@@ -104,6 +104,7 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 		Append:    req.Append,
 		Firmware:  req.Firmware,
 		Disk:      vmPath(data, id, vmOverlayImage),
+		DiskBytes: size,
 		UID:       uid,
 	}
 	if boot == bootDirect {
@@ -226,6 +227,12 @@ func startVM(ctx context.Context, data string, v vm, logf func(string, ...any)) 
 		}
 	}
 
+	if grown, err := growDisk(ctx, v); err != nil {
+		return 0, err
+	} else if grown {
+		logf("grew the disk to %d MiB; the guest grows its filesystem itself", v.DiskBytes>>20)
+	}
+
 	var tap *os.File
 	var err error
 	if v.Net != nil {
@@ -264,6 +271,57 @@ func startVM(ctx context.Context, data string, v vm, logf func(string, ...any)) 
 	}
 	logf("vm %s (%s) started, pid %d", v.ID, v.Name, pid)
 	return pid, nil
+}
+
+// resizeVM records a new size for a vm that already exists. Nothing is applied
+// to the running guest: qemu reads cpus and memory when it launches, and the
+// disk is grown on the next start, so the owner has to restart the vm for any
+// of this to take effect.
+func resizeVM(ctx context.Context, data string, v vm, req proto.VMResize) error {
+	if req.CPUs < 1 {
+		return errors.New("cpus must be at least 1")
+	}
+	if req.Memory < 64 {
+		return errors.New("memory must be at least 64 MiB")
+	}
+	size, err := parseSize("--disk-size", req.DiskSize)
+	if err != nil {
+		return err
+	}
+	// The recorded size is what the image is asked to be, so a size that is not
+	// moving needs no look at the image at all -- and a vm whose size was never
+	// recorded is the only case worth opening it for.
+	if size > 0 && size != v.DiskBytes {
+		current := v.DiskBytes
+		if current == 0 {
+			if current, err = imageVirtualSize(ctx, v.Disk); err != nil {
+				return err
+			}
+		}
+		if size < current {
+			return fmt.Errorf("a disk can only grow: this vm already has %d MiB", current>>20)
+		}
+		v.DiskBytes = size
+	}
+	v.CPUs, v.MemoryMiB = req.CPUs, req.Memory
+	return saveVM(data, v)
+}
+
+// growDisk brings the overlay up to the size the vm asks for, and reports
+// whether it had to. It runs with no qemu holding the image, which is the only
+// time growing it is safe.
+func growDisk(ctx context.Context, v vm) (bool, error) {
+	if v.DiskBytes <= 0 {
+		return false, nil
+	}
+	current, err := imageVirtualSize(ctx, v.Disk)
+	if err != nil {
+		return false, err
+	}
+	if current >= v.DiskBytes {
+		return false, nil
+	}
+	return true, resizeImage(ctx, v.Disk, v.DiskBytes)
 }
 
 func removeVM(ctx context.Context, data string, v vm) error {

@@ -698,6 +698,20 @@
                 },
                 "type": "object"
             },
+            "main.updateVMSizeReq": {
+                "properties": {
+                    "cpus": {
+                        "type": "integer"
+                    },
+                    "disk_size": {
+                        "type": "string"
+                    },
+                    "memory_mib": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
             "main.userArtifactDTO": {
                 "properties": {
                     "created_at": {
@@ -3392,6 +3406,124 @@
                     }
                 ],
                 "summary": "Rotate this VM's remote desktop password",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/{id}/size": {
+            "put": {
+                "description": "Changes what this VM gets the next time it boots. cpus and memory_mib may go either way; disk_size may only grow, and the guest still grows its own filesystem into the new space. Omit disk_size to leave the disk alone. The new size is charged against your quota straight away.\n\nA running VM is restarted as part of this, since that is the only way the new size reaches the guest: it is shut down and booted again before this returns, so anything running inside it stops. A stopped VM is left stopped and picks the new size up on its next start.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.updateVMSizeReq",
+                                        "summary": "body",
+                                        "description": "the new size"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "the new size",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.vmDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "cpus under 1, memory under 64 MiB, a bad size, or a smaller disk"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "over quota"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the vm is pending, gone, or its host is not connected"
+                    },
+                    "502": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the host did not take the new size, or took it and could not restart the vm"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Resize a VM",
                 "tags": [
                     "vms"
                 ]

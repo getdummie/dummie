@@ -297,19 +297,55 @@ func newOverlay(ctx context.Context, base, dst string, sizeBytes int64) error {
 	return nil
 }
 
-func imageFormat(ctx context.Context, p string) (string, error) {
-	out, err := exec.CommandContext(ctx, "qemu-img", "info", "--output=json", p).Output()
+func resizeImage(ctx context.Context, p string, sizeBytes int64) error {
+	out, err := exec.CommandContext(ctx, "qemu-img", "resize", "-f", "qcow2", "-q",
+		p, fmt.Sprintf("%d", sizeBytes)).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("qemu-img info %s: %w", p, err)
+		return fmt.Errorf("qemu-img resize: %v: %s", err, strings.TrimSpace(string(out)))
 	}
-	var info struct {
-		Format string `json:"format"`
-	}
-	if err := json.Unmarshal(out, &info); err != nil {
-		return "", fmt.Errorf("could not parse qemu-img info for %s: %w", p, err)
+	return nil
+}
+
+func imageFormat(ctx context.Context, p string) (string, error) {
+	info, err := imageInfo(ctx, p)
+	if err != nil {
+		return "", err
 	}
 	if info.Format == "" {
 		return "", fmt.Errorf("qemu-img could not determine the format of %s", p)
 	}
 	return info.Format, nil
+}
+
+func imageVirtualSize(ctx context.Context, p string) (int64, error) {
+	info, err := imageInfo(ctx, p)
+	if err != nil {
+		return 0, err
+	}
+	if info.VirtualSize <= 0 {
+		return 0, fmt.Errorf("qemu-img could not determine the size of %s", p)
+	}
+	return info.VirtualSize, nil
+}
+
+type qemuImageInfo struct {
+	Format      string `json:"format"`
+	VirtualSize int64  `json:"virtual-size"`
+}
+
+// imageInfo reads an image without taking a lock on it (-U), so it can also be
+// asked about a disk a running qemu holds the write lock on.
+func imageInfo(ctx context.Context, p string) (qemuImageInfo, error) {
+	var info qemuImageInfo
+	cmd := exec.CommandContext(ctx, "qemu-img", "info", "-U", "--output=json", p)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return info, fmt.Errorf("qemu-img info %s: %v: %s", p, err, strings.TrimSpace(stderr.String()))
+	}
+	if err := json.Unmarshal(out, &info); err != nil {
+		return info, fmt.Errorf("could not parse qemu-img info for %s: %w", p, err)
+	}
+	return info, nil
 }

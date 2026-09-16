@@ -77,6 +77,8 @@ const (
 	KindVMStop    JobKind = "vm.stop"
 	KindVMStart   JobKind = "vm.start"
 	KindVMDestroy JobKind = "vm.destroy"
+	KindVMResize  JobKind = "vm.resize"
+	KindVMRestart JobKind = "vm.restart"
 
 	KindSuricataRules JobKind = "suricata.rules"
 
@@ -104,6 +106,8 @@ type Job struct {
 	Kind JobKind `json:"kind"`
 	VM   *VMSpec `json:"vm,omitempty"`
 	VMID string `json:"vm_id,omitempty"`
+
+	Resize *VMResize `json:"resize,omitempty"`
 	Suricata *SuricataRules `json:"suricata,omitempty"`
 	Proxy    *ProxyConfig    `json:"proxy,omitempty"`
 	Intproxy *IntproxyConfig `json:"intproxy,omitempty"`
@@ -263,6 +267,16 @@ type VMSpec struct {
 	BurstKbit int      `json:"burst_kbit,omitempty"`
 
 	Image *ImageConfig `json:"image,omitempty"`
+}
+
+// VMResize is the new size of a vm that already exists. The host records it and
+// the guest picks it up on its next boot, so nothing here touches a running
+// qemu. DiskSize may only grow: the host refuses anything smaller than the disk
+// it already has.
+type VMResize struct {
+	CPUs     int    `json:"cpus"`
+	Memory   int    `json:"memory_mib"`
+	DiskSize string `json:"disk_size,omitempty"`
 }
 
 // ImageConfig is what the container image declared, carried from the os image

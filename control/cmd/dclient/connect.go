@@ -376,12 +376,18 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.createVM(ctx, env.ID, *job.VM)
-	case proto.KindVMStop, proto.KindVMStart, proto.KindVMDestroy:
+	case proto.KindVMStop, proto.KindVMStart, proto.KindVMDestroy, proto.KindVMRestart:
 		if job.VMID == "" {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no vm"})
 			return
 		}
 		go l.runVMAction(ctx, env.ID, job.Kind, job.VMID)
+	case proto.KindVMResize:
+		if job.VMID == "" || job.Resize == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no vm or no new size"})
+			return
+		}
+		go l.resizeVM(ctx, env.ID, job.VMID, *job.Resize)
 	case proto.KindSuricataRules:
 		if job.Suricata == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no ruleset"})
@@ -657,9 +663,52 @@ func (l *link) runVMAction(ctx context.Context, jobID string, kind proto.JobKind
 		if err := removeCgroup(v.Cgroup); err != nil {
 			logf("could not remove cgroup %s: %v", v.Cgroup, err)
 		}
+
+	case proto.KindVMRestart:
+		logf("restarting vm %s (%s)", v.ID, v.Name)
+		if err := stopVM(ctx, l.data, v.ID, defaultStopWait); err != nil {
+			logf("restart failed while stopping: %v", err)
+			l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+			return
+		}
+		if err := teardownVMNetwork(v); err != nil {
+			logf("could not fully tear down the network for %s: %v", v.ID, err)
+		}
+		if err := removeCgroup(v.Cgroup); err != nil {
+			logf("could not remove cgroup %s: %v", v.Cgroup, err)
+		}
+		// Read again: whatever the guest boots with is what is on disk now, which
+		// a resize just before this job will have changed.
+		if v, err = resolveVM(l.data, vmID); err != nil {
+			l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+			return
+		}
+		if _, err := startVM(ctx, l.data, v, logf); err != nil {
+			logf("restart failed while starting: %v", err)
+			l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
+			return
+		}
 	}
 
 	l.reply(ctx, jobID, proto.JobResult{Kind: kind, OK: true})
+}
+
+func (l *link) resizeVM(ctx context.Context, jobID, vmID string, req proto.VMResize) {
+	ctx = context.WithoutCancel(ctx)
+
+	v, err := resolveVM(l.data, vmID)
+	if err != nil {
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMResize, Error: err.Error()})
+		return
+	}
+	if err := resizeVM(ctx, l.data, v, req); err != nil {
+		log.Printf("job %s: could not resize vm %s: %v", jobID, v.ID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMResize, Error: err.Error()})
+		return
+	}
+	log.Printf("job %s: vm %s (%s) is now %d vcpu, %d MiB memory; it takes effect on its next boot",
+		jobID, v.ID, v.Name, req.CPUs, req.Memory)
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMResize, OK: true})
 }
 
 func (l *link) reply(ctx context.Context, jobID string, res proto.JobResult) {

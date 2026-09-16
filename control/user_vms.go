@@ -1055,6 +1055,192 @@ func (h *UserHandler) UpdateDefaultUser(c *echo.Context) error {
 	return c.JSON(http.StatusOK, d)
 }
 
+type updateVMSizeReq struct {
+	CPUs      int32  `json:"cpus"`
+	MemoryMiB int32  `json:"memory_mib"`
+	DiskSize  string `json:"disk_size"`
+}
+
+// resizeJobWait is how long the request holds open for the host to record the
+// new size. The host only writes it down, so this is generous.
+const resizeJobWait = 10 * time.Second
+
+// restartJobWait covers a graceful shutdown of the guest, the kill that follows
+// one that will not go, and the boot after it.
+const restartJobWait = 60 * time.Second
+
+// @Summary     Resize a VM
+// @Description Changes what this VM gets the next time it boots. cpus and memory_mib may go either way; disk_size may only grow, and the guest still grows its own filesystem into the new space. Omit disk_size to leave the disk alone. The new size is charged against your quota straight away.
+// @Description
+// @Description A running VM is restarted as part of this, since that is the only way the new size reaches the guest: it is shut down and booted again before this returns, so anything running inside it stops. A stopped VM is left stopped and picks the new size up on its next start.
+// @Tags        vms
+// @Accept      json
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id   path string true "vm id" format(uuid)
+// @Param       body body updateVMSizeReq true "the new size"
+// @Success     200 {object} vmDTO
+// @Failure     400 {object} apiError "cpus under 1, memory under 64 MiB, a bad size, or a smaller disk"
+// @Failure     401 {object} apiError
+// @Failure     403 {object} apiError "over quota"
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the vm is pending, gone, or its host is not connected"
+// @Failure     502 {object} apiError "the host did not take the new size, or took it and could not restart the vm"
+// @Router      /vms/{id}/size [put]
+func (h *UserHandler) UpdateSize(c *echo.Context) error {
+	vm, err := h.ownedVM(c)
+	if err != nil {
+		return err
+	}
+	owner, err := callerID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
+	}
+
+	var req updateVMSizeReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if vm.VMID == "" {
+		return echo.NewHTTPError(http.StatusConflict, "this vm was never created on a host")
+	}
+	switch vm.Status {
+	case "pending":
+		return echo.NewHTTPError(http.StatusConflict, "this vm is still being created; try again once it has settled")
+	case "gone", "failed":
+		return echo.NewHTTPError(http.StatusConflict, "this vm no longer exists on its host")
+	}
+	if req.CPUs < 1 {
+		return echo.NewHTTPError(http.StatusBadRequest, "cpus must be at least 1")
+	}
+	if req.MemoryMiB < 64 {
+		return echo.NewHTTPError(http.StatusBadRequest, "memory_mib must be at least 64")
+	}
+	diskSize := strings.TrimSpace(req.DiskSize)
+	if diskSize != "" && !sizePattern.MatchString(diskSize) {
+		return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
+	}
+	diskMiB, err := parseSizeMiB(diskSize)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "disk size must be a number, optionally with a K, M, G or T suffix")
+	}
+	if diskMiB == 0 {
+		diskMiB = vm.DiskMiB
+	}
+	if diskMiB < vm.DiskMiB {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf(
+			"a disk can only be made bigger; this vm already has %d MiB", vm.DiskMiB))
+	}
+
+	ctx := c.Request().Context()
+	u, err := h.q.GetUserByID(ctx, owner)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not read your account")
+	}
+	used, err := h.q.SumActiveVMUsageByOwner(ctx, owner)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not total your usage")
+	}
+	// This vm is in the total already, so its own current size comes back out
+	// before the new one goes in.
+	if cpus := used.CPUs - vm.CPUs + req.CPUs; cpus > u.VCPULimit {
+		return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf(
+			"this would use %d vCPU of your %d limit", cpus, u.VCPULimit))
+	}
+	if mem := used.MemoryMiB - vm.MemoryMiB + req.MemoryMiB; mem > u.MemoryLimitMiB {
+		return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf(
+			"this would use %d MiB of memory against your %d MiB limit", mem, u.MemoryLimitMiB))
+	}
+	if disk := used.DiskMiB - vm.DiskMiB + diskMiB; disk > u.DiskLimitMiB {
+		return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf(
+			"this would use %d MiB of disk against your %d MiB limit", disk, u.DiskLimitMiB))
+	}
+
+	var spec proto.VMSpec
+	if len(vm.Spec) > 0 {
+		if err := json.Unmarshal(vm.Spec, &spec); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not read this vm's spec")
+		}
+	}
+	spec.CPUs = int(req.CPUs)
+	spec.Memory = int(req.MemoryMiB)
+	if diskMiB > 0 {
+		spec.DiskSize = fmt.Sprintf("%dM", diskMiB)
+	}
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not record the new size")
+	}
+
+	clientID := uuid.UUID(vm.ClientID.Bytes).String()
+	if !h.hub.Connected(clientID) {
+		return echo.NewHTTPError(http.StatusConflict, "the host running this vm is not connected")
+	}
+	// Asked rather than told: the row is only moved once the host has the new
+	// size, so a host that refuses it does not leave the console showing a size
+	// the vm will never boot with.
+	res, err := h.hub.Ask(ctx, clientID, proto.Job{
+		Kind: proto.KindVMResize,
+		VMID: vm.VMID,
+		Resize: &proto.VMResize{
+			CPUs:     int(req.CPUs),
+			Memory:   int(req.MemoryMiB),
+			DiskSize: spec.DiskSize,
+		},
+	}, resizeJobWait)
+	if err != nil {
+		log.Printf("client %s: could not resize vm %s: %v", clientID, vm.Name, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "the host did not answer; the vm is unchanged")
+	}
+	if !res.OK {
+		msg := res.Error
+		if msg == "" {
+			msg = "the host could not apply the new size"
+		}
+		return echo.NewHTTPError(http.StatusBadGateway, msg)
+	}
+
+	row, err := h.q.UpdateVMSizeForOwner(ctx, db.UpdateVMSizeForOwnerParams{
+		ID:        vm.ID,
+		CreatedBy: owner,
+		CPUs:      req.CPUs,
+		MemoryMiB: req.MemoryMiB,
+		DiskMiB:   diskMiB,
+		Spec:      raw,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "no such vm")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "the host took the new size but it could not be recorded")
+	}
+
+	// The new size is what the guest boots with, so a running vm is restarted
+	// here rather than left to be reasoned about. A stopped one already has the
+	// new size waiting for its next start.
+	if row.Status == "running" {
+		res, err := h.hub.Ask(ctx, clientID, proto.Job{Kind: proto.KindVMRestart, VMID: vm.VMID}, restartJobWait)
+		if err != nil || !res.OK {
+			msg := "the host did not answer the restart"
+			if err == nil {
+				msg = res.Error
+				if msg == "" {
+					msg = "the host could not restart it"
+				}
+			}
+			log.Printf("client %s: could not restart vm %s after a resize: %v %s", clientID, vm.Name, err, msg)
+			return echo.NewHTTPError(http.StatusBadGateway,
+				"the new size is saved, but this vm could not be restarted, so it is still running with the old one: "+msg)
+		}
+	}
+
+	d := toVMDTO(row)
+	d.URL = h.vmURL(ctx, row)
+	d.ConsoleURL = h.consoleURL(ctx, row)
+	d.DesktopURL = h.desktopURL(ctx, row)
+	return c.JSON(http.StatusOK, d)
+}
+
 // @Summary     List a VM's allowed destinations
 // @Description Everything this guest is permitted to reach. expires_at is set on temporary allowances and empty on permanent ones.
 // @Tags        egress

@@ -11,7 +11,7 @@
 </p>
 
 <p align="center">
-  <a href="#architecture">Architecture</a> ·
+  <a href="https://www.dummie.dev/architecture">Architecture</a> ·
   <a href="#repository-layout">Layout</a> ·
   <a href="#license">License</a>
 </p>
@@ -33,31 +33,6 @@ as you want behind it.
 - **Per-run network policy.** Pick the domains and ports you want to whitelist
   for your VM
 - **One binary to deploy.** Single binary deploy.
-
-## Architecture
-
-```
-                        ┌──────────────────────────┐
-  browser / SDK ──────► │  control  (Go binary)    │
-                        │  API + console + spec    │
-                        └────────────┬─────────────┘
-                                     │  assigns work
-                         ┌───────────┴───────────┐
-                         ▼                       ▼
-                 ┌───────────────┐       ┌───────────────┐
-                 │ QEMU host     │       │ QEMU host     │
-                 │  dclient      │       │  dclient      │
-                 │  dproxy/dpipe │       │  dproxy/dpipe │
-                 │  suricata     │       │  suricata     │
-                 │  ┌─────────┐  │       │  ┌─────────┐  │
-                 │  │ microVM │  │       │  │ microVM │  │
-                 │  └─────────┘  │       │  └─────────┘  │
-                 └───────────────┘       └───────────────┘
-```
-
-The control plane never runs a guest. It records what should exist and hosts
-reconcile toward it; a host that goes silent stops being given work, and the VMs
-it was running are reaped by their TTL.
 
 ## Repository layout
 

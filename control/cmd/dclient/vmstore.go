@@ -69,6 +69,10 @@ type vm struct {
 	Disk   string `json:"disk"`
 	Cgroup string `json:"cgroup,omitempty"`
 
+	// DiskBytes is the size the overlay should have. A resize only records it
+	// here; the disk is grown to match on the next start, when no qemu holds it.
+	DiskBytes int64 `json:"disk_bytes,omitempty"`
+
 	UID int `json:"uid,omitempty"`
 }
 

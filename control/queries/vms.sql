@@ -162,6 +162,18 @@ SET default_user = sqlc.arg(default_user),
 WHERE id = sqlc.arg(id) AND created_by = sqlc.arg(created_by)
 RETURNING *;
 
+-- name: UpdateVMSizeForOwner :one
+-- The spec goes with the sizes so a vm copied from this one is copied at the
+-- size it has now rather than the one it was created with.
+UPDATE vms
+SET cpus       = sqlc.arg(cpus),
+    memory_mib = sqlc.arg(memory_mib),
+    disk_mib   = sqlc.arg(disk_mib),
+    spec       = sqlc.arg(spec),
+    updated_at = now()
+WHERE id = sqlc.arg(id) AND created_by = sqlc.arg(created_by)
+RETURNING *;
+
 -- name: DeleteVM :exec
 DELETE FROM vms
 WHERE id = $1;

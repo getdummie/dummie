@@ -561,6 +561,80 @@ async function saveUser() {
   }
 }
 
+const sizeOpen = ref(false)
+const savingSize = ref(false)
+const sizeError = ref<string | null>(null)
+const sizeForm = reactive({ cpus: '1', memory_mib: '512', disk_size: '' })
+
+const resizable = computed(() => vm.value?.status === 'running' || vm.value?.status === 'stopped')
+
+function sizeToMiB(s: string): number | null {
+  const v = s.trim()
+  if (!v) return 0
+  const m = /^(\d+)([KkMmGgTt]?)$/.exec(v)
+  if (!m) return null
+  const mult: Record<string, number> = { '': 1, k: 1 << 10, m: 1 << 20, g: 1 << 30, t: 2 ** 40 }
+  const bytes = Number(m[1]) * (mult[m[2]!.toLowerCase()] ?? 1)
+  return Math.ceil(bytes / (1 << 20))
+}
+
+function miBToSize(mib: number) {
+  if (!mib) return ''
+  return mib % 1024 === 0 ? `${mib / 1024}G` : `${mib}M`
+}
+
+function openSize() {
+  if (!vm.value) return
+  sizeForm.cpus = String(vm.value.cpus || 1)
+  sizeForm.memory_mib = String(vm.value.memory_mib || 512)
+  sizeForm.disk_size = miBToSize(vm.value.disk_mib)
+  sizeError.value = null
+  sizeOpen.value = true
+}
+
+async function saveSize() {
+  const cpus = Number(sizeForm.cpus)
+  const memory = Number(sizeForm.memory_mib)
+  if (!Number.isInteger(cpus) || cpus < 1) {
+    sizeError.value = 'vCPU must be a whole number of at least 1.'
+    return
+  }
+  if (!Number.isInteger(memory) || memory < 64) {
+    sizeError.value = 'Memory must be at least 64 MiB.'
+    return
+  }
+  const disk = sizeToMiB(sizeForm.disk_size)
+  if (disk === null) {
+    sizeError.value = 'Disk size must be a number, optionally with a K, M, G or T suffix — e.g. 4G.'
+    return
+  }
+  if (disk && vm.value && disk < vm.value.disk_mib) {
+    sizeError.value = `A disk can only be made bigger. This VM already has ${fmtMiB(vm.value.disk_mib)}.`
+    return
+  }
+
+  savingSize.value = true
+  sizeError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/size`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cpus, memory_mib: memory, disk_size: sizeForm.disk_size.trim() }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    vm.value = await res.json()
+    sizeOpen.value = false
+  }
+  catch (e) {
+    sizeError.value = e instanceof Error ? e.message : 'Could not save the new size'
+    // A restart can fail after the size is saved, so the row may have moved.
+    await load(true)
+  }
+  finally {
+    savingSize.value = false
+  }
+}
+
 const addOpen = ref(false)
 const adding = ref(false)
 const addError = ref<string | null>(null)
@@ -1113,9 +1187,72 @@ async function removeDomain() {
               {{ vm.name || vm.vm_id || 'unnamed' }}
             </h1>
             <Badge :variant="statusVariant[vm.status]" class="font-mono">{{ vm.status }}</Badge>
-            <p class="font-mono text-xs text-muted-foreground">
+            <p class="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
               {{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }} ·
               {{ vm.disk_mib ? `${fmtMiB(vm.disk_mib)} disk` : 'disk not recorded' }}
+              <Dialog v-model:open="sizeOpen">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  class="size-6"
+                  :disabled="!resizable"
+                  :aria-label="resizable ? 'Edit this VM\'s size' : `Cannot resize this VM: it is ${vm.status}`"
+                  @click="openSize"
+                >
+                  <Pencil class="size-3.5" aria-hidden="true" />
+                </Button>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>Edit size</DialogTitle>
+                    <DialogDescription>
+                      What <span class="font-mono text-foreground">{{ vm.name }}</span> gets the next
+                      time it boots.
+                      <template v-if="isRunning">
+                        Applying restarts it, so anything running inside it stops.
+                      </template>
+                      <template v-else>
+                        This VM is stopped, so it starts at the new size.
+                      </template>
+                    </DialogDescription>
+                  </DialogHeader>
+                  <form class="space-y-4" :aria-busy="savingSize" @submit.prevent="saveSize">
+                    <div class="grid gap-4 sm:grid-cols-2">
+                      <div class="space-y-2">
+                        <Label for="size-cpus">vCPU</Label>
+                        <Input id="size-cpus" v-model="sizeForm.cpus" type="number" min="1" step="1" inputmode="numeric" />
+                      </div>
+                      <div class="space-y-2">
+                        <Label for="size-mem">Memory (MiB)</Label>
+                        <Input id="size-mem" v-model="sizeForm.memory_mib" type="number" min="64" step="64" inputmode="numeric" />
+                      </div>
+                    </div>
+                    <div class="space-y-2">
+                      <Label for="size-disk">Disk size</Label>
+                      <Input id="size-disk" v-model="sizeForm.disk_size" placeholder="4G" aria-describedby="size-disk-hint" />
+                      <p id="size-disk-hint" class="text-xs text-muted-foreground">
+                        A disk can only grow. The guest grows its own filesystem into the new space
+                        when it boots.
+                      </p>
+                    </div>
+
+                    <FormError id="size-error" :message="sizeError" />
+
+                    <DialogFooter>
+                      <DialogClose as-child>
+                        <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                      </DialogClose>
+                      <Button type="submit" class="font-mono text-xs" :disabled="savingSize">
+                        <template v-if="savingSize">
+                          {{ isRunning ? 'Restarting…' : 'Applying…' }}
+                        </template>
+                        <template v-else>
+                          {{ isRunning ? 'Apply & restart' : 'Apply' }}
+                        </template>
+                      </Button>
+                    </DialogFooter>
+                  </form>
+                </DialogContent>
+              </Dialog>
             </p>
           </div>
         </div>

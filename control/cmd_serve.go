@@ -290,6 +290,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.POST("/:id/destroy", userH.DestroyVM)
 	vms.PUT("/:id/ports", userH.UpdatePorts)
 	vms.PUT("/:id/user", userH.UpdateDefaultUser)
+	vms.PUT("/:id/size", userH.UpdateSize)
 	vms.POST("/:id/console-token", userH.ConsoleToken)
 	vms.POST("/:id/web-session", userH.WebSession)
 	vms.POST("/:id/desktop-token", userH.DesktopToken)

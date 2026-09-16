@@ -831,6 +831,64 @@ func (q *Queries) UpdateVMPortsForOwner(ctx context.Context, arg UpdateVMPortsFo
 	return i, err
 }
 
+const updateVMSizeForOwner = `-- name: UpdateVMSizeForOwner :one
+UPDATE vms
+SET cpus       = $1,
+    memory_mib = $2,
+    disk_mib   = $3,
+    spec       = $4,
+    updated_at = now()
+WHERE id = $5 AND created_by = $6
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user
+`
+
+type UpdateVMSizeForOwnerParams struct {
+	CPUs      int32
+	MemoryMiB int32
+	DiskMiB   int32
+	Spec      []byte
+	ID        pgtype.UUID
+	CreatedBy pgtype.UUID
+}
+
+// The spec goes with the sizes so a vm copied from this one is copied at the
+// size it has now rather than the one it was created with.
+func (q *Queries) UpdateVMSizeForOwner(ctx context.Context, arg UpdateVMSizeForOwnerParams) (Vm, error) {
+	row := q.db.QueryRow(ctx, updateVMSizeForOwner,
+		arg.CPUs,
+		arg.MemoryMiB,
+		arg.DiskMiB,
+		arg.Spec,
+		arg.ID,
+		arg.CreatedBy,
+	)
+	var i Vm
+	err := row.Scan(
+		&i.ID,
+		&i.ClientID,
+		&i.VMID,
+		&i.Name,
+		&i.Status,
+		&i.Boot,
+		&i.CPUs,
+		&i.MemoryMiB,
+		&i.IP,
+		&i.Spec,
+		&i.LastError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.ReportedAt,
+		&i.CreatedBy,
+		&i.DiskMiB,
+		&i.DefaultPort,
+		&i.PublicPorts,
+		&i.RdpNonce,
+		&i.DefaultUser,
+	)
+	return i, err
+}
+
 const upsertVMFromInventory = `-- name: UpsertVMFromInventory :exec
 INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
