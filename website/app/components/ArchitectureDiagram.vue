@@ -117,7 +117,7 @@ const nodes: Node[] = [
     id: 'host',
     name: 'QEMU host',
     kind: 'host',
-    sub: 'one of many',
+    sub: 'one of many · reconciles toward control',
     where: 'the fleet',
     summary: 'A machine that actually boots sandboxes. Every host runs the same set of services, and a host that goes silent simply stops being given work.',
     points: [
@@ -129,7 +129,7 @@ const nodes: Node[] = [
     id: 'dclient',
     name: 'dclient',
     kind: 'binary',
-    sub: 'the host agent — owns everything below',
+    sub: 'the host agent — registers with control, owns everything above',
     where: 'QEMU host · agent',
     summary: 'The host\'s agent. It registers with the control plane, receives the work assigned to it, and owns every local service that makes a sandbox work.',
     points: [
@@ -231,7 +231,7 @@ const nodes: Node[] = [
     id: 'tap',
     name: 'tap device',
     kind: 'net',
-    sub: 'one per VM',
+    sub: 'one per VM · pinned address',
     where: 'QEMU host · kernel network device',
     summary: 'The virtual NIC that attaches a guest to the host network. dclient allocates one per VM and pins a single address to it.',
     points: [
@@ -315,8 +315,17 @@ function iconFor(id: string) {
   return node ? kindIcon[node.kind] : null
 }
 
+function nodeBind(id: string) {
+  return {
+    'type': 'button',
+    'aria-pressed': active.value === id,
+    'class': [{ 'arch-on': active.value === id }, `arch-k-${byId[id]?.kind}`],
+  }
+}
+
 const stores = ['postgres', 'clickhouse', 's3']
 const policy = ['intproxy', 'coredns', 'suricata', 'nftables']
+const guest = ['tap', 'dinit', 'workload']
 const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kernel']
 </script>
 
@@ -345,18 +354,12 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
       <div class="relative grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_auto_minmax(0,2.1fr)] lg:items-start lg:gap-2">
         <div class="flex flex-col lg:col-start-1">
           <div class="flex justify-center">
-            <button
-              type="button"
-              class="arch-node w-full max-w-xs"
-              :class="{ 'arch-on': active === 'clients' }"
-              :aria-pressed="active === 'clients'"
-              v-on="on('clients')"
-            >
+            <button class="arch-node w-full max-w-xs" v-bind="nodeBind('clients')" v-on="on('clients')">
               <span class="arch-head">
-                <Globe class="arch-icon" aria-hidden="true" />
-                <span class="arch-name">browser / SDK</span>
+                <component :is="iconFor('clients')" class="arch-icon" aria-hidden="true" />
+                <span class="arch-name">{{ byId.clients?.name }}</span>
               </span>
-              <span class="arch-sub">the only thing users address</span>
+              <span class="arch-sub">{{ byId.clients?.sub }}</span>
             </button>
           </div>
 
@@ -373,18 +376,12 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
               <span class="arch-region-note">run once</span>
             </p>
 
-            <button
-              type="button"
-              class="arch-node arch-node-lg w-full"
-              :class="{ 'arch-on': active === 'control' }"
-              :aria-pressed="active === 'control'"
-              v-on="on('control')"
-            >
+            <button class="arch-node arch-node-lg w-full" v-bind="nodeBind('control')" v-on="on('control')">
               <span class="arch-head">
-                <Terminal class="arch-icon" aria-hidden="true" />
-                <span class="arch-name text-base">control</span>
+                <component :is="iconFor('control')" class="arch-icon" aria-hidden="true" />
+                <span class="arch-name">{{ byId.control?.name }}</span>
               </span>
-              <span class="arch-sub">API · console · spec · migrations, in one Go binary</span>
+              <span class="arch-sub">{{ byId.control?.sub }}</span>
             </button>
 
             <div class="arch-link arch-link-tight">
@@ -397,10 +394,8 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
               <button
                 v-for="id in stores"
                 :key="id"
-                type="button"
                 class="arch-node arch-node-sm arch-cyl"
-                :class="{ 'arch-on': active === id }"
-                :aria-pressed="active === id"
+                v-bind="nodeBind(id)"
                 v-on="on(id)"
               >
                 <span class="arch-head">
@@ -423,26 +418,20 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
 
         <section class="arch-region arch-region-host" :class="{ 'arch-region-on': active === 'host' }">
           <button type="button" class="arch-region-head w-full" :aria-pressed="active === 'host'" v-on="on('host')">
-            <Server class="size-3.5" aria-hidden="true" />
-            QEMU host
-            <span class="arch-region-note">one of many · reconciles toward control</span>
+            <component :is="iconFor('host')" class="size-3.5" aria-hidden="true" />
+            {{ byId.host?.name }}
+            <span class="arch-region-note">{{ byId.host?.sub }}</span>
           </button>
 
           <div class="arch-group">
             <p class="arch-group-label">public ingress</p>
             <div class="grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
-              <button
-                type="button"
-                class="arch-node arch-node-sm"
-                :class="{ 'arch-on': active === 'dproxy' }"
-                :aria-pressed="active === 'dproxy'"
-                v-on="on('dproxy')"
-              >
+              <button class="arch-node arch-node-sm" v-bind="nodeBind('dproxy')" v-on="on('dproxy')">
                 <span class="arch-head">
-                  <Terminal class="arch-icon" aria-hidden="true" />
-                  <span class="arch-name">dproxy</span>
+                  <component :is="iconFor('dproxy')" class="arch-icon" aria-hidden="true" />
+                  <span class="arch-name">{{ byId.dproxy?.name }}</span>
                 </span>
-                <span class="arch-sub">accepts · routes · hands off the fd</span>
+                <span class="arch-sub">{{ byId.dproxy?.sub }}</span>
               </button>
 
               <span class="arch-span arch-span-inline">
@@ -453,18 +442,12 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
                 <span class="arch-edge arch-span-label">unix socket · fd passing</span>
               </span>
 
-              <button
-                type="button"
-                class="arch-node arch-node-sm"
-                :class="{ 'arch-on': active === 'dpipe' }"
-                :aria-pressed="active === 'dpipe'"
-                v-on="on('dpipe')"
-              >
+              <button class="arch-node arch-node-sm" v-bind="nodeBind('dpipe')" v-on="on('dpipe')">
                 <span class="arch-head">
-                  <Terminal class="arch-icon" aria-hidden="true" />
-                  <span class="arch-name">dpipe</span>
+                  <component :is="iconFor('dpipe')" class="arch-icon" aria-hidden="true" />
+                  <span class="arch-name">{{ byId.dpipe?.name }}</span>
                 </span>
-                <span class="arch-sub">holds connections open across restarts</span>
+                <span class="arch-sub">{{ byId.dpipe?.sub }}</span>
               </button>
             </div>
           </div>
@@ -483,48 +466,22 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
               :class="{ 'arch-region-on': active === 'vm' }"
             >
               <button type="button" class="arch-region-head w-full" :aria-pressed="active === 'vm'" v-on="on('vm')">
-                <Cpu class="size-3.5" aria-hidden="true" />
-                microVM
+                <component :is="iconFor('vm')" class="size-3.5" aria-hidden="true" />
+                {{ byId.vm?.name }} {{ n - 1 }}
               </button>
               <div class="grid gap-1.5">
                 <button
-                  type="button"
-                  class="arch-node arch-node-xs arch-k-net"
-                  :class="{ 'arch-on': active === 'tap' }"
-                  :aria-pressed="active === 'tap'"
-                  v-on="on('tap')"
-                >
-                  <span class="arch-head">
-                    <Network class="arch-icon" aria-hidden="true" />
-                    <span class="arch-name text-[0.78rem]">tap{{ n - 1 }}</span>
-                  </span>
-                  <span class="arch-sub">pinned address</span>
-                </button>
-                <button
-                  type="button"
+                  v-for="id in guest"
+                  :key="id"
                   class="arch-node arch-node-xs"
-                  :class="{ 'arch-on': active === 'dinit' }"
-                  :aria-pressed="active === 'dinit'"
-                  v-on="on('dinit')"
+                  v-bind="nodeBind(id)"
+                  v-on="on(id)"
                 >
                   <span class="arch-head">
-                    <Terminal class="arch-icon" aria-hidden="true" />
-                    <span class="arch-name text-[0.78rem]">dinit</span>
+                    <component :is="iconFor(id)" class="arch-icon" aria-hidden="true" />
+                    <span class="arch-name">{{ byId[id]?.name }}</span>
                   </span>
-                  <span class="arch-sub">pid 1</span>
-                </button>
-                <button
-                  type="button"
-                  class="arch-node arch-node-xs arch-k-guest"
-                  :class="{ 'arch-on': active === 'workload' }"
-                  :aria-pressed="active === 'workload'"
-                  v-on="on('workload')"
-                >
-                  <span class="arch-head">
-                    <Box class="arch-icon" aria-hidden="true" />
-                    <span class="arch-name text-[0.78rem]">your workload</span>
-                  </span>
-                  <span class="arch-sub">from an OCI image</span>
+                  <span class="arch-sub">{{ byId[id]?.sub }}</span>
                 </button>
               </div>
             </section>
@@ -542,15 +499,13 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
               <button
                 v-for="id in policy"
                 :key="id"
-                type="button"
                 class="arch-node arch-node-sm"
-                :class="[{ 'arch-on': active === id }, `arch-k-${byId[id]?.kind}`]"
-                :aria-pressed="active === id"
+                v-bind="nodeBind(id)"
                 v-on="on(id)"
               >
                 <span class="arch-head">
                   <component :is="iconFor(id)" class="arch-icon" aria-hidden="true" />
-                  <span class="arch-name text-[0.78rem]">{{ byId[id]?.name }}</span>
+                  <span class="arch-name arch-name-sm">{{ byId[id]?.name }}</span>
                 </span>
                 <span class="arch-sub">{{ byId[id]?.sub }}</span>
               </button>
@@ -563,18 +518,12 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
             <span class="arch-rule" />
           </div>
 
-          <button
-            type="button"
-            class="arch-node w-full"
-            :class="{ 'arch-on': active === 'dclient' }"
-            :aria-pressed="active === 'dclient'"
-            v-on="on('dclient')"
-          >
+          <button class="arch-node w-full" v-bind="nodeBind('dclient')" v-on="on('dclient')">
             <span class="arch-head">
-              <Terminal class="arch-icon" aria-hidden="true" />
-              <span class="arch-name">dclient</span>
+              <component :is="iconFor('dclient')" class="arch-icon" aria-hidden="true" />
+              <span class="arch-name">{{ byId.dclient?.name }}</span>
             </span>
-            <span class="arch-sub">the host agent — registers with control, owns everything above</span>
+            <span class="arch-sub">{{ byId.dclient?.sub }}</span>
           </button>
         </section>
       </div>
@@ -669,10 +618,17 @@ button.arch-node:hover,
   font-weight: 600;
   overflow-wrap: anywhere;
 }
-/* sized so the longest store name still sits on one line in a third-width box */
+/* sized so the longest name still sits on one line in a narrow box */
 .arch-name-tight {
   font-size: 0.68rem;
   letter-spacing: -0.01em;
+}
+.arch-name-sm,
+.arch-node-xs .arch-name {
+  font-size: 0.78rem;
+}
+.arch-node-lg .arch-name {
+  font-size: 1rem;
 }
 .arch-sub {
   font-size: 0.7rem;
