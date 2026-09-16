@@ -33,15 +33,23 @@ useSeoMeta({
               Secure computers
               <span class="block text-muted-foreground">for everyone</span>
             </h1>
-            <div class="anim-rise mt-8 flex flex-col gap-3 sm:flex-row" style="animation-delay: 0.26s">
-              <Button as-child size="lg" class="group font-mono text-sm">
-                <a :href="`${consoleUrl}/signin`">
-                  Boot a machine
+            <div class="anim-rise mt-8 flex flex-col gap-3" style="animation-delay: 0.26s">
+              <div class="flex flex-col gap-3 sm:flex-row">
+                <Button as-child size="lg" class="group font-mono text-sm">
+                  <a :href="`${consoleUrl}/signin`">
+                    Boot a machine
+                    <ArrowRight class="size-4 transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true" />
+                  </a>
+                </Button>
+                <Button as-child size="lg" variant="outline" class="font-mono text-sm">
+                  <a href="#usecases">What it's for</a>
+                </Button>
+              </div>
+              <Button as-child size="lg" variant="outline" class="group font-mono text-sm sm:self-start">
+                <NuxtLink to="/architecture">
+                  Talk tech to me
                   <ArrowRight class="size-4 transition-transform duration-300 group-hover:translate-x-1" aria-hidden="true" />
-                </a>
-              </Button>
-              <Button as-child size="lg" variant="outline" class="font-mono text-sm">
-                <a href="#usecases">What it's for</a>
+                </NuxtLink>
               </Button>
             </div>
           </div>

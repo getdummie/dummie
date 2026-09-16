@@ -471,13 +471,15 @@
     min-height: calc(100svh - 3.5rem);
   }
 
+  /* opt-in: a page with no .panel would have the footer as its only snap
+     target, and mandatory snapping would jump straight to it on load. */
   @media (min-width: 1024px) and (min-height: 44rem) {
-    html {
+    html.snap-panels {
       scroll-snap-type: y mandatory;
       scroll-padding-top: 3.5rem;
     }
-    .panel,
-    .panel-end {
+    html.snap-panels .panel,
+    html.snap-panels .panel-end {
       scroll-snap-align: start;
       scroll-snap-stop: always;
     }
