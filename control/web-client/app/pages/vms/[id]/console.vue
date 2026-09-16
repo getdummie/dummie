@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft } from '@lucide/vue'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import VmTerminal from '@/components/VmTerminal.vue'
@@ -57,11 +57,22 @@ const connection = computed(() => {
   }
 })
 
-const quickKeys = [
+const rowOneKeys = [
   { label: 'Tab', data: '\t' },
+  { label: 'Enter', data: '\r' },
+]
+
+const rowTwoKeys = [
   { label: 'Ctrl+c', data: '\x03' },
   { label: 'Ctrl+r', data: '\x12' },
 ]
+
+const arrowKeys = {
+  up: { label: 'Up', data: '\x1b[A', icon: ArrowUp },
+  left: { label: 'Left', data: '\x1b[D', icon: ArrowLeft },
+  down: { label: 'Down', data: '\x1b[B', icon: ArrowDown },
+  right: { label: 'Right', data: '\x1b[C', icon: ArrowRight },
+}
 
 const pasteError = ref<string | null>(null)
 let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined
@@ -123,9 +134,25 @@ async function paste() {
   }
 }
 
+// The keypad is fixed to the viewport, so the terminal needs a matching
+// reservation below it — its height changes with the paste error line.
+const keypad = useTemplateRef<HTMLElement>('keypad')
+const keypadHeight = ref(0)
+let keypadObserver: ResizeObserver | null = null
+
+onMounted(() => {
+  if (!keypad.value) return
+  keypadObserver = new ResizeObserver(([entry]) => {
+    keypadHeight.value = entry?.target.getBoundingClientRect().height ?? 0
+  })
+  keypadObserver.observe(keypad.value)
+})
+
 onBeforeUnmount(() => {
   clearTimeout(pasteErrorTimer)
   clearTimeout(flashTimer)
+  keypadObserver?.disconnect()
+  keypadObserver = null
 })
 </script>
 
@@ -175,52 +202,97 @@ onBeforeUnmount(() => {
       @vm="vm = $event"
     />
 
+    <div class="shrink-0 sm:hidden" :style="{ height: `${keypadHeight}px` }" aria-hidden="true" />
+
     <div
-      class="shrink-0 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] sm:hidden"
+      ref="keypad"
+      class="fixed inset-x-0 bottom-0 z-50 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] sm:hidden"
     >
       <p v-if="pasteError" class="px-3 pt-2 font-mono text-xs text-muted-foreground">
         {{ pasteError }}
       </p>
-      <div
-        class="flex items-center gap-1.5 overflow-x-auto overscroll-x-contain px-3 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        <Button
-          v-for="key in quickKeys"
-          :key="key.label"
-          variant="outline"
-          size="sm"
-          class="shrink-0 font-mono text-xs transition-colors"
-          :class="flashClass(key.label)"
-          :disabled="phase !== 'open'"
-          @mousedown.prevent
-          @click="sendKeys(key)"
-        >
-          {{ key.label }}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          class="shrink-0 font-mono text-xs transition-colors"
-          :class="flashClass('Paste')"
-          :disabled="phase !== 'open'"
-          @mousedown.prevent
-          @click="paste()"
-        >
-          Paste
-        </Button>
-        <Button
-          v-for="mod in modifiers"
-          :key="mod.key"
-          :variant="armed(mod.key) ? 'default' : 'outline'"
-          size="sm"
-          class="shrink-0 font-mono text-xs"
-          :disabled="phase !== 'open'"
-          :aria-pressed="armed(mod.key)"
-          @mousedown.prevent
-          @click="toggleModifier(mod.key)"
-        >
-          {{ mod.label }}
-        </Button>
+      <div class="flex items-start gap-2 px-3 py-2">
+        <div class="grid min-w-0 flex-1 grid-cols-4 gap-1.5">
+          <Button
+            v-for="key in rowOneKeys"
+            :key="key.label"
+            variant="outline"
+            size="sm"
+            class="px-1 font-mono text-[11px] transition-colors"
+            :class="flashClass(key.label)"
+            :disabled="phase !== 'open'"
+            @mousedown.prevent
+            @click="sendKeys(key)"
+          >
+            {{ key.label }}
+          </Button>
+          <Button
+            v-for="mod in modifiers"
+            :key="mod.key"
+            :variant="armed(mod.key) ? 'default' : 'outline'"
+            size="sm"
+            class="px-1 font-mono text-[11px]"
+            :disabled="phase !== 'open'"
+            :aria-pressed="armed(mod.key)"
+            @mousedown.prevent
+            @click="toggleModifier(mod.key)"
+          >
+            {{ mod.label }}
+          </Button>
+          <Button
+            v-for="key in rowTwoKeys"
+            :key="key.label"
+            variant="outline"
+            size="sm"
+            class="px-1 font-mono text-[11px] transition-colors"
+            :class="flashClass(key.label)"
+            :disabled="phase !== 'open'"
+            @mousedown.prevent
+            @click="sendKeys(key)"
+          >
+            {{ key.label }}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            class="px-1 font-mono text-[11px] transition-colors"
+            :class="flashClass('Paste')"
+            :disabled="phase !== 'open'"
+            @mousedown.prevent
+            @click="paste()"
+          >
+            Paste
+          </Button>
+        </div>
+
+        <div class="grid shrink-0 grid-cols-3 grid-rows-2 gap-1.5">
+          <Button
+            variant="outline"
+            size="icon-sm"
+            class="col-start-2 row-start-1 transition-colors"
+            :class="flashClass(arrowKeys.up.label)"
+            :disabled="phase !== 'open'"
+            aria-label="Up"
+            @mousedown.prevent
+            @click="sendKeys(arrowKeys.up)"
+          >
+            <ArrowUp class="size-3.5" />
+          </Button>
+          <Button
+            v-for="key in [arrowKeys.left, arrowKeys.down, arrowKeys.right]"
+            :key="key.label"
+            variant="outline"
+            size="icon-sm"
+            class="row-start-2 transition-colors"
+            :class="flashClass(key.label)"
+            :disabled="phase !== 'open'"
+            :aria-label="key.label"
+            @mousedown.prevent
+            @click="sendKeys(key)"
+          >
+            <component :is="key.icon" class="size-3.5" />
+          </Button>
+        </div>
       </div>
     </div>
   </div>
