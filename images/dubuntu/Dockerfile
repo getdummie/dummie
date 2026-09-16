@@ -77,7 +77,7 @@ USER ubuntu
 RUN set -ex \
   mkdir -p /home/ubuntu/app /home/ubuntu/.pi/agent
 COPY <<'EOF' /home/ubuntu/.pi/agent/APPEND_SYSTEM.md
-Never add comments unless asked. Code is the source of truth.
-Network access is restricted. If you need a domain or IP whitelisted, ask the user with a short reason.
+- Never add comments unless asked.
+- Network access is restricted. If you need a domain or IP whitelisted, ask the user with a reason in 10 words.
 EOF
 WORKDIR /home/ubuntu/app
