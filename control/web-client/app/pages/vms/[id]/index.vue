@@ -722,25 +722,24 @@ function portsLabel(t: TargetRecord) {
 
 const allowAll = computed(() => targets.value.find(isEverywhere) ?? null)
 const openAllOpen = ref(false)
-const openAllTTL = ref('3600')
+const openAllMinutes = ref('60')
 const openAllNote = ref('')
 const openingAll = ref(false)
 const openAllError = ref<string | null>(null)
 
 function resetOpenAllForm() {
-  openAllTTL.value = '3600'
+  openAllMinutes.value = '60'
   openAllNote.value = ''
   openAllError.value = null
 }
 
 async function openEverything() {
-  const ttl = Number(openAllTTL.value)
-  const problem = ttlProblem(openAllTTL.value)
-  if (problem || ttl === 0) {
+  const problem = ttlMinutesProblem(openAllMinutes.value)
+  if (problem) {
     openAllError.value = problem
-      ?? 'An open door needs a TTL. Add 0.0.0.0/0 by hand if you really want it to stay.'
     return
   }
+  const ttl = Number(openAllMinutes.value) * 60
   openingAll.value = true
   openAllError.value = null
   try {
@@ -803,6 +802,13 @@ function ttlProblem(raw: string) {
   if (!Number.isInteger(ttl) || ttl < 0) return 'TTL must be a whole number of seconds, or 0 for no limit.'
   if (ttl > 0 && ttl < 10) return 'A TTL must be at least 10 seconds. Use 0 for no limit.'
   if (ttl > 30 * 24 * 3600) return 'A TTL must be at most 30 days (2592000 seconds).'
+  return null
+}
+
+function ttlMinutesProblem(raw: string) {
+  const mins = Number(raw)
+  if (!Number.isInteger(mins) || mins < 1) return 'TTL must be a whole number of minutes, at least 1.'
+  if (mins > 30 * 24 * 60) return 'A TTL must be at most 30 days (43200 minutes).'
   return null
 }
 
@@ -1739,12 +1745,13 @@ async function removeDomain() {
 
               <form class="space-y-4" :aria-busy="openingAll" @submit.prevent="openEverything">
                 <div class="space-y-2">
-                  <Label for="oa-ttl">TTL (seconds)</Label>
+                  <Label for="oa-ttl">TTL (minutes)</Label>
                   <Input
                     id="oa-ttl"
-                    v-model="openAllTTL"
+                    v-model="openAllMinutes"
                     type="number"
-                    min="10"
+                    min="1"
+                    max="43200"
                     step="1"
                     inputmode="numeric"
                     required
