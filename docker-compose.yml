@@ -8,7 +8,7 @@ services:
       - ./website:/app
     working_dir: /app
     ports:
-      - 3000:3000
+      - 127.0.0.1:3000:3000
 
   control-sdk:
     restart: unless-stopped
@@ -31,7 +31,7 @@ services:
       - ./control:/app
     working_dir: /app
     ports:
-      - 1323:1323
+      - 10.68.0.1:1323:1323
     depends_on:
       postgres:
         condition: service_healthy
@@ -67,8 +67,8 @@ services:
       - NET_RAW
       - SYS_NICE
     ports:
-      - 8123:8123
-      - 9010:9000
+      - 10.68.0.1:8123:8123
+      - 10.68.0.1:9010:9000
     volumes:
       - ./clickhouse-data:/var/lib/clickhouse/
     env_file:
@@ -81,8 +81,8 @@ services:
     env_file:
       - .rustfs.env
     ports:
-      - 9000:9000
-      - 9001:9001
+      - 10.68.0.1:9000:9000
+      - 10.68.0.1:9001:9001
     volumes:
       - ./rustfs-data:/data
       - ./rustfs-logs:/logs
@@ -105,7 +105,7 @@ services:
     env_file:
       - .pgweb.env
     ports:
-      - 8082:8081
+      - 127.0.0.1:8082:8081
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,8 +116,8 @@ services:
   postgres:
     image: postgres:18.4-alpine3.24
     restart: unless-stopped
-    ports:
-      - 5432:5432
+    # ports:
+    #   - 10.68.0.1:5432:5432
     volumes:
       - ./postgres-data:/var/lib/postgresql/18/docker
       - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh:ro
