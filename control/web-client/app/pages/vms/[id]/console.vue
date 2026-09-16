@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from '@lucide/vue'
+import ThemeToggle from '@/components/ThemeToggle.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import VmTerminal from '@/components/VmTerminal.vue'
@@ -22,6 +23,7 @@ const vm = ref<VM | null>(null)
 const phase = ref<Phase>('loading')
 const message = ref<string | null>(null)
 const terminal = useTemplateRef<InstanceType<typeof VmTerminal>>('terminal')
+const { preference: themePreference, isDark, setPreference } = useConsoleTheme()
 
 useHead(() => ({
   title: vm.value ? `dummie — console · ${vm.value.name || vm.value.vm_id}` : 'dummie — console',
@@ -177,16 +179,24 @@ onBeforeUnmount(() => {
         <span class="sr-only">Console {{ statusLabel }}</span>
       </div>
 
-      <Button
-        variant="outline"
-        size="sm"
-        class="ml-auto font-mono text-xs"
-        :class="connection.button"
-        :disabled="!connection.action || !vm?.console_url"
-        @click="connection.action?.()"
-      >
-        {{ connection.label }}
-      </Button>
+      <div class="ml-auto flex items-center gap-1">
+        <Button
+          variant="outline"
+          size="sm"
+          class="font-mono text-xs"
+          :class="connection.button"
+          :disabled="!connection.action || !vm?.console_url"
+          @click="connection.action?.()"
+        >
+          {{ connection.label }}
+        </Button>
+
+        <ThemeToggle
+          :preference="themePreference"
+          :is-dark="isDark"
+          @update:preference="setPreference"
+        />
+      </div>
     </header>
 
     <Alert v-if="message" :variant="phase === 'error' ? 'destructive' : 'default'" class="rounded-none border-x-0">
@@ -197,6 +207,7 @@ onBeforeUnmount(() => {
     <VmTerminal
       ref="terminal"
       :vm-id="id"
+      :dark="isDark"
       @phase="phase = $event"
       @message="message = $event"
       @vm="vm = $event"

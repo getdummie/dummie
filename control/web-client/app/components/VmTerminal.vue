@@ -6,6 +6,8 @@ import '@xterm/xterm/css/xterm.css'
 const props = defineProps<{
   vmId: string
   fontSize?: number
+  // Left unset the terminal follows the app theme; the console passes its own.
+  dark?: boolean
 }>()
 
 export type Phase = 'loading' | 'connecting' | 'open' | 'closed' | 'error'
@@ -64,7 +66,8 @@ const themes = {
   },
 } as const
 
-const theme = computed(() => colorMode.value === 'dark' ? themes.dark : themes.light)
+const isDark = computed(() => props.dark ?? colorMode.value === 'dark')
+const theme = computed(() => isDark.value ? themes.dark : themes.light)
 
 const phase = ref<Phase>('loading')
 const message = ref<string | null>(null)
