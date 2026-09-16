@@ -36,6 +36,38 @@ const statusLabel = computed(() => ({
   closed: 'disconnected',
   error: 'error',
 }[phase.value]))
+
+const quickKeys = [
+  { label: 'Tab', data: '\t' },
+  { label: 'Ctrl+C', data: '\x03' },
+]
+
+const pasteError = ref<string | null>(null)
+let pasteErrorTimer: ReturnType<typeof setTimeout> | undefined
+
+function showPasteError(msg: string) {
+  pasteError.value = msg
+  clearTimeout(pasteErrorTimer)
+  pasteErrorTimer = setTimeout(() => (pasteError.value = null), 4000)
+}
+
+function sendKeys(data: string) {
+  terminal.value?.send(data)
+  terminal.value?.focus()
+}
+
+async function paste() {
+  try {
+    const text = await navigator.clipboard.readText()
+    if (text) terminal.value?.send(text)
+    terminal.value?.focus()
+  }
+  catch {
+    showPasteError('The browser would not hand over the clipboard. Long-press the terminal to paste instead.')
+  }
+}
+
+onBeforeUnmount(() => clearTimeout(pasteErrorTimer))
 </script>
 
 <template>
@@ -94,5 +126,37 @@ const statusLabel = computed(() => ({
       @vm="vm = $event"
       @host="host = $event"
     />
+
+    <div
+      class="shrink-0 border-t border-border bg-background pb-[env(safe-area-inset-bottom)] sm:hidden"
+    >
+      <p v-if="pasteError" class="px-3 pt-2 font-mono text-xs text-muted-foreground">
+        {{ pasteError }}
+      </p>
+      <div class="flex items-center gap-2 px-3 py-2">
+        <Button
+          v-for="key in quickKeys"
+          :key="key.label"
+          variant="outline"
+          size="sm"
+          class="flex-1 font-mono text-xs"
+          :disabled="phase !== 'open'"
+          @mousedown.prevent
+          @click="sendKeys(key.data)"
+        >
+          {{ key.label }}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          class="flex-1 font-mono text-xs"
+          :disabled="phase !== 'open'"
+          @mousedown.prevent
+          @click="paste()"
+        >
+          Paste
+        </Button>
+      </div>
+    </div>
   </div>
 </template>

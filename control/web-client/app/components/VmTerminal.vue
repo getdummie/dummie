@@ -163,6 +163,14 @@ function disconnect() {
   sock?.close(1000, 'closed by the user')
 }
 
+function send(data: string) {
+  if (ws?.readyState === WebSocket.OPEN) ws.send(encoder.encode(data))
+}
+
+function focus() {
+  term?.focus()
+}
+
 onMounted(async () => {
   let vm: VM
   try {
@@ -215,7 +223,7 @@ onBeforeUnmount(() => {
   term = null
 })
 
-defineExpose({ phase, message, connect, disconnect })
+defineExpose({ phase, message, connect, disconnect, send, focus })
 </script>
 
 <template>
