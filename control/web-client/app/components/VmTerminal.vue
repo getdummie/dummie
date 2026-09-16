@@ -94,9 +94,17 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
+let sentCols = 0
+let sentRows = 0
+
+// A pty resize makes full-screen apps redraw, so only send one when the grid
+// really changed — a few stray pixels from browser chrome must not count.
 function sendResize() {
   if (!term || ws?.readyState !== WebSocket.OPEN) return
-  ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }))
+  if (term.cols === sentCols && term.rows === sentRows) return
+  sentCols = term.cols
+  sentRows = term.rows
+  ws.send(JSON.stringify({ type: 'resize', cols: sentCols, rows: sentRows }))
 }
 
 function fitAndResize() {
@@ -136,6 +144,8 @@ async function connect() {
   sock.onopen = () => {
     phase.value = 'open'
     message.value = null
+    sentCols = 0 // a fresh pty needs its size even if the grid did not change
+    sentRows = 0
     fitAndResize()
     term?.focus()
   }

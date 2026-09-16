@@ -129,7 +129,9 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="flex h-dvh flex-col bg-background text-foreground">
+  <!-- svh, not dvh: dvh tracks the browser chrome collapsing on scroll, which
+       resizes the pty and makes tmux redraw. svh stays put. -->
+  <div class="flex h-svh flex-col overscroll-none bg-background text-foreground">
     <header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
       <NuxtLink
         :to="`/vms/${id}`"
