@@ -78,6 +78,8 @@ export function useIntegrations() {
 
     installURL: (id: string) =>
       request<{ url: string }>(`/integrations/${id}/github/install`).then(d => d.url),
+    manageURL: (id: string) =>
+      request<{ url: string }>(`/integrations/${id}/github/manage`).then(d => d.url),
     availableRepos: (id: string) =>
       request<{ items: string[] }>(`/integrations/${id}/available-repos`).then(d => d.items ?? []),
     setRepos: (id: string, repos: string[]) =>

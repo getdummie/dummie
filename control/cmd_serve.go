@@ -322,6 +322,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	integ.DELETE("/:id/vms/:vm_id", integH.Detach)
 	integ.PUT("/:id/vms/:vm_id/repos", integH.SetVMRepos)
 	integ.GET("/:id/github/install", integH.Install)
+	integ.GET("/:id/github/manage", integH.Manage)
 
 	// Outside the group on purpose: github sends the browser here as a top-level
 	// redirect, which carries no access token. The single-use state authenticates it.

@@ -1049,6 +1049,15 @@
                 ]
             }
         },
+        "/integrations/{id}/github/manage": {
+            "get": {
+                "responses": {},
+                "summary": "Where to change the repositories granted to an installation",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
         "/integrations/{id}/repos": {
             "put": {
                 "requestBody": {

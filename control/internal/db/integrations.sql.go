@@ -523,6 +523,35 @@ func (q *Queries) ListIntegrationGrantsForVM(ctx context.Context, arg ListIntegr
 	return items, nil
 }
 
+const listIntegrationIDsByInstallationID = `-- name: ListIntegrationIDsByInstallationID :many
+SELECT i.id
+FROM integrations i
+JOIN github_installations gi ON gi.id = i.installation_pk
+WHERE gi.installation_id = $1
+`
+
+// Github's "redirect on update" carries an installation id and nothing else, so
+// this is the only way back to the page the user came from.
+func (q *Queries) ListIntegrationIDsByInstallationID(ctx context.Context, installationID int64) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, listIntegrationIDsByInstallationID, installationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []pgtype.UUID
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIntegrationRepos = `-- name: ListIntegrationRepos :many
 SELECT repo_owner, repo_name FROM integration_repos
 WHERE integration_id = $1

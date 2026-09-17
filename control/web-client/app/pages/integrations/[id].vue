@@ -121,6 +121,22 @@ async function connect() {
   }
 }
 
+const managing = ref(false)
+
+// Which repositories github granted is settled on github, not here, so this
+// only works out where that installation lives and sends the browser there.
+async function manageOnGitHub() {
+  managing.value = true
+  error.value = null
+  try {
+    window.location.href = await api.manageURL(id.value)
+  }
+  catch (e) {
+    error.value = e instanceof Error ? e.message : 'Could not open the installation on GitHub'
+    managing.value = false
+  }
+}
+
 function toggleRepo(repo: string, on: boolean) {
   const next = new Set(selected.value)
   if (on) next.add(repo)
@@ -281,10 +297,16 @@ const usage = computed(() => {
                 on offer here, change the installation on GitHub.
               </p>
             </div>
-            <Button variant="ghost" size="sm" :disabled="availableLoading" @click="loadAvailable">
-              <RefreshCw class="size-3.5" :class="availableLoading && 'animate-spin'" aria-hidden="true" />
-              Refresh
-            </Button>
+            <div class="flex shrink-0 flex-wrap items-center gap-2">
+              <Button variant="ghost" size="sm" :disabled="availableLoading" @click="loadAvailable">
+                <RefreshCw class="size-3.5" :class="availableLoading && 'animate-spin'" aria-hidden="true" />
+                Refresh
+              </Button>
+              <Button variant="secondary" size="sm" :disabled="managing" @click="manageOnGitHub">
+                <ExternalLink class="size-3.5" aria-hidden="true" />
+                {{ managing ? 'Opening GitHub…' : 'Change access on GitHub' }}
+              </Button>
+            </div>
           </div>
 
           <div v-if="item.all_reposable" class="mt-4 flex items-start gap-3 rounded-md bg-muted/40 p-3">
@@ -313,16 +335,8 @@ const usage = computed(() => {
             </div>
 
             <p v-else-if="!available.length" class="mt-4 text-sm text-muted-foreground">
-              GitHub granted this installation no repositories.
-              <a
-                href="https://github.com/settings/installations"
-                target="_blank"
-                rel="noreferrer"
-                class="inline-flex items-center gap-1 underline underline-offset-2"
-              >
-                Change what it can see
-                <ExternalLink class="size-3" aria-hidden="true" />
-              </a>
+              GitHub granted this installation no repositories. Use
+              <span class="font-medium">Change access on GitHub</span> above, then refresh.
             </p>
 
             <template v-else>

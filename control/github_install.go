@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
@@ -69,6 +70,48 @@ func (h *IntegrationHandler) Install(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]string{"url": target})
 }
 
+// Manage points the browser at the installation's own page on github, where the
+// repositories granted to it are changed. Which page that is depends on whether
+// the app sits on a user or an organisation, which only github knows.
+//
+// @Summary     Where to change the repositories granted to an installation
+// @Tags        integrations
+// @Produce     json
+// @Router      /integrations/{id}/github/manage [get]
+func (h *IntegrationHandler) Manage(c *echo.Context) error {
+	owner, id, err := h.ownedIntegration(c)
+	if err != nil {
+		return err
+	}
+
+	ctx := c.Request().Context()
+	row, err := h.q.GetIntegrationForOwner(ctx, db.GetIntegrationForOwnerParams{ID: id, OwnerID: owner})
+	if err != nil {
+		return notFoundOr(err, "no such integration", "could not read the integration")
+	}
+	if !row.InstallationPk.Valid {
+		return echo.NewHTTPError(http.StatusConflict, "connect a github account to this integration first")
+	}
+
+	app, err := h.githubApp(ctx)
+	if err != nil {
+		return err
+	}
+	account, err := app.getInstallation(ctx, row.InstallationID.Int64)
+	if err != nil {
+		log.Printf("could not read github installation %d: %v", row.InstallationID.Int64, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "github could not be asked about this installation")
+	}
+
+	installation := strconv.FormatInt(row.InstallationID.Int64, 10)
+	target := "https://github.com/settings/installations/" + installation
+	if !strings.EqualFold(account.AccountType, "User") {
+		target = "https://github.com/organizations/" + url.PathEscape(account.AccountLogin) +
+			"/settings/installations/" + installation
+	}
+	return c.JSON(http.StatusOK, map[string]string{"url": target})
+}
+
 // Callback is authenticated by the state alone, not by a session: github sends
 // the browser here as a top-level redirect, which carries no access token.
 //
@@ -84,7 +127,7 @@ func (h *IntegrationHandler) Callback(c *echo.Context) error {
 		// was involved. Nothing to record -- the repository list is read from
 		// github on demand -- so this is a benign bounce, not a failure.
 		if c.QueryParam("setup_action") == "update" {
-			return h.installRedirect(c, "", "")
+			return h.installRedirect(c, h.integrationOfInstallation(ctx, c.QueryParam("installation_id")), "")
 		}
 		return h.installRedirect(c, "", "missing_state")
 	}
@@ -152,6 +195,24 @@ func (h *IntegrationHandler) Callback(c *echo.Context) error {
 	log.Printf("github installation %d (%s) connected to integration %s",
 		installationID, account.AccountLogin, integrationID)
 	return h.installRedirect(c, integrationID, "")
+}
+
+// integrationOfInstallation names the page to land on after github's stateless
+// update redirect. It stays empty unless exactly one integration uses the
+// installation: with several there is no way to tell which one was being
+// edited, and the caller is unauthenticated here so guessing is not free.
+// Landing on a page you do not own is harmless -- every read behind it is
+// checked against the session -- but landing on the wrong one is confusing.
+func (h *IntegrationHandler) integrationOfInstallation(ctx context.Context, raw string) string {
+	installationID, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || installationID <= 0 {
+		return ""
+	}
+	ids, err := h.q.ListIntegrationIDsByInstallationID(ctx, installationID)
+	if err != nil || len(ids) != 1 {
+		return ""
+	}
+	return domainIDString(ids[0])
 }
 
 func githubRepositorySelection(v string) string {

@@ -82,6 +82,14 @@ FROM integrations i
 LEFT JOIN github_installations gi ON gi.id = i.installation_pk
 WHERE i.id = $1 AND i.owner_id = $2;
 
+-- name: ListIntegrationIDsByInstallationID :many
+-- Github's "redirect on update" carries an installation id and nothing else, so
+-- this is the only way back to the page the user came from.
+SELECT i.id
+FROM integrations i
+JOIN github_installations gi ON gi.id = i.installation_pk
+WHERE gi.installation_id = $1;
+
 -- name: GetIntegrationByNameForOwner :one
 SELECT * FROM integrations
 WHERE owner_id = $1 AND name = $2;
