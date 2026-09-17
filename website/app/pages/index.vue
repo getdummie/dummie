@@ -23,7 +23,7 @@ useSeoMeta({
           <div>
             <p class="eyebrow anim-rise mb-5 flex items-center gap-2 text-primary-text">
               <span aria-hidden="true" class="inline-block size-1.5 animate-pulse bg-primary" />
-              Isolated by default
+              NETWORK AND HYPERVISOR ISOLATED
             </p>
             <h1
               id="hero-heading"

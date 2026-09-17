@@ -34,12 +34,12 @@
   <g transform="translate(80 470)">
     <rect width="440" height="1" fill="#DCE2E0"/>
     <text y="52" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="24" letter-spacing="1" fill="#5A6664">
-      Your own machine, booted in seconds.
+      Machines, booted in seconds, for humans and agents alike.
     </text>
   </g>
 
   <g transform="translate(80 556)">
     <rect width="14" height="14" rx="2" fill="#48D597"/>
-    <text x="30" y="13" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="19" letter-spacing="3" fill="#2F9E72">ISOLATED BY DEFAULT</text>
+    <text x="30" y="13" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="19" letter-spacing="3" fill="#2F9E72">NETWORK AND HYPERVISOR ISOLATED</text>
   </g>
 </svg>
