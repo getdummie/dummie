@@ -1,0 +1,115 @@
+#!/usr/bin/env sh
+#
+# npm-compatible shim that forwards to bun.
+# Put this on your PATH ahead of the real npm (e.g. name it `npm`).
+#
+# Translations:
+#   npm install                  -> bun install
+#   npm install <pkg>            -> bun install <pkg>
+#   npm install -g <pkg>         -> bun add --global <pkg>
+#   npm ci                       -> bun install --frozen-lockfile
+#   npm add / uninstall / remove -> bun add / bun remove
+#   npm run <script>             -> bun run <script>
+#   npm exec                     -> bunx
+#   npm view / info / show       -> bun info
+#   npm root [-g]                -> print node_modules path
+#   --prefix <dir>               -> --cwd <dir>   (dir is created if missing)
+#   --legacy-peer-deps / --save* -> dropped (npm-only, no bun equivalent)
+
+set -eu
+
+# All logs go to stderr so they never pollute stdout
+# (npm root -g etc. print machine-read paths on stdout).
+log() { printf 'npm-shim: %s\n' "$*" >&2; }
+
+# Log the exact translated command, then replace the process with it.
+run() {
+  log "npm $orig_args  ->  $*"
+  exec "$@"
+}
+
+# Capture the original npm-style invocation BEFORE we mutate $@.
+orig_args="$*"
+
+if ! command -v bun >/dev/null 2>&1; then
+  log "'bun' was not found on PATH"
+  exit 127
+fi
+
+cmd=${1:-}
+[ "$#" -gt 0 ] && shift
+
+global=0
+prefix=""
+
+# For the commands that take package/dir flags, pull -g / --prefix out of
+# ANY position, drop npm-only flags, and rebuild the argument list.
+case "$cmd" in
+  install|i|add|uninstall|un|remove|rm)
+    n=$#
+    while [ "$n" -gt 0 ]; do
+      arg=$1; shift
+      case "$arg" in
+        -g|--global)        global=1 ;;
+        --prefix)           prefix=${1:-}; [ "$#" -gt 0 ] && shift && n=$((n - 1)) ;;
+        --prefix=*)         prefix=${arg#--prefix=} ;;
+        --legacy-peer-deps) : ;;                 # npm-only, no bun equivalent
+        --save|--save-dev|--save-exact|--no-save) : ;;  # npm defaults in bun
+        *) set -- "$@" "$arg" ;;
+      esac
+      n=$((n - 1))
+    done
+    ;;
+esac
+
+# If a prefix was given, make sure the dir exists (npm creates it; bun errors
+# on a missing --cwd), then prepend --cwd so it applies to the bun command.
+if [ -n "$prefix" ]; then
+  if ! mkdir -p "$prefix" 2>/dev/null; then
+    log "could not create prefix directory: $prefix"
+    exit 1
+  fi
+  set -- --cwd "$prefix" "$@"
+fi
+
+case "$cmd" in
+  install|i)
+    [ "$global" = 1 ] && run bun add --global "$@"
+    run bun install "$@"
+    ;;
+  ci)
+    run bun install --frozen-lockfile "$@"
+    ;;
+  add)
+    [ "$global" = 1 ] && run bun add --global "$@"
+    run bun add "$@"
+    ;;
+  uninstall|un|remove|rm)
+    [ "$global" = 1 ] && run bun remove --global "$@"
+    run bun remove "$@"
+    ;;
+  run|run-script)
+    run bun run "$@"
+    ;;
+  exec)
+    run bunx "$@"
+    ;;
+  view|info|show)
+    run bun info "$@"
+    ;;
+  root)
+    case "${1:-}" in
+      -g|--global) log "npm $orig_args  ->  print global node_modules path"
+                   echo "${BUN_INSTALL:-$HOME/.bun}/install/global/node_modules" ;;
+      *)           log "npm $orig_args  ->  print local node_modules path"
+                   echo "$(pwd)/node_modules" ;;
+    esac
+    exit 0
+    ;;
+  "")
+    run bun
+    ;;
+  *)
+    run bun "$cmd" "$@"
+    ;;
+esac

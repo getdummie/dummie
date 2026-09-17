@@ -1,9 +1,15 @@
+FROM docker.io/chromedp/headless-shell:stable AS chrome
+
 FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN set -ex \
   && apt update \
+  && apt -y \
+    -o Dpkg::Options::=--force-confold \
+    -o Dpkg::Options::=--force-confdef \
+    dist-upgrade \
   && apt install -y \
     systemd \
     systemd-sysv \
@@ -27,11 +33,42 @@ RUN set -ex \
     lsof \
     tmux \
     git \
+    file \
   && apt clean \
   && systemctl enable ssh \
   && systemctl enable systemd-resolved \
   && systemctl enable systemd-networkd \
   && systemctl enable systemd-udevd \
+  && systemctl mask -- \
+    snapd.service \
+    snapd.socket \
+    snapd.seeded.service \
+    snapd.snap-repair.timer \
+    snapd.snap-repair.service \
+    unattended-upgrades.service \
+    apt-daily.timer \
+    apt-daily-upgrade.timer \
+    motd-news.service \
+    motd-news.timer \
+    update-notifier-download.timer \
+    update-notifier-motd.timer \
+    fwupd.service \
+    fwupd-refresh.service \
+    fwupd-refresh.timer \
+    plymouth.service \
+    plymouth-start.service \
+    plymouth-quit.service \
+    plymouth-quit-wait.service \
+    plymouth-read-write.service \
+    man-db.timer \
+    dpkg-db-backup.timer \
+    e2scrub_all.timer \
+    e2scrub_reap.service \
+    ubuntu-advantage.service \
+    ua-reboot-cmds.service \
+    apport.service \
+    apport-autoreport.timer \
+    ufw.service \
   && adduser ubuntu sudo \
   && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
   && chmod 0440 /etc/sudoers.d/ubuntu
@@ -48,36 +85,92 @@ ENV LANG=C.UTF-8
 ENV TERM=xterm-256color
 
 USER root
-ARG NODE_VERSION=26.8.1
-RUN set -e \
-  && apt update \
+ARG BUN_VERSION=latest
+RUN set -ex \
   && apt-get install -y --no-install-recommends \
-      ca-certificates \
-      libatomic1 \
-      curl \
-      xz-utils \
-  && curl -fsSLO "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.xz" \
-  && tar -xJf "node-v$NODE_VERSION-linux-x64.tar.xz" -C /usr/local --strip-components=1 --no-same-owner \
-  && rm "node-v$NODE_VERSION-linux-x64.tar.xz"
+    ca-certificates \
+    libatomic1 \
+    curl \
+    unzip \
+  && case "$(dpkg --print-architecture)" in \
+       amd64) BUN_ARCH=x64 ;; \
+       arm64) BUN_ARCH=aarch64 ;; \
+       *) echo "unsupported architecture for bun" >&2; exit 1 ;; \
+     esac \
+  && if [ "$BUN_VERSION" = latest ]; then \
+       BUN_URL="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-${BUN_ARCH}.zip"; \
+     else \
+       BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}.zip"; \
+     fi \
+  && curl -fsSL "$BUN_URL" -o /tmp/bun.zip \
+  && unzip -q /tmp/bun.zip -d /tmp \
+  && mv "/tmp/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun \
+  && chmod 0755 /usr/local/bin/bun \
+  && rm -rf /tmp/bun.zip "/tmp/bun-linux-${BUN_ARCH}" \
+  && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
+  && ln -s /usr/local/bin/bun /usr/local/bin/node \
+  && bun --version
 
-ENV PLAYWRIGHT_BROWSERS_PATH=/opt/playwright-browsers
+COPY --from=chrome /headless-shell /headless-shell
+ENV PATH=/headless-shell:$PATH
+
+# headless-shell is dynamically linked; these are the libs it resolves at startup.
 RUN set -e \
-  && npm install -g playwright \
-  && playwright install --with-deps chromium \
-  && chmod -R a+rX /opt/playwright-browsers
+  && apt-get install -y --no-install-recommends \
+    fonts-noto-color-emoji \
+    fonts-symbola \
+    fonts-noto-core \
+    fonts-indic \
+    fonts-liberation \
+    libglib2.0-0 \
+    libnss3 \
+    libx11-6 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxext6 \
+    libxi6 \
+    libxrandr2 \
+    libxkbcommon0 \
+    libgbm1 \
+    libasound2t64 \
+    libpango-1.0-0 \
+    libcairo2 \
+  && fc-cache -f \
+  && for n in chrome chromium chromium-browser google-chrome google-chrome-stable; do \
+       ln -sf /headless-shell/headless-shell "/usr/local/bin/$n"; \
+     done \
+  && headless-shell --version
 
+ENV CHROME_PATH=/headless-shell/headless-shell
+ENV CHROME_BIN=/headless-shell/headless-shell
+ENV PUPPETEER_EXECUTABLE_PATH=/headless-shell/headless-shell
+
+COPY bun-as-npm /usr/local/bin/npm
 RUN set -e \
   && apt-get install -y --no-install-recommends \
     fd-find \
     ripgrep \
-  && npm install -g --ignore-scripts \
-    "@earendil-works/pi-coding-agent"
+  && BUN_INSTALL=/usr/local bun install -g "@earendil-works/pi-coding-agent" \
+  && chmod -R a+rX /usr/local/lib \
+  && chmod 0755 /usr/local/bin/npm \
+  && command -v pi
 
-USER ubuntu
 RUN set -ex \
-  mkdir -p /home/ubuntu/app /home/ubuntu/.pi/agent
+  && mkdir -p /home/ubuntu/app /home/ubuntu/.pi/agent
 COPY <<'EOF' /home/ubuntu/.pi/agent/APPEND_SYSTEM.md
 - Never add comments unless asked.
 - Network access is restricted. If you need a domain or IP whitelisted, ask the user with a reason in 10 words.
 EOF
+COPY <<'EOF' /home/ubuntu/.pi/agent/skills/web-development/
+---
+name: web-development
+description: "A base skill for developing web apps. Use this skill when you are starting with a fresh web development project for guidance on the architecture."
+---
+- golang echo server for backed (which serves APIs namespaced with /api/v1/ ) listening on port 8000 and host 0.0.0.0
+- vuejs for frontend
+- golang backend initializes the vuejs server on port 3000 and anything not coming on /api/v1/ gets internally routed to it and served
+EOF
+RUN chown -R ubuntu:ubuntu /home/ubuntu
+
+USER ubuntu
 WORKDIR /home/ubuntu/app
