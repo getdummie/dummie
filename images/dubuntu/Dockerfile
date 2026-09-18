@@ -34,6 +34,7 @@ RUN set -ex \
     tmux \
     git \
     file \
+    xsel \
   && apt clean \
   && systemctl enable ssh \
   && systemctl enable systemd-resolved \
@@ -160,6 +161,7 @@ RUN set -ex \
 COPY <<'EOF' /home/ubuntu/.pi/agent/APPEND_SYSTEM.md
 - Never add comments unless asked.
 - Network access is restricted. If you need a domain or IP whitelisted, ask the user with a reason in 10 words.
+- For accessing a browser you can access chromium over CDP
 EOF
 COPY <<'EOF' /home/ubuntu/.pi/agent/skills/web-development/
 ---
