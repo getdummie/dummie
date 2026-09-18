@@ -48,11 +48,16 @@ freebind: true
 reuseport: true
 
 # dclient serves this socket and relays to the control server with the host's own
-# credential, so intproxy holds no credential of its own.
-broker:
-  socket: ` + intproxyBrokerSocket + `
-  timeout: 5s
+# credential, so intproxy holds no credential of its own and no policy either.
+credential:
+  mode: broker
   token_skew: 60s
+  broker:
+    socket: ` + intproxyBrokerSocket + `
+    timeout: 5s
+
+integrations:
+  - name: github
 
 dial_timeout: 10s
 tls_handshake_timeout: 10s
@@ -78,7 +83,7 @@ func generateIntproxyConfig(tld, controlURL string, tls bool) string {
 	fmt.Fprintf(&b, "\nlisten: %s\n", yamlString(listen))
 	fmt.Fprintf(&b, "tld: %s\n", yamlString(tld))
 	fmt.Fprintf(&b, "label: %s\n", yamlString(proxyIntLabel))
-	fmt.Fprintf(&b, "console_url: %s\n", yamlString(strings.TrimRight(strings.TrimSpace(controlURL), "/")))
+	fmt.Fprintf(&b, "docs_url: %s\n", yamlString(strings.TrimRight(strings.TrimSpace(controlURL), "/")+"/integrations"))
 
 	b.WriteString("\ntls:\n")
 	if tls {

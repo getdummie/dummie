@@ -12,10 +12,12 @@ func TestGenerateIntproxyConfig(t *testing.T) {
 		`listen: "10.64.255.254:443"`,
 		`tld: "example.com"`,
 		`label: "int"`,
-		`console_url: "https://control.example.com"`,
+		`docs_url: "https://control.example.com/integrations"`,
 		`cert: "/etc/intproxy/certs/fullchain.pem"`,
 		`key: "/etc/intproxy/certs/privkey.pem"`,
 		"socket: /run/intproxy/broker.sock",
+		"mode: broker",
+		"- name: github",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)

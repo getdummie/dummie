@@ -2,13 +2,11 @@ package intproxy
 
 import (
 	"encoding/base64"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 )
 
 // upstreamProbe records what github would have seen.
@@ -37,24 +35,13 @@ func TestEndToEndCloneInjectsToken(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	b := fakeBroker(t, func(w http.ResponseWriter, r *http.Request) {
-		var tr tokenRequest
-		_ = json.NewDecoder(r.Body).Decode(&tr)
-		if tr.Repo != "getdummie/dummie" || tr.VMIP != "192.0.2.1" {
-			t.Errorf("broker saw %+v", tr)
-		}
-		_ = json.NewEncoder(w).Encode(tokenResponse{Token: "ghs_minted", ExpiresAt: time.Now().Add(time.Hour)})
-	})
-
-	s := serverWithBroker(t, b)
-	s.cfg.GitHub.GitHost = upstream.Listener.Addr().String()
-	s.rp = newReverseProxy(s)
-	s.rp.rp.Transport = upstream.Client().Transport
+	s := testServer(t, minting("ghs_minted"), "git_host: "+upstream.Listener.Addr().String())
+	s.rp.Transport = upstream.Client().Transport
 
 	r := httptest.NewRequest(http.MethodGet, "/getdummie/dummie.git/info/refs?service=git-upload-pack", nil)
-	r.Host = s.ServerName()
+	r.Host = githubHost()
 	r.Header.Set("Git-Protocol", "version=2")
-	r.Header.Set("Authorization", "Bearer ghp_the_guests_own_token")
+	r.Header.Set("Authorization", "Bearer ghp_the_clients_own_token")
 	r.Header.Set("Cookie", "session=abc")
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
@@ -71,7 +58,7 @@ func TestEndToEndCloneInjectsToken(t *testing.T) {
 		t.Fatalf("upstream Authorization = %q, want the minted token", seen.auth)
 	}
 	if seen.cookie != "" {
-		t.Fatal("the guest's cookie reached github")
+		t.Fatal("the client's cookie reached github")
 	}
 	if seen.path != "/getdummie/dummie.git/info/refs" {
 		t.Fatalf("upstream path = %q", seen.path)
@@ -82,7 +69,7 @@ func TestEndToEndCloneInjectsToken(t *testing.T) {
 	if seen.proto != "version=2" {
 		t.Fatalf("Git-Protocol = %q, want it forwarded", seen.proto)
 	}
-	if seen.host != s.cfg.GitHub.GitHost {
+	if seen.host != upstream.Listener.Addr().String() {
 		t.Fatalf("upstream Host = %q", seen.host)
 	}
 }
@@ -98,17 +85,11 @@ func TestEndToEndRESTRewritesPagination(t *testing.T) {
 	}))
 	defer upstream.Close()
 
-	b := fakeBroker(t, func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(tokenResponse{Token: "ghs_minted", ExpiresAt: time.Now().Add(time.Hour)})
-	})
-
-	s := serverWithBroker(t, b)
-	s.cfg.GitHub.APIHost = upstream.Listener.Addr().String()
-	s.rp = newReverseProxy(s)
-	s.rp.rp.Transport = upstream.Client().Transport
+	s := testServer(t, minting("ghs_minted"), "api_host: "+upstream.Listener.Addr().String())
+	s.rp.Transport = upstream.Client().Transport
 
 	r := httptest.NewRequest(http.MethodGet, "/api/v3/user/repos", nil)
-	r.Host = s.ServerName()
+	r.Host = githubHost()
 	w := httptest.NewRecorder()
 	s.ServeHTTP(w, r)
 
@@ -119,7 +100,36 @@ func TestEndToEndRESTRewritesPagination(t *testing.T) {
 		t.Fatalf("rate limit headers were not passed through: %q", got)
 	}
 	link := w.Header().Get("Link")
-	if want := `<https://github.int.example.com/api/v3/user/repos?page=2>; rel="next"`; link != want {
+	if want := `<http://github.int.example.com/api/v3/user/repos?page=2>; rel="next"`; link != want {
 		t.Fatalf("Link = %q, want %q", link, want)
+	}
+}
+
+// An upstream 401 is about this proxy's credential, not the caller's. Passed
+// through, git would answer it by prompting for a password that cannot help.
+func TestUpstream401BecomesOur403(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="GitHub"`)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"message":"Bad credentials"}`)
+	}))
+	defer upstream.Close()
+
+	s := testServer(t, minting("ghp_expired"), "git_host: "+upstream.Listener.Addr().String())
+	s.rp.Transport = upstream.Client().Transport
+
+	r := httptest.NewRequest(http.MethodGet, "/acme/thing.git/info/refs?service=git-upload-pack", nil)
+	r.Host = githubHost()
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; a 401 makes git prompt for credentials", w.Code)
+	}
+	if w.Header().Get("WWW-Authenticate") != "" {
+		t.Fatal("WWW-Authenticate reached the client, so git will prompt for credentials")
+	}
+	if !strings.Contains(w.Body.String(), "expired or been revoked") {
+		t.Fatalf("body = %q, want an explanation of whose credential failed", w.Body.String())
 	}
 }

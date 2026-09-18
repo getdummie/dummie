@@ -1,0 +1,70 @@
+# Local mode: this process holds the tokens and the rules itself. Nothing else
+# is needed to run it -- no control server, no broker socket.
+#
+# Two things follow from that, and they are weaker than broker mode:
+#   - the tokens are on this host, so a compromise here exposes them
+#   - the rules below are a static copy, so a change needs a SIGHUP
+#
+# What it still buys: the token never has to live on the client. No
+# ~/.git-credentials, nothing in a CI environment, nothing baked into an image.
+# A client just runs `git clone https://github.int.example.com/acme/thing.git`.
+
+listen: "0.0.0.0:443"
+tld: "internal.example.com"
+label: "int"
+
+tls:
+  enabled: true
+  cert: /etc/intproxy/certs/fullchain.pem
+  key: /etc/intproxy/certs/privkey.pem
+  min_version: "1.2"
+
+credential:
+  mode: local
+  token_skew: 60s
+
+integrations:
+  - name: github
+    # git_host: github.com
+    # api_host: api.github.com
+    auth:
+      kind: token
+      # Prefer fine-grained tokens: their scope is enforced by github itself,
+      # so it holds even if the rules below are wrong. A classic token is as
+      # broad as its owner, and then this proxy is the only thing narrowing it.
+      credentials:
+        ci: { token_file: /etc/intproxy/pat-ci }
+        alice: { token_env: INTPROXY_PAT_ALICE }
+      # default: ci
+
+# Identity is the source address and nothing else, so one client is one
+# address. Two people on the same host share whatever it maps to.
+policy:
+  default: deny
+  clients:
+    - name: build
+      source: 10.0.0.0/24
+      integrations:
+        - name: github
+          credential: ci
+          read: ["acme/*"]
+          write: ["acme/releases"]
+          # Graphql and the rest api outside /repos name no repository, so they
+          # cannot be scoped to one. Off unless asked for.
+          unscoped: false
+
+    - name: alice
+      source: 10.0.1.7
+      integrations:
+        # No read or write lists: the token's own scope is the boundary, which
+        # is the right shape for a fine-grained token.
+        - name: github
+          credential: alice
+
+dial_timeout: 10s
+tls_handshake_timeout: 10s
+response_header_timeout: 60s
+idle_timeout: 120s
+read_header_timeout: 30s
+shutdown_grace: 5m
+log_level: info

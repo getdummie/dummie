@@ -52,8 +52,12 @@ label: "` + intproxyLabel + `"
 tls:
   cert: ` + intproxyCertFile + `
   key: ` + intproxyKeyFile + `
-broker:
-  socket: ` + intproxyBrokerSock + `
+credential:
+  mode: broker
+  broker:
+    socket: ` + intproxyBrokerSock + `
+integrations:
+  - name: github
 log_level: info
 `
 

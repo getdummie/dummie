@@ -5,6 +5,10 @@ default: build
 build:
     go build -o intproxy ./cmd/intproxy
 
+# Validate a config file without starting anything.
+check config="intproxy.yaml": build
+    ./intproxy -config {{config}} -check
+
 # Unit + integration tests.
 test:
     go test ./...

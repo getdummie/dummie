@@ -13,6 +13,10 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"intproxy/internal/credential"
+	"intproxy/internal/integration"
+	"intproxy/internal/policy"
 )
 
 type Duration time.Duration
@@ -48,6 +52,14 @@ func (d Duration) Or(def time.Duration) time.Duration {
 	return time.Duration(d)
 }
 
+// Credential modes. Broker holds nothing locally and asks a unix socket, which
+// is how a managed fleet runs it. Local holds the tokens and the policy in this
+// process, which is how a standalone deployment runs it.
+const (
+	ModeBroker = "broker"
+	ModeLocal  = "local"
+)
+
 type Config struct {
 	Listen    string `yaml:"listen"`
 	Freebind  bool   `yaml:"freebind"`
@@ -56,11 +68,13 @@ type Config struct {
 	TLD   string `yaml:"tld"`
 	Label string `yaml:"label"`
 
-	ConsoleURL string `yaml:"console_url"`
+	// DocsURL is where a refused caller is pointed.
+	DocsURL string `yaml:"docs_url"`
 
-	TLS    TLSConfig    `yaml:"tls"`
-	Broker BrokerConfig `yaml:"broker"`
-	GitHub GitHubConfig `yaml:"github"`
+	TLS          TLSConfig           `yaml:"tls"`
+	Credential   CredentialConfig    `yaml:"credential"`
+	Integrations []IntegrationConfig `yaml:"integrations"`
+	Policy       *policy.Policy      `yaml:"policy"`
 
 	DialTimeout           Duration `yaml:"dial_timeout"`
 	TLSHandshakeTimeout   Duration `yaml:"tls_handshake_timeout"`
@@ -70,6 +84,8 @@ type Config struct {
 	ShutdownGrace         Duration `yaml:"shutdown_grace"`
 
 	LogLevel string `yaml:"log_level"`
+
+	path string
 }
 
 type TLSConfig struct {
@@ -85,42 +101,57 @@ func (t TLSConfig) enabled() bool {
 	return t.Enabled == nil || *t.Enabled
 }
 
+type CredentialConfig struct {
+	Mode      string       `yaml:"mode"`
+	TokenSkew Duration     `yaml:"token_skew"`
+	Broker    BrokerConfig `yaml:"broker"`
+}
+
 type BrokerConfig struct {
-	Socket    string   `yaml:"socket"`
-	Timeout   Duration `yaml:"timeout"`
-	TokenSkew Duration `yaml:"token_skew"`
+	Socket  string   `yaml:"socket"`
+	Timeout Duration `yaml:"timeout"`
 }
 
-type GitHubConfig struct {
-	GitHost string `yaml:"git_host"`
-	APIHost string `yaml:"api_host"`
+// IntegrationConfig keeps the whole node so an integration decodes its own
+// options. Adding one therefore adds no fields to this struct.
+type IntegrationConfig struct {
+	Name    string
+	Enabled bool
+	Auth    credential.StaticConfig
+
+	node yaml.Node
 }
 
-const (
-	defaultGitHost = "github.com"
-	defaultAPIHost = "api.github.com"
-	defaultLabel   = "int"
-)
-
-func (g GitHubConfig) gitHost() string {
-	if g.GitHost == "" {
-		return defaultGitHost
+func (i *IntegrationConfig) UnmarshalYAML(n *yaml.Node) error {
+	var head struct {
+		Name    string                  `yaml:"name"`
+		Enabled *bool                   `yaml:"enabled"`
+		Auth    credential.StaticConfig `yaml:"auth"`
 	}
-	return g.GitHost
+	if err := n.Decode(&head); err != nil {
+		return err
+	}
+	i.Name = head.Name
+	i.Enabled = head.Enabled == nil || *head.Enabled
+	i.Auth = head.Auth
+	i.node = *n
+	return nil
 }
 
-func (g GitHubConfig) apiHost() string {
-	if g.APIHost == "" {
-		return defaultAPIHost
-	}
-	return g.APIHost
-}
+func (i IntegrationConfig) Decode(v any) error { return i.node.Decode(v) }
+
+const defaultLabel = "int"
 
 func (c *Config) label() string {
 	if c.Label == "" {
 		return defaultLabel
 	}
 	return c.Label
+}
+
+// hostname is the vhost an integration answers for.
+func (c *Config) hostname(name string) string {
+	return name + "." + c.label() + "." + c.TLD
 }
 
 func LoadConfig(path string) (*Config, error) {
@@ -132,6 +163,7 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	c.path = path
 	if err := c.Validate(); err != nil {
 		return nil, err
 	}
@@ -144,7 +176,7 @@ var (
 )
 
 func (c *Config) Validate() error {
-	if err := validHostPort("listen", c.Listen); err != nil {
+	if err := c.validateListen(); err != nil {
 		return err
 	}
 	if c.TLD == "" {
@@ -166,36 +198,107 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("config: tls.min_version %q must be 1.2 or 1.3", c.TLS.MinVersion)
 		}
 	}
-	if c.Broker.Socket == "" {
-		return errors.New("config: broker.socket is required")
+	if err := c.validateIntegrations(); err != nil {
+		return err
 	}
-	if !filepath.IsAbs(c.Broker.Socket) {
-		return fmt.Errorf("config: broker.socket %q must be an absolute path", c.Broker.Socket)
+	return c.validateCredential()
+}
+
+// validateListen only demands a concrete address when reuseport is on. That
+// combination means another process holds the same port on this host and the
+// two coexist because this bind is the more specific one; a wildcard would
+// collide with it instead. On its own, a wildcard is perfectly ordinary.
+func (c *Config) validateListen() error {
+	if c.Listen == "" {
+		return errors.New("config: listen is required")
+	}
+	host, port, err := net.SplitHostPort(c.Listen)
+	if err != nil {
+		return fmt.Errorf("config: listen %q must be host:port: %w", c.Listen, err)
+	}
+	p, err := strconv.Atoi(port)
+	if err != nil || p <= 0 || p > 65535 {
+		return fmt.Errorf("config: listen %q has an invalid port", c.Listen)
+	}
+	if !c.Reuseport {
+		return nil
+	}
+	if host == "" || host == "0.0.0.0" || host == "::" || strings.Contains(host, "*") {
+		return fmt.Errorf("config: listen %q needs a concrete address, not a wildcard, when reuseport is on", c.Listen)
+	}
+	if net.ParseIP(host) == nil {
+		return fmt.Errorf("config: listen %q needs an IP address when reuseport is on", c.Listen)
 	}
 	return nil
 }
 
-// validHostPort rejects a wildcard host: intproxy shares :443 with dproxy and
-// only coexists with it by binding one concrete address.
-func validHostPort(field, addr string) error {
-	if addr == "" {
-		return fmt.Errorf("config: %s is required", field)
+func (c *Config) validateIntegrations() error {
+	if len(c.Integrations) == 0 {
+		return errors.New("config: at least one integration is required")
 	}
-	host, port, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf("config: %s %q must be host:port: %w", field, addr, err)
+	seen := map[string]bool{}
+	enabled := 0
+	for _, ic := range c.Integrations {
+		if ic.Name == "" {
+			return errors.New("config: an integration has no name")
+		}
+		if seen[ic.Name] {
+			return fmt.Errorf("config: integration %q is listed twice", ic.Name)
+		}
+		seen[ic.Name] = true
+		if !integration.Known(ic.Name) {
+			return fmt.Errorf("config: integration %q is not known; this build has %s",
+				ic.Name, strings.Join(integration.Names(), ", "))
+		}
+		if ic.Enabled {
+			enabled++
+		}
 	}
-	if host == "" || host == "0.0.0.0" || host == "::" || strings.Contains(host, "*") {
-		return fmt.Errorf("config: %s %q needs a concrete address, not a wildcard", field, addr)
-	}
-	if net.ParseIP(host) == nil {
-		return fmt.Errorf("config: %s %q needs an IP address", field, addr)
-	}
-	p, err := strconv.Atoi(port)
-	if err != nil || p <= 0 || p > 65535 {
-		return fmt.Errorf("config: %s %q has an invalid port", field, addr)
+	if enabled == 0 {
+		return errors.New("config: every integration is disabled")
 	}
 	return nil
+}
+
+func (c *Config) validateCredential() error {
+	switch c.Credential.Mode {
+	case ModeBroker:
+		if c.Credential.Broker.Socket == "" {
+			return errors.New("config: credential.broker.socket is required under mode: broker")
+		}
+		if !filepath.IsAbs(c.Credential.Broker.Socket) {
+			return fmt.Errorf("config: credential.broker.socket %q must be an absolute path", c.Credential.Broker.Socket)
+		}
+		// A local copy of either would be a second, staler answer to a question
+		// the broker already answers on every request.
+		if c.Policy != nil {
+			return errors.New("config: policy belongs to mode: local; under mode: broker the control server decides")
+		}
+		for _, ic := range c.Integrations {
+			if !ic.Auth.Empty() {
+				return fmt.Errorf("config: integration %q sets auth, but mode: broker holds no credentials", ic.Name)
+			}
+		}
+		return nil
+
+	case ModeLocal:
+		if c.Credential.Broker.Socket != "" {
+			return errors.New("config: credential.broker.socket is set but the mode is local")
+		}
+		if c.Policy == nil {
+			return errors.New("config: policy is required under mode: local, or no client can reach anything")
+		}
+		for _, ic := range c.Integrations {
+			if ic.Enabled && ic.Auth.Empty() {
+				return fmt.Errorf("config: integration %q needs an auth block under mode: local", ic.Name)
+			}
+		}
+		return nil
+
+	case "":
+		return errors.New(`config: credential.mode is required, either "broker" or "local"`)
+	}
+	return fmt.Errorf("config: credential.mode %q must be %q or %q", c.Credential.Mode, ModeBroker, ModeLocal)
 }
 
 func ParseLogLevel(s string) slog.Level {
