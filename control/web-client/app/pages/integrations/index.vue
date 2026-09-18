@@ -41,6 +41,7 @@ async function load() {
 }
 onMounted(load)
 
+const pickOpen = ref(false)
 const addOpen = ref(false)
 const name = ref('')
 const creating = ref(false)
@@ -49,9 +50,16 @@ const creating = ref(false)
 // rather than as a server error.
 const nameValid = computed(() => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name.value) && name.value.length >= 3 && name.value.length <= 52)
 
-function openAdd() {
-  name.value = ''
+function openPicker() {
   error.value = null
+  pickOpen.value = true
+}
+
+// nextTick so the picker has finished closing before the next dialog opens.
+async function pickGitHub() {
+  pickOpen.value = false
+  name.value = ''
+  await nextTick()
   addOpen.value = true
 }
 
@@ -112,14 +120,8 @@ const failedInstall = computed(() => {
       <div>
         <p class="eyebrow mb-2 text-primary-text">// integrations</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Integrations</h1>
-        <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Give a VM access to a private GitHub repository without putting a token on it. The VM
-          clones from
-          <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">github.int.&lt;domain&gt;</code>
-          and the credential is added on the way out, so it never touches the machine.
-        </p>
       </div>
-      <Button v-if="items.length" class="shrink-0" @click="openAdd">
+      <Button v-if="items.length" class="shrink-0" @click="openPicker">
         <Plus class="size-4" aria-hidden="true" />
         New integration
       </Button>
@@ -152,7 +154,7 @@ const failedInstall = computed(() => {
           Create one, connect a GitHub account, then attach it to the VMs that should be able to
           reach those repositories. It grants nothing until you attach it.
         </p>
-        <Button class="mt-4" @click="openAdd">
+        <Button class="mt-4" @click="openPicker">
           <Plus class="size-4" aria-hidden="true" />
           New integration
         </Button>
@@ -211,14 +213,36 @@ const failedInstall = computed(() => {
       </div>
     </div>
 
+    <Dialog v-model:open="pickOpen">
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>New integration</DialogTitle>
+          <DialogDescription>Pick what to connect.</DialogDescription>
+        </DialogHeader>
+
+        <div class="mt-4">
+          <button
+            type="button"
+            class="flex w-full items-center gap-3 rounded-lg border border-border p-4 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            @click="pickGitHub"
+          >
+            <GitBranch class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium">GitHub</span>
+              <span class="block text-xs text-muted-foreground">Clone private repositories from a VM.</span>
+            </span>
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+
     <Dialog v-model:open="addOpen">
       <DialogContent>
         <form @submit.prevent="create">
           <DialogHeader>
-            <DialogTitle>New integration</DialogTitle>
+            <DialogTitle>GitHub Integration</DialogTitle>
             <DialogDescription>
-              Give it a name, then GitHub will ask which account and which repositories to grant.
-              You choose which VMs may use it afterwards.
+              GitHub will ask which account and which repositories to grant.
             </DialogDescription>
           </DialogHeader>
 
