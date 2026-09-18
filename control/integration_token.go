@@ -150,6 +150,23 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 				canonical = found.RepoName
 			}
 
+			// An attachment grants exactly the repositories it names, and
+			// attaching a vm is not itself a grant: none named means none
+			// reachable.
+			n, err := h.q.CountVMIntegrationRepos(ctx, db.CountVMIntegrationReposParams{
+				VMID:          g.VmPk,
+				IntegrationID: g.IntegrationID,
+			})
+			if err != nil {
+				log.Printf("could not count the repository scope of integration %s on vm %s: %v",
+					g.IntegrationName, g.VMName, err)
+				continue
+			}
+			if n == 0 {
+				sawOutOfScope = true
+				continue
+			}
+
 			scoped, err := h.q.VMIntegrationAllowsRepo(ctx, db.VMIntegrationAllowsRepoParams{
 				VMID:          g.VmPk,
 				IntegrationID: g.IntegrationID,
@@ -181,7 +198,9 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 			// A request that names no repository -- graphql, or rest outside
 			// /repos -- gets a token scoped to this attachment's effective set.
 			d.repos = h.reposForAttachment(ctx, g)
-			if len(d.repos) == 0 && !g.AllRepos {
+			// Empty would mint a token covering the whole installation, which
+			// is the opposite of what an attachment naming nothing means.
+			if len(d.repos) == 0 {
 				continue
 			}
 		}
@@ -215,8 +234,8 @@ func (h *ClientHandler) pickGrant(ctx context.Context, grants []db.ListIntegrati
 	}
 }
 
-// reposForAttachment is the effective set for one (vm, integration): the
-// attachment's own scoping when it has any, otherwise the integration's list.
+// reposForAttachment is the set for one (vm, integration): exactly what the
+// attachment names, and nothing when it names nothing.
 func (h *ClientHandler) reposForAttachment(ctx context.Context, g db.ListIntegrationGrantsForVMRow) []string {
 	scoped, err := h.q.ListVMIntegrationRepos(ctx, db.ListVMIntegrationReposParams{
 		VMID:          g.VmPk,
@@ -227,21 +246,8 @@ func (h *ClientHandler) reposForAttachment(ctx context.Context, g db.ListIntegra
 			g.IntegrationName, g.VMName, err)
 		return nil
 	}
-	if len(scoped) > 0 {
-		out := make([]string, 0, len(scoped))
-		for _, r := range scoped {
-			out = append(out, r.RepoName)
-		}
-		return out
-	}
-
-	rows, err := h.q.ListIntegrationRepos(ctx, g.IntegrationID)
-	if err != nil {
-		log.Printf("could not list the repositories of integration %s: %v", g.IntegrationName, err)
-		return nil
-	}
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
+	out := make([]string, 0, len(scoped))
+	for _, r := range scoped {
 		out = append(out, r.RepoName)
 	}
 	return out

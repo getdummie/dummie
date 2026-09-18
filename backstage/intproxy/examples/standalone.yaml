@@ -22,6 +22,9 @@ tls:
 credential:
   mode: local
   token_skew: 60s
+  # Only bounds broker mode, where the answer lives elsewhere. Here the policy
+  # below is consulted on every request already.
+  max_age: 60s
 
 integrations:
   - name: github

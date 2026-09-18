@@ -19,6 +19,9 @@ reuseport: true
 credential:
   mode: broker
   token_skew: 60s
+  # Bounds revocation: a grant is re-asked this often, so access taken away
+  # stops working within a minute rather than when the token expires.
+  max_age: 60s
   broker:
     socket: /run/intproxy/broker.sock
     timeout: 5s

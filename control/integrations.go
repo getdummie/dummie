@@ -182,21 +182,13 @@ func (h *IntegrationHandler) Update(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
 	}
 
-	ctx := c.Request().Context()
-	current, err := h.q.GetIntegrationForOwner(ctx, db.GetIntegrationForOwnerParams{ID: id, OwnerID: owner})
-	if err != nil {
-		return notFoundOr(err, "no such integration", "could not read the integration")
-	}
-	// "Every repository" only means anything when github itself granted the
-	// installation every repository.
-	if req.AllRepos && current.RepositorySelection.String != "all" {
-		return echo.NewHTTPError(http.StatusBadRequest,
-			"this installation is limited to selected repositories on github, so it cannot cover all of them")
-	}
-
-	if _, err := h.q.UpdateIntegrationFlags(ctx, db.UpdateIntegrationFlagsParams{
+	// all_repos is not a choice any more: an integration covers whatever github
+	// granted its installation. Minting omits the repositories field, and github
+	// scopes the token to the installation -- selected or not. Only readonly is
+	// still the owner's to set.
+	if _, err := h.q.UpdateIntegrationFlags(c.Request().Context(), db.UpdateIntegrationFlagsParams{
 		ID:       id,
-		AllRepos: req.AllRepos,
+		AllRepos: true,
 		Readonly: req.Readonly,
 		OwnerID:  owner,
 	}); err != nil {
@@ -479,8 +471,8 @@ func (h *IntegrationHandler) ListForVM(c *echo.Context) error {
 			Readonly: r.Readonly,
 			AllRepos: r.AllRepos,
 		}
-		// This vm's own scope when it has one, otherwise the integration's
-		// list -- which is exactly what the vm can actually reach.
+		// Exactly what this vm can reach: the repositories picked for the
+		// attachment, and none when none are picked.
 		scoped, err := h.q.ListVMIntegrationRepos(ctx, db.ListVMIntegrationReposParams{
 			VMID: vmID, IntegrationID: r.ID,
 		})
@@ -488,19 +480,8 @@ func (h *IntegrationHandler) ListForVM(c *echo.Context) error {
 			log.Printf("could not read the repository scope of integration %s: %v", dto.ID, err)
 			return echo.NewHTTPError(http.StatusInternalServerError, "could not list the integrations")
 		}
-		if len(scoped) > 0 {
-			for _, x := range scoped {
-				dto.Repos = append(dto.Repos, x.RepoOwner+"/"+x.RepoName)
-			}
-		} else if !r.AllRepos {
-			covered, err := h.q.ListIntegrationRepos(ctx, r.ID)
-			if err != nil {
-				log.Printf("could not read the repositories of integration %s: %v", dto.ID, err)
-				return echo.NewHTTPError(http.StatusInternalServerError, "could not list the integrations")
-			}
-			for _, x := range covered {
-				dto.Repos = append(dto.Repos, x.RepoOwner+"/"+x.RepoName)
-			}
+		for _, x := range scoped {
+			dto.Repos = append(dto.Repos, x.RepoOwner+"/"+x.RepoName)
 		}
 		dto.RepoCount = int64(len(dto.Repos))
 		items = append(items, dto)

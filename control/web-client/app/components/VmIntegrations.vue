@@ -9,8 +9,8 @@ import type { Integration } from '@/composables/useIntegrations'
 
 const props = defineProps<{ vmId: string, vmName: string, host: string }>()
 
-// What this VM can actually reach through one integration: its own scope when
-// it has one, otherwise everything the integration covers.
+// What this VM can reach through one integration: exactly the repositories
+// picked for it.
 interface VMIntegration {
   id: string
   name: string
@@ -41,12 +41,34 @@ async function loadAttached() {
   attached.value = new Map((items as VMIntegration[]).map(i => [i.id, i]))
 }
 
+// availableRepos is a live call to github, so it is fetched once per
+// integration and kept. inflight keeps a prefetch and an open from both asking.
+const inflight = new Map<string, Promise<void>>()
+
+function loadChoices(id: string): Promise<void> {
+  if (choices.value[id]) return Promise.resolve()
+  const pending = inflight.get(id)
+  if (pending) return pending
+
+  const p = api.availableRepos(id)
+    .then((repos) => {
+      choices.value = { ...choices.value, [id]: repos }
+    })
+    .finally(() => inflight.delete(id))
+  inflight.set(id, p)
+  return p
+}
+
 async function load() {
   loading.value = true
   error.value = null
   try {
     const [list] = await Promise.all([api.list(), loadAttached()])
     integrations.value = list
+    // Warm the github call while the user is still reading, so opening the
+    // editor does not wait on it. A failure here is not worth surfacing: the
+    // open path reports it and retries.
+    for (const i of list.filter(x => x.connected)) loadChoices(i.id).catch(() => {})
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not load the integrations'
@@ -80,23 +102,21 @@ async function toggle(i: Integration, on: boolean) {
   }
 }
 
-// The editor needs this VM's own scope, not the effective list: an empty scope
-// means the VM follows the integration as repositories are added to it.
+// An attachment reaches exactly what it names here, so a VM with nothing picked
+// reaches nothing: attaching is not itself a grant.
 async function toggleScope(i: Integration) {
   if (open.value === i.id) {
     open.value = null
     return
   }
   open.value = i.id
-  choicesLoading.value = true
   error.value = null
+  // This VM's own scope, already loaded with the list.
+  selected.value = new Set(attached.value.get(i.id)?.repos ?? [])
+
+  choicesLoading.value = !choices.value[i.id]
   try {
-    const [full, vms] = await Promise.all([api.get(i.id), api.attachedVMs(i.id)])
-    selected.value = new Set(vms.find(v => v.id === props.vmId)?.repos ?? [])
-    choices.value = {
-      ...choices.value,
-      [i.id]: full.all_repos ? await api.availableRepos(i.id) : (full.repos ?? []),
-    }
+    await loadChoices(i.id)
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not read the repositories'
@@ -171,9 +191,7 @@ async function saveScope(i: Integration) {
                 Not attached.
               </p>
               <p v-else-if="!reachable(i).length" class="mt-0.5 text-xs text-muted-foreground">
-                {{ i.all_repos
-                  ? 'Every repository the GitHub install grants.'
-                  : 'This integration has no repositories selected yet.' }}
+                No repositories picked yet, so it grants nothing.
               </p>
               <ul v-else class="mt-1 flex flex-wrap gap-1">
                 <li
@@ -208,9 +226,7 @@ async function saveScope(i: Integration) {
 
           <div v-if="open === i.id" class="mt-3 rounded-md bg-muted/40 p-3">
             <p class="text-xs text-muted-foreground">
-              Which of this integration's repositories
-              <span class="font-medium">{{ vmName }}</span> may reach. Select none to give it all of
-              them, now and as more are added.
+              Pick repositories to grant access to this VM
             </p>
             <div v-if="choicesLoading" class="mt-2.5 space-y-2" aria-busy="true">
               <Skeleton v-for="n in 3" :key="n" class="h-4 w-48" aria-hidden="true" />

@@ -53,7 +53,7 @@ func testServer(t *testing.T, src credential.Source, ghOptions string) *Server {
 		version: "test",
 		hosts:   map[string]integration.Integration{},
 	}
-	s.creds = credential.NewCache(src, time.Minute)
+	s.creds = credential.NewCache(src, time.Minute, time.Minute)
 
 	var decode func(any) error
 	if ghOptions != "" {

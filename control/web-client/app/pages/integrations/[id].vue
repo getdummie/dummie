@@ -1,13 +1,10 @@
 <script setup lang="ts">
-import { ArrowLeft, ChevronDown, ExternalLink, GitBranch, RefreshCw, TriangleAlert } from '@lucide/vue'
+import { ArrowLeft, ExternalLink, GitBranch, RefreshCw, TriangleAlert } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Switch } from '@/components/ui/switch'
-import type { Integration, OwnedVM } from '@/composables/useIntegrations'
+import type { Integration, IntegrationVM, OwnedVM } from '@/composables/useIntegrations'
 import { integrationHost } from '@/composables/useIntegrations'
 
 definePageMeta({ middleware: ['auth'] })
@@ -25,53 +22,16 @@ const available = ref<string[]>([])
 const availableError = ref<string | null>(null)
 const availableLoading = ref(false)
 
-const selected = ref<Set<string>>(new Set())
-const savingRepos = ref(false)
-
+// Attaching happens on a VM's own page, so this is a read-only view of who has
+// been given access.
 const vms = ref<OwnedVM[]>([])
-const attached = ref<Set<string>>(new Set())
-const vmBusy = ref<Record<string, boolean>>({})
+const attachedVMs = ref<IntegrationVM[]>([])
+const attached = computed(() => new Set(attachedVMs.value.map(v => v.id)))
 
-// Per-attachment repository scope. An empty set means the VM inherits every
-// repository the integration covers.
-const vmScope = ref<Record<string, Set<string>>>({})
-const scopeOpen = ref<string | null>(null)
-const scopeSaving = ref<Record<string, boolean>>({})
-
-// What an attachment can be narrowed to: the integration's own list, or
-// everything github granted when it covers all repositories.
-const scopeChoices = computed(() =>
-  item.value?.all_repos ? available.value : (item.value?.repos ?? []),
-)
-
-function scopeLabel(vmID: string) {
-  const n = vmScope.value[vmID]?.size ?? 0
-  if (n === 0) return 'all repositories'
-  return `${n} of ${scopeChoices.value.length}`
-}
-
-function toggleScope(vmID: string, repo: string, on: boolean) {
-  const next = new Set(vmScope.value[vmID] ?? [])
-  if (on) next.add(repo)
-  else next.delete(repo)
-  vmScope.value = { ...vmScope.value, [vmID]: next }
-}
-
-async function saveScope(vmID: string) {
-  scopeSaving.value = { ...scopeSaving.value, [vmID]: true }
-  error.value = null
-  try {
-    await api.setVMRepos(id.value, vmID, [...(vmScope.value[vmID] ?? [])])
-    scopeOpen.value = null
-  }
-  catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not save the repositories for this VM'
-  }
-  finally {
-    const b = { ...scopeSaving.value }
-    delete b[vmID]
-    scopeSaving.value = b
-  }
+// An attachment reaches exactly the repositories picked for it on the VM's own
+// page, and nothing when none are.
+function vmRepos(vm: IntegrationVM): string[] {
+  return vm.repos ?? []
 }
 
 useHead(() => ({ title: `dummie — ${item.value?.name ?? 'integration'}` }))
@@ -82,9 +42,7 @@ async function load() {
   try {
     const [i, a, v] = await Promise.all([api.get(id.value), api.attachedVMs(id.value), api.ownedVMs()])
     item.value = i
-    selected.value = new Set(i.repos ?? [])
-    attached.value = new Set(a.map(x => x.id))
-    vmScope.value = Object.fromEntries(a.map(x => [x.id, new Set(x.repos ?? [])]))
+    attachedVMs.value = a
     vms.value = v
     if (i.connected) await loadAvailable()
   }
@@ -137,89 +95,12 @@ async function manageOnGitHub() {
   }
 }
 
-function toggleRepo(repo: string, on: boolean) {
-  const next = new Set(selected.value)
-  if (on) next.add(repo)
-  else next.delete(repo)
-  selected.value = next
-}
-
-const reposDirty = computed(() => {
-  const was = new Set(item.value?.repos ?? [])
-  if (was.size !== selected.value.size) return true
-  for (const r of selected.value) if (!was.has(r)) return true
-  return false
-})
-
-async function saveRepos() {
-  savingRepos.value = true
-  error.value = null
-  try {
-    await api.setRepos(id.value, [...selected.value])
-    if (item.value) item.value.repos = [...selected.value]
-  }
-  catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not save the repositories'
-  }
-  finally {
-    savingRepos.value = false
-  }
-}
-
-async function setFlags(patch: { all_repos?: boolean, readonly?: boolean }) {
-  if (!item.value) return
-  const before = { all_repos: item.value.all_repos, readonly: item.value.readonly }
-  const next = { ...before, ...patch }
-  item.value.all_repos = next.all_repos
-  item.value.readonly = next.readonly
-  error.value = null
-  try {
-    await api.update(id.value, next)
-  }
-  catch (e) {
-    item.value.all_repos = before.all_repos
-    item.value.readonly = before.readonly
-    error.value = e instanceof Error ? e.message : 'Could not save'
-  }
-}
-
-async function toggleVM(vm: OwnedVM, on: boolean) {
-  vmBusy.value = { ...vmBusy.value, [vm.id]: true }
-  error.value = null
-  const next = new Set(attached.value)
-  try {
-    if (on) {
-      await api.attach(id.value, vm.id)
-      next.add(vm.id)
-      vmScope.value = { ...vmScope.value, [vm.id]: new Set() }
-    }
-    else {
-      await api.detach(id.value, vm.id)
-      next.delete(vm.id)
-      // Detaching drops the scoping server-side too, via the composite key.
-      const s = { ...vmScope.value }
-      delete s[vm.id]
-      vmScope.value = s
-      if (scopeOpen.value === vm.id) scopeOpen.value = null
-    }
-    attached.value = next
-  }
-  catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not change the attachment'
-  }
-  finally {
-    const b = { ...vmBusy.value }
-    delete b[vm.id]
-    vmBusy.value = b
-  }
-}
-
 // The usage snippet needs a fleet domain, which comes from a VM's own hostname.
 // An attached VM is the accurate source; otherwise any of the user's will do.
 const usage = computed(() => {
   const attachedVM = vms.value.find(v => attached.value.has(v.id))
   const host = integrationHost(attachedVM ?? vms.value[0])
-  const repo = [...selected.value][0]
+  const repo = available.value[0]
   return host ? { host, repo } : null
 })
 </script>
@@ -290,13 +171,7 @@ const usage = computed(() => {
       <template v-else>
         <section class="mt-8 rounded-lg border border-border p-4 sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 class="text-lg font-semibold tracking-tight">Repositories</h2>
-              <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-                Which of the repositories GitHub granted this integration covers. To change what is
-                on offer here, change the installation on GitHub.
-              </p>
-            </div>
+            <h2 class="text-lg font-semibold tracking-tight">Repositories</h2>
             <div class="flex shrink-0 flex-wrap items-center gap-2">
               <Button variant="ghost" size="sm" :disabled="availableLoading" @click="loadAvailable">
                 <RefreshCw class="size-3.5" :class="availableLoading && 'animate-spin'" aria-hidden="true" />
@@ -309,159 +184,68 @@ const usage = computed(() => {
             </div>
           </div>
 
-          <div v-if="item.all_reposable" class="mt-4 flex items-start gap-3 rounded-md bg-muted/40 p-3">
-            <Switch
-              id="all-repos"
-              :model-value="item.all_repos"
-              class="mt-0.5"
-              @update:model-value="(v: boolean) => setFlags({ all_repos: v })"
-            />
-            <div>
-              <Label for="all-repos" class="text-sm font-medium">Every repository</Label>
-              <p class="mt-0.5 text-xs text-muted-foreground">
-                Follows the installation, including repositories added to it later.
-              </p>
-            </div>
-          </div>
-
           <Alert v-if="availableError" variant="destructive" class="mt-4">
             <AlertTitle>Could not reach GitHub</AlertTitle>
             <AlertDescription>{{ availableError }}</AlertDescription>
           </Alert>
 
-          <template v-if="!item.all_repos">
-            <div v-if="availableLoading" class="mt-4 space-y-2" aria-hidden="true">
-              <Skeleton v-for="n in 3" :key="n" class="h-6 w-64" />
-            </div>
+          <div v-if="availableLoading" class="mt-4 space-y-2" aria-hidden="true">
+            <Skeleton v-for="n in 3" :key="n" class="h-6 w-64" />
+          </div>
 
-            <p v-else-if="!available.length" class="mt-4 text-sm text-muted-foreground">
-              GitHub granted this installation no repositories. Use
-              <span class="font-medium">Change access on GitHub</span> above, then refresh.
-            </p>
+          <p v-else-if="!available.length" class="mt-4 text-sm text-muted-foreground">
+            GitHub granted this installation no repositories. Use
+            <span class="font-medium">Change access on GitHub</span> above, then refresh.
+          </p>
 
-            <template v-else>
-              <ul class="mt-4 space-y-2">
-                <li v-for="repo in available" :key="repo" class="flex items-center gap-2.5">
-                  <Checkbox
-                    :id="`repo-${repo}`"
-                    :model-value="selected.has(repo)"
-                    @update:model-value="(v: boolean) => toggleRepo(repo, v)"
-                  />
-                  <Label :for="`repo-${repo}`" class="font-mono text-sm font-normal">{{ repo }}</Label>
-                </li>
-              </ul>
-              <div class="mt-4 flex items-center gap-2">
-                <Button :disabled="savingRepos || !reposDirty" @click="saveRepos">
-                  {{ savingRepos ? 'Saving…' : 'Save repositories' }}
-                </Button>
-                <p v-if="!selected.size" class="text-xs text-muted-foreground">
-                  With none selected, this integration grants nothing.
-                </p>
-              </div>
-            </template>
-          </template>
+          <ul v-else class="mt-4 space-y-1.5">
+            <li v-for="repo in available" :key="repo" class="font-mono text-sm">{{ repo }}</li>
+          </ul>
         </section>
 
         <section class="mt-6 rounded-lg border border-border p-4 sm:p-6">
           <h2 class="text-lg font-semibold tracking-tight">Attached VMs</h2>
           <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Only these VMs can reach the repositories above. Changes take effect on the next git
-            command — nothing restarts.
-          </p>
-          <p v-if="scopeChoices.length > 1" class="mt-1 max-w-2xl text-sm text-muted-foreground">
-            An attached VM reaches every repository above by default. To give one VM only some of
-            them, attach it and then use the
-            <span class="font-medium">all repositories</span> button on its row.
-          </p>
-          <p v-else-if="!scopeChoices.length" class="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Select repositories above first — attaching a VM to an integration that covers nothing
-            grants it nothing.
+            To grant or revoke access, open a VM and use its own integrations section.
           </p>
 
-          <p v-if="!vms.length" class="mt-4 text-sm text-muted-foreground">
-            You have no VMs yet. <NuxtLink to="/vms" class="underline underline-offset-2">Create one</NuxtLink>.
-          </p>
-
-          <ul v-else class="mt-4 divide-y divide-border">
-            <li v-for="vm in vms" :key="vm.id" class="py-2.5">
-              <div class="flex items-center justify-between gap-4">
-                <div class="min-w-0">
-                  <p class="truncate text-sm font-medium">{{ vm.name }}</p>
-                  <p class="font-mono text-xs text-muted-foreground">{{ vm.status }}</p>
-                </div>
-                <div class="flex shrink-0 items-center gap-2">
-                  <Button
-                    v-if="attached.has(vm.id) && scopeChoices.length > 1"
-                    variant="ghost"
-                    size="sm"
-                    class="font-mono text-xs"
-                    :aria-expanded="scopeOpen === vm.id"
-                    @click="scopeOpen = scopeOpen === vm.id ? null : vm.id"
-                  >
-                    {{ scopeLabel(vm.id) }}
-                    <ChevronDown class="size-3.5" :class="scopeOpen === vm.id && 'rotate-180'" aria-hidden="true" />
-                  </Button>
-                  <Switch
-                    :model-value="attached.has(vm.id)"
-                    :disabled="vmBusy[vm.id]"
-                    :aria-label="`Attach ${item.name} to ${vm.name}`"
-                    @update:model-value="(v: boolean) => toggleVM(vm, v)"
-                  />
-                </div>
+          <ul v-if="attachedVMs.length" class="mt-4 divide-y divide-border">
+            <li
+              v-for="vm in attachedVMs"
+              :key="vm.id"
+              class="flex flex-col gap-1.5 py-2.5 sm:flex-row sm:items-start sm:justify-between sm:gap-4"
+            >
+              <div class="min-w-0">
+                <NuxtLink :to="`/vms/${vm.id}`" class="truncate text-sm font-medium hover:underline">
+                  {{ vm.name }}
+                </NuxtLink>
+                <p class="font-mono text-xs text-muted-foreground">{{ vm.ip }}</p>
               </div>
-
-              <div v-if="scopeOpen === vm.id" class="mt-3 rounded-md bg-muted/40 p-3">
-                <p class="text-xs text-muted-foreground">
-                  Which of this integration's repositories <span class="font-medium">{{ vm.name }}</span>
-                  may reach. Select none to give it all of them.
-                </p>
-                <ul class="mt-2.5 space-y-2">
-                  <li v-for="repo in scopeChoices" :key="repo" class="flex items-center gap-2.5">
-                    <Checkbox
-                      :id="`scope-${vm.id}-${repo}`"
-                      :model-value="vmScope[vm.id]?.has(repo) ?? false"
-                      @update:model-value="(v: boolean) => toggleScope(vm.id, repo, v)"
-                    />
-                    <Label :for="`scope-${vm.id}-${repo}`" class="font-mono text-xs font-normal">{{ repo }}</Label>
-                  </li>
-                </ul>
-                <Button
-                  size="sm"
-                  class="mt-3"
-                  :disabled="scopeSaving[vm.id]"
-                  @click="saveScope(vm.id)"
-                >
-                  {{ scopeSaving[vm.id] ? 'Saving…' : 'Save' }}
-                </Button>
-              </div>
+              <p v-if="!vmRepos(vm).length" class="shrink-0 text-xs text-muted-foreground">
+                no repositories
+              </p>
+              <ul v-else class="flex flex-wrap gap-x-3 gap-y-1 sm:max-w-[60%] sm:justify-end">
+                <li v-for="repo in vmRepos(vm)" :key="repo" class="font-mono text-xs text-muted-foreground">
+                  {{ repo }}
+                </li>
+              </ul>
             </li>
           </ul>
 
-          <div v-if="!attached.size" class="mt-4 flex items-start gap-2 rounded-md bg-muted/40 p-3 text-sm">
+          <div v-else class="mt-4 flex items-start gap-2 rounded-md bg-muted/40 p-3 text-sm">
             <TriangleAlert class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <p class="text-muted-foreground">
               Attached to no VMs, so this integration currently grants nothing.
+              <template v-if="vms.length">
+                Open a
+                <NuxtLink to="/vms" class="underline underline-offset-2">VM</NuxtLink>
+                to give it access.
+              </template>
+              <template v-else>
+                You have no VMs yet —
+                <NuxtLink to="/vms" class="underline underline-offset-2">create one</NuxtLink>.
+              </template>
             </p>
-          </div>
-        </section>
-
-        <section class="mt-6 rounded-lg border border-border p-4 sm:p-6">
-          <h2 class="text-lg font-semibold tracking-tight">Access</h2>
-
-          <div class="mt-4 flex items-start gap-3">
-            <Switch
-              id="readonly"
-              :model-value="item.readonly"
-              class="mt-0.5"
-              @update:model-value="(v: boolean) => setFlags({ readonly: v })"
-            />
-            <div>
-              <Label for="readonly" class="text-sm font-medium">Read-only</Label>
-              <p class="mt-0.5 max-w-xl text-xs text-muted-foreground">
-                Clones and reads work; <span class="font-mono">git push</span> and writes through the
-                API are refused with a message saying so.
-              </p>
-            </div>
           </div>
         </section>
 

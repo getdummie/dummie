@@ -28,7 +28,7 @@ func TestCacheHoldsUntilSkew(t *testing.T) {
 	src := &countingSource{fn: func(Scope) (Token, error) {
 		return Token{Value: "ghs_one", ExpiresAt: time.Now().Add(time.Hour)}, nil
 	}}
-	c := NewCache(src, time.Minute)
+	c := NewCache(src, time.Minute, time.Minute)
 
 	for range 3 {
 		tok, err := c.Token(context.Background(), gitScope())
@@ -48,7 +48,7 @@ func TestCacheRefetchesInsideSkew(t *testing.T) {
 	src := &countingSource{fn: func(Scope) (Token, error) {
 		return Token{Value: "ghs_short", ExpiresAt: time.Now().Add(10 * time.Second)}, nil
 	}}
-	c := NewCache(src, time.Minute)
+	c := NewCache(src, time.Minute, time.Minute)
 
 	for range 2 {
 		if _, err := c.Token(context.Background(), gitScope()); err != nil {
@@ -65,7 +65,7 @@ func TestCacheHoldsATokenThatNeverExpires(t *testing.T) {
 	src := &countingSource{fn: func(Scope) (Token, error) {
 		return Token{Value: "ghp_static"}, nil
 	}}
-	c := NewCache(src, time.Minute)
+	c := NewCache(src, time.Minute, time.Minute)
 
 	for range 3 {
 		if _, err := c.Token(context.Background(), gitScope()); err != nil {
@@ -77,11 +77,46 @@ func TestCacheHoldsATokenThatNeverExpires(t *testing.T) {
 	}
 }
 
+// Nothing pushes a revocation here, so a grant has to be re-asked even while
+// its token is still perfectly valid. Without this a repository taken away
+// would keep working until the token expired -- an hour, for github.
+func TestCacheReasksAfterMaxAgeWhileTheTokenIsStillValid(t *testing.T) {
+	var granted atomic.Bool
+	granted.Store(true)
+
+	src := &countingSource{fn: func(Scope) (Token, error) {
+		if !granted.Load() {
+			return Token{}, &Denial{Status: http.StatusForbidden, Message: "revoked"}
+		}
+		// Far from expiry, so only max_age can force a re-ask.
+		return Token{Value: "ghs_one", ExpiresAt: time.Now().Add(time.Hour)}, nil
+	}}
+	c := NewCache(src, time.Minute, 20*time.Millisecond)
+
+	if _, err := c.Token(context.Background(), gitScope()); err != nil {
+		t.Fatal(err)
+	}
+	granted.Store(false)
+
+	// Still inside max_age: the cached grant is reused.
+	if _, err := c.Token(context.Background(), gitScope()); err != nil {
+		t.Fatalf("the cached token was dropped too early: %v", err)
+	}
+
+	time.Sleep(30 * time.Millisecond)
+
+	_, err := c.Token(context.Background(), gitScope())
+	var d *Denial
+	if !errors.As(err, &d) {
+		t.Fatalf("a revoked grant was still served after max_age: %v", err)
+	}
+}
+
 func TestCacheKeysOnEveryScopeField(t *testing.T) {
 	src := &countingSource{fn: func(s Scope) (Token, error) {
 		return Token{Value: s.Integration + "/" + s.Credential + "/" + s.Resource, ExpiresAt: time.Now().Add(time.Hour)}, nil
 	}}
-	c := NewCache(src, time.Minute)
+	c := NewCache(src, time.Minute, time.Minute)
 
 	base := gitScope()
 	scopes := []Scope{base, {}, {}, {}, {}}
@@ -112,7 +147,7 @@ func TestCacheDoesNotCacheDenials(t *testing.T) {
 		}
 		return Token{Value: "ghs_ok", ExpiresAt: time.Now().Add(time.Hour)}, nil
 	}
-	c := NewCache(src, time.Minute)
+	c := NewCache(src, time.Minute, time.Minute)
 
 	_, err := c.Token(context.Background(), gitScope())
 	var d *Denial
@@ -135,7 +170,7 @@ func TestCacheSingleFlight(t *testing.T) {
 		<-release
 		return Token{Value: "ghs_one", ExpiresAt: time.Now().Add(time.Hour)}, nil
 	}}
-	c := NewCache(src, time.Minute)
+	c := NewCache(src, time.Minute, time.Minute)
 
 	var wg sync.WaitGroup
 	errs := make([]error, 8)

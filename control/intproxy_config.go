@@ -52,6 +52,11 @@ reuseport: true
 credential:
   mode: broker
   token_skew: 60s
+  # How long a granted credential is reused before the control server is asked
+  # again. This is what bounds revocation: detaching a vm or removing a
+  # repository stops working within this long, rather than when the github
+  # token expires an hour later.
+  max_age: 60s
   broker:
     socket: ` + intproxyBrokerSocket + `
     timeout: 5s

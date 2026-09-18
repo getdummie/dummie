@@ -56,7 +56,9 @@ func New(cfg *Config, log *slog.Logger, version string) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	s.creds = credential.NewCache(src, cfg.Credential.TokenSkew.Or(time.Minute))
+	s.creds = credential.NewCache(src,
+		cfg.Credential.TokenSkew.Or(time.Minute),
+		cfg.Credential.MaxAge.Or(time.Minute))
 
 	if cfg.Credential.Mode == ModeLocal {
 		if err := cfg.Policy.Compile(); err != nil {

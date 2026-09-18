@@ -102,9 +102,13 @@ func (t TLSConfig) enabled() bool {
 }
 
 type CredentialConfig struct {
-	Mode      string       `yaml:"mode"`
-	TokenSkew Duration     `yaml:"token_skew"`
-	Broker    BrokerConfig `yaml:"broker"`
+	Mode      string   `yaml:"mode"`
+	TokenSkew Duration `yaml:"token_skew"`
+	// MaxAge caps how long a granted credential is reused before the source is
+	// asked again. It is what bounds revocation: nothing pushes a change here,
+	// so without it a revoked grant would keep working until its token expired.
+	MaxAge Duration     `yaml:"max_age"`
+	Broker BrokerConfig `yaml:"broker"`
 }
 
 type BrokerConfig struct {

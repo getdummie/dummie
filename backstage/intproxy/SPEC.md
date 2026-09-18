@@ -17,7 +17,8 @@ live. Everything else is shared.
 |---|---|---|
 | credential | none held; asks a unix socket per request | held here, from a file or the environment |
 | policy | none held; the socket's server decides | a static list in this config |
-| a rule change | takes effect on the next request | needs a `SIGHUP` |
+| a grant | next request | next request |
+| a revocation | within `credential.max_age` | `SIGHUP`, then next request |
 | a compromise here | lets an attacker mint tokens for attached clients | exposes the tokens themselves |
 
 Broker mode is what a managed fleet uses. Local mode is what makes this thing
@@ -79,6 +80,14 @@ changes which token comes back has to be in it.
 repository attached a second ago works on the very next request. A token with
 no expiry is static and never re-fetched.
 
+Grants are the other half, and they need their own bound. Nothing pushes a
+revocation here, so a cached grant is a cached *authorization*: held to token
+expiry it would keep working for the life of the token, which for a github
+installation token is an hour. `credential.max_age` caps how long one is reused
+before the source is asked again, so revocation bites within that long. Asking
+again is cheap — the control server re-runs the decision against its own tables
+and usually answers from its installation-token cache without touching github.
+
 ### Broker mode
 
 `intproxy` asks `dclient` over a unix socket, and `dclient` relays to the
@@ -87,10 +96,11 @@ identity — it can create and destroy VMs — so keeping it in `dclient` means 
 compromise of `intproxy` buys only the ability to mint repo-scoped tokens for
 clients that are already attached.
 
-The pushed config carries no policy at all. Attaching or detaching an
-integration therefore takes effect on the next request with no push and no
-restart, and a stale policy copy — a detached client that keeps working — is
-not possible.
+The pushed config carries no policy at all, so no push and no restart is needed
+to change who may reach what, and a stale *copy* of the rules cannot exist.
+Attaching takes effect on the very next request, because denials are not cached.
+Detaching takes effect within `credential.max_age`, because a grant already
+handed out is cached for that long — see Credentials above.
 
 ### Local mode
 
