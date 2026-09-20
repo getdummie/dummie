@@ -156,6 +156,29 @@ RUN set -e \
   && chmod 0755 /usr/local/bin/npm \
   && command -v pi
 
+ARG DOCKER_SUITE=
+RUN set -ex \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && install -m 0755 -d /etc/apt/keyrings \
+  && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+  && chmod a+r /etc/apt/keyrings/docker.asc \
+  && SUITE="${DOCKER_SUITE:-$(. /etc/os-release && echo "$VERSION_CODENAME")}" \
+  && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${SUITE} stable" \
+    > /etc/apt/sources.list.d/docker.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends \
+    docker-ce \
+    docker-ce-cli \
+    containerd.io \
+    docker-compose-plugin \
+    iptables \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/* \
+  && systemctl enable docker.service \
+  && adduser ubuntu docker \
+  && dockerd --version \
+  && docker compose version
+
 RUN set -ex \
   && mkdir -p /home/ubuntu/app /home/ubuntu/.pi/agent
 COPY <<'EOF' /home/ubuntu/.pi/agent/APPEND_SYSTEM.md
