@@ -85,6 +85,13 @@ ENV PATH=/usr/local/go/bin:$PATH
 ENV LANG=C.UTF-8
 ENV TERM=xterm-256color
 
+# ENV only applies to docker exec; the VM boots systemd, so login shells need these on disk.
+RUN set -ex \
+  && printf 'LANG=C.UTF-8\nLC_ALL=C.UTF-8\n' > /etc/default/locale \
+  && printf 'LANG=C.UTF-8\nLC_ALL=C.UTF-8\n' > /etc/locale.conf \
+  && printf 'LANG=C.UTF-8\nLC_ALL=C.UTF-8\n' >> /etc/environment \
+  && sed -i 's/^#\?AcceptEnv LANG LC_\*/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_config
+
 USER root
 ARG BUN_VERSION=latest
 RUN set -ex \
