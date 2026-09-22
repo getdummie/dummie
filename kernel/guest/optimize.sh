@@ -110,6 +110,9 @@ scripts/config --enable  CONFIG_IP_NF_FILTER
 scripts/config --enable  CONFIG_IP_NF_NAT
 scripts/config --enable  CONFIG_IP_NF_TARGET_MASQUERADE
 scripts/config --enable  CONFIG_NETFILTER_XT_TARGET_MASQUERADE
+scripts/config --enable  CONFIG_NETFILTER_XT_NAT          # xt_nat: the DNAT/SNAT targets docker uses to publish ports
+scripts/config --enable  CONFIG_NETFILTER_XT_TARGET_REDIRECT
+scripts/config --enable  CONFIG_IP_NF_TARGET_REJECT       # docker's default-deny rules on the DOCKER-USER chain
 scripts/config --enable  CONFIG_NETFILTER_XT_MATCH_ADDRTYPE
 scripts/config --enable  CONFIG_NETFILTER_XT_MATCH_CONNTRACK
 scripts/config --enable  CONFIG_NETFILTER_XT_MARK
