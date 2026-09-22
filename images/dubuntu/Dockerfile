@@ -175,6 +175,19 @@ RUN set -ex \
   && dockerd --version \
   && docker compose version
 
+# ENV only reaches docker exec; booted as a VM, each of these is read by a different consumer.
+ARG VM_PATH_PREFIX=/usr/local/go/bin:/headless-shell
+RUN set -ex \
+  && printf 'PATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' "$VM_PATH_PREFIX" >> /etc/environment \
+  && printf 'PATH=%s:$PATH\nexport PATH\n' "$VM_PATH_PREFIX" > /etc/profile.d/10-vm-path.sh \
+  && chmod 0644 /etc/profile.d/10-vm-path.sh \
+  && printf 'Defaults secure_path="%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"\n' "$VM_PATH_PREFIX" > /etc/sudoers.d/secure_path \
+  && chmod 0440 /etc/sudoers.d/secure_path \
+  && visudo -c \
+  && mkdir -p /etc/systemd/system.conf.d \
+  && printf '[Manager]\nDefaultEnvironment=PATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' "$VM_PATH_PREFIX" \
+    > /etc/systemd/system.conf.d/10-vm-path.conf
+
 RUN set -ex \
   && mkdir -p /home/ubuntu/app /home/ubuntu/.pi/agent
 COPY <<'EOF' /home/ubuntu/.pi/agent/APPEND_SYSTEM.md
