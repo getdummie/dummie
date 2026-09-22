@@ -1,4 +1,8 @@
+ARG BUN_VERSION=latest
+
 FROM docker.io/chromedp/headless-shell:stable AS chrome
+
+FROM docker.io/oven/bun:${BUN_VERSION} AS bun
 
 FROM ubuntu:26.04
 
@@ -93,28 +97,12 @@ RUN set -ex \
   && sed -i 's/^#\?AcceptEnv LANG LC_\*/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_config
 
 USER root
-ARG BUN_VERSION=latest
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 RUN set -ex \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     libatomic1 \
-    curl \
-    unzip \
-  && case "$(dpkg --print-architecture)" in \
-       amd64) BUN_ARCH=x64 ;; \
-       arm64) BUN_ARCH=aarch64 ;; \
-       *) echo "unsupported architecture for bun" >&2; exit 1 ;; \
-     esac \
-  && if [ "$BUN_VERSION" = latest ]; then \
-       BUN_URL="https://github.com/oven-sh/bun/releases/latest/download/bun-linux-${BUN_ARCH}.zip"; \
-     else \
-       BUN_URL="https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-${BUN_ARCH}.zip"; \
-     fi \
-  && curl -fsSL "$BUN_URL" -o /tmp/bun.zip \
-  && unzip -q /tmp/bun.zip -d /tmp \
-  && mv "/tmp/bun-linux-${BUN_ARCH}/bun" /usr/local/bin/bun \
   && chmod 0755 /usr/local/bin/bun \
-  && rm -rf /tmp/bun.zip "/tmp/bun-linux-${BUN_ARCH}" \
   && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
   && ln -s /usr/local/bin/bun /usr/local/bin/node \
   && bun --version
