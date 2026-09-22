@@ -74,6 +74,7 @@ RUN set -ex \
     apport.service \
     apport-autoreport.timer \
     ufw.service \
+    systemd-networkd-wait-online.service \
   && adduser ubuntu sudo \
   && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
   && chmod 0440 /etc/sudoers.d/ubuntu
