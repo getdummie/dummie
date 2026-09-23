@@ -1037,6 +1037,8 @@ interface CustomDomain {
   domain: string
   status: 'pending_dns' | 'verifying' | 'issuing' | 'active' | 'failed'
   cname_name: string
+  cname_host: string
+  zone: string
   cname_target: string
   last_error?: string
   url?: string
@@ -1814,24 +1816,35 @@ async function removeDomain() {
               nothing has to be issued. Point the CNAME at the target below and the name is live.
             </p>
             <p v-else-if="domain.status !== 'active'" class="text-xs text-muted-foreground">
-              Create this record at whoever holds your domain, then confirm it below. It has to be a
-              CNAME: an A record pointing at the same address is not accepted, because the CNAME is
-              what keeps the name following this VM if it moves.
+              Add this record at your DNS provider, then confirm below.
             </p>
             <p v-else class="text-xs text-muted-foreground">
               This name is live. Its CNAME has to keep pointing here, or it stops resolving to this VM.
             </p>
             <dl class="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-3">
+              <div class="min-w-0">
+                <dt class="eyebrow text-muted-foreground">Name</dt>
+                <template v-if="domain.zone">
+                  <dd class="mt-1 font-mono text-sm break-all">
+                    <span class="font-semibold">{{ domain.cname_host }}</span><span
+                      v-if="domain.cname_host !== '@'"
+                      class="text-muted-foreground"
+                    >.{{ domain.zone }}</span>
+                  </dd>
+                  <dd v-if="domain.cname_host === '@'" class="mt-1 text-xs text-muted-foreground">
+                    <span class="font-mono">@</span> is the root of
+                    <span class="font-mono">{{ domain.zone }}</span>. Many providers don't allow a CNAME
+                    there; use a subdomain like <span class="font-mono">www</span> if yours refuses.
+                  </dd>
+                </template>
+                <dd v-else class="mt-1 font-mono text-sm break-all">{{ domain.cname_name }}</dd>
+              </div>
               <div>
                 <dt class="eyebrow text-muted-foreground">Type</dt>
                 <dd class="mt-1 font-mono text-sm">CNAME</dd>
               </div>
               <div class="min-w-0">
-                <dt class="eyebrow text-muted-foreground">Name</dt>
-                <dd class="mt-1 font-mono text-sm break-all">{{ domain.cname_name }}</dd>
-              </div>
-              <div class="min-w-0">
-                <dt class="eyebrow text-muted-foreground">Points to</dt>
+                <dt class="eyebrow text-muted-foreground">Value</dt>
                 <dd class="mt-1 font-mono text-sm break-all">{{ domain.cname_target || '—' }}</dd>
               </div>
             </dl>

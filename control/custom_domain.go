@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/labstack/echo/v5"
+	"golang.org/x/net/publicsuffix"
 
 	"control/internal/db"
 )
@@ -37,6 +38,11 @@ type customDomainDTO struct {
 	CNAMEName   string `json:"cname_name"`
 	CNAMETarget string `json:"cname_target"`
 
+	// CNAMEName split at the registrable domain: most DNS panels want only
+	// CNAMEHost ("www", or "@" for the apex) since they append Zone themselves.
+	CNAMEHost string `json:"cname_host"`
+	Zone      string `json:"zone"`
+
 	LastError    string     `json:"last_error,omitempty"`
 	URL          string     `json:"url,omitempty"`
 	CertNotAfter *time.Time `json:"cert_not_after,omitempty"`
@@ -54,6 +60,7 @@ func (h *UserHandler) customDomainDTO(ctx context.Context, vm db.Vm, row db.VmCu
 		CNAMETarget: h.customDomainTarget(ctx, vm),
 		LastError:   row.LastError,
 	}
+	out.CNAMEHost, out.Zone = splitCustomDomain(row.Domain)
 	if row.CertNotAfter.Valid {
 		t := row.CertNotAfter.Time
 		out.CertNotAfter = &t
@@ -66,6 +73,17 @@ func (h *UserHandler) customDomainDTO(ctx context.Context, vm db.Vm, row db.VmCu
 		out.URL = scheme + "://" + row.Domain
 	}
 	return out
+}
+
+func splitCustomDomain(domain string) (host, zone string) {
+	zone, err := publicsuffix.EffectiveTLDPlusOne(domain)
+	if err != nil {
+		return domain, ""
+	}
+	if zone == domain {
+		return "@", zone
+	}
+	return strings.TrimSuffix(domain, "."+zone), zone
 }
 
 func (h *UserHandler) customDomainTarget(ctx context.Context, vm db.Vm) string {

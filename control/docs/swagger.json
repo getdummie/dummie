@@ -190,6 +190,10 @@
                         "description": "Set when this claim was served by a certificate already held for the\nname, so the page can say the CNAME is the only thing left to do.",
                         "type": "boolean"
                     },
+                    "cname_host": {
+                        "description": "CNAMEName split at the registrable domain: most DNS panels want only\nCNAMEHost (\"www\", or \"@\" for the apex) since they append Zone themselves.",
+                        "type": "string"
+                    },
                     "cname_name": {
                         "description": "The record the owner has to create at their registrar, and what it has\nto point at. Both are echoed back at every status so the page can keep\nshowing the instructions while an order runs.",
                         "type": "string"
@@ -207,6 +211,9 @@
                         "type": "string"
                     },
                     "url": {
+                        "type": "string"
+                    },
+                    "zone": {
                         "type": "string"
                     }
                 },
