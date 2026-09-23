@@ -202,7 +202,7 @@ description: "A base skill for developing web apps. Use this skill when you are 
 ---
 - golang echo server for backed (which serves APIs namespaced with /api/v1/ ) listening on port 8000 and host 0.0.0.0
 - vuejs for frontend
-- golang backend initializes the vuejs server on port 3000 and anything not coming on /api/v1/ gets internally routed to it and served
+- golang backend initializes the vuejs server on port 3000 and anything not coming on /api/v1/ gets internally routed to vuejs and served
 EOF
 RUN chown -R ubuntu:ubuntu /home/ubuntu
 
