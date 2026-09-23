@@ -2257,7 +2257,7 @@ async function removeDomain() {
               </span>
             </TableCell>
             <TableCell class="text-right">
-              <div class="flex items-center justify-end gap-1">
+              <div v-if="timeLeft(t.expires_at) !== 'overdue'" class="flex items-center justify-end gap-1">
                 <Tooltip v-if="t.expires_at">
                   <TooltipTrigger as-child>
                     <Button
