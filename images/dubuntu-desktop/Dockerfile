@@ -54,6 +54,11 @@ RUN set -ex \
   && apt clean \
   && rm -rf /var/lib/apt/lists/*
 
+RUN set -e \
+  && apt-get install -y --no-install-recommends \
+    fonts-noto-color-emoji \
+    fonts-noto-core
+
 RUN set -ex \
   && systemctl enable ssh \
   && systemctl enable systemd-resolved \
