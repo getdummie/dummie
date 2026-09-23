@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp } from '@lucide/vue'
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Network } from '@lucide/vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import VmNetworkPanel from '@/components/VmNetworkPanel.vue'
 import VmTerminal from '@/components/VmTerminal.vue'
+import { deniedCovered } from '@/lib/targets'
 
 definePageMeta({ middleware: ['auth'], layout: false })
 
@@ -24,6 +27,18 @@ const phase = ref<Phase>('loading')
 const message = ref<string | null>(null)
 const terminal = useTemplateRef<InstanceType<typeof VmTerminal>>('terminal')
 const { preference: themePreference, isDark, setPreference } = useConsoleTheme()
+const network = reactive(useVmNetwork(id))
+const networkOpen = ref(false)
+const networkProps = computed(() => ({
+  targets: network.targets,
+  denied: network.denied,
+  deniedAvailable: network.deniedAvailable,
+  loaded: network.loaded,
+  allowing: network.allowing,
+  allowError: network.allowError,
+  refreshing: network.refreshing,
+}))
+const deniedCount = computed(() => network.denied.filter(d => !deniedCovered(d, network.targets)).length)
 
 useHead(() => ({
   title: vm.value ? `dummie — console · ${vm.value.name || vm.value.vm_id}` : 'dummie — console',
@@ -183,6 +198,16 @@ onBeforeUnmount(() => {
         <Button
           variant="outline"
           size="sm"
+          class="font-mono text-xs sm:hidden"
+          aria-label="Show network activity"
+          @click="networkOpen = true"
+        >
+          <Network class="size-3.5" aria-hidden="true" />
+          <span v-if="deniedCount" class="tabular-nums text-destructive">{{ deniedCount }}</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
           class="font-mono text-xs"
           :class="connection.button"
           :disabled="!connection.action || !vm?.console_url"
@@ -199,19 +224,37 @@ onBeforeUnmount(() => {
       </div>
     </header>
 
-    <Alert v-if="message" :variant="phase === 'error' ? 'destructive' : 'default'" class="rounded-none border-x-0">
-      <AlertTitle>{{ phase === 'error' ? 'Console unavailable' : 'Disconnected' }}</AlertTitle>
-      <AlertDescription>{{ message }}</AlertDescription>
-    </Alert>
+    <div class="flex min-h-0 flex-1">
+      <div class="flex min-w-0 flex-1 flex-col">
+        <Alert v-if="message" :variant="phase === 'error' ? 'destructive' : 'default'" class="rounded-none border-x-0">
+          <AlertTitle>{{ phase === 'error' ? 'Console unavailable' : 'Disconnected' }}</AlertTitle>
+          <AlertDescription>{{ message }}</AlertDescription>
+        </Alert>
 
-    <VmTerminal
-      ref="terminal"
-      :vm-id="id"
-      :dark="isDark"
-      @phase="phase = $event"
-      @message="message = $event"
-      @vm="vm = $event"
-    />
+        <VmTerminal
+          ref="terminal"
+          :vm-id="id"
+          :dark="isDark"
+          @phase="phase = $event"
+          @message="message = $event"
+          @vm="vm = $event"
+        />
+      </div>
+
+      <aside aria-label="Network activity" class="hidden w-72 shrink-0 flex-col border-l border-border sm:flex">
+        <VmNetworkPanel v-bind="networkProps" @allow="network.allow" @refresh="network.refreshNow" />
+      </aside>
+    </div>
+
+    <Sheet v-model:open="networkOpen">
+      <SheetContent side="right" class="w-[85%] gap-0 p-0">
+        <SheetHeader class="shrink-0 border-b border-border px-4 py-3">
+          <SheetTitle class="font-mono text-sm">Network</SheetTitle>
+          <SheetDescription class="sr-only">Denied and allowed destinations for this VM</SheetDescription>
+        </SheetHeader>
+        <VmNetworkPanel v-bind="networkProps" @allow="network.allow" @refresh="network.refreshNow" />
+      </SheetContent>
+    </Sheet>
 
     <div class="shrink-0 sm:hidden" :style="{ height: `${keypadHeight}px` }" aria-hidden="true" />
 

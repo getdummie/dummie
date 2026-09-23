@@ -32,6 +32,7 @@ import {
   applyPreset,
   blankTarget,
   deniedCovered,
+  deniedKey,
   deniedParent,
   destinationPlaceholder as destinationPlaceholderFor,
   domainPortChoices,
@@ -42,6 +43,7 @@ import {
   presetWarning as presetWarningFor,
   resetForKind,
   targetToForm,
+  tempAllowPayload,
   toTargetPayload,
 } from '@/lib/targets'
 import type { DeniedAttempt, TargetRecord } from '@/lib/targets'
@@ -719,38 +721,14 @@ const alreadyAllowed = computed(() => {
   return covered
 })
 
-function deniedKey(d: DeniedAttempt) {
-  return `${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`
-}
-
-const tempAllowTTL = 600
 const allowingDenied = ref<string | null>(null)
 const allowDeniedError = ref<string | null>(null)
 
 async function allowDenied(d: DeniedAttempt) {
-  const byName = d.kind === 'lookup' || (!!d.domain && (d.port === 443 || d.port === 80))
-  const payload = byName
-    ? {
-        kind: 'domain',
-        destination: d.domain,
-        transport: 'tcp',
-        ports: d.kind === 'lookup' ? '80,443' : String(d.port),
-      }
-    : {
-        kind: 'ip',
-        destination: d.address,
-        transport: d.proto === 'icmp' ? 'icmp' : (d.proto || 'tcp'),
-        ports: d.proto === 'icmp' ? '' : String(d.port),
-      }
-
   allowingDenied.value = deniedKey(d)
   allowDeniedError.value = null
   try {
-    await postTarget({
-      ...payload,
-      note: '',
-      ttl_seconds: tempAllowTTL,
-    })
+    await postTarget(tempAllowPayload(d))
     await loadTargets()
   }
   catch (e) {

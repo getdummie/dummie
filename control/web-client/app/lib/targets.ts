@@ -229,6 +229,30 @@ export function deniedCovered(d: DeniedAttempt, targets: TargetRecord[]) {
     && (d.proto === 'icmp' || portsCover(t.ports, d.port)))
 }
 
+export const tempAllowTTL = 600
+
+export function deniedKey(d: DeniedAttempt) {
+  return `${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`
+}
+
+export function tempAllowPayload(d: DeniedAttempt) {
+  const byName = d.kind === 'lookup' || (!!d.domain && (d.port === 443 || d.port === 80))
+  const rule = byName
+    ? {
+        kind: 'domain',
+        destination: d.domain,
+        transport: 'tcp',
+        ports: d.kind === 'lookup' ? '80,443' : String(d.port),
+      }
+    : {
+        kind: 'ip',
+        destination: d.address,
+        transport: d.proto === 'icmp' ? 'icmp' : (d.proto || 'tcp'),
+        ports: d.proto === 'icmp' ? '' : String(d.port),
+      }
+  return { ...rule, note: '', ttl_seconds: tempAllowTTL }
+}
+
 export function describeTarget(form: TargetForm) {
   if (form.kind === 'domain') {
     const choice = domainPortChoices.find(c => c.value === form.domainPorts)
