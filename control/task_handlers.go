@@ -129,6 +129,11 @@ const (
 
 	customDomainRetry = 30 * time.Second
 
+	// A missing CNAME is the owner's to fix, so it is checked a few times and
+	// then handed back to them instead of retried for the whole task budget.
+	customDomainCNAMEChecks = 3
+	customDomainCNAMERetry  = 10 * time.Second
+
 	// How long a host is given to finish an order before the job is sent
 	// again. An HTTP-01 order is seconds of work; this is the window for a
 	// host that took the job and then died with it.
@@ -197,10 +202,14 @@ func handleCustomDomainIssue(ctx context.Context, r *taskRunner, t db.ScheduledT
 		if lastAttempt {
 			return give(err.Error())
 		}
-		if !payload.Renew {
-			noteCustomDomain(ctx, r, row.ID, customDomainVerifying, err.Error())
+		if payload.Renew {
+			return taskRetry(customDomainRetry, "%v", err)
 		}
-		return taskRetry(customDomainRetry, "%v", err)
+		if t.Attempts+1 >= customDomainCNAMEChecks {
+			noteCustomDomain(ctx, r, row.ID, customDomainPendingDNS, err.Error())
+			return taskFailed("%v", err)
+		}
+		return taskRetry(customDomainCNAMERetry, "%v", err)
 	}
 
 	clientID := uuid.UUID(row.ClientID.Bytes).String()

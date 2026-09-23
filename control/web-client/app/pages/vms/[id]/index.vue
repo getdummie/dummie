@@ -1863,7 +1863,7 @@ async function removeDomain() {
               :disabled="domainBusy || domainSettling"
               @click="verifyDomain"
             >
-              <RefreshCw class="size-4" aria-hidden="true" />
+              <RefreshCw class="size-4" :class="{ 'animate-spin': domainSettling }" aria-hidden="true" />
               {{ domainSettling ? 'Checking…' : 'I have added the CNAME' }}
             </Button>
             <Button variant="outline" size="sm" :disabled="domainBusy" @click="removeDomain">
