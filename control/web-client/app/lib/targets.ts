@@ -198,14 +198,18 @@ function transportCovers(spec: string, proto: string) {
 
 // A denied attempt matched against the current allowlist: a name resolves if it
 // is listed at all, everything else has to match address, transport and port.
+function nameCovered(allowed: string, name: string) {
+  return !!name && (name === allowed || name.endsWith(`.${allowed}`))
+}
+
 export function deniedCovered(d: DeniedAttempt, targets: TargetRecord[]) {
   if (targets.some(isEverywhere)) return true
   const name = normalizeName(d.domain)
   if (d.kind === 'lookup') {
-    return targets.some(t => t.kind === 'domain' && normalizeName(t.destination) === name)
+    return targets.some(t => t.kind === 'domain' && nameCovered(normalizeName(t.destination), name))
   }
   const byName = name && targets.some(t => t.kind === 'domain'
-    && normalizeName(t.destination) === name
+    && nameCovered(normalizeName(t.destination), name)
     && portsCover(t.ports || '80,443', d.port))
   if (byName) return true
   if (!d.address) return false
