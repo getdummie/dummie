@@ -723,7 +723,7 @@ function deniedKey(d: DeniedAttempt) {
   return `${d.kind}-${d.domain}-${d.address}-${d.proto}-${d.port}`
 }
 
-const tempAllowTTL = 300
+const tempAllowTTL = 600
 const allowingDenied = ref<string | null>(null)
 const allowDeniedError = ref<string | null>(null)
 
@@ -2388,7 +2388,7 @@ async function removeDomain() {
                   size="sm"
                   class="font-mono text-xs"
                   :disabled="allowingDenied === deniedKey(d)"
-                  :aria-label="`Temporarily allow ${deniedDestination(d)} for 5 minutes`"
+                  :aria-label="`Temporarily allow ${deniedDestination(d)} for 10 minutes`"
                   @click="allowDenied(d)"
                 >
                   {{ allowingDenied === deniedKey(d) ? 'Allowing…' : 'Temporarily allow' }}
