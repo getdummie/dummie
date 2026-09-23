@@ -303,6 +303,14 @@ func resizeVM(ctx context.Context, data string, v vm, req proto.VMResize) error 
 		}
 		v.DiskBytes = size
 	}
+	if kernel := (artifact{req.Kernel, req.KernelSHA}); !kernel.empty() {
+		if v.Boot != bootDirect {
+			return fmt.Errorf("only a %s-boot vm takes a kernel", bootDirect)
+		}
+		if v.Kernel, err = kernel.resolve(ctx, imagesDir(data)); err != nil {
+			return err
+		}
+	}
 	v.CPUs, v.MemoryMiB = req.CPUs, req.Memory
 	return saveVM(data, v)
 }

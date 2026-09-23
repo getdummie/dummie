@@ -651,6 +651,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			// Anything that cannot be a login name is left empty and resolves to
 			// root, which is also what the check constraint on the column allows.
 			DefaultUser: loginName(osImage.ConfigUser),
+			KernelID:    pgKernelID,
 		})
 		if err != nil {
 			return err
@@ -1059,18 +1060,22 @@ type updateVMSizeReq struct {
 	CPUs      int32  `json:"cpus"`
 	MemoryMiB int32  `json:"memory_mib"`
 	DiskSize  string `json:"disk_size"`
+	KernelID  string `json:"kernel_id"`
 }
 
 // resizeJobWait is how long the request holds open for the host to record the
 // new size. The host only writes it down, so this is generous.
 const resizeJobWait = 10 * time.Second
 
+// rekernelJobWait also covers the host downloading a kernel it has not cached.
+const rekernelJobWait = 2 * time.Minute
+
 // restartJobWait covers a graceful shutdown of the guest, the kill that follows
 // one that will not go, and the boot after it.
 const restartJobWait = 60 * time.Second
 
 // @Summary     Resize a VM
-// @Description Changes what this VM gets the next time it boots. cpus and memory_mib may go either way; disk_size may only grow, and the guest still grows its own filesystem into the new space. Omit disk_size to leave the disk alone. The new size is charged against your quota straight away.
+// @Description Changes what this VM gets the next time it boots. cpus and memory_mib may go either way; disk_size may only grow, and the guest still grows its own filesystem into the new space. Omit disk_size to leave the disk alone. kernel_id swaps the kernel for one from /vms/kernels; omit it to keep the current one. The new size is charged against your quota straight away.
 // @Description
 // @Description A running VM is restarted as part of this, since that is the only way the new size reaches the guest: it is shut down and booted again before this returns, so anything running inside it stops. A stopped VM is left stopped and picks the new size up on its next start.
 // @Tags        vms
@@ -1080,11 +1085,11 @@ const restartJobWait = 60 * time.Second
 // @Param       id   path string true "vm id" format(uuid)
 // @Param       body body updateVMSizeReq true "the new size"
 // @Success     200 {object} vmDTO
-// @Failure     400 {object} apiError "cpus under 1, memory under 64 MiB, a bad size, or a smaller disk"
+// @Failure     400 {object} apiError "cpus under 1, memory under 64 MiB, a bad size, a smaller disk, or a bad kernel id"
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "over quota"
-// @Failure     404 {object} apiError
-// @Failure     409 {object} apiError "the vm is pending, gone, or its host is not connected"
+// @Failure     404 {object} apiError "no such vm or kernel"
+// @Failure     409 {object} apiError "the vm is pending, gone, not direct-boot, or its host is not connected; or the kernel is withdrawn"
 // @Failure     502 {object} apiError "the host did not take the new size, or took it and could not restart the vm"
 // @Router      /vms/{id}/size [put]
 func (h *UserHandler) UpdateSize(c *echo.Context) error {
@@ -1167,6 +1172,43 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 	if diskMiB > 0 {
 		spec.DiskSize = fmt.Sprintf("%dM", diskMiB)
 	}
+
+	kernelID := vm.KernelID
+	resize := proto.VMResize{CPUs: int(req.CPUs), Memory: int(req.MemoryMiB), DiskSize: spec.DiskSize}
+	wait := resizeJobWait
+	if reqKernel := strings.TrimSpace(req.KernelID); reqKernel != "" {
+		pgKernelID, err := parseUUID(reqKernel)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid kernel id")
+		}
+		if pgKernelID != vm.KernelID {
+			if vm.Boot != "direct" {
+				return echo.NewHTTPError(http.StatusConflict, "only a direct-boot vm takes a kernel")
+			}
+			if h.blobs == nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, errNoBlobStore.Error())
+			}
+			kernel, err := h.q.GetKernel(ctx, pgKernelID)
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return echo.NewHTTPError(http.StatusNotFound, "no such kernel")
+				}
+				return echo.NewHTTPError(http.StatusInternalServerError, "could not read the kernel")
+			}
+			if kernel.SoftDeletedAt.Valid {
+				return echo.NewHTTPError(http.StatusConflict, "that kernel has been withdrawn; choose another")
+			}
+			kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
+			if err != nil {
+				log.Printf("could not presign kernel %s for vm %s: %v", reqKernel, vm.Name, err)
+				return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the kernel download")
+			}
+			spec.Kernel, spec.KernelSHA = kernelURL, ""
+			resize.Kernel = kernelURL
+			kernelID = pgKernelID
+			wait = rekernelJobWait
+		}
+	}
 	raw, err := json.Marshal(spec)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not record the new size")
@@ -1180,14 +1222,10 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 	// size, so a host that refuses it does not leave the console showing a size
 	// the vm will never boot with.
 	res, err := h.hub.Ask(ctx, clientID, proto.Job{
-		Kind: proto.KindVMResize,
-		VMID: vm.VMID,
-		Resize: &proto.VMResize{
-			CPUs:     int(req.CPUs),
-			Memory:   int(req.MemoryMiB),
-			DiskSize: spec.DiskSize,
-		},
-	}, resizeJobWait)
+		Kind:   proto.KindVMResize,
+		VMID:   vm.VMID,
+		Resize: &resize,
+	}, wait)
 	if err != nil {
 		log.Printf("client %s: could not resize vm %s: %v", clientID, vm.Name, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "the host did not answer; the vm is unchanged")
@@ -1207,6 +1245,7 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 		MemoryMiB: req.MemoryMiB,
 		DiskMiB:   diskMiB,
 		Spec:      raw,
+		KernelID:  kernelID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

@@ -272,11 +272,14 @@ type VMSpec struct {
 // VMResize is the new size of a vm that already exists. The host records it and
 // the guest picks it up on its next boot, so nothing here touches a running
 // qemu. DiskSize may only grow: the host refuses anything smaller than the disk
-// it already has.
+// it already has. Kernel, when set, is fetched and swapped in for the next boot.
 type VMResize struct {
 	CPUs     int    `json:"cpus"`
 	Memory   int    `json:"memory_mib"`
 	DiskSize string `json:"disk_size,omitempty"`
+
+	Kernel    string `json:"kernel,omitempty"`
+	KernelSHA string `json:"kernel_sha256,omitempty"`
 }
 
 // ImageConfig is what the container image declared, carried from the os image

@@ -37,6 +37,9 @@ type vmDTO struct {
 	// whatever its OS image declared.
 	DefaultUser string `json:"default_user"`
 
+	// KernelID is the catalogue kernel it boots, empty when it was not booted from one.
+	KernelID string `json:"kernel_id"`
+
 	Spec      json.RawMessage `json:"spec" swaggertype:"object"`
 	LastError string          `json:"last_error"`
 	CreatedAt string          `json:"created_at"`
@@ -88,6 +91,9 @@ func toVMDTO(v db.Vm) vmDTO {
 	}
 	if v.CreatedBy.Valid {
 		d.CreatedBy = uuid.UUID(v.CreatedBy.Bytes).String()
+	}
+	if v.KernelID.Valid {
+		d.KernelID = uuid.UUID(v.KernelID.Bytes).String()
 	}
 	return d
 }

@@ -1,6 +1,6 @@
 -- name: CreateVM :one
-INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports, default_user)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports, default_user, kernel_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 RETURNING *;
 
 -- name: MarkVMRunning :exec
@@ -170,6 +170,7 @@ SET cpus       = sqlc.arg(cpus),
     memory_mib = sqlc.arg(memory_mib),
     disk_mib   = sqlc.arg(disk_mib),
     spec       = sqlc.arg(spec),
+    kernel_id  = sqlc.arg(kernel_id),
     updated_at = now()
 WHERE id = sqlc.arg(id) AND created_by = sqlc.arg(created_by)
 RETURNING *;

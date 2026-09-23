@@ -65,6 +65,7 @@ interface VM {
   default_port: number
   public_ports: number[]
   default_user: string
+  kernel_id: string
   status: 'pending' | 'running' | 'stopped' | 'failed' | 'gone'
   boot: string
   cpus: number
@@ -567,7 +568,40 @@ async function saveUser() {
 const sizeOpen = ref(false)
 const savingSize = ref(false)
 const sizeError = ref<string | null>(null)
-const sizeForm = reactive({ cpus: '1', memory_mib: '512', disk_size: '' })
+const sizeForm = reactive({ cpus: '1', memory_mib: '512', disk_size: '', kernel_id: '' })
+
+interface Kernel {
+  id: string
+  name: string
+  description: string
+}
+const kernels = ref<Kernel[]>([])
+const kernelsError = ref<string | null>(null)
+const selectedKernel = computed(() => kernels.value.find(k => k.id === sizeForm.kernel_id) ?? null)
+const currentKernelListed = computed(() => !!vm.value?.kernel_id && kernels.value.some(k => k.id === vm.value?.kernel_id))
+const kernelsLoading = ref(false)
+const kernelLabel = computed(() => {
+  if (selectedKernel.value) return selectedKernel.value.name
+  if (kernelsLoading.value) return 'Loading…'
+  if (sizeForm.kernel_id) return 'withdrawn kernel'
+  return 'custom kernel (not from the catalogue)'
+})
+
+async function loadKernels() {
+  kernelsError.value = null
+  kernelsLoading.value = true
+  try {
+    const res = await authFetch('/vms/kernels')
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    kernels.value = (await res.json()).items ?? []
+  }
+  catch (e) {
+    kernelsError.value = e instanceof Error ? e.message : 'Could not load kernels'
+  }
+  finally {
+    kernelsLoading.value = false
+  }
+}
 
 const resizable = computed(() => vm.value?.status === 'running' || vm.value?.status === 'stopped')
 
@@ -591,8 +625,10 @@ function openSize() {
   sizeForm.cpus = String(vm.value.cpus || 1)
   sizeForm.memory_mib = String(vm.value.memory_mib || 512)
   sizeForm.disk_size = miBToSize(vm.value.disk_mib)
+  sizeForm.kernel_id = vm.value.kernel_id || ''
   sizeError.value = null
   sizeOpen.value = true
+  if (vm.value.boot === 'direct') loadKernels()
 }
 
 async function saveSize() {
@@ -622,14 +658,19 @@ async function saveSize() {
     const res = await authFetch(`/vms/${id.value}/size`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cpus, memory_mib: memory, disk_size: sizeForm.disk_size.trim() }),
+      body: JSON.stringify({
+        cpus,
+        memory_mib: memory,
+        disk_size: sizeForm.disk_size.trim(),
+        kernel_id: sizeForm.kernel_id,
+      }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     vm.value = await res.json()
     sizeOpen.value = false
   }
   catch (e) {
-    sizeError.value = e instanceof Error ? e.message : 'Could not save the new size'
+    sizeError.value = e instanceof Error ? e.message : 'Could not save the changes'
     // A restart can fail after the size is saved, so the row may have moved.
     await load(true)
   }
@@ -1189,14 +1230,14 @@ async function removeDomain() {
                   size="icon"
                   class="size-6"
                   :disabled="!resizable"
-                  :aria-label="resizable ? 'Edit this VM\'s size' : `Cannot resize this VM: it is ${vm.status}`"
+                  :aria-label="resizable ? 'Edit this VM' : `Cannot edit this VM: it is ${vm.status}`"
                   @click="openSize"
                 >
                   <Pencil class="size-3.5" aria-hidden="true" />
                 </Button>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Edit size</DialogTitle>
+                    <DialogTitle>Edit VM</DialogTitle>
                     <DialogDescription>
                       What <span class="font-mono text-foreground">{{ vm.name }}</span> gets the next
                       time it boots.
@@ -1204,7 +1245,7 @@ async function removeDomain() {
                         Applying restarts it, so anything running inside it stops.
                       </template>
                       <template v-else>
-                        This VM is stopped, so it starts at the new size.
+                        This VM is stopped, so it picks the changes up on its next start.
                       </template>
                     </DialogDescription>
                   </DialogHeader>
@@ -1225,6 +1266,34 @@ async function removeDomain() {
                       <p id="size-disk-hint" class="text-xs text-muted-foreground">
                         A disk can only grow. The guest grows its own filesystem into the new space
                         when it boots.
+                      </p>
+                    </div>
+                    <div v-if="vm.boot === 'direct'" class="space-y-2">
+                      <Label for="size-kernel">Kernel</Label>
+                      <Select v-model="sizeForm.kernel_id" :disabled="!kernels.length">
+                        <SelectTrigger id="size-kernel" class="w-full font-mono text-xs" aria-describedby="size-kernel-hint">
+                          <SelectValue>{{ kernelLabel }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem
+                            v-if="vm.kernel_id && !currentKernelListed"
+                            :value="vm.kernel_id"
+                            disabled
+                            class="font-mono text-xs"
+                          >
+                            current (withdrawn)
+                          </SelectItem>
+                          <SelectItem v-for="k in kernels" :key="k.id" :value="k.id" class="font-mono text-xs">
+                            {{ k.name }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p id="size-kernel-hint" class="text-xs text-muted-foreground">
+                        <template v-if="kernelsError">{{ kernelsError }}</template>
+                        <template v-else-if="selectedKernel?.description">{{ selectedKernel.description }}</template>
+                        <template v-else-if="!vm.kernel_id">
+                          This VM's kernel is not from the catalogue. Pick one to replace it.
+                        </template>
                       </p>
                     </div>
 

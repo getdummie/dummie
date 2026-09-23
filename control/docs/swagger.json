@@ -713,6 +713,9 @@
                     "disk_size": {
                         "type": "string"
                     },
+                    "kernel_id": {
+                        "type": "string"
+                    },
                     "memory_mib": {
                         "type": "integer"
                     }
@@ -816,6 +819,10 @@
                         "type": "string"
                     },
                     "ip": {
+                        "type": "string"
+                    },
+                    "kernel_id": {
+                        "description": "KernelID is the catalogue kernel it boots, empty when it was not booted from one.",
                         "type": "string"
                     },
                     "last_error": {
@@ -3429,7 +3436,7 @@
         },
         "/vms/{id}/size": {
             "put": {
-                "description": "Changes what this VM gets the next time it boots. cpus and memory_mib may go either way; disk_size may only grow, and the guest still grows its own filesystem into the new space. Omit disk_size to leave the disk alone. The new size is charged against your quota straight away.\n\nA running VM is restarted as part of this, since that is the only way the new size reaches the guest: it is shut down and booted again before this returns, so anything running inside it stops. A stopped VM is left stopped and picks the new size up on its next start.",
+                "description": "Changes what this VM gets the next time it boots. cpus and memory_mib may go either way; disk_size may only grow, and the guest still grows its own filesystem into the new space. Omit disk_size to leave the disk alone. kernel_id swaps the kernel for one from /vms/kernels; omit it to keep the current one. The new size is charged against your quota straight away.\n\nA running VM is restarted as part of this, since that is the only way the new size reaches the guest: it is shut down and booted again before this returns, so anything running inside it stops. A stopped VM is left stopped and picks the new size up on its next start.",
                 "parameters": [
                     {
                         "description": "vm id",
@@ -3481,7 +3488,7 @@
                                 }
                             }
                         },
-                        "description": "cpus under 1, memory under 64 MiB, a bad size, or a smaller disk"
+                        "description": "cpus under 1, memory under 64 MiB, a bad size, a smaller disk, or a bad kernel id"
                     },
                     "401": {
                         "content": {
@@ -3511,7 +3518,7 @@
                                 }
                             }
                         },
-                        "description": "Not Found"
+                        "description": "no such vm or kernel"
                     },
                     "409": {
                         "content": {
@@ -3521,7 +3528,7 @@
                                 }
                             }
                         },
-                        "description": "the vm is pending, gone, or its host is not connected"
+                        "description": "the vm is pending, gone, not direct-boot, or its host is not connected; or the kernel is withdrawn"
                     },
                     "502": {
                         "content": {

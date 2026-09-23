@@ -295,6 +295,7 @@ type Vm struct {
 	PublicPorts []int32
 	RdpNonce    string
 	DefaultUser string
+	KernelID    pgtype.UUID
 }
 
 type VmCustomDomain struct {
