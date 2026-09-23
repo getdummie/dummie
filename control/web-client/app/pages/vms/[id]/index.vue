@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Globe, Info, Monitor, Pencil, Pin, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Check, ChevronDown, ClockPlus, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Globe, Info, Monitor, Pencil, Pin, Plus, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -2369,6 +2369,7 @@ async function removeDomain() {
                   :aria-label="`Temporarily allow ${deniedDestination(d)} for 10 minutes`"
                   @click="allowDenied(d)"
                 >
+                  <ClockPlus :class="['size-3.5', allowingDenied === deniedKey(d) && 'animate-pulse']" aria-hidden="true" />
                   {{ allowingDenied === deniedKey(d) ? 'Allowing…' : 'Temporarily allow' }}
                 </Button>
               </TableCell>
