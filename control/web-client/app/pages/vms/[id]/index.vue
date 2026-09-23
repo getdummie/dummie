@@ -1802,7 +1802,7 @@ async function removeDomain() {
           <dl class="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
             <div>
               <dt class="eyebrow text-muted-foreground">Domain</dt>
-              <dd class="mt-1 font-mono text-sm break-all">
+              <dd class="mt-1 font-mono text-sm font-semibold break-all">
                 <a
                   v-if="domain.url"
                   :href="domain.url"
@@ -1828,7 +1828,11 @@ async function removeDomain() {
               nothing has to be issued. Point the CNAME at the target below and the name is live.
             </p>
             <p v-else-if="domain.status !== 'active'" class="text-xs text-muted-foreground">
-              Add this record at your DNS provider, then confirm below.
+              Add this record
+              <template v-if="domain.zone">
+                to <span class="font-mono font-semibold text-foreground">{{ domain.zone }}</span>
+              </template>
+              at your DNS provider, then confirm below.
             </p>
             <p v-else class="text-xs text-muted-foreground">
               This name is live. Its CNAME has to keep pointing here, or it stops resolving to this VM.
@@ -1842,12 +1846,7 @@ async function removeDomain() {
                 <dt class="eyebrow text-muted-foreground">Name</dt>
                 <template v-if="domain.zone">
                   <dd class="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm">
-                    <span class="break-all">
-                      <span class="font-semibold">{{ domain.cname_host }}</span><span
-                        v-if="domain.cname_host !== '@'"
-                        class="text-muted-foreground"
-                      >.{{ domain.zone }}</span>
-                    </span>
+                    <span class="break-all">{{ domain.cname_host }}</span>
                     <Button
                       variant="ghost"
                       size="icon-xs"
