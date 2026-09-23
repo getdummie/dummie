@@ -196,12 +196,22 @@ function transportCovers(spec: string, proto: string) {
   return transport === 'any' && (proto === 'tcp' || proto === 'udp')
 }
 
-// A denied attempt matched against the current allowlist: a name resolves if it
-// is listed at all, everything else has to match address, transport and port.
 function nameCovered(allowed: string, name: string) {
   return !!name && (name === allowed || name.endsWith(`.${allowed}`))
 }
 
+// The allowed parent domain that covers a denied name, when the name itself is
+// not listed; used to explain why a subdomain shows as allowed.
+export function deniedParent(d: DeniedAttempt, targets: TargetRecord[]) {
+  const name = normalizeName(d.domain)
+  if (!name) return null
+  const names = targets.filter(t => t.kind === 'domain').map(t => normalizeName(t.destination))
+  if (names.includes(name)) return null
+  return names.find(n => name.endsWith(`.${n}`)) ?? null
+}
+
+// A denied attempt matched against the current allowlist: a name resolves if it
+// is listed at all, everything else has to match address, transport and port.
 export function deniedCovered(d: DeniedAttempt, targets: TargetRecord[]) {
   if (targets.some(isEverywhere)) return true
   const name = normalizeName(d.domain)

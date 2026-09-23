@@ -32,6 +32,7 @@ import {
   applyPreset,
   blankTarget,
   deniedCovered,
+  deniedParent,
   destinationPlaceholder as destinationPlaceholderFor,
   domainPortChoices,
   everywhere,
@@ -711,9 +712,9 @@ function deniedDestination(d: DeniedAttempt) {
 }
 
 const alreadyAllowed = computed(() => {
-  const covered = new Set<DeniedAttempt>()
+  const covered = new Map<DeniedAttempt, string | null>()
   for (const d of denied.value) {
-    if (deniedCovered(d, targets.value)) covered.add(d)
+    if (deniedCovered(d, targets.value)) covered.set(d, deniedParent(d, targets.value))
   }
   return covered
 })
@@ -2376,7 +2377,10 @@ async function removeDomain() {
               </TableCell>
               <TableCell class="text-right whitespace-nowrap">
                 <span v-if="alreadyAllowed.has(d)" class="font-mono text-xs text-primary-text">
-                  allowed
+                  <template v-if="alreadyAllowed.get(d)">
+                    allowed via <span class="font-semibold">{{ alreadyAllowed.get(d) }}</span>
+                  </template>
+                  <template v-else>allowed</template>
                 </span>
                 <Button
                   v-else
