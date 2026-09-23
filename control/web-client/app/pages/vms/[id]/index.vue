@@ -1052,6 +1052,18 @@ const domainInput = ref('')
 const domainBusy = ref(false)
 const domainError = ref<string | null>(null)
 let domainPoll: ReturnType<typeof setInterval> | null = null
+const domainCopied = ref<'' | 'name' | 'value'>('')
+
+async function copyDomainRecord(field: 'name' | 'value', value: string) {
+  try {
+    await navigator.clipboard.writeText(value)
+    domainCopied.value = field
+    setTimeout(() => (domainCopied.value = ''), 2000)
+  }
+  catch {
+    domainError.value = 'Could not copy to the clipboard'
+  }
+}
 
 const domainSettling = computed(
   () => domain.value?.status === 'verifying' || domain.value?.status === 'issuing',
@@ -1822,14 +1834,29 @@ async function removeDomain() {
               This name is live. Its CNAME has to keep pointing here, or it stops resolving to this VM.
             </p>
             <dl class="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-3">
+              <div>
+                <dt class="eyebrow text-muted-foreground">Type</dt>
+                <dd class="mt-1 font-mono text-sm">CNAME</dd>
+              </div>
               <div class="min-w-0">
                 <dt class="eyebrow text-muted-foreground">Name</dt>
                 <template v-if="domain.zone">
-                  <dd class="mt-1 font-mono text-sm break-all">
-                    <span class="font-semibold">{{ domain.cname_host }}</span><span
-                      v-if="domain.cname_host !== '@'"
-                      class="text-muted-foreground"
-                    >.{{ domain.zone }}</span>
+                  <dd class="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm">
+                    <span class="break-all">
+                      <span class="font-semibold">{{ domain.cname_host }}</span><span
+                        v-if="domain.cname_host !== '@'"
+                        class="text-muted-foreground"
+                      >.{{ domain.zone }}</span>
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      class="shrink-0"
+                      aria-label="Copy the name to the clipboard"
+                      @click="copyDomainRecord('name', domain.cname_host)"
+                    >
+                      <component :is="domainCopied === 'name' ? Check : Copy" aria-hidden="true" />
+                    </Button>
                   </dd>
                   <dd v-if="domain.cname_host === '@'" class="mt-1 text-xs text-muted-foreground">
                     <span class="font-mono">@</span> is the root of
@@ -1839,15 +1866,26 @@ async function removeDomain() {
                 </template>
                 <dd v-else class="mt-1 font-mono text-sm break-all">{{ domain.cname_name }}</dd>
               </div>
-              <div>
-                <dt class="eyebrow text-muted-foreground">Type</dt>
-                <dd class="mt-1 font-mono text-sm">CNAME</dd>
-              </div>
               <div class="min-w-0">
                 <dt class="eyebrow text-muted-foreground">Value</dt>
-                <dd class="mt-1 font-mono text-sm break-all">{{ domain.cname_target || '—' }}</dd>
+                <dd class="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm">
+                  <span class="break-all">{{ domain.cname_target || '—' }}</span>
+                  <Button
+                    v-if="domain.cname_target"
+                    variant="ghost"
+                    size="icon-xs"
+                    class="shrink-0"
+                    aria-label="Copy the value to the clipboard"
+                    @click="copyDomainRecord('value', domain.cname_target)"
+                  >
+                    <component :is="domainCopied === 'value' ? Check : Copy" aria-hidden="true" />
+                  </Button>
+                </dd>
               </div>
             </dl>
+            <span role="status" aria-live="polite" class="sr-only">
+              {{ domainCopied ? `Record ${domainCopied} copied to clipboard` : '' }}
+            </span>
           </div>
 
           <p v-if="domain.last_error" class="mt-3 text-xs text-destructive">{{ domain.last_error }}</p>
