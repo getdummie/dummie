@@ -39,6 +39,10 @@ RUN set -ex \
     git \
     file \
     xsel \
+    jq \
+    unzip \
+    bc \
+    oathtool \
   && apt clean \
   && systemctl enable ssh \
   && systemctl enable systemd-resolved \
