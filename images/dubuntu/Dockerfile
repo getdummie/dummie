@@ -195,7 +195,7 @@ COPY <<'EOF' /home/ubuntu/.pi/agent/APPEND_SYSTEM.md
 - Network access is restricted. If you need a domain or IP whitelisted, ask the user with a reason in 10 words.
 - For accessing a browser you can access chromium over CDP
 EOF
-COPY <<'EOF' /home/ubuntu/.pi/agent/skills/web-development/
+COPY <<'EOF' /home/ubuntu/.pi/agent/skills/web-development/SKILL.md
 ---
 name: web-development
 description: "A base skill for developing web apps. Use this skill when you are starting with a fresh web development project for guidance on the architecture."
