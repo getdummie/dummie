@@ -273,6 +273,39 @@ func (h *AdminHandler) UpdateUserQuota(c *echo.Context) error {
 	return c.JSON(http.StatusOK, toAdminUserDTO(u))
 }
 
+type updateUserRoleReq struct {
+	UserType string `json:"user_type"`
+}
+
+func (h *AdminHandler) UpdateUserRole(c *echo.Context) error {
+	id := c.Param("id")
+	pgID, err := parseUUID(id)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
+	}
+	var req updateUserRoleReq
+	if err := c.Bind(&req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	if req.UserType != "admin" && req.UserType != "user" {
+		return echo.NewHTTPError(http.StatusBadRequest, "user_type must be admin or user")
+	}
+	if uid, _ := c.Get("uid").(string); uid != "" && uid == id && req.UserType != "admin" {
+		return echo.NewHTTPError(http.StatusBadRequest, "you cannot remove your own admin role")
+	}
+	u, err := h.q.UpdateUserType(c.Request().Context(), db.UpdateUserTypeParams{
+		ID:       pgID,
+		UserType: req.UserType,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusNotFound, "user not found")
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not save role")
+	}
+	return c.JSON(http.StatusOK, toAdminUserDTO(u))
+}
+
 type updateUserPublicKeyReq struct {
 	PublicKey string `json:"public_key"`
 }

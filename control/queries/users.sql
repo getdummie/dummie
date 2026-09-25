@@ -30,6 +30,13 @@ SET vcpu_limit = $2,
 WHERE id = $1
 RETURNING *;
 
+-- name: UpdateUserType :one
+UPDATE users
+SET user_type = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING *;
+
 -- name: UpdateUserPublicKey :one
 UPDATE users
 SET public_key = $2,

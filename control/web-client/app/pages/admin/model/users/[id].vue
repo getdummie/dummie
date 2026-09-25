@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
 
@@ -26,7 +27,7 @@ interface AdminUser {
 }
 
 const route = useRoute()
-const { authFetch } = useAuth()
+const { authFetch, user: me } = useAuth()
 const id = computed(() => String(route.params.id))
 
 const user = ref<AdminUser | null>(null)
@@ -111,6 +112,38 @@ function discardKeyEdits() {
   keyError.value = null
 }
 
+const roleDraft = ref('user')
+const savingRole = ref(false)
+const roleError = ref<string | null>(null)
+const roleSaved = ref(false)
+
+const isSelf = computed(() => !!me.value && me.value.id === user.value?.id)
+const roleDirty = computed(() => roleDraft.value !== user.value?.user_type)
+
+async function saveRole() {
+  savingRole.value = true
+  roleError.value = null
+  roleSaved.value = false
+  try {
+    const res = await authFetch(`/admin/users/${id.value}/role`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_type: roleDraft.value }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const data: AdminUser = await res.json()
+    user.value = data
+    roleDraft.value = data.user_type
+    roleSaved.value = true
+  }
+  catch (e) {
+    roleError.value = e instanceof Error ? e.message : 'Could not save role'
+  }
+  finally {
+    savingRole.value = false
+  }
+}
+
 async function load() {
   loading.value = true
   error.value = null
@@ -122,6 +155,7 @@ async function load() {
     user.value = data
     resetForm(data)
     keyForm.public_key = data.public_key
+    roleDraft.value = data.user_type
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Failed to load user'
@@ -247,6 +281,43 @@ async function saveKey() {
             <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(user.updated_at) }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section aria-labelledby="role-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
+        <h2 id="role-heading" class="text-sm font-semibold">Role</h2>
+        <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+          Admins can reach this console and manage every user, client and VM. A change takes effect
+          the next time their session refreshes.
+        </p>
+
+        <form class="mt-4 space-y-4" :aria-busy="savingRole" @submit.prevent="saveRole">
+          <div class="space-y-2 sm:max-w-xs">
+            <Label for="u-role">Role</Label>
+            <Select v-model="roleDraft" :disabled="savingRole || isSelf">
+              <SelectTrigger id="u-role" class="w-full font-mono text-sm" aria-describedby="u-role-hint">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="user">user</SelectItem>
+                <SelectItem value="admin">admin</SelectItem>
+              </SelectContent>
+            </Select>
+            <p v-if="isSelf" id="u-role-hint" class="text-xs text-muted-foreground">
+              You cannot change your own role.
+            </p>
+          </div>
+
+          <FormError id="role-error" :message="roleError" />
+
+          <div class="flex items-center gap-3">
+            <Button type="submit" class="font-mono text-xs" :disabled="savingRole || !roleDirty">
+              {{ savingRole ? 'Saving…' : 'Save' }}
+            </Button>
+            <p role="status" aria-live="polite" class="font-mono text-xs text-muted-foreground">
+              {{ roleSaved && !roleDirty ? 'Saved' : '' }}
+            </p>
+          </div>
+        </form>
       </section>
 
       <section aria-labelledby="key-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">

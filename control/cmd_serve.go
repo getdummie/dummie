@@ -191,6 +191,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/users/:id", adminH.GetUser)
 	admin.PUT("/users/:id/quota", adminH.UpdateUserQuota)
 	admin.PUT("/users/:id/public_key", adminH.UpdateUserPublicKey)
+	admin.PUT("/users/:id/role", adminH.UpdateUserRole)
 	admin.DELETE("/users/:id", adminH.DeleteUser)
 	admin.GET("/tokens", adminH.ListTokens)
 	admin.POST("/tokens/:id/blacklist", adminH.BlacklistToken)

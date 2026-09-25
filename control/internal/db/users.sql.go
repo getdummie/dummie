@@ -293,3 +293,37 @@ func (q *Queries) UpdateUserQuota(ctx context.Context, arg UpdateUserQuotaParams
 	)
 	return i, err
 }
+
+const updateUserType = `-- name: UpdateUserType :one
+UPDATE users
+SET user_type = $2,
+    updated_at = now()
+WHERE id = $1
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key
+`
+
+type UpdateUserTypeParams struct {
+	ID       pgtype.UUID
+	UserType string
+}
+
+func (q *Queries) UpdateUserType(ctx context.Context, arg UpdateUserTypeParams) (User, error) {
+	row := q.db.QueryRow(ctx, updateUserType, arg.ID, arg.UserType)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Username,
+		&i.Email,
+		&i.PasswordHash,
+		&i.FirstName,
+		&i.LastName,
+		&i.UserType,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.VCPULimit,
+		&i.MemoryLimitMiB,
+		&i.DiskLimitMiB,
+		&i.PublicKey,
+	)
+	return i, err
+}
