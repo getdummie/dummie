@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"log"
 	"net"
 	"net/http"
@@ -19,7 +20,13 @@ const (
 	llmGlobalSuffix    = "@global"
 )
 
-var llmResourceRe = regexp.MustCompile(`^([a-z0-9]+)(@global)?/(openai|anthropic)$`)
+var llmResourceRe = regexp.MustCompile(`^([a-z0-9]+)(@global)?/(openai|anthropic|responses)$`)
+
+var llmFormatPaths = map[string]string{
+	"openai":    "/v1/chat/completions",
+	"anthropic": "/v1/messages",
+	"responses": "/v1/responses",
+}
 
 // llmToken hands intproxy the key a vm's model prefix names: the vm owner's
 // own, or with @global the one an admin set for everyone.
@@ -29,7 +36,7 @@ func (h *ClientHandler) llmToken(c *echo.Context, client db.Client, vmIP, resour
 	}
 	m := llmResourceRe.FindStringSubmatch(resource)
 	if m == nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "resource must be <provider>[@global]/<openai|anthropic>")
+		return echo.NewHTTPError(http.StatusBadRequest, "resource must be <provider>[@global]/<openai|anthropic|responses>")
 	}
 	provider, global, format := m[1], m[2] != "", m[3]
 
@@ -47,22 +54,41 @@ func (h *ClientHandler) llmToken(c *echo.Context, client db.Client, vmIP, resour
 		if !ok {
 			break
 		}
-		key, err := h.llmSealer.open(k.ApiKeyEnc, llmKeyAAD(k.Provider, llmKeyOwner(k)))
-		if err != nil {
-			log.Printf("could not open the %s llm key %s: %v", provider, domainIDString(k.ID), err)
-			return echo.NewHTTPError(http.StatusInternalServerError, "the stored llm key could not be decrypted")
+		upstream := plan.base(format)
+		if upstream == "" {
+			var served []string
+			for _, f := range []string{"openai", "anthropic", "responses"} {
+				if plan.base(f) != "" {
+					served = append(served, llmFormatPaths[f])
+				}
+			}
+			return echo.NewHTTPError(http.StatusForbidden, provider+" does not serve "+llmFormatPaths[format]+"; use "+strings.Join(served, " or "))
 		}
-		upstream := plan.OpenAIBase
-		if format == "anthropic" {
-			upstream = plan.AnthropicBase
+		resp := proto.IntegrationTokenResponse{Upstream: upstream}
+		if llmUsesDevice(k.Provider) {
+			cred, err := h.chatgptAccess(c.Request().Context(), k)
+			if errors.Is(err, errLLMKeyRejected) {
+				return echo.NewHTTPError(http.StatusForbidden, "the "+provider+" login has expired or was revoked; connect it again under integrations")
+			}
+			if err != nil {
+				log.Printf("could not get a %s login for key %s: %v", provider, domainIDString(k.ID), err)
+				return echo.NewHTTPError(http.StatusBadGateway, "could not refresh the "+provider+" login")
+			}
+			resp.Token, resp.Account, resp.ExpiresAt = cred.AccessToken, cred.AccountID, cred.ExpiresAt
+		} else {
+			key, err := h.llmSealer.open(k.ApiKeyEnc, llmKeyAAD(k.Provider, llmKeyOwner(k)))
+			if err != nil {
+				log.Printf("could not open the %s llm key %s: %v", provider, domainIDString(k.ID), err)
+				return echo.NewHTTPError(http.StatusInternalServerError, "the stored llm key could not be decrypted")
+			}
+			resp.Token = key
 		}
 		// Only global keys are metered: they are the ones someone else pays for.
-		var meter string
 		if global && k.VMOwner.Valid {
-			meter = domainIDString(k.VMOwner) + "/" + domainIDString(k.VmPk) + "/" + provider
+			resp.Meter = domainIDString(k.VMOwner) + "/" + domainIDString(k.VmPk) + "/" + provider
 		}
 		log.Printf("llm key issued: host=%s vm=%s provider=%s global=%t", clientLabel(client), k.VMName, provider, global)
-		return c.JSON(http.StatusOK, proto.IntegrationTokenResponse{Token: key, Upstream: upstream, Meter: meter})
+		return c.JSON(http.StatusOK, resp)
 	}
 
 	name := provider
@@ -120,6 +146,13 @@ func (h *ClientHandler) LLMModels(c *echo.Context) error {
 			prefix += llmGlobalSuffix
 		}
 		models, err := h.llmModels.get(ctx, k.ID, k.UpdatedAt.Time, func() ([]llmModel, error) {
+			if llmUsesDevice(k.Provider) {
+				cred, err := h.chatgptAccess(ctx, k)
+				if err != nil {
+					return nil, err
+				}
+				return fetchChatGPTModels(ctx, plan, cred)
+			}
 			key, err := h.llmSealer.open(k.ApiKeyEnc, llmKeyAAD(k.Provider, llmKeyOwner(k)))
 			if err != nil {
 				return nil, err

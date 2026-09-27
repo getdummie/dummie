@@ -26,6 +26,7 @@ func TestClassify(t *testing.T) {
 		{"not json", http.MethodPost, "/v1/chat/completions", `nope`, false, "", "", ""},
 		{"wrong method", http.MethodGet, "/v1/chat/completions", "", false, "", "", ""},
 		{"unknown path", http.MethodPost, "/v1/embeddings", `{"model":"zai/x"}`, false, "", "", ""},
+		{"responses", http.MethodPost, "/v1/responses", `{"model":"chatgpt/gpt-5-codex"}`, true, kindResponses, "chatgpt/responses", ""},
 	}
 	l := &LLM{}
 	for _, tc := range cases {
@@ -82,5 +83,48 @@ func TestRenderErrorMatchesTheCallersAPI(t *testing.T) {
 	}
 	if err := json.Unmarshal(body, &o); err != nil || o.Error.Message != "no key" {
 		t.Fatalf("openai body = %s", body)
+	}
+}
+
+func codexed(t *testing.T, body string) map[string]any {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodPost, "/responses", strings.NewReader(body))
+	codexBody(r)
+	raw, _ := io.ReadAll(r.Body)
+	if r.ContentLength != int64(len(raw)) {
+		t.Fatalf("ContentLength = %d, body is %d", r.ContentLength, len(raw))
+	}
+	var out map[string]any
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("body = %s", raw)
+	}
+	return out
+}
+
+func TestCodexBodyMovesTheSystemPromptIntoInstructions(t *testing.T) {
+	out := codexed(t, `{"model":"gpt-6-luna","store":true,"max_output_tokens":256,"input":[`+
+		`{"role":"developer","content":"be terse"},`+
+		`{"role":"system","content":[{"type":"input_text","text":"no emoji"}]},`+
+		`{"role":"user","content":"hi"}]}`)
+	if out["instructions"] != "be terse\n\nno emoji" || out["store"] != false || out["max_output_tokens"] != nil {
+		t.Fatalf("body = %v", out)
+	}
+	if input := out["input"].([]any); len(input) != 1 || input[0].(map[string]any)["role"] != "user" {
+		t.Fatalf("input = %v", out["input"])
+	}
+}
+
+func TestCodexBodyKeepsGivenInstructions(t *testing.T) {
+	out := codexed(t, `{"instructions":"mine","input":[{"role":"developer","content":"x"},{"role":"user","content":"hi"}]}`)
+	if out["instructions"] != "mine" || len(out["input"].([]any)) != 2 {
+		t.Fatalf("body = %v", out)
+	}
+}
+
+func TestCodexBodyListsAStringInput(t *testing.T) {
+	out := codexed(t, `{"input":"hi"}`)
+	input := out["input"].([]any)
+	if len(input) != 1 || input[0].(map[string]any)["content"] != "hi" || input[0].(map[string]any)["role"] != "user" {
+		t.Fatalf("input = %v", out["input"])
 	}
 }

@@ -35,6 +35,9 @@ type Token struct {
 	// Meter, when set, asks for this token's usage to be recorded under it.
 	// Opaque here; the source decides what it names.
 	Meter string
+	// Account is the upstream account the token acts for, when its api asks
+	// for one alongside the token.
+	Account string
 }
 
 func (t Token) stale(skew time.Duration) bool {

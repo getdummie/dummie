@@ -75,6 +75,38 @@ func TestEndToEndLLMUsesTheBrokersUpstream(t *testing.T) {
 	}
 }
 
+func TestEndToEndChatGPTSendsTheBrokersAccount(t *testing.T) {
+	var seen struct{ auth, account, beta, path string }
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.auth, seen.account, seen.beta, seen.path = r.Header.Get("Authorization"), r.Header.Get("Chatgpt-Account-Id"), r.Header.Get("OpenAI-Beta"), r.URL.Path
+		_, _ = w.Write([]byte(`{"id":"x"}`))
+	}))
+	defer upstream.Close()
+
+	src := fakeSource{fn: func(credential.Scope) (credential.Token, error) {
+		return credential.Token{Value: "access", Account: "acct-1", Upstream: upstream.URL + "/backend-api/codex"}, nil
+	}}
+	s := testServer(t, src, "")
+	s.rp.Transport = upstream.Client().Transport
+	host := withLLM(t, s)
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"chatgpt/gpt-5-codex"}`))
+	r.Host = host
+	r.Header.Set("Chatgpt-Account-Id", "acct-the-guests-own")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", w.Code, w.Body.String())
+	}
+	if seen.auth != "Bearer access" || seen.account != "acct-1" || seen.beta != "responses=experimental" {
+		t.Fatalf("upstream headers = %+v", seen)
+	}
+	if seen.path != "/backend-api/codex/responses" {
+		t.Fatalf("upstream path = %q", seen.path)
+	}
+}
+
 // A source is trusted to name the upstream, but never over plain http.
 func TestUpstreamBaseRequiresHTTPS(t *testing.T) {
 	for _, raw := range []string{"http://api.z.ai/v4", "https://", "https://u:p@api.z.ai", "https://api.z.ai/v4?x=1"} {

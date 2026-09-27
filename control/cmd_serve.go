@@ -206,9 +206,11 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.POST("/clients/:id/revoke", adminH.RevokeClient)
 	admin.DELETE("/clients/:id", adminH.DeleteClient)
 	llmSealer := loadLLMSealer()
-	llmH := &LLMKeyHandler{q: q, sealer: llmSealer}
+	llmH := &LLMKeyHandler{q: q, sealer: llmSealer, devices: newChatGPTDevices()}
 	admin.GET("/llm-keys", llmH.ListGlobal)
 	admin.PUT("/llm-keys/:provider", llmH.PutGlobal)
+	admin.POST("/llm-keys/:provider/device", llmH.DeviceStartGlobal)
+	admin.POST("/llm-keys/:provider/device/poll", llmH.DevicePollGlobal)
 	admin.DELETE("/llm-keys/:provider", llmH.DeleteGlobal)
 	usageH := &LLMUsageHandler{q: q, ch: ch, prices: &llmPriceBook{q: q}}
 	admin.GET("/llm-usage", usageH.All)
@@ -283,6 +285,8 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	llmKeys := me.Group("/llm-keys", denyPAT)
 	llmKeys.GET("", llmH.ListMine)
 	llmKeys.PUT("/:provider", llmH.PutMine)
+	llmKeys.POST("/:provider/device", llmH.DeviceStartMine)
+	llmKeys.POST("/:provider/device/poll", llmH.DevicePollMine)
 	llmKeys.DELETE("/:provider", llmH.DeleteMine)
 	me.GET("/llm-usage", usageH.Mine)
 

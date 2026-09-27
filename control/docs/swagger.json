@@ -1013,6 +1013,24 @@
                 ]
             }
         },
+        "/admin/llm-keys/{provider}/device": {
+            "post": {
+                "responses": {},
+                "summary": "Start a device login for the global llm provider account",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/llm-keys/{provider}/device/poll": {
+            "post": {
+                "responses": {},
+                "summary": "Check on the global device login, saving it once approved",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/llm-usage": {
             "get": {
                 "parameters": [
@@ -1344,6 +1362,24 @@
                 },
                 "responses": null,
                 "summary": "Set your key for an llm provider",
+                "tags": [
+                    "llm"
+                ]
+            }
+        },
+        "/me/llm-keys/{provider}/device": {
+            "post": {
+                "responses": {},
+                "summary": "Start a device login for your llm provider account",
+                "tags": [
+                    "llm"
+                ]
+            }
+        },
+        "/me/llm-keys/{provider}/device/poll": {
+            "post": {
+                "responses": {},
+                "summary": "Check on your device login, saving it once approved",
                 "tags": [
                     "llm"
                 ]

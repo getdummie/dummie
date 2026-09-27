@@ -66,6 +66,28 @@ func TestMeterAnthropicStream(t *testing.T) {
 	}
 }
 
+func TestMeterResponsesStream(t *testing.T) {
+	body := "event: response.created\n" +
+		"data: {\"type\":\"response.created\",\"response\":{\"model\":\"gpt-5-codex\",\"usage\":null}}\n\n" +
+		"event: response.output_text.delta\n" +
+		"data: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n" +
+		"event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-5-codex\",\"usage\":{\"input_tokens\":100,\"input_tokens_details\":{\"cached_tokens\":60},\"output_tokens\":9}}}\n\n"
+	u := metered(t, "text/event-stream", body)
+	want := integration.Usage{Model: "gpt-5-codex", Input: 40, Output: 9, CacheRead: 60}
+	if u != want {
+		t.Fatalf("usage = %+v, want %+v", u, want)
+	}
+}
+
+func TestMeterResponsesJSON(t *testing.T) {
+	u := metered(t, "application/json", `{"model":"gpt-5-codex","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":0},"output_tokens":3}}`)
+	want := integration.Usage{Model: "gpt-5-codex", Input: 10, Output: 3}
+	if u != want {
+		t.Fatalf("usage = %+v, want %+v", u, want)
+	}
+}
+
 func TestMeterSkipsCompressedBodies(t *testing.T) {
 	resp := &http.Response{
 		Header: http.Header{"Content-Encoding": {"gzip"}},

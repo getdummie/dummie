@@ -18,11 +18,31 @@ type llmPlan struct {
 	Label         string `json:"label"`
 	OpenAIBase    string `json:"-"`
 	AnthropicBase string `json:"-"`
+	ResponsesBase string `json:"-"`
 }
+
+// base is where this plan serves the api format names, or "" if it does not.
+func (p llmPlan) base(format string) string {
+	switch format {
+	case "openai":
+		return p.OpenAIBase
+	case "anthropic":
+		return p.AnthropicBase
+	case "responses":
+		return p.ResponsesBase
+	}
+	return ""
+}
+
+const (
+	llmAuthKey    = "key"
+	llmAuthDevice = "device"
+)
 
 type llmProvider struct {
 	ID    string    `json:"id"`
 	Label string    `json:"label"`
+	Auth  string    `json:"auth"`
 	Plans []llmPlan `json:"plans"`
 }
 
@@ -31,9 +51,17 @@ type llmProvider struct {
 var llmProviders = []llmProvider{{
 	ID:    "zai",
 	Label: "Z.ai",
+	Auth:  llmAuthKey,
 	Plans: []llmPlan{
 		{ID: "api", Label: "API", OpenAIBase: "https://api.z.ai/api/paas/v4", AnthropicBase: "https://api.z.ai/api/anthropic"},
 		{ID: "coding", Label: "Coding plan", OpenAIBase: "https://api.z.ai/api/coding/paas/v4", AnthropicBase: "https://api.z.ai/api/anthropic"},
+	},
+}, {
+	ID:    "chatgpt",
+	Label: "ChatGPT",
+	Auth:  llmAuthDevice,
+	Plans: []llmPlan{
+		{ID: "subscription", Label: "Subscription", ResponsesBase: "https://chatgpt.com/backend-api/codex"},
 	},
 }}
 
@@ -51,13 +79,18 @@ func llmPlanFor(provider, plan string) (llmPlan, bool) {
 	return llmPlan{}, false
 }
 
-func llmProviderKnown(provider string) bool {
+func llmProviderFor(provider string) (llmProvider, bool) {
 	for _, p := range llmProviders {
 		if p.ID == provider {
-			return true
+			return p, true
 		}
 	}
-	return false
+	return llmProvider{}, false
+}
+
+func llmUsesDevice(provider string) bool {
+	p, _ := llmProviderFor(provider)
+	return p.Auth == llmAuthDevice
 }
 
 type llmModel struct {

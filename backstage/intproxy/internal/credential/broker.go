@@ -102,7 +102,7 @@ func (b *Broker) Token(ctx context.Context, s Scope) (Token, error) {
 			Message: "intproxy: the control server returned an unusable token",
 		}
 	}
-	return Token{Value: br.Token, ExpiresAt: br.ExpiresAt, Upstream: br.Upstream, Meter: br.Meter}, nil
+	return Token{Value: br.Token, ExpiresAt: br.ExpiresAt, Upstream: br.Upstream, Meter: br.Meter, Account: br.Account}, nil
 }
 
 type relayRequest struct {

@@ -17,13 +17,15 @@ import (
 // LLMKeyHandler stores api keys for llm providers: one per provider for each
 // user, and one global key per provider that an admin sets for everyone.
 type LLMKeyHandler struct {
-	q      *db.Queries
-	sealer *llmSealer
+	q       *db.Queries
+	sealer  *llmSealer
+	devices *chatgptDevices
 }
 
 type llmKeyDTO struct {
 	Provider  string    `json:"provider"`
 	Label     string    `json:"label"`
+	Auth      string    `json:"auth"`
 	Plans     []llmPlan `json:"plans"`
 	Plan      string    `json:"plan"`
 	KeySet    bool      `json:"key_set"`
@@ -42,7 +44,7 @@ func toLLMKeyDTOs(keys []db.LlmKey) []llmKeyDTO {
 	}
 	out := make([]llmKeyDTO, 0, len(llmProviders))
 	for _, p := range llmProviders {
-		d := llmKeyDTO{Provider: p.ID, Label: p.Label, Plans: p.Plans, Plan: p.Plans[0].ID}
+		d := llmKeyDTO{Provider: p.ID, Label: p.Label, Auth: p.Auth, Plans: p.Plans, Plan: p.Plans[0].ID}
 		if k, ok := byProvider[p.ID]; ok {
 			d.Plan, d.KeySet = k.Plan, true
 			d.UpdatedAt = k.UpdatedAt.Time.Format(time.RFC3339)
@@ -112,8 +114,12 @@ func (h *LLMKeyHandler) put(c *echo.Context, owner, by pgtype.UUID) error {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, "llm keys are not enabled on this server")
 	}
 	provider := c.Param("provider")
-	if !llmProviderKnown(provider) {
+	p, ok := llmProviderFor(provider)
+	if !ok {
 		return echo.NewHTTPError(http.StatusNotFound, "unknown llm provider")
+	}
+	if p.Auth == llmAuthDevice {
+		return echo.NewHTTPError(http.StatusBadRequest, p.Label+" is connected with a device login, not an api key")
 	}
 	var req putLLMKeyReq
 	if err := c.Bind(&req); err != nil {
@@ -162,19 +168,149 @@ func (h *LLMKeyHandler) put(c *echo.Context, owner, by pgtype.UUID) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not encrypt the key")
 	}
+	if err := h.store(c, owner, by, provider, plan.ID, sealed); err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusNoContent)
+}
+
+func (h *LLMKeyHandler) store(c *echo.Context, owner, by pgtype.UUID, provider, plan string, sealed []byte) error {
+	ctx := c.Request().Context()
+	var err error
 	if owner.Valid {
 		_, err = h.q.UpsertUserLLMKey(ctx, db.UpsertUserLLMKeyParams{
-			OwnerID: owner, Provider: provider, Plan: plan.ID, ApiKeyEnc: sealed,
+			OwnerID: owner, Provider: provider, Plan: plan, ApiKeyEnc: sealed,
 		})
 	} else {
 		_, err = h.q.UpsertGlobalLLMKey(ctx, db.UpsertGlobalLLMKeyParams{
-			Provider: provider, Plan: plan.ID, ApiKeyEnc: sealed, UpdatedBy: by,
+			Provider: provider, Plan: plan, ApiKeyEnc: sealed, UpdatedBy: by,
 		})
 	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the key")
 	}
-	return c.NoContent(http.StatusNoContent)
+	return nil
+}
+
+type deviceStartResp struct {
+	UserCode        string `json:"user_code"`
+	VerificationURL string `json:"verification_url"`
+	Interval        int    `json:"interval"`
+}
+
+// @Summary     Start a device login for your llm provider account
+// @Tags        llm
+// @Produce     json
+// @Router      /me/llm-keys/{provider}/device [post]
+func (h *LLMKeyHandler) DeviceStartMine(c *echo.Context) error {
+	uid, err := callerID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
+	}
+	return h.deviceStart(c, uid)
+}
+
+// @Summary     Start a device login for the global llm provider account
+// @Tags        admin
+// @Produce     json
+// @Router      /admin/llm-keys/{provider}/device [post]
+func (h *LLMKeyHandler) DeviceStartGlobal(c *echo.Context) error {
+	return h.deviceStart(c, pgtype.UUID{})
+}
+
+// @Summary     Check on your device login, saving it once approved
+// @Tags        llm
+// @Produce     json
+// @Router      /me/llm-keys/{provider}/device/poll [post]
+func (h *LLMKeyHandler) DevicePollMine(c *echo.Context) error {
+	uid, err := callerID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
+	}
+	return h.devicePoll(c, uid, uid)
+}
+
+// @Summary     Check on the global device login, saving it once approved
+// @Tags        admin
+// @Produce     json
+// @Router      /admin/llm-keys/{provider}/device/poll [post]
+func (h *LLMKeyHandler) DevicePollGlobal(c *echo.Context) error {
+	uid, err := callerID(c)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
+	}
+	return h.devicePoll(c, pgtype.UUID{}, uid)
+}
+
+func (h *LLMKeyHandler) deviceProvider(c *echo.Context) (string, error) {
+	if h.sealer == nil {
+		return "", echo.NewHTTPError(http.StatusServiceUnavailable, "llm keys are not enabled on this server")
+	}
+	provider := c.Param("provider")
+	if !llmUsesDevice(provider) {
+		return "", echo.NewHTTPError(http.StatusNotFound, "this provider has no device login")
+	}
+	return provider, nil
+}
+
+func (h *LLMKeyHandler) deviceStart(c *echo.Context, owner pgtype.UUID) error {
+	provider, err := h.deviceProvider(c)
+	if err != nil {
+		return err
+	}
+	dev, err := chatgptDeviceStart(c.Request().Context())
+	if err != nil {
+		log.Printf("could not start a %s device login: %v", provider, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "could not start a login with the provider")
+	}
+	h.devices.put(chatgptDeviceKey(provider, owner), dev)
+	interval, _ := dev.Interval.Int64()
+	return c.JSON(http.StatusOK, deviceStartResp{
+		UserCode: dev.UserCode, VerificationURL: chatgptVerifyURL, Interval: int(max(interval, 5)),
+	})
+}
+
+// devicePoll saves the login once approved, after checking it can reach the
+// provider's models, which an account without the subscription cannot.
+func (h *LLMKeyHandler) devicePoll(c *echo.Context, owner, by pgtype.UUID) error {
+	provider, err := h.deviceProvider(c)
+	if err != nil {
+		return err
+	}
+	key := chatgptDeviceKey(provider, owner)
+	dev, ok := h.devices.get(key)
+	if !ok {
+		return echo.NewHTTPError(http.StatusGone, "this login expired or was never started; start it again")
+	}
+
+	ctx := c.Request().Context()
+	cred, err := chatgptDevicePoll(ctx, dev)
+	if errors.Is(err, errChatGPTPending) {
+		return c.JSON(http.StatusOK, map[string]string{"status": "pending"})
+	}
+	h.devices.drop(key)
+	if err != nil {
+		log.Printf("a %s device login failed: %v", provider, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "the provider did not complete the login; start it again")
+	}
+
+	p, _ := llmProviderFor(provider)
+	plan := p.Plans[0]
+	if _, err := fetchChatGPTModels(ctx, plan, cred); err != nil {
+		if errors.Is(err, errLLMKeyRejected) {
+			return echo.NewHTTPError(http.StatusBadRequest, "this account cannot use "+p.Label+" models; check that it has a subscription")
+		}
+		log.Printf("could not check a %s login: %v", provider, err)
+		return echo.NewHTTPError(http.StatusBadGateway, "could not reach the provider to check this login")
+	}
+	sealed, err := sealChatGPTCred(h.sealer, cred, llmKeyAAD(provider, owner))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not encrypt the login")
+	}
+	if err := h.store(c, owner, by, provider, plan.ID, sealed); err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, map[string]string{"status": "done"})
 }
 
 // @Summary     Remove your key for an llm provider

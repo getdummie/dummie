@@ -178,7 +178,7 @@ type IntegrationTokenRequest struct {
 	Integration string `json:"integration"`
 	Repo        string `json:"repo,omitempty"`
 	// Resource is the integration-defined scope; llm puts
-	// "<provider>[@global]/<openai|anthropic>" here.
+	// "<provider>[@global]/<openai|anthropic|responses>" here.
 	Resource string `json:"resource,omitempty"`
 	Write    bool   `json:"write"`
 }

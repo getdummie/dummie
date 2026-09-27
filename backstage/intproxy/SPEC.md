@@ -168,16 +168,30 @@ the path-traversal guard.
 | `GET /v1/models` | answered by the broker (`POST /v1/llm/models`), not proxied |
 | `POST /v1/chat/completions` | `<upstream>/chat/completions`, OpenAI shape |
 | `POST /v1/messages` | `<upstream>/v1/messages`, Anthropic shape |
+| `POST /v1/responses` | `<upstream>/responses`, OpenAI Responses shape (chatgpt subscriptions) |
 
 The body's `model` is `<provider>/<model>` for the caller's own key and
 `<provider>@global/<model>` for the shared one. The prefix is stripped before the
-body goes upstream and becomes the scope's resource, `<source>/<openai|anthropic>`.
+body goes upstream and becomes the scope's resource, `<source>/<openai|anthropic|responses>`.
 The broker answers with the key and the https base URL it belongs to, since one
 provider can have several (z.ai's pay-as-you-go api and its coding plan). Broker
 mode only: a local token has no way to name its upstream.
 
-`X-Api-Key` and `Api-Key` are stripped along with `Authorization`, so a guest's
-own key never reaches the upstream.
+`X-Api-Key`, `Api-Key` and `Chatgpt-Account-Id` are stripped along with
+`Authorization`, so a guest's own key never reaches the upstream.
+
+A chatgpt subscription's token comes with an `account`. When one is set it goes
+upstream as `Chatgpt-Account-Id`, along with `OpenAI-Beta: responses=experimental`
+and `Originator: codex_cli_rs`, which the codex backend expects. The token expires,
+so the broker sends `expires_at` and refreshes it itself.
+
+The codex backend is stricter than the public Responses api, so its bodies are
+reshaped: a string `input` becomes one user message, `store` is forced false,
+`max_output_tokens` is dropped, and
+with no `instructions` the leading system/developer messages move into them.
+
+An upstream 4xx/5xx is logged with the first 2 KiB of its body, since some
+clients show only the status.
 
 ### Usage
 
@@ -189,7 +203,8 @@ and one line goes to stdout when the body closes:
 intproxyusage {"ts":…,"meter":…,"integration":"llm","status":200,"duration_ms":…,"model":…,"input_tokens":…,"output_tokens":…,"cache_read_tokens":…,"cache_write_tokens":…}
 ```
 
-`input_tokens` excludes cached tokens in both apis. The meter is opaque here;
+`input_tokens` excludes cached tokens in every api, including the Responses
+api's `response.completed` event. The meter is opaque here;
 the control server sets it only for global keys. `Accept-Encoding` is dropped
 upstream so the body stays readable, and a global OpenAI stream gets
 `stream_options.include_usage` unless the client set `stream_options` itself.

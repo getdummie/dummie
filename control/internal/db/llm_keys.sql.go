@@ -60,6 +60,28 @@ func (q *Queries) GetGlobalLLMKey(ctx context.Context, provider string) (LlmKey,
 	return i, err
 }
 
+const getLLMKeyForUpdate = `-- name: GetLLMKeyForUpdate :one
+SELECT id, owner_id, provider, plan, api_key_enc, created_at, updated_at, updated_by FROM llm_keys WHERE id = $1 FOR UPDATE
+`
+
+// Held while an oauth token is refreshed, since each refresh rotates the
+// refresh token and a second one racing it would be refused.
+func (q *Queries) GetLLMKeyForUpdate(ctx context.Context, id pgtype.UUID) (LlmKey, error) {
+	row := q.db.QueryRow(ctx, getLLMKeyForUpdate, id)
+	var i LlmKey
+	err := row.Scan(
+		&i.ID,
+		&i.OwnerID,
+		&i.Provider,
+		&i.Plan,
+		&i.ApiKeyEnc,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UpdatedBy,
+	)
+	return i, err
+}
+
 const getUserLLMKey = `-- name: GetUserLLMKey :one
 SELECT id, owner_id, provider, plan, api_key_enc, created_at, updated_at, updated_by FROM llm_keys WHERE owner_id = $1 AND provider = $2
 `
@@ -272,6 +294,22 @@ func (q *Queries) ListUsernamesByIDs(ctx context.Context, ids []pgtype.UUID) ([]
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateLLMKeySecret = `-- name: UpdateLLMKeySecret :exec
+UPDATE llm_keys SET api_key_enc = $1 WHERE id = $2
+`
+
+type UpdateLLMKeySecretParams struct {
+	ApiKeyEnc []byte
+	ID        pgtype.UUID
+}
+
+// Leaves updated_at alone: that versions the models cache, and a refreshed
+// token is the same login.
+func (q *Queries) UpdateLLMKeySecret(ctx context.Context, arg UpdateLLMKeySecretParams) error {
+	_, err := q.db.Exec(ctx, updateLLMKeySecret, arg.ApiKeyEnc, arg.ID)
+	return err
 }
 
 const upsertGlobalLLMKey = `-- name: UpsertGlobalLLMKey :one

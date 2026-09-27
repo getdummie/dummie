@@ -42,6 +42,7 @@ var stripped = []string{
 	"X-Real-Ip",
 	"X-Api-Key",
 	"Api-Key",
+	"Chatgpt-Account-Id",
 }
 
 func (s *Server) newReverseProxy() *httputil.ReverseProxy {
@@ -126,6 +127,15 @@ func (s *Server) modifyResponse(resp *http.Response) error {
 			"integration", ig.Name(), "resource", route.Resource)
 		return replaceWithError(resp, ig, route, http.StatusForbidden,
 			"intproxy: this proxy's own credential was rejected upstream, so it has expired or been revoked; nothing is wrong with your request")
+	}
+	if resp.StatusCode >= 400 && resp.Body != nil && resp.Header.Get("Content-Encoding") == "" {
+		head, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		resp.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(head), resp.Body), resp.Body}
+		s.log.Warn("upstream refused the request", "integration", ig.Name(), "resource", route.Resource,
+			"status", resp.StatusCode, "body", string(head))
 	}
 	if err := ig.ModifyResponse(resp); err != nil {
 		return err

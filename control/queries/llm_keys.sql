@@ -45,6 +45,16 @@ WHERE v.client_id = sqlc.arg(client_id)
   AND v.ip = sqlc.arg(vm_ip)
 ORDER BY is_global, k.provider;
 
+-- name: GetLLMKeyForUpdate :one
+-- Held while an oauth token is refreshed, since each refresh rotates the
+-- refresh token and a second one racing it would be refused.
+SELECT * FROM llm_keys WHERE id = sqlc.arg(id) FOR UPDATE;
+
+-- name: UpdateLLMKeySecret :exec
+-- Leaves updated_at alone: that versions the models cache, and a refreshed
+-- token is the same login.
+UPDATE llm_keys SET api_key_enc = sqlc.arg(api_key_enc) WHERE id = sqlc.arg(id);
+
 -- name: UpsertLLMPrices :exec
 INSERT INTO llm_prices (model, input_per_token, output_per_token, cache_read_per_token, cache_write_per_token, updated_at)
 SELECT unnest(sqlc.arg(models)::text[]),

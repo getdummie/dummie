@@ -85,6 +85,9 @@ type usageFields struct {
 	PromptDetails    *struct {
 		CachedTokens int64 `json:"cached_tokens"`
 	} `json:"prompt_tokens_details"`
+	InputDetails *struct {
+		CachedTokens int64 `json:"cached_tokens"`
+	} `json:"input_tokens_details"`
 
 	InputTokens  int64 `json:"input_tokens"`
 	OutputTokens int64 `json:"output_tokens"`
@@ -99,6 +102,10 @@ type event struct {
 		Model string       `json:"model"`
 		Usage *usageFields `json:"usage"`
 	} `json:"message"`
+	Response *struct {
+		Model string       `json:"model"`
+		Usage *usageFields `json:"usage"`
+	} `json:"response"`
 }
 
 // parse takes one json document: a whole response, or one sse event.
@@ -114,6 +121,10 @@ func (m *meterBody) parse(b []byte) {
 		m.model(ev.Message.Model)
 		m.apply(ev.Message.Usage)
 	}
+	if ev.Response != nil {
+		m.model(ev.Response.Model)
+		m.apply(ev.Response.Usage)
+	}
 	m.model(ev.Model)
 	m.apply(ev.Usage)
 }
@@ -128,6 +139,13 @@ func (m *meterBody) model(s string) {
 // which openai counts inside prompt_tokens and anthropic reports apart.
 func (m *meterBody) apply(f *usageFields) {
 	if f == nil {
+		return
+	}
+	// The responses api counts cached tokens inside input_tokens.
+	if f.InputDetails != nil {
+		m.u.Input = max(f.InputTokens-f.InputDetails.CachedTokens, 0)
+		m.u.CacheRead = f.InputDetails.CachedTokens
+		m.u.Output = f.OutputTokens
 		return
 	}
 	if f.PromptTokens > 0 || f.CompletionTokens > 0 {

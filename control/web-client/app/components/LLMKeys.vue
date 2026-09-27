@@ -20,6 +20,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 interface LLMKey {
   provider: string
   label: string
+  auth: 'key' | 'device'
   plans: { id: string, label: string }[]
   plan: string
   key_set: boolean
@@ -116,6 +117,58 @@ async function remove() {
 }
 
 const prefix = (p: string) => (props.admin ? `${p}@global` : p)
+
+interface DeviceLogin { provider: string, code: string, url: string }
+const device = ref<DeviceLogin | null>(null)
+let pollTimer: ReturnType<typeof setTimeout> | undefined
+
+function stopDevice() {
+  clearTimeout(pollTimer)
+  device.value = null
+}
+onBeforeUnmount(stopDevice)
+
+async function connect(k: LLMKey) {
+  stopDevice()
+  saving.value = k.provider
+  error.value = null
+  try {
+    const res = await authFetch(`${base.value}/${k.provider}/device`, { method: 'POST' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const b = await res.json()
+    device.value = { provider: k.provider, code: b.user_code, url: b.verification_url }
+    schedulePoll(k, b.interval)
+  }
+  catch (e) {
+    error.value = e instanceof Error ? e.message : 'Could not start the login'
+    saving.value = null
+  }
+}
+
+function schedulePoll(k: LLMKey, interval: number) {
+  pollTimer = setTimeout(async () => {
+    try {
+      const res = await authFetch(`${base.value}/${k.provider}/device/poll`, { method: 'POST' })
+      if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+      if ((await res.json()).status === 'pending') return schedulePoll(k, interval)
+      stopDevice()
+      saving.value = null
+      await load()
+      saved.value = k.provider
+      setTimeout(() => { saved.value = null }, 2000)
+    }
+    catch (e) {
+      stopDevice()
+      saving.value = null
+      error.value = e instanceof Error ? e.message : 'The login did not complete'
+    }
+  }, interval * 1000)
+}
+
+function cancelDevice() {
+  stopDevice()
+  saving.value = null
+}
 </script>
 
 <template>
@@ -161,7 +214,21 @@ const prefix = (p: string) => (props.admin ? `${p}@global` : p)
           </Badge>
         </div>
 
-        <div v-if="drafts[k.provider]" class="grid gap-4 sm:grid-cols-[12rem_1fr]">
+        <div v-if="k.auth === 'device' && device?.provider === k.provider" class="space-y-2 rounded-md border border-border bg-muted/40 p-4">
+          <p class="text-sm">
+            Open
+            <a :href="device?.url" target="_blank" rel="noopener noreferrer" class="font-medium underline underline-offset-4 break-all">{{ device?.url }}</a>
+            and enter this code:
+          </p>
+          <p class="font-mono text-2xl tracking-widest select-all">{{ device?.code }}</p>
+          <p class="text-xs text-muted-foreground">Waiting for approval… this page updates on its own.</p>
+        </div>
+
+        <p v-else-if="k.auth === 'device'" class="text-xs text-muted-foreground">
+          Sign in with your {{ k.label }} account on OpenAI's site. The login stays encrypted on this server and is refreshed here.
+        </p>
+
+        <div v-else-if="drafts[k.provider]" class="grid gap-4 sm:grid-cols-[12rem_1fr]">
           <div class="space-y-1.5">
             <Label :for="`llm-plan-${k.provider}`">Plan</Label>
             <NativeSelect :id="`llm-plan-${k.provider}`" v-model="drafts[k.provider]!.plan">
@@ -189,10 +256,21 @@ const prefix = (p: string) => (props.admin ? `${p}@global` : p)
           Models appear as
           <code class="rounded bg-muted px-1 py-0.5 font-mono">{{ prefix(k.provider) }}/&lt;model&gt;</code>
           in <code class="rounded bg-muted px-1 py-0.5 font-mono">/v1/models</code>.
+          <template v-if="k.auth === 'device'">
+            Served on <code class="rounded bg-muted px-1 py-0.5 font-mono">/v1/responses</code> only.
+          </template>
         </p>
 
         <div class="flex flex-wrap items-center gap-2">
-          <Button type="submit" :disabled="saving === k.provider || !dirty(k)">
+          <template v-if="k.auth === 'device'">
+            <Button v-if="device?.provider === k.provider" type="button" variant="secondary" @click="cancelDevice">
+              Cancel
+            </Button>
+            <Button v-else type="button" :disabled="!!saving" @click="connect(k)">
+              {{ saving === k.provider ? 'Starting…' : k.key_set ? 'Reconnect' : `Connect ${k.label}` }}
+            </Button>
+          </template>
+          <Button v-else type="submit" :disabled="saving === k.provider || !dirty(k)">
             {{ saving === k.provider ? 'Checking…' : 'Save' }}
           </Button>
           <span v-if="saved === k.provider" class="text-sm text-muted-foreground">Saved</span>
