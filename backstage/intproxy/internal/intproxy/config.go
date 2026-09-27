@@ -293,6 +293,11 @@ func (c *Config) validateCredential() error {
 			return errors.New("config: policy is required under mode: local, or no client can reach anything")
 		}
 		for _, ic := range c.Integrations {
+			// llm's upstream comes with each key from the broker; a local
+			// token has nowhere to say it.
+			if ic.Enabled && ic.Name == "llm" {
+				return errors.New("config: integration \"llm\" needs credential.mode: broker")
+			}
 			if ic.Enabled && ic.Auth.Empty() {
 				return fmt.Errorf("config: integration %q needs an auth block under mode: local", ic.Name)
 			}

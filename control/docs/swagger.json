@@ -979,6 +979,40 @@
                 ]
             }
         },
+        "/admin/llm-keys": {
+            "get": {
+                "responses": {},
+                "summary": "Global llm provider keys, usable by everyone",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/llm-keys/{provider}": {
+            "delete": {
+                "responses": null,
+                "summary": "Remove the global key for an llm provider",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "put": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": null,
+                "summary": "Set the global key for an llm provider",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/integrations": {
             "get": {
                 "responses": {},
@@ -1240,6 +1274,40 @@
                 "summary": "Update your account",
                 "tags": [
                     "me"
+                ]
+            }
+        },
+        "/me/llm-keys": {
+            "get": {
+                "responses": {},
+                "summary": "Your llm provider keys",
+                "tags": [
+                    "llm"
+                ]
+            }
+        },
+        "/me/llm-keys/{provider}": {
+            "delete": {
+                "responses": null,
+                "summary": "Remove your key for an llm provider",
+                "tags": [
+                    "llm"
+                ]
+            },
+            "put": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": null,
+                "summary": "Set your key for an llm provider",
+                "tags": [
+                    "llm"
                 ]
             }
         },

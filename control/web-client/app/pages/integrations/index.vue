@@ -213,6 +213,8 @@ const failedInstall = computed(() => {
       </div>
     </div>
 
+    <LLMKeys class="mt-12" />
+
     <Dialog v-model:open="pickOpen">
       <DialogContent class="sm:max-w-md">
         <DialogHeader>

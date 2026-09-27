@@ -18,6 +18,7 @@ func TestGenerateIntproxyConfig(t *testing.T) {
 		"socket: /run/intproxy/broker.sock",
 		"mode: broker",
 		"- name: github",
+		"- name: llm",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)

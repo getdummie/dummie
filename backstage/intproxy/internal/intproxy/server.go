@@ -3,6 +3,7 @@ package intproxy
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -30,6 +31,7 @@ type Server struct {
 	policy atomic.Pointer[policy.Policy]
 
 	creds *credential.Cache
+	relay credential.Relayer
 	hosts map[string]integration.Integration
 	names []string
 
@@ -55,6 +57,9 @@ func New(cfg *Config, log *slog.Logger, version string) (*Server, error) {
 	src, err := s.credentialSource()
 	if err != nil {
 		return nil, err
+	}
+	if r, ok := src.(credential.Relayer); ok {
+		s.relay = r
 	}
 	s.creds = credential.NewCache(src,
 		cfg.Credential.TokenSkew.Or(time.Minute),
@@ -169,6 +174,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if route.Relay != "" {
+		s.relayed(w, r, ig, route, ip)
+		return
+	}
+
 	scope := credential.Scope{
 		Integration: ig.Name(),
 		ClientIP:    ip.String(),
@@ -194,6 +204,35 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.log.Debug("proxying", "client", ip.String(), "integration", ig.Name(),
 		"kind", route.Kind, "resource", route.Resource, "write", route.Write)
 	s.proxy(w, r, ig, route, tok)
+}
+
+// relayed hands the whole answer to the broker. Local mode has nobody to ask.
+func (s *Server) relayed(w http.ResponseWriter, r *http.Request, ig integration.Integration, route integration.Route, ip netip.Addr) {
+	if s.relay == nil {
+		s.writeError(w, ig, route, http.StatusNotImplemented, "intproxy: this endpoint needs credential.mode: broker")
+		return
+	}
+	status, body, err := s.relay.Relay(r.Context(), route.Relay, ip.String())
+	if err != nil {
+		s.log.Warn("could not relay", "client", ip.String(), "integration", ig.Name(), "path", route.Relay, "error", err)
+		s.writeError(w, ig, route, http.StatusBadGateway, "intproxy: could not reach the control server, so this request can be retried")
+		return
+	}
+	if status != http.StatusOK {
+		var be struct {
+			Message string `json:"message"`
+		}
+		_ = json.Unmarshal(body, &be)
+		if be.Message == "" {
+			be.Message = "the control server could not answer this request"
+		}
+		s.writeError(w, ig, route, status, "intproxy: "+be.Message)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
 }
 
 func (s *Server) deny(w http.ResponseWriter, ig integration.Integration, route integration.Route, ip netip.Addr, err error) {

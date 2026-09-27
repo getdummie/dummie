@@ -38,6 +38,9 @@ type ClientHandler struct {
 	// tokens caches minted github installation tokens. Minting is rate limited
 	// by github, and this cache is shared across every host in the fleet.
 	tokens *tokenCache
+
+	llmSealer *llmSealer
+	llmModels *llmModelsCache
 }
 
 func (h *ClientHandler) openEnrollment(ctx context.Context) bool {

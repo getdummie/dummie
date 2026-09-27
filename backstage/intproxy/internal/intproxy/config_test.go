@@ -98,11 +98,15 @@ func TestValidate(t *testing.T) {
 		{"no socket", func(c *Config) { c.Credential.Broker.Socket = "" }, "credential.broker.socket is required"},
 		{"relative socket", func(c *Config) { c.Credential.Broker.Socket = "broker.sock" }, "absolute path"},
 		{"no integrations", func(c *Config) { c.Integrations = nil }, "at least one integration"},
-		{"unknown integration", func(c *Config) { c.Integrations[0].Name = "llm" }, "is not known"},
+		{"unknown integration", func(c *Config) { c.Integrations[0].Name = "nope" }, "is not known"},
 		{"all disabled", func(c *Config) { c.Integrations[0].Enabled = false }, "every integration is disabled"},
 		{"duplicate integration", func(c *Config) {
 			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "github", Enabled: true})
 		}, "listed twice"},
+		{"llm under local", func(c *Config) {
+			*c = *localConfig()
+			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "llm", Enabled: true})
+		}, "needs credential.mode: broker"},
 	}
 
 	for _, tc := range cases {

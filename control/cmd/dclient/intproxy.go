@@ -130,7 +130,7 @@ func removeIntproxyHost() {
 	_ = os.RemoveAll(intproxyRuntimeDir)
 }
 
-// brokerServer hands intproxy short-lived github tokens. It is a relay and
+// brokerServer hands intproxy integration credentials. It is a relay and
 // nothing more: dclient adds the host's own credential, and the control server
 // makes every authorization decision, so there is one place a rule can be wrong.
 //
@@ -146,6 +146,7 @@ type brokerServer struct {
 func (s *brokerServer) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/token", s.token1)
+	mux.HandleFunc("POST /v1/llm/models", s.llmModels)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintln(w, "ok")
 	})
@@ -154,7 +155,20 @@ func (s *brokerServer) routes() *http.ServeMux {
 
 func (s *brokerServer) token1(w http.ResponseWriter, r *http.Request) {
 	var req proto.IntegrationTokenRequest
-	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req); err != nil {
+	s.relay(w, r, &req, proto.IntegrationTokenPath, 15*time.Second)
+}
+
+// llmModels takes longer than a token: the control server may have to ask
+// each provider the vm has a key for.
+func (s *brokerServer) llmModels(w http.ResponseWriter, r *http.Request) {
+	var req proto.LLMModelsRequest
+	s.relay(w, r, &req, proto.LLMModelsPath, 25*time.Second)
+}
+
+// relay decodes into req before forwarding, so only the fields the control
+// server expects ever leave this host.
+func (s *brokerServer) relay(w http.ResponseWriter, r *http.Request, req any, path string, timeout time.Duration) {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(req); err != nil {
 		http.Error(w, `{"message":"could not decode the request"}`, http.StatusBadRequest)
 		return
 	}
@@ -165,10 +179,10 @@ func (s *brokerServer) token1(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 
-	endpoint := s.base.JoinPath(proto.IntegrationTokenPath).String()
+	endpoint := s.base.JoinPath(path).String()
 	up, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, `{"message":"could not build the upstream request"}`, http.StatusInternalServerError)
@@ -190,7 +204,7 @@ func (s *brokerServer) token1(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Retry-After", ra)
 	}
 	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, io.LimitReader(resp.Body, 64<<10))
+	_, _ = io.Copy(w, io.LimitReader(resp.Body, 4<<20))
 }
 
 // serve listens on the unix socket. Go's unix listener honours umask, so the

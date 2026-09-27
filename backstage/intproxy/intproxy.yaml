@@ -28,13 +28,15 @@ credential:
 
 integrations:
   - name: github
+  - name: llm
 
 dial_timeout: 10s
 tls_handshake_timeout: 10s
 
 # A header deadline, not a body deadline. There is no read or write timeout at
-# all: a packfile clone is one long request in each direction.
-response_header_timeout: 60s
+# all: a packfile clone is one long request in each direction. Long enough for
+# a non-streaming completion, which sends no headers until it is done.
+response_header_timeout: 300s
 
 idle_timeout: 120s
 read_header_timeout: 30s

@@ -29,6 +29,9 @@ type Token struct {
 	Value string
 	// ExpiresAt zero means a static credential that never rotates.
 	ExpiresAt time.Time
+	// Upstream is an https base URL the source picked for this token, for
+	// integrations whose upstream depends on the credential. Empty otherwise.
+	Upstream string
 }
 
 func (t Token) stale(skew time.Duration) bool {
@@ -40,6 +43,12 @@ func (t Token) stale(skew time.Duration) bool {
 
 type Source interface {
 	Token(context.Context, Scope) (Token, error)
+}
+
+// Relayer answers a request on the proxy's behalf instead of handing out a
+// credential for it: status and a JSON body, passed through as is.
+type Relayer interface {
+	Relay(ctx context.Context, path, clientIP string) (int, []byte, error)
 }
 
 // Denial is a refusal that can be rendered to the caller, as opposed to a

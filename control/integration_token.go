@@ -34,12 +34,16 @@ func (h *ClientHandler) IntegrationToken(c *echo.Context) error {
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "could not decode the request")
 	}
-	if req.Integration != integrationKindGitHub {
-		return echo.NewHTTPError(http.StatusBadRequest, "unknown integration kind")
-	}
 	ip := net.ParseIP(strings.TrimSpace(req.VMIP))
 	if ip == nil || ip.To4() == nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "vm_ip is not an IPv4 address")
+	}
+	switch req.Integration {
+	case integrationKindGitHub:
+	case integrationKindLLM:
+		return h.llmToken(c, client, ip.String(), req.Resource)
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, "unknown integration kind")
 	}
 
 	var owner, repo string

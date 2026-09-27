@@ -5,4 +5,5 @@ package all
 
 import (
 	_ "intproxy/internal/integration/github"
+	_ "intproxy/internal/integration/llm"
 )

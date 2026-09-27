@@ -177,16 +177,29 @@ type IntegrationTokenRequest struct {
 	VMIP        string `json:"vm_ip"`
 	Integration string `json:"integration"`
 	Repo        string `json:"repo,omitempty"`
-	Write       bool   `json:"write"`
+	// Resource is the integration-defined scope; llm puts
+	// "<provider>[@global]/<openai|anthropic>" here.
+	Resource string `json:"resource,omitempty"`
+	Write    bool   `json:"write"`
 }
 
 type IntegrationTokenResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Account   string    `json:"account,omitempty"`
+	// Upstream is the https base the token belongs to, when the integration
+	// has more than one.
+	Upstream string `json:"upstream,omitempty"`
 }
 
 const IntegrationTokenPath = "/api/v1/client/integration/token"
+
+// LLMModelsRequest asks which models a vm can reach through intproxy.
+type LLMModelsRequest struct {
+	VMIP string `json:"vm_ip"`
+}
+
+const LLMModelsPath = "/api/v1/client/llm/models"
 
 type DpipeCerts struct {
 	Cert string `json:"cert"`

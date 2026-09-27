@@ -47,6 +47,7 @@ type brokerRequest struct {
 	VMIP        string `json:"vm_ip"`
 	Integration string `json:"integration"`
 	Repo        string `json:"repo,omitempty"`
+	Resource    string `json:"resource,omitempty"`
 	Write       bool   `json:"write"`
 }
 
@@ -54,6 +55,7 @@ type brokerResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Account   string    `json:"account,omitempty"`
+	Upstream  string    `json:"upstream,omitempty"`
 }
 
 type brokerError struct {
@@ -65,6 +67,7 @@ func (b *Broker) Token(ctx context.Context, s Scope) (Token, error) {
 		VMIP:        s.ClientIP,
 		Integration: s.Integration,
 		Repo:        s.Resource,
+		Resource:    s.Resource,
 		Write:       s.Write,
 	})
 	if err != nil {
@@ -98,7 +101,40 @@ func (b *Broker) Token(ctx context.Context, s Scope) (Token, error) {
 			Message: "intproxy: the control server returned an unusable token",
 		}
 	}
-	return Token{Value: br.Token, ExpiresAt: br.ExpiresAt}, nil
+	return Token{Value: br.Token, ExpiresAt: br.ExpiresAt, Upstream: br.Upstream}, nil
+}
+
+type relayRequest struct {
+	VMIP string `json:"vm_ip"`
+}
+
+// Relay posts the caller's address to path on the broker and returns whatever
+// comes back. Errors are only for when the broker itself cannot be reached.
+func (b *Broker) Relay(ctx context.Context, path, clientIP string) (int, []byte, error) {
+	body, err := json.Marshal(relayRequest{VMIP: clientIP})
+	if err != nil {
+		return 0, nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://broker"+path, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// The answer may need a round trip to an upstream behind the broker, so it
+	// gets longer than a token lookup does.
+	hc := *b.hc
+	hc.Timeout = 30 * time.Second
+	resp, err := hc.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, raw, nil
 }
 
 func (b *Broker) denialFor(status int, raw []byte) error {

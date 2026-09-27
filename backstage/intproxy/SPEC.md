@@ -161,6 +161,24 @@ namespace, and `owner=repos` would be ambiguous.
 Owner and repo names are validated and **rejected** rather than cleaned. That is
 the path-traversal guard.
 
+## Request shapes (llm)
+
+| inbound | upstream |
+|---|---|
+| `GET /v1/models` | answered by the broker (`POST /v1/llm/models`), not proxied |
+| `POST /v1/chat/completions` | `<upstream>/chat/completions`, OpenAI shape |
+| `POST /v1/messages` | `<upstream>/v1/messages`, Anthropic shape |
+
+The body's `model` is `<provider>/<model>` for the caller's own key and
+`<provider>@global/<model>` for the shared one. The prefix is stripped before the
+body goes upstream and becomes the scope's resource, `<source>/<openai|anthropic>`.
+The broker answers with the key and the https base URL it belongs to, since one
+provider can have several (z.ai's pay-as-you-go api and its coding plan). Broker
+mode only: a local token has no way to name its upstream.
+
+`X-Api-Key` and `Api-Key` are stripped along with `Authorization`, so a guest's
+own key never reaches the upstream.
+
 ## Header handling
 
 Every inbound `Authorization`, `Cookie`, `Proxy-Authorization`, `Forwarded`,

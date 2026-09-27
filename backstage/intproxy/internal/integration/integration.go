@@ -25,6 +25,10 @@ type Route struct {
 
 	UpstreamHost string
 	UpstreamPath string
+
+	// Relay, when set, is a broker path that answers this request outright;
+	// nothing is proxied and no credential is fetched.
+	Relay string
 }
 
 type Integration interface {

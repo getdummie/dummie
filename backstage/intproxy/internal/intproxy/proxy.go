@@ -11,6 +11,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"intproxy/internal/credential"
@@ -38,6 +39,8 @@ var stripped = []string{
 	"X-Forwarded-Host",
 	"X-Forwarded-Proto",
 	"X-Real-Ip",
+	"X-Api-Key",
+	"Api-Key",
 }
 
 func (s *Server) newReverseProxy() *httputil.ReverseProxy {
@@ -74,11 +77,15 @@ func (s *Server) rewrite(pr *httputil.ProxyRequest) {
 	tok, _ := pr.In.Context().Value(ctxToken).(credential.Token)
 
 	out := &url.URL{Scheme: "https", Host: route.UpstreamHost, Path: route.UpstreamPath}
+	if base, ok := upstreamBase(tok.Upstream); ok {
+		out.Host = base.Host
+		out.Path = strings.TrimSuffix(base.Path, "/") + route.UpstreamPath
+	}
 	if q := pr.In.URL.Query(); len(q) > 0 {
 		out.RawQuery = q.Encode()
 	}
 	pr.Out.URL = out
-	pr.Out.Host = route.UpstreamHost
+	pr.Out.Host = out.Host
 
 	for _, h := range stripped {
 		pr.Out.Header.Del(h)
@@ -86,6 +93,19 @@ func (s *Server) rewrite(pr *httputil.ProxyRequest) {
 	if ig != nil {
 		ig.Apply(pr, route, tok)
 	}
+}
+
+// upstreamBase only honours https with a host and nothing else, so a source
+// cannot steer a credential onto plain http or smuggle a query along.
+func upstreamBase(raw string) (*url.URL, bool) {
+	if raw == "" {
+		return nil, false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, false
+	}
+	return u, true
 }
 
 func (s *Server) modifyResponse(resp *http.Response) error {

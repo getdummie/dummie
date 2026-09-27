@@ -205,6 +205,11 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/clients/:id", adminH.GetClient)
 	admin.POST("/clients/:id/revoke", adminH.RevokeClient)
 	admin.DELETE("/clients/:id", adminH.DeleteClient)
+	llmSealer := loadLLMSealer()
+	llmH := &LLMKeyHandler{q: q, sealer: llmSealer}
+	admin.GET("/llm-keys", llmH.ListGlobal)
+	admin.PUT("/llm-keys/:provider", llmH.PutGlobal)
+	admin.DELETE("/llm-keys/:provider", llmH.DeleteGlobal)
 	admin.GET("/github-app", adminH.GetGitHubApp)
 	admin.PUT("/github-app", adminH.PutGitHubApp)
 	admin.DELETE("/github-app", adminH.DeleteGitHubApp)
@@ -272,6 +277,11 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	pats.POST("/:id/revoke", profileH.RevokeToken)
 	pats.DELETE("/:id", profileH.DeleteToken)
 
+	llmKeys := me.Group("/llm-keys", denyPAT)
+	llmKeys.GET("", llmH.ListMine)
+	llmKeys.PUT("/:provider", llmH.PutMine)
+	llmKeys.DELETE("/:provider", llmH.DeleteMine)
+
 	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL}
 	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
 	vms := api.Group("/vms", userJWT(cfg, q))
@@ -329,11 +339,13 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	// redirect, which carries no access token. The single-use state authenticates it.
 	api.GET("/integrations/github/callback", integH.Callback)
 
-	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg, blobs: blobs, tokens: newTokenCache()}
+	clientH := &ClientHandler{q: q, pool: pool, hub: hub, proxy: proxyCfg, blobs: blobs, tokens: newTokenCache(),
+		llmSealer: llmSealer, llmModels: newLLMModelsCache()}
 	ag := api.Group("/client")
 	ag.POST("/enroll", clientH.Enroll)
 	ag.GET("/connect", clientH.Connect)
 	ag.POST("/integration/token", clientH.IntegrationToken)
+	ag.POST("/llm/models", clientH.LLMModels)
 
 	api.GET("/ht/", func(c *echo.Context) error {
 		apiOK := true

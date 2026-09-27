@@ -161,6 +161,17 @@ type Kernel struct {
 	SoftDeletedAt pgtype.Timestamptz
 }
 
+type LlmKey struct {
+	ID        pgtype.UUID
+	OwnerID   pgtype.UUID
+	Provider  string
+	Plan      string
+	ApiKeyEnc []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	UpdatedBy pgtype.UUID
+}
+
 type OidcIdentity struct {
 	ProviderID pgtype.UUID
 	Subject    string

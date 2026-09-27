@@ -21,6 +21,7 @@ sql:
           vm_id: "VMID"
           vm_ip: "VMIP"
           vm_name: "VMName"
+          vm_owner: "VMOwner"
           host_vm_id: "HostVMID"
           cpus: "CPUs"
           memory_mib: "MemoryMiB"
