@@ -121,6 +121,7 @@ func (q *Queries) ListGlobalLLMKeys(ctx context.Context) ([]LlmKey, error) {
 const listLLMKeysForVM = `-- name: ListLLMKeysForVM :many
 SELECT k.id, k.provider, k.plan, k.api_key_enc, k.updated_at,
        (k.owner_id IS NULL)::boolean AS is_global,
+       v.id AS vm_pk,
        v.name AS vm_name,
        v.created_by AS vm_owner
 FROM vms v
@@ -142,6 +143,7 @@ type ListLLMKeysForVMRow struct {
 	ApiKeyEnc []byte
 	UpdatedAt pgtype.Timestamptz
 	IsGlobal  bool
+	VmPk      pgtype.UUID
 	VMName    string
 	VMOwner   pgtype.UUID
 }
@@ -165,8 +167,40 @@ func (q *Queries) ListLLMKeysForVM(ctx context.Context, arg ListLLMKeysForVMPara
 			&i.ApiKeyEnc,
 			&i.UpdatedAt,
 			&i.IsGlobal,
+			&i.VmPk,
 			&i.VMName,
 			&i.VMOwner,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listLLMPrices = `-- name: ListLLMPrices :many
+SELECT model, input_per_token, output_per_token, cache_read_per_token, cache_write_per_token, updated_at FROM llm_prices
+`
+
+func (q *Queries) ListLLMPrices(ctx context.Context) ([]LlmPrice, error) {
+	rows, err := q.db.Query(ctx, listLLMPrices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LlmPrice
+	for rows.Next() {
+		var i LlmPrice
+		if err := rows.Scan(
+			&i.Model,
+			&i.InputPerToken,
+			&i.OutputPerToken,
+			&i.CacheReadPerToken,
+			&i.CacheWritePerToken,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -211,6 +245,35 @@ func (q *Queries) ListUserLLMKeys(ctx context.Context, ownerID pgtype.UUID) ([]L
 	return items, nil
 }
 
+const listUsernamesByIDs = `-- name: ListUsernamesByIDs :many
+SELECT id, username FROM users WHERE id = ANY($1::uuid[])
+`
+
+type ListUsernamesByIDsRow struct {
+	ID       pgtype.UUID
+	Username string
+}
+
+func (q *Queries) ListUsernamesByIDs(ctx context.Context, ids []pgtype.UUID) ([]ListUsernamesByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listUsernamesByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsernamesByIDsRow
+	for rows.Next() {
+		var i ListUsernamesByIDsRow
+		if err := rows.Scan(&i.ID, &i.Username); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const upsertGlobalLLMKey = `-- name: UpsertGlobalLLMKey :one
 INSERT INTO llm_keys (owner_id, provider, plan, api_key_enc, updated_by)
 VALUES (NULL, $1, $2, $3, $4)
@@ -245,6 +308,41 @@ func (q *Queries) UpsertGlobalLLMKey(ctx context.Context, arg UpsertGlobalLLMKey
 		&i.UpdatedBy,
 	)
 	return i, err
+}
+
+const upsertLLMPrices = `-- name: UpsertLLMPrices :exec
+INSERT INTO llm_prices (model, input_per_token, output_per_token, cache_read_per_token, cache_write_per_token, updated_at)
+SELECT unnest($1::text[]),
+       unnest($2::float8[]),
+       unnest($3::float8[]),
+       unnest($4::float8[]),
+       unnest($5::float8[]),
+       now()
+ON CONFLICT (model) DO UPDATE
+SET input_per_token = EXCLUDED.input_per_token,
+    output_per_token = EXCLUDED.output_per_token,
+    cache_read_per_token = EXCLUDED.cache_read_per_token,
+    cache_write_per_token = EXCLUDED.cache_write_per_token,
+    updated_at = EXCLUDED.updated_at
+`
+
+type UpsertLLMPricesParams struct {
+	Models      []string
+	Inputs      []float64
+	Outputs     []float64
+	CacheReads  []float64
+	CacheWrites []float64
+}
+
+func (q *Queries) UpsertLLMPrices(ctx context.Context, arg UpsertLLMPricesParams) error {
+	_, err := q.db.Exec(ctx, upsertLLMPrices,
+		arg.Models,
+		arg.Inputs,
+		arg.Outputs,
+		arg.CacheReads,
+		arg.CacheWrites,
+	)
+	return err
 }
 
 const upsertUserLLMKey = `-- name: UpsertUserLLMKey :one

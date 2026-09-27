@@ -18,7 +18,11 @@ const (
 	vectorClickHouseDatabase = "dummie"
 	vectorClickHouseTable    = "suricata_events"
 	vectorDNSTable           = "dns_queries"
+	vectorLLMUsageTable      = "llm_usage"
 )
+
+// intproxyUsageMarker mirrors intproxy's UsageMarker; the two must agree.
+const intproxyUsageMarker = "intproxyusage"
 
 const corednsLogContainer = "coredns"
 
@@ -35,6 +39,12 @@ sources:
   coredns:
     type: docker_logs
     include_containers: ["__COREDNS_CONTAINER__"]
+
+  # intproxy writes one line per metered llm response to stdout, next to its
+  # ordinary logs.
+  intproxy:
+    type: journald
+    include_units: ["intproxy"]
 
 transforms:
   # coredns writes its startup and plugin chatter to the same stream as its
@@ -69,6 +79,39 @@ transforms:
       # Stored lowercased and without the root dot so a row compares directly
       # against a recorded destination and against suricata_events.domain.
       .qname = replace(downcase(string(f[3]) ?? ""), r'\.$', "")
+
+  llm_usage_only:
+    type: filter
+    inputs: ["intproxy"]
+    condition: 'starts_with(string!(.message), "__USAGE_MARKER__ ")'
+
+  shape_llm_usage:
+    type: remap
+    inputs: ["llm_usage_only"]
+    source: |
+      raw = string!(.message)
+      parts = split(raw, "__USAGE_MARKER__ ")
+      ev = object(parse_json(string(parts[1]) ?? "") ?? {}) ?? {}
+      # The meter is "<user>/<vm>/<provider>", set by the control server.
+      m = split(string(ev.meter) ?? "", "/")
+      ts = parse_timestamp(string(ev.ts) ?? "", "%+") ?? now()
+
+      . = {}
+      .timestamp = format_timestamp!(ts, "%Y-%m-%d %H:%M:%S%.6f")
+      .user_id = string(m[0]) ?? ""
+      .vm_id = string(m[1]) ?? ""
+      .provider = string(m[2]) ?? ""
+      # A malformed uuid would fail the whole insert batch, not just this row.
+      if !match(.user_id, r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') || !match(.vm_id, r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$') {
+        abort
+      }
+      .model = string(ev.model) ?? ""
+      .status = to_int(ev.status) ?? 0
+      .duration_ms = to_int(ev.duration_ms) ?? 0
+      .input_tokens = to_int(ev.input_tokens) ?? 0
+      .output_tokens = to_int(ev.output_tokens) ?? 0
+      .cache_read_tokens = to_int(ev.cache_read_tokens) ?? 0
+      .cache_write_tokens = to_int(ev.cache_write_tokens) ?? 0
 
   shape:
     type: remap
@@ -188,6 +231,23 @@ sinks:
     buffer:
       type: disk
       max_size: 268435488
+
+  clickhouse_llm_usage:
+    type: clickhouse
+    inputs: ["shape_llm_usage"]
+    endpoint: __CLICKHOUSE_URL__
+    database: __DATABASE__
+    table: __LLM_USAGE_TABLE__
+    auth:
+      strategy: basic
+      user: __CLICKHOUSE_USER__
+      password: __CLICKHOUSE_PASSWORD__
+    skip_unknown_fields: true
+    batch:
+      timeout_secs: 5
+    buffer:
+      type: disk
+      max_size: 268435488
 `
 
 func renderVectorConfig(url, user, password string) string {
@@ -201,6 +261,8 @@ func renderVectorConfig(url, user, password string) string {
 		"__DATABASE__", yamlString(vectorClickHouseDatabase),
 		"__TABLE__", yamlString(vectorClickHouseTable),
 		"__DNS_TABLE__", yamlString(vectorDNSTable),
+		"__LLM_USAGE_TABLE__", yamlString(vectorLLMUsageTable),
+		"__USAGE_MARKER__", intproxyUsageMarker,
 	).Replace(vectorConfigTemplate)
 }
 

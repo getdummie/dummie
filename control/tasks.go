@@ -176,6 +176,7 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore)
 		taskCustomDomainIssue: handleCustomDomainIssue,
 		taskCustomCertPurge:   handleCustomCertPurge,
 		taskOSImageBuild:      handleOSImageBuild,
+		taskLLMPrices:         handleLLMPrices,
 	}
 	return r
 }
@@ -202,6 +203,14 @@ func (r *taskRunner) run(ctx context.Context) {
 		DelaySeconds: taskCustomCertPurgeEvery.Seconds(),
 	}); err != nil {
 		log.Printf("could not schedule the custom certificate purge: %v", err)
+	}
+
+	// No delay: usage has no cost until the first fetch lands.
+	if err := r.q.CreateSingletonScheduledTask(ctx, db.CreateSingletonScheduledTaskParams{
+		Kind:   taskLLMPrices,
+		Reason: "refresh llm prices from litellm",
+	}); err != nil {
+		log.Printf("could not schedule the llm price refresh: %v", err)
 	}
 
 	tick := time.NewTicker(taskTick)

@@ -1013,6 +1013,44 @@
                 ]
             }
         },
+        "/admin/llm-usage": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "YYYY-MM, defaults to the current month (UTC)",
+                        "in": "query",
+                        "name": "month",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {},
+                "summary": "Every user's usage of the global llm keys for a month",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/llm-usage/users/{id}": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "YYYY-MM, defaults to the current month (UTC)",
+                        "in": "query",
+                        "name": "month",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {},
+                "summary": "One user's usage of the global llm keys for a month",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/integrations": {
             "get": {
                 "responses": {},
@@ -1306,6 +1344,25 @@
                 },
                 "responses": null,
                 "summary": "Set your key for an llm provider",
+                "tags": [
+                    "llm"
+                ]
+            }
+        },
+        "/me/llm-usage": {
+            "get": {
+                "parameters": [
+                    {
+                        "description": "YYYY-MM, defaults to the current month (UTC)",
+                        "in": "query",
+                        "name": "month",
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {},
+                "summary": "Your usage of the global llm keys for a month",
                 "tags": [
                     "llm"
                 ]

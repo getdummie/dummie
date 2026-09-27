@@ -179,6 +179,21 @@ mode only: a local token has no way to name its upstream.
 `X-Api-Key` and `Api-Key` are stripped along with `Authorization`, so a guest's
 own key never reaches the upstream.
 
+### Usage
+
+When the broker's answer carries a `meter`, the response is metered: its usage
+is read off the body as it streams to the client, never buffered ahead of it,
+and one line goes to stdout when the body closes:
+
+```
+intproxyusage {"ts":…,"meter":…,"integration":"llm","status":200,"duration_ms":…,"model":…,"input_tokens":…,"output_tokens":…,"cache_read_tokens":…,"cache_write_tokens":…}
+```
+
+`input_tokens` excludes cached tokens in both apis. The meter is opaque here;
+the control server sets it only for global keys. `Accept-Encoding` is dropped
+upstream so the body stays readable, and a global OpenAI stream gets
+`stream_options.include_usage` unless the client set `stream_options` itself.
+
 ## Header handling
 
 Every inbound `Authorization`, `Cookie`, `Proxy-Authorization`, `Forwarded`,

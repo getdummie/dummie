@@ -24,6 +24,7 @@ const (
 	ctxIntegration ctxKey = iota
 	ctxRoute
 	ctxToken
+	ctxStart
 )
 
 // stripped headers carry identity a client must not be able to smuggle
@@ -68,6 +69,7 @@ func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ig integration.In
 	ctx := context.WithValue(r.Context(), ctxIntegration, ig)
 	ctx = context.WithValue(ctx, ctxRoute, route)
 	ctx = context.WithValue(ctx, ctxToken, tok)
+	ctx = context.WithValue(ctx, ctxStart, time.Now())
 	s.rp.ServeHTTP(w, r.WithContext(ctx))
 }
 
@@ -125,7 +127,18 @@ func (s *Server) modifyResponse(resp *http.Response) error {
 		return replaceWithError(resp, ig, route, http.StatusForbidden,
 			"intproxy: this proxy's own credential was rejected upstream, so it has expired or been revoked; nothing is wrong with your request")
 	}
-	return ig.ModifyResponse(resp)
+	if err := ig.ModifyResponse(resp); err != nil {
+		return err
+	}
+	tok, _ := ctx.Value(ctxToken).(credential.Token)
+	if m, ok := ig.(integration.Metered); ok && tok.Meter != "" {
+		start, _ := ctx.Value(ctxStart).(time.Time)
+		status := resp.StatusCode
+		m.Meter(resp, func(u integration.Usage) {
+			s.recordUsage(ig.Name(), tok.Meter, status, time.Since(start), u)
+		})
+	}
+	return nil
 }
 
 // replaceWithError swaps the whole response, headers included, so nothing from

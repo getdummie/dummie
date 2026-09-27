@@ -32,6 +32,9 @@ type Token struct {
 	// Upstream is an https base URL the source picked for this token, for
 	// integrations whose upstream depends on the credential. Empty otherwise.
 	Upstream string
+	// Meter, when set, asks for this token's usage to be recorded under it.
+	// Opaque here; the source decides what it names.
+	Meter string
 }
 
 func (t Token) stale(skew time.Duration) bool {

@@ -172,6 +172,15 @@ type LlmKey struct {
 	UpdatedBy pgtype.UUID
 }
 
+type LlmPrice struct {
+	Model              string
+	InputPerToken      float64
+	OutputPerToken     float64
+	CacheReadPerToken  float64
+	CacheWritePerToken float64
+	UpdatedAt          pgtype.Timestamptz
+}
+
 type OidcIdentity struct {
 	ProviderID pgtype.UUID
 	Subject    string

@@ -210,6 +210,9 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/llm-keys", llmH.ListGlobal)
 	admin.PUT("/llm-keys/:provider", llmH.PutGlobal)
 	admin.DELETE("/llm-keys/:provider", llmH.DeleteGlobal)
+	usageH := &LLMUsageHandler{q: q, ch: ch, prices: &llmPriceBook{q: q}}
+	admin.GET("/llm-usage", usageH.All)
+	admin.GET("/llm-usage/users/:id", usageH.ForUser)
 	admin.GET("/github-app", adminH.GetGitHubApp)
 	admin.PUT("/github-app", adminH.PutGitHubApp)
 	admin.DELETE("/github-app", adminH.DeleteGitHubApp)
@@ -281,6 +284,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	llmKeys.GET("", llmH.ListMine)
 	llmKeys.PUT("/:provider", llmH.PutMine)
 	llmKeys.DELETE("/:provider", llmH.DeleteMine)
+	me.GET("/llm-usage", usageH.Mine)
 
 	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL}
 	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}

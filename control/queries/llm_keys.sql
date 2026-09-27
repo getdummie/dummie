@@ -36,6 +36,7 @@ DELETE FROM llm_keys WHERE owner_id IS NULL AND provider = sqlc.arg(provider);
 -- vms. The owner's keys sort before the global ones.
 SELECT k.id, k.provider, k.plan, k.api_key_enc, k.updated_at,
        (k.owner_id IS NULL)::boolean AS is_global,
+       v.id AS vm_pk,
        v.name AS vm_name,
        v.created_by AS vm_owner
 FROM vms v
@@ -43,3 +44,24 @@ JOIN llm_keys k ON k.owner_id = v.created_by OR k.owner_id IS NULL
 WHERE v.client_id = sqlc.arg(client_id)
   AND v.ip = sqlc.arg(vm_ip)
 ORDER BY is_global, k.provider;
+
+-- name: UpsertLLMPrices :exec
+INSERT INTO llm_prices (model, input_per_token, output_per_token, cache_read_per_token, cache_write_per_token, updated_at)
+SELECT unnest(sqlc.arg(models)::text[]),
+       unnest(sqlc.arg(inputs)::float8[]),
+       unnest(sqlc.arg(outputs)::float8[]),
+       unnest(sqlc.arg(cache_reads)::float8[]),
+       unnest(sqlc.arg(cache_writes)::float8[]),
+       now()
+ON CONFLICT (model) DO UPDATE
+SET input_per_token = EXCLUDED.input_per_token,
+    output_per_token = EXCLUDED.output_per_token,
+    cache_read_per_token = EXCLUDED.cache_read_per_token,
+    cache_write_per_token = EXCLUDED.cache_write_per_token,
+    updated_at = EXCLUDED.updated_at;
+
+-- name: ListLLMPrices :many
+SELECT * FROM llm_prices;
+
+-- name: ListUsernamesByIDs :many
+SELECT id, username FROM users WHERE id = ANY(sqlc.arg(ids)::uuid[]);

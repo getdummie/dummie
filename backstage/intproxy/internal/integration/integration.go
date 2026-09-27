@@ -54,6 +54,22 @@ type Integration interface {
 	Describe() string
 }
 
+// Usage is what one response consumed, as far as the integration can tell.
+type Usage struct {
+	Model      string
+	Input      int64
+	Output     int64
+	CacheRead  int64
+	CacheWrite int64
+}
+
+// Metered is an Integration that can read usage off a response. Only asked
+// for when the credential carries a meter.
+type Metered interface {
+	// Meter wraps resp.Body and calls done exactly once, when it is closed.
+	Meter(resp *http.Response, done func(Usage))
+}
+
 type Options struct {
 	// Decode hands the integration its own config block. Nil when the block
 	// carried nothing beyond a name.

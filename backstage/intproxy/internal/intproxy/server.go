@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -36,6 +38,10 @@ type Server struct {
 	names []string
 
 	rp *httputil.ReverseProxy
+
+	// usage receives one line per metered response; stdout when nil.
+	usage   io.Writer
+	usageMu sync.Mutex
 }
 
 func New(cfg *Config, log *slog.Logger, version string) (*Server, error) {

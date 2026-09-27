@@ -36,6 +36,7 @@ func TestRenderVectorConfigLeavesNoPlaceholders(t *testing.T) {
 		"__EVE_LOG__", "__COREDNS_CONTAINER__", "__DNS_MARKER__",
 		"__CLICKHOUSE_URL__", "__CLICKHOUSE_USER__", "__CLICKHOUSE_PASSWORD__",
 		"__DATABASE__", "__TABLE__", "__DNS_TABLE__",
+		"__LLM_USAGE_TABLE__", "__USAGE_MARKER__",
 	} {
 		if strings.Contains(out, placeholder) {
 			t.Errorf("%s was not substituted", placeholder)
@@ -83,7 +84,7 @@ func TestRenderVectorConfigWiresBothPipelines(t *testing.T) {
 			}
 		}
 	}
-	for _, want := range []string{vectorClickHouseTable, vectorDNSTable} {
+	for _, want := range []string{vectorClickHouseTable, vectorDNSTable, vectorLLMUsageTable} {
 		if !strings.Contains(out, want) {
 			t.Errorf("nothing writes to %s:\n%s", want, out)
 		}

@@ -73,6 +73,13 @@ func withModel(r *http.Request, route integration.Route) (integration.Route, boo
 	}
 
 	body["model"], _ = json.Marshal(name)
+	// Only global keys are metered, and an openai stream carries no usage
+	// unless it is asked for.
+	if route.Kind == kindOpenAI && strings.HasSuffix(source, "@global") && string(body["stream"]) == "true" {
+		if _, set := body["stream_options"]; !set {
+			body["stream_options"] = json.RawMessage(`{"include_usage":true}`)
+		}
+	}
 	out, err := json.Marshal(body)
 	if err != nil {
 		return route, false
@@ -87,6 +94,8 @@ func withModel(r *http.Request, route integration.Route) (integration.Route, boo
 
 func (l *LLM) Apply(pr *httputil.ProxyRequest, _ integration.Route, tok credential.Token) {
 	pr.Out.Header.Set("Authorization", "Bearer "+tok.Value)
+	// Usage is read off the body in flight, which a compressed one defeats.
+	pr.Out.Header.Del("Accept-Encoding")
 }
 
 func (l *LLM) ModifyResponse(resp *http.Response) error {

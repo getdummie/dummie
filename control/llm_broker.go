@@ -56,8 +56,13 @@ func (h *ClientHandler) llmToken(c *echo.Context, client db.Client, vmIP, resour
 		if format == "anthropic" {
 			upstream = plan.AnthropicBase
 		}
+		// Only global keys are metered: they are the ones someone else pays for.
+		var meter string
+		if global && k.VMOwner.Valid {
+			meter = domainIDString(k.VMOwner) + "/" + domainIDString(k.VmPk) + "/" + provider
+		}
 		log.Printf("llm key issued: host=%s vm=%s provider=%s global=%t", clientLabel(client), k.VMName, provider, global)
-		return c.JSON(http.StatusOK, proto.IntegrationTokenResponse{Token: key, Upstream: upstream})
+		return c.JSON(http.StatusOK, proto.IntegrationTokenResponse{Token: key, Upstream: upstream, Meter: meter})
 	}
 
 	name := provider

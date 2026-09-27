@@ -120,3 +120,36 @@ func TestModelsWithoutABrokerAreNotImplemented(t *testing.T) {
 		t.Fatalf("status = %d", w.Code)
 	}
 }
+
+func TestMeteredResponsesAreRecorded(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"model":"glm-4.6","usage":{"prompt_tokens":9,"completion_tokens":4}}`))
+	}))
+	defer upstream.Close()
+
+	src := fakeSource{fn: func(credential.Scope) (credential.Token, error) {
+		return credential.Token{Value: "k", Upstream: upstream.URL, Meter: "user/vm/zai"}, nil
+	}}
+	s := testServer(t, src, "")
+	s.rp.Transport = upstream.Client().Transport
+	var out strings.Builder
+	s.usage = &out
+	host := withLLM(t, s)
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"zai@global/glm-4.6"}`))
+	r.Host = host
+	s.ServeHTTP(httptest.NewRecorder(), r)
+
+	line, ok := strings.CutPrefix(strings.TrimSpace(out.String()), UsageMarker+" ")
+	if !ok {
+		t.Fatalf("no usage line: %q", out.String())
+	}
+	var got usageLine
+	if err := json.Unmarshal([]byte(line), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Meter != "user/vm/zai" || got.Model != "glm-4.6" || got.Input != 9 || got.Output != 4 || got.Status != 200 {
+		t.Fatalf("usage = %+v", got)
+	}
+}

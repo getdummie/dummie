@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { Component } from 'vue'
 import {
+  ChartColumn,
   Box,
   Clock,
   Cpu,
@@ -27,6 +28,7 @@ const groups: AdminLink[][] = [
   [
     { label: 'Users', to: '/admin/model/users', icon: Users },
     { label: 'Sessions', to: '/admin/model/sessions', icon: Ticket },
+    { label: 'LLM usage', to: '/admin/model/llm-usage', icon: ChartColumn },
   ],
   [
     { label: 'Enrollment keys', to: '/admin/model/client-keys', icon: KeyRound },
