@@ -80,6 +80,34 @@ func TestMeterResponsesStream(t *testing.T) {
 	}
 }
 
+func TestMeterResponsesStreamWithoutContentType(t *testing.T) {
+	// The ChatGPT subscription backend omits Content-Type on its SSE response.
+	body := "event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"model\":\"gpt-6-sol\",\"usage\":{\"input_tokens\":10,\"input_tokens_details\":{\"cached_tokens\":0},\"output_tokens\":6}}}\n\n"
+	u := metered(t, "", body)
+	want := integration.Usage{Model: "gpt-6-sol", Input: 10, Output: 6}
+	if u != want {
+		t.Fatalf("usage = %+v, want %+v", u, want)
+	}
+}
+
+func TestMeterResponsesJSONWithoutContentType(t *testing.T) {
+	u := metered(t, "", `{"model":"gpt-6-sol","usage":{"input_tokens":10,"output_tokens":6}}`)
+	want := integration.Usage{Model: "gpt-6-sol", Input: 10, Output: 6}
+	if u != want {
+		t.Fatalf("usage = %+v, want %+v", u, want)
+	}
+}
+
+func TestMeterDataFirstStreamWithoutContentType(t *testing.T) {
+	body := "data: {\"model\":\"glm-4.6\",\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":5}}\n\n"
+	u := metered(t, "", body)
+	want := integration.Usage{Model: "glm-4.6", Input: 12, Output: 5}
+	if u != want {
+		t.Fatalf("usage = %+v, want %+v", u, want)
+	}
+}
+
 func TestMeterResponsesJSON(t *testing.T) {
 	u := metered(t, "application/json", `{"model":"gpt-5-codex","usage":{"input_tokens":10,"input_tokens_details":{"cached_tokens":0},"output_tokens":3}}`)
 	want := integration.Usage{Model: "gpt-5-codex", Input: 10, Output: 3}
