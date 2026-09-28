@@ -1395,10 +1395,18 @@
                         "schema": {
                             "type": "string"
                         }
+                    },
+                    {
+                        "description": "global (default) or personal",
+                        "in": "query",
+                        "name": "source",
+                        "schema": {
+                            "type": "string"
+                        }
                     }
                 ],
                 "responses": {},
-                "summary": "Your usage of the global llm keys for a month",
+                "summary": "Your usage of global or personal llm keys for a month",
                 "tags": [
                     "llm"
                 ]

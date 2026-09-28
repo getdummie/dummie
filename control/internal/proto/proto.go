@@ -190,7 +190,8 @@ type IntegrationTokenResponse struct {
 	// Upstream is the https base the token belongs to, when the integration
 	// has more than one.
 	Upstream string `json:"upstream,omitempty"`
-	// Meter asks intproxy to record usage under it: "<user>/<vm>/<provider>".
+	// Meter asks intproxy to record usage under it:
+	// "<user>/<vm>/<provider>[@personal]".
 	Meter string `json:"meter,omitempty"`
 }
 

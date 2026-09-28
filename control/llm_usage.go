@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -15,8 +16,9 @@ import (
 	"control/internal/db"
 )
 
-// LLMUsageHandler reports usage of the global llm keys, which is the only
-// usage recorded: a user's own key is theirs to account for.
+// LLMUsageHandler reports global-key usage to admins and both key sources to
+// the owner. Personal usage is marked in the metered provider name so it also
+// works with existing Vector and ClickHouse installations.
 type LLMUsageHandler struct {
 	q      *db.Queries
 	ch     driver.Conn
@@ -58,6 +60,7 @@ type usageByDay struct {
 
 type usageReport struct {
 	Month     string         `json:"month"`
+	Source    usageSource    `json:"source"`
 	Available bool           `json:"available"`
 	Totals    usageTotals    `json:"totals"`
 	ByModel   []usageByModel `json:"by_model"`
@@ -84,7 +87,26 @@ SELECT user_id, toString(toDate(timestamp)) AS day, provider, model,
        count(), sum(input_tokens), sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens)
 FROM llm_usage
 WHERE timestamp >= ? AND timestamp < ? AND (? OR user_id = toUUID(?))
+  AND endsWith(provider, '@personal') = ?
 GROUP BY user_id, day, provider, model`
+
+type usageSource string
+
+const (
+	usageGlobal   usageSource = "global"
+	usagePersonal usageSource = "personal"
+)
+
+func parseUsageSource(raw string) (usageSource, bool) {
+	switch usageSource(raw) {
+	case "", usageGlobal:
+		return usageGlobal, true
+	case usagePersonal:
+		return usagePersonal, true
+	default:
+		return "", false
+	}
+}
 
 type usageRow struct {
 	user            uuid.UUID
@@ -93,7 +115,7 @@ type usageRow struct {
 	usageTotals
 }
 
-func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.UUID) ([]usageRow, error) {
+func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.UUID, source usageSource) ([]usageRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -101,7 +123,7 @@ func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.
 	if user != nil {
 		all, who = false, *user
 	}
-	rs, err := h.ch.Query(ctx, usageRowsQuery, month, month.AddDate(0, 1, 0), all, who.String())
+	rs, err := h.ch.Query(ctx, usageRowsQuery, month, month.AddDate(0, 1, 0), all, who.String(), source == usagePersonal)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +137,7 @@ func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.
 			&r.Requests, &r.Input, &r.Output, &r.CacheRead, &r.CacheWrite); err != nil {
 			return nil, err
 		}
+		r.provider = llmUsageProvider(r.provider)
 		if p, ok := lookupLLMPrice(prices, r.provider, r.model); ok {
 			r.Cost = float64(r.Input)*p.input + float64(r.Output)*p.output +
 				float64(r.CacheRead)*p.cacheRead + float64(r.CacheWrite)*p.cacheWrite
@@ -126,16 +149,20 @@ func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.
 	return out, rs.Err()
 }
 
-func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID) error {
+func llmUsageProvider(metered string) string {
+	return strings.TrimSuffix(metered, llmPersonalMeterSuffix)
+}
+
+func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID, source usageSource) error {
 	month, err := usageMonth(c.QueryParam("month"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "month must be YYYY-MM")
 	}
-	rep := usageReport{Month: month.Format("2006-01"), ByModel: []usageByModel{}, ByDay: []usageByDay{}}
+	rep := usageReport{Month: month.Format("2006-01"), Source: source, ByModel: []usageByModel{}, ByDay: []usageByDay{}}
 	if h.ch == nil {
 		return c.JSON(http.StatusOK, rep)
 	}
-	rows, err := h.rows(c.Request().Context(), month, &user)
+	rows, err := h.rows(c.Request().Context(), month, &user, source)
 	if err != nil {
 		log.Printf("could not read llm usage for %s (is 0003_llm_usage applied?): %v", user, err)
 		return c.JSON(http.StatusOK, rep)
@@ -167,17 +194,22 @@ func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID) error {
 	return c.JSON(http.StatusOK, rep)
 }
 
-// @Summary     Your usage of the global llm keys for a month
+// @Summary     Your usage of global or personal llm keys for a month
 // @Tags        llm
 // @Produce     json
 // @Param       month query string false "YYYY-MM, defaults to the current month (UTC)"
+// @Param       source query string false "global (default) or personal"
 // @Router      /me/llm-usage [get]
 func (h *LLMUsageHandler) Mine(c *echo.Context) error {
 	uid, err := callerID(c)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
 	}
-	return h.report(c, uuid.UUID(uid.Bytes))
+	source, ok := parseUsageSource(c.QueryParam("source"))
+	if !ok {
+		return echo.NewHTTPError(http.StatusBadRequest, "source must be global or personal")
+	}
+	return h.report(c, uuid.UUID(uid.Bytes), source)
 }
 
 // @Summary     One user's usage of the global llm keys for a month
@@ -190,7 +222,7 @@ func (h *LLMUsageHandler) ForUser(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid user id")
 	}
-	return h.report(c, id)
+	return h.report(c, id, usageGlobal)
 }
 
 // @Summary     Every user's usage of the global llm keys for a month
@@ -208,7 +240,7 @@ func (h *LLMUsageHandler) All(c *echo.Context) error {
 		return c.JSON(http.StatusOK, out)
 	}
 	ctx := c.Request().Context()
-	rows, err := h.rows(ctx, month, nil)
+	rows, err := h.rows(ctx, month, nil, usageGlobal)
 	if err != nil {
 		log.Printf("could not read llm usage (is 0003_llm_usage applied?): %v", err)
 		return c.JSON(http.StatusOK, out)

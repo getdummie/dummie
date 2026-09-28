@@ -100,11 +100,11 @@ func TestMeterSkipsCompressedBodies(t *testing.T) {
 	}
 }
 
-func TestGlobalOpenAIStreamsAskForUsage(t *testing.T) {
+func TestOpenAIStreamsAskForUsage(t *testing.T) {
 	for _, tc := range []struct {
 		model string
 		want  bool
-	}{{"zai@global/glm-4.6", true}, {"zai/glm-4.6", false}} {
+	}{{"zai@global/glm-4.6", true}, {"zai/glm-4.6", true}} {
 		r, _ := http.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"`+tc.model+`","stream":true}`))
 		if _, ok := (&LLM{}).Classify(r); !ok {
 			t.Fatal("not classified")

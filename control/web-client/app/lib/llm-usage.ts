@@ -10,6 +10,7 @@ export interface UsageTotals {
 
 export interface UsageReport {
   month: string
+  source?: 'global' | 'personal'
   available: boolean
   totals: UsageTotals
   by_model: (UsageTotals & { provider: string, model: string })[]

@@ -7,7 +7,7 @@ import { TableCell, TableRow } from '@/components/ui/table'
 import { fmtCost, fmtTokens, monthOptions, type UsageReport } from '@/lib/llm-usage'
 import type { DataTableColumn } from '@/lib/table'
 
-const props = defineProps<{ endpoint: string, month?: string }>()
+const props = defineProps<{ endpoint: string, month?: string, source?: 'global' | 'personal' }>()
 
 const { authFetch } = useAuth()
 const months = monthOptions()
@@ -20,9 +20,15 @@ async function load() {
   loading.value = true
   error.value = null
   try {
-    const res = await authFetch(`${props.endpoint}?month=${month.value}`)
+    const params = new URLSearchParams({ month: month.value })
+    if (props.source) params.set('source', props.source)
+    const res = await authFetch(`${props.endpoint}?${params}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    report.value = await res.json()
+    const body: UsageReport = await res.json()
+    if (props.source && body.source !== props.source) {
+      throw new Error('This server does not support personal usage yet')
+    }
+    report.value = body
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not load usage'
@@ -60,14 +66,16 @@ const modelColumns = columns({ key: 'model', label: 'Model' })
 const dayColumns = columns({ key: 'date', label: 'Day' })
 
 const hasUnpriced = computed(() => !!report.value?.totals.unpriced)
+const modelPrefix = (provider: string) => `${provider}${props.source === 'personal' ? '' : '@global'}`
+const monthId = computed(() => props.source === 'personal' ? 'personal-usage-month' : 'global-usage-month')
 </script>
 
 <template>
   <div>
     <div class="flex flex-wrap items-end gap-3">
       <div class="space-y-1.5">
-        <Label for="usage-month">Month</Label>
-        <NativeSelect id="usage-month" v-model="month">
+        <Label :for="monthId">Month</Label>
+        <NativeSelect :id="monthId" v-model="month">
           <NativeSelectOption v-for="m in months" :key="m.value" :value="m.value">{{ m.label }}</NativeSelectOption>
         </NativeSelect>
       </div>
@@ -104,7 +112,7 @@ const hasUnpriced = computed(() => !!report.value?.totals.unpriced)
     >
       <template #empty>No usage this month.</template>
       <TableRow v-for="r in report?.by_model" :key="`${r.provider}/${r.model}`">
-        <TableCell class="font-mono text-xs">{{ r.provider }}@global/{{ r.model }}</TableCell>
+        <TableCell class="font-mono text-xs">{{ modelPrefix(r.provider) }}/{{ r.model }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ r.requests.toLocaleString() }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ fmtTokens(r.input_tokens) }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ fmtTokens(r.cache_read_tokens) }}</TableCell>
