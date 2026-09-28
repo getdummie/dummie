@@ -618,12 +618,12 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	if req.DefaultPort == 0 && osImage.DefaultPort.Valid {
 		defaultPort = osImage.DefaultPort.Int32
 	}
-	kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
+	kernelURL, err := h.blobs.PresignGetForHost(ctx, kernel.ObjectKey, kernel.FileName)
 	if err != nil {
 		log.Printf("could not presign kernel %s for a create: %v", req.KernelID, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the kernel download")
 	}
-	osImageURL, err := h.blobs.PresignGet(ctx, osImage.ObjectKey, osImage.FileName)
+	osImageURL, err := h.blobs.PresignGetForHost(ctx, osImage.ObjectKey, osImage.FileName)
 	if err != nil {
 		log.Printf("could not presign os image %s for a create: %v", req.OSImageID, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the os image download")
@@ -1209,7 +1209,7 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 			if kernel.SoftDeletedAt.Valid {
 				return echo.NewHTTPError(http.StatusConflict, "that kernel has been withdrawn; choose another")
 			}
-			kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
+			kernelURL, err := h.blobs.PresignGetForHost(ctx, kernel.ObjectKey, kernel.FileName)
 			if err != nil {
 				log.Printf("could not presign kernel %s for vm %s: %v", reqKernel, vm.Name, err)
 				return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the kernel download")
