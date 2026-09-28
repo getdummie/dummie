@@ -1,0 +1,65 @@
+# Backing services for running the Go control server directly on the host.
+# Use `docker compose -f docker-compose.local.yml up -d` from the repo root.
+name: dummie-local
+
+services:
+  postgres:
+    image: postgres:18.4-alpine3.24
+    environment:
+      POSTGRES_DB: control
+      POSTGRES_USER: control
+      POSTGRES_PASSWORD: control
+    ports:
+      - 127.0.0.1:5433:5432
+    volumes:
+      - postgres-data:/var/lib/postgresql/18/docker
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U control -d control"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.7.3.19
+    environment:
+      CLICKHOUSE_DB: dummie
+      CLICKHOUSE_USER: control
+      CLICKHOUSE_PASSWORD: control
+      CLICKHOUSE_ACCESS_MANAGEMENT: "1"
+    ports:
+      - 127.0.0.1:8123:8123
+      - 127.0.0.1:9010:9000
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--user", "control", "--password", "control", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  rustfs:
+    image: rustfs/rustfs:1.0.0-beta.10
+    env_file:
+      - .rustfs.env
+    environment:
+      RUSTFS_VOLUMES: /data
+      RUSTFS_ADDRESS: 0.0.0.0:9000
+      RUSTFS_CONSOLE_ADDRESS: 0.0.0.0:9001
+    ports:
+      - ${DUMMIE_VM_BIND_IP:-127.0.0.1}:9000:9000
+      - 127.0.0.1:9001:9001
+    volumes:
+      - rustfs-data:/data
+      - rustfs-logs:/logs
+    healthcheck:
+      test: ["CMD", "sh", "-c", "curl -fsS http://127.0.0.1:9000/health >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+volumes:
+  postgres-data:
+  clickhouse-data:
+  rustfs-data:
+  rustfs-logs:
