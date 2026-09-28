@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -45,7 +46,17 @@ func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
 	if h.prod {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s.%s", scheme, v.Name, tld)
+	return fmt.Sprintf("%s://%s", scheme, h.proxyURLHost(v.Name+"."+tld))
+}
+
+func (h *UserHandler) proxyURLHost(host string) string {
+	if !h.prod {
+		port, err := strconv.Atoi(os.Getenv("LOCAL_VM_PROXY_PORT"))
+		if err == nil && port > 0 && port <= 65535 {
+			return net.JoinHostPort(host, strconv.Itoa(port))
+		}
+	}
+	return host
 }
 
 func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
@@ -97,7 +108,7 @@ func (h *UserHandler) fillVMURLs(ctx context.Context, rows []db.Vm, items []vmDT
 			tlds[v.ClientID] = tld
 		}
 		if tld != "" {
-			items[i].URL = fmt.Sprintf("%s://%s.%s", scheme, v.Name, tld)
+			items[i].URL = fmt.Sprintf("%s://%s", scheme, h.proxyURLHost(v.Name+"."+tld))
 		}
 	}
 }
