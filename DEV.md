@@ -73,10 +73,13 @@ cd website
 CONSOLE_URL=http://localhost:1323 bun --bun run dev --port 3001
 ```
 
-Check the API at `http://localhost:1323/api/v1/health`. Stop the apps with Ctrl-C
-and the backing services with `docker compose -f docker-compose.local.yml down`.
-The Compose volume keeps your development data; add `-v` to `down` if you want
-to remove it.
+Check the API at `http://localhost:1323/api/v1/health`. Then open
+`http://localhost:1323` and sign up. On a fresh database, the first
+account becomes the admin and can open the **Admin** sections used below.
+
+Stop the apps with Ctrl-C and the backing services with
+`docker compose -f docker-compose.local.yml down`. The Compose volumes keep
+your development data; add `-v` to `down` if you want to remove them.
 
 This starts the control plane and website. [Local VM setup](LOCAL_VMS.md)
 covers the prebuilt kernels, QEMU host, enrollment, and a sandbox smoke test.

@@ -23,26 +23,46 @@ makes static Linux binaries for `dclient` and its services.
 
 The host image includes the public key from `~/.ssh/id_ed25519.pub`. Set
 `DUMMIE_VM_SSH_PUBLIC_KEY_FILE` to another absolute path when building if you
-use a different SSH key.
+use a different SSH key. Keep the matching private key in your SSH agent or
+select it with `ssh -i` when connecting.
 
 ## Start the services and host VM
 
 Follow [DEV.md](DEV.md) for PostgreSQL, ClickHouse, RustFS, and the control
-server. Keep the API and RustFS ports bound to host loopback. Change the
-ignored `control/.env` setting below and restart the control server so its
-signed storage links work from inside the VM:
+server. Keep the API and RustFS ports bound to host loopback. Add these values
+to the ignored `control/.env` and restart the control server:
 
 ```dotenv
-S3_PUBLIC_ENDPOINT=http://10.68.0.1:9000
+S3_HOST_ENDPOINT=http://10.68.0.1:9000
 LOCAL_VM_PROXY_PORT=8080
 ```
 
-Start the artifact server in its own terminal, then boot and enter the host VM:
+`S3_PUBLIC_ENDPOINT` stays at `http://127.0.0.1:9000` from [DEV.md](DEV.md),
+so browser downloads use a reachable address. `S3_HOST_ENDPOINT` signs VM
+artifact downloads for the QEMU host at its guest-facing address.
+
+If you used an earlier draft of this guide that stored a persistent local VM
+under `.microqemu/qemu-host`, stop that VM and move its state before switching
+to the opt-in `qemu-local` launcher:
+
+```sh
+just vm-stop
+mv nix-vms/.microqemu/qemu-host nix-vms/.microqemu/qemu-local
+```
+
+Skip this step if you used `qemu-host` with its original tap network setup.
+
+Start the artifact server in one terminal and leave it running:
 
 ```sh
 just vm-artifacts
-just vm-start
-just vm-ssh
+```
+
+In another terminal, boot and enter the host VM:
+
+```sh
+just vm-local-start
+just vm-local-ssh
 ```
 
 The artifact server binds to `127.0.0.1:8081` on the host and serves only
@@ -88,10 +108,11 @@ sudo journalctl -u dclient -n 40 --no-pager
 ```
 
 The host should appear online in **Admin → Clients**. Its disk is persistent,
-so enrollment survives `just vm-stop` and `just vm-start`. The local disk and
-any private enrollment seed live under ignored `nix-vms/.microqemu/`; keep
-that directory private. If you deliberately delete `rootfs.ext4`, you need a
-new enrollment key unless you saved an `enrollment-seed.tar` there.
+so enrollment survives `just vm-local-stop` and `just vm-local-start`. The
+local disk and any private enrollment seed live under ignored
+`nix-vms/.microqemu/`; keep that directory private. If you delete
+`rootfs.ext4`, you need a new enrollment key unless you saved an
+`enrollment-seed.tar` there.
 
 ## Reach guest SSH and browser consoles
 
@@ -101,7 +122,7 @@ account profile. Set the host's dproxy download URL to
 `http://10.68.0.1:8081/dproxy` in its client service settings. Then run:
 
 ```sh
-just vm-proxy-tunnel
+just vm-local-proxy-tunnel
 ssh -p 2224 <vm-name>@127.0.0.1
 ```
 
@@ -145,8 +166,8 @@ when you need a custom kernel. They are not needed for this local setup.
 
 ## Codex in dubuntu
 
-The `dubuntu` image installs pi 0.87.1 and Codex CLI 0.158.0. Both start with
-`chatgpt/gpt-6-sol` through the internal LLM proxy, which uses the ChatGPT
+The local `dubuntu` image installs pi 0.87.1 and Codex CLI 0.158.0. Both start
+with `chatgpt/gpt-6-sol` through the internal LLM proxy, which uses the ChatGPT
 integration connected to your account under **Integrations** in the control
 console. No ChatGPT credential is stored in the guest. Pi's bundled Dummie
 extension loads available models from the proxy and selects the default. In
@@ -167,10 +188,19 @@ the same address and header. The image sets
 startup can hang on this restricted guest network. To opt into plugins in a
 guest, change that value to `true`.
 
-Build a fresh rootfs for new VMs with `just image-build dubuntu`, then upload
-`images/dubuntu/rootfs.tar` under **Admin → OS images**. Set its image user to
+Build a fresh rootfs for new VMs with `just image-build-local-dubuntu`, then
+upload `images/dubuntu/rootfs.tar` under **Admin → OS images**. Set its image user to
 `ubuntu` in the image configuration before creating a VM. The current rootfs
 is about 2.15 GiB, so set `KERNEL_MAX_UPLOAD_MIB=3072` in the local
-`control/.env` and restart the control server before uploading. When building
-for a different fleet domain or HTTPS proxy, pass `DUMMIE_LLM_TLD` and
-`DUMMIE_LLM_PROXY_URL` as Docker build arguments.
+`control/.env` and restart the control server before uploading. A plain
+`just image-build dubuntu` leaves the Dummie provider unconfigured for other
+developers and fleets. To configure another fleet, set both build variables:
+
+```sh
+DUMMIE_LLM_TLD=example.com \
+  DUMMIE_LLM_PROXY_URL=https://llm.int.example.com/v1 \
+  just image-build dubuntu
+```
+
+Use that fleet's real domain and proxy address. The internal proxy must serve
+the `llm.int.<domain>` host and accept the configured scheme.
