@@ -1397,7 +1397,7 @@
                         }
                     },
                     {
-                        "description": "global (default) or personal",
+                        "description": "global (default), personal, or all",
                         "in": "query",
                         "name": "source",
                         "schema": {
@@ -1406,7 +1406,7 @@
                     }
                 ],
                 "responses": {},
-                "summary": "Your usage of global or personal llm keys for a month",
+                "summary": "Your usage of global, personal, or all llm keys for a month",
                 "tags": [
                     "llm"
                 ]

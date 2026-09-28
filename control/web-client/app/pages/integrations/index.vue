@@ -217,21 +217,12 @@ const failedInstall = computed(() => {
 
     <section class="mt-12">
       <p class="eyebrow mb-2 text-primary-text">// integrations · llm usage</p>
-      <h2 class="text-xl font-semibold tracking-tight">Your key usage</h2>
+      <h2 class="text-xl font-semibold tracking-tight">LLM usage</h2>
       <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-        What your VMs used through your connected LLM keys. Usage is recorded from now on;
-        earlier requests through your keys were not metered.
+        See usage and estimated cost across your connected keys and shared global keys, including a breakdown by VM.
+        Earlier requests through your own keys were not metered.
       </p>
-      <LLMUsageReport endpoint="/me/llm-usage" source="personal" class="mt-6" />
-    </section>
-
-    <section class="mt-12">
-      <p class="eyebrow mb-2 text-primary-text">// integrations · llm usage</p>
-      <h2 class="text-xl font-semibold tracking-tight">Global key usage</h2>
-      <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-        What your VMs used through the shared <span class="font-mono text-xs">@global</span> keys.
-      </p>
-      <LLMUsageReport endpoint="/me/llm-usage" class="mt-6" />
+      <LLMUsageReport endpoint="/me/llm-usage" selectable-source class="mt-6" />
     </section>
 
     <Dialog v-model:open="pickOpen">

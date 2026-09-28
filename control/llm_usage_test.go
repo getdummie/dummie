@@ -29,11 +29,25 @@ func TestParseUsageSource(t *testing.T) {
 		{"", usageGlobal, true},
 		{"global", usageGlobal, true},
 		{"personal", usagePersonal, true},
-		{"all", "", false},
+		{"all", usageAll, true},
 	} {
 		got, ok := parseUsageSource(tc.input)
 		if got != tc.want || ok != tc.ok {
 			t.Errorf("source %q = (%q, %t), want (%q, %t)", tc.input, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestUsageSourceForProvider(t *testing.T) {
+	for _, tc := range []struct {
+		provider string
+		want     usageSource
+	}{
+		{"openai", usageGlobal},
+		{"openai@personal", usagePersonal},
+	} {
+		if got := usageSourceForProvider(tc.provider); got != tc.want {
+			t.Errorf("provider %q = %q, want %q", tc.provider, got, tc.want)
 		}
 	}
 }

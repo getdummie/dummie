@@ -48,8 +48,15 @@ func (t *usageTotals) add(o usageTotals) {
 }
 
 type usageByModel struct {
-	Provider string `json:"provider"`
-	Model    string `json:"model"`
+	Provider string      `json:"provider"`
+	Model    string      `json:"model"`
+	Source   usageSource `json:"source"`
+	usageTotals
+}
+
+type usageByVM struct {
+	VMID   string `json:"vm_id"`
+	VMName string `json:"vm_name"`
 	usageTotals
 }
 
@@ -64,6 +71,7 @@ type usageReport struct {
 	Available bool           `json:"available"`
 	Totals    usageTotals    `json:"totals"`
 	ByModel   []usageByModel `json:"by_model"`
+	ByVM      []usageByVM    `json:"by_vm"`
 	ByDay     []usageByDay   `json:"by_day"`
 }
 
@@ -83,18 +91,19 @@ func usageMonth(raw string) (time.Time, error) {
 }
 
 const usageRowsQuery = `
-SELECT user_id, toString(toDate(timestamp)) AS day, provider, model,
+SELECT user_id, vm_id, toString(toDate(timestamp)) AS day, provider, model,
        count(), sum(input_tokens), sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens)
 FROM llm_usage
 WHERE timestamp >= ? AND timestamp < ? AND (? OR user_id = toUUID(?))
-  AND endsWith(provider, '@personal') = ?
-GROUP BY user_id, day, provider, model`
+  AND (? OR endsWith(provider, '@personal') = ?)
+GROUP BY user_id, vm_id, day, provider, model`
 
 type usageSource string
 
 const (
 	usageGlobal   usageSource = "global"
 	usagePersonal usageSource = "personal"
+	usageAll      usageSource = "all"
 )
 
 func parseUsageSource(raw string) (usageSource, bool) {
@@ -103,6 +112,8 @@ func parseUsageSource(raw string) (usageSource, bool) {
 		return usageGlobal, true
 	case usagePersonal:
 		return usagePersonal, true
+	case usageAll:
+		return usageAll, true
 	default:
 		return "", false
 	}
@@ -110,8 +121,10 @@ func parseUsageSource(raw string) (usageSource, bool) {
 
 type usageRow struct {
 	user            uuid.UUID
+	vm              uuid.UUID
 	day             string
 	provider, model string
+	source          usageSource
 	usageTotals
 }
 
@@ -123,7 +136,7 @@ func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.
 	if user != nil {
 		all, who = false, *user
 	}
-	rs, err := h.ch.Query(ctx, usageRowsQuery, month, month.AddDate(0, 1, 0), all, who.String(), source == usagePersonal)
+	rs, err := h.ch.Query(ctx, usageRowsQuery, month, month.AddDate(0, 1, 0), all, who.String(), source == usageAll, source == usagePersonal)
 	if err != nil {
 		return nil, err
 	}
@@ -133,10 +146,11 @@ func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.
 	var out []usageRow
 	for rs.Next() {
 		var r usageRow
-		if err := rs.Scan(&r.user, &r.day, &r.provider, &r.model,
+		if err := rs.Scan(&r.user, &r.vm, &r.day, &r.provider, &r.model,
 			&r.Requests, &r.Input, &r.Output, &r.CacheRead, &r.CacheWrite); err != nil {
 			return nil, err
 		}
+		r.source = usageSourceForProvider(r.provider)
 		r.provider = llmUsageProvider(r.provider)
 		if p, ok := lookupLLMPrice(prices, r.provider, r.model); ok {
 			r.Cost = float64(r.Input)*p.input + float64(r.Output)*p.output +
@@ -153,12 +167,19 @@ func llmUsageProvider(metered string) string {
 	return strings.TrimSuffix(metered, llmPersonalMeterSuffix)
 }
 
+func usageSourceForProvider(metered string) usageSource {
+	if strings.HasSuffix(metered, llmPersonalMeterSuffix) {
+		return usagePersonal
+	}
+	return usageGlobal
+}
+
 func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID, source usageSource) error {
 	month, err := usageMonth(c.QueryParam("month"))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "month must be YYYY-MM")
 	}
-	rep := usageReport{Month: month.Format("2006-01"), Source: source, ByModel: []usageByModel{}, ByDay: []usageByDay{}}
+	rep := usageReport{Month: month.Format("2006-01"), Source: source, ByModel: []usageByModel{}, ByVM: []usageByVM{}, ByDay: []usageByDay{}}
 	if h.ch == nil {
 		return c.JSON(http.StatusOK, rep)
 	}
@@ -169,15 +190,20 @@ func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID, source usageSo
 	}
 	rep.Available = true
 
-	models := map[[2]string]*usageByModel{}
+	models := map[[3]string]*usageByModel{}
+	vms := map[uuid.UUID]*usageByVM{}
 	days := map[string]*usageByDay{}
 	for _, r := range rows {
 		rep.Totals.add(r.usageTotals)
-		k := [2]string{r.provider, r.model}
+		k := [3]string{string(r.source), r.provider, r.model}
 		if models[k] == nil {
-			models[k] = &usageByModel{Provider: r.provider, Model: r.model}
+			models[k] = &usageByModel{Provider: r.provider, Model: r.model, Source: r.source}
 		}
 		models[k].add(r.usageTotals)
+		if vms[r.vm] == nil {
+			vms[r.vm] = &usageByVM{VMID: r.vm.String()}
+		}
+		vms[r.vm].add(r.usageTotals)
 		if days[r.day] == nil {
 			days[r.day] = &usageByDay{Date: r.day}
 		}
@@ -187,6 +213,31 @@ func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID, source usageSo
 		rep.ByModel = append(rep.ByModel, *m)
 	}
 	sort.Slice(rep.ByModel, func(i, j int) bool { return rep.ByModel[i].Output > rep.ByModel[j].Output })
+	ids := make([]pgtype.UUID, 0, len(vms))
+	for id := range vms {
+		ids = append(ids, pgtype.UUID{Bytes: id, Valid: true})
+	}
+	if len(ids) > 0 {
+		names, err := h.q.ListVMNamesByIDs(c.Request().Context(), db.ListVMNamesByIDsParams{
+			VmIds: ids, OwnerID: pgtype.UUID{Bytes: user, Valid: true},
+		})
+		if err != nil {
+			log.Printf("could not read names for llm usage VMs: %v", err)
+		} else {
+			for _, n := range names {
+				vms[uuid.UUID(n.ID.Bytes)].VMName = n.Name
+			}
+		}
+	}
+	for _, vm := range vms {
+		rep.ByVM = append(rep.ByVM, *vm)
+	}
+	sort.Slice(rep.ByVM, func(i, j int) bool {
+		if rep.ByVM[i].Cost != rep.ByVM[j].Cost {
+			return rep.ByVM[i].Cost > rep.ByVM[j].Cost
+		}
+		return rep.ByVM[i].VMID < rep.ByVM[j].VMID
+	})
 	for _, d := range days {
 		rep.ByDay = append(rep.ByDay, *d)
 	}
@@ -194,11 +245,11 @@ func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID, source usageSo
 	return c.JSON(http.StatusOK, rep)
 }
 
-// @Summary     Your usage of global or personal llm keys for a month
+// @Summary     Your usage of global, personal, or all llm keys for a month
 // @Tags        llm
 // @Produce     json
 // @Param       month query string false "YYYY-MM, defaults to the current month (UTC)"
-// @Param       source query string false "global (default) or personal"
+// @Param       source query string false "global (default), personal, or all"
 // @Router      /me/llm-usage [get]
 func (h *LLMUsageHandler) Mine(c *echo.Context) error {
 	uid, err := callerID(c)
@@ -207,7 +258,7 @@ func (h *LLMUsageHandler) Mine(c *echo.Context) error {
 	}
 	source, ok := parseUsageSource(c.QueryParam("source"))
 	if !ok {
-		return echo.NewHTTPError(http.StatusBadRequest, "source must be global or personal")
+		return echo.NewHTTPError(http.StatusBadRequest, "source must be global, personal, or all")
 	}
 	return h.report(c, uuid.UUID(uid.Bytes), source)
 }

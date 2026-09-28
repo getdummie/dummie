@@ -8,12 +8,15 @@ export interface UsageTotals {
   unpriced: boolean
 }
 
+export type UsageSource = 'all' | 'personal' | 'global'
+
 export interface UsageReport {
   month: string
-  source?: 'global' | 'personal'
+  source?: UsageSource
   available: boolean
   totals: UsageTotals
-  by_model: (UsageTotals & { provider: string, model: string })[]
+  by_model: (UsageTotals & { provider: string, model: string, source?: 'personal' | 'global' })[]
+  by_vm?: (UsageTotals & { vm_id: string, vm_name: string })[]
   by_day: (UsageTotals & { date: string })[]
 }
 
@@ -40,8 +43,10 @@ export function fmtTokens(n: number): string {
   return n < 10_000 ? n.toLocaleString() : compact.format(n)
 }
 
-export function fmtCost(t: UsageTotals): string {
+export function fmtCost(t: UsageTotals, precise = false): string {
   if (t.cost_usd <= 0) return t.unpriced ? '—' : '$0.00'
-  const s = t.cost_usd < 0.01 ? '<$0.01' : `$${t.cost_usd.toFixed(2)}`
+  const s = t.cost_usd < 0.01
+    ? (precise ? `$${t.cost_usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 8 })}` : '<$0.01')
+    : `$${t.cost_usd.toFixed(2)}`
   return t.unpriced ? `${s}*` : s
 }

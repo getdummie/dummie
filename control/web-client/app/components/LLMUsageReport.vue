@@ -4,41 +4,44 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TableCell, TableRow } from '@/components/ui/table'
-import { fmtCost, fmtTokens, monthOptions, type UsageReport } from '@/lib/llm-usage'
+import { fmtCost, fmtTokens, monthOptions, type UsageReport, type UsageSource } from '@/lib/llm-usage'
 import type { DataTableColumn } from '@/lib/table'
 
-const props = defineProps<{ endpoint: string, month?: string, source?: 'global' | 'personal' }>()
+const props = defineProps<{ endpoint: string, month?: string, source?: UsageSource, selectableSource?: boolean }>()
 
 const { authFetch } = useAuth()
 const months = monthOptions()
 const month = ref(months.some(m => m.value === props.month) ? props.month! : months[0]!.value)
+const source = ref<UsageSource>(props.source ?? (props.selectableSource ? 'all' : 'global'))
 const report = ref<UsageReport | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
+let activeLoad = 0
 
 async function load() {
+  const id = ++activeLoad
   loading.value = true
   error.value = null
   try {
     const params = new URLSearchParams({ month: month.value })
-    if (props.source) params.set('source', props.source)
+    if (props.selectableSource || props.source) params.set('source', source.value)
     const res = await authFetch(`${props.endpoint}?${params}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
     const body: UsageReport = await res.json()
-    if (props.source && body.source !== props.source) {
-      throw new Error('This server does not support personal usage yet')
+    if ((props.selectableSource || props.source) && body.source !== source.value) {
+      throw new Error('This server does not support the selected usage view yet')
     }
-    report.value = body
+    if (id === activeLoad) report.value = body
   }
   catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not load usage'
+    if (id === activeLoad) error.value = e instanceof Error ? e.message : 'Could not load usage'
   }
   finally {
-    loading.value = false
+    if (id === activeLoad) loading.value = false
   }
 }
 onMounted(load)
-watch(month, load)
+watch([month, source], load)
 
 const stats = computed(() => {
   const t = report.value?.totals
@@ -63,16 +66,26 @@ const columns = (first: DataTableColumn): DataTableColumn[] => [
   { key: 'cost', label: 'Cost', align: 'right' },
 ]
 const modelColumns = columns({ key: 'model', label: 'Model' })
+const vmColumns = columns({ key: 'vm', label: 'VM' })
 const dayColumns = columns({ key: 'date', label: 'Day' })
 
 const hasUnpriced = computed(() => !!report.value?.totals.unpriced)
-const modelPrefix = (provider: string) => `${provider}${props.source === 'personal' ? '' : '@global'}`
-const monthId = computed(() => props.source === 'personal' ? 'personal-usage-month' : 'global-usage-month')
+const modelPrefix = (provider: string, rowSource?: 'personal' | 'global') => `${provider}${rowSource === 'personal' ? '' : '@global'}`
+const monthId = 'llm-usage-month'
+const sourceId = 'llm-usage-source'
 </script>
 
 <template>
   <div>
     <div class="flex flex-wrap items-end gap-3">
+      <div v-if="selectableSource" class="space-y-1.5">
+        <Label :for="sourceId">Integrations</Label>
+        <NativeSelect :id="sourceId" v-model="source">
+          <NativeSelectOption value="all">All integrations</NativeSelectOption>
+          <NativeSelectOption value="personal">Personal integrations</NativeSelectOption>
+          <NativeSelectOption value="global">Global integrations</NativeSelectOption>
+        </NativeSelect>
+      </div>
       <div class="space-y-1.5">
         <Label :for="monthId">Month</Label>
         <NativeSelect :id="monthId" v-model="month">
@@ -112,13 +125,34 @@ const monthId = computed(() => props.source === 'personal' ? 'personal-usage-mon
     >
       <template #empty>No usage this month.</template>
       <TableRow v-for="r in report?.by_model" :key="`${r.provider}/${r.model}`">
-        <TableCell class="font-mono text-xs">{{ modelPrefix(r.provider) }}/{{ r.model }}</TableCell>
+        <TableCell class="font-mono text-xs">{{ modelPrefix(r.provider, r.source) }}/{{ r.model }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ r.requests.toLocaleString() }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ fmtTokens(r.input_tokens) }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ fmtTokens(r.cache_read_tokens) }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ fmtTokens(r.cache_write_tokens) }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ fmtTokens(r.output_tokens) }}</TableCell>
         <TableCell class="text-right tabular-nums">{{ fmtCost(r) }}</TableCell>
+      </TableRow>
+    </DataTable>
+
+    <h3 class="mt-8 text-sm font-medium">By VM</h3>
+    <DataTable
+      label="Usage by VM"
+      :columns="vmColumns"
+      :loading="loading"
+      :loading-rows="2"
+      :empty="!report?.by_vm?.length"
+      class="mt-3"
+    >
+      <template #empty>No usage this month.</template>
+      <TableRow v-for="vm in report?.by_vm ?? []" :key="vm.vm_id">
+        <TableCell class="font-mono text-xs" :title="vm.vm_id">{{ vm.vm_name || `VM ${vm.vm_id.slice(0, 8)}` }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ vm.requests.toLocaleString() }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(vm.input_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(vm.cache_read_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(vm.cache_write_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(vm.output_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtCost(vm, true) }}</TableCell>
       </TableRow>
     </DataTable>
 
@@ -146,6 +180,7 @@ const monthId = computed(() => props.source === 'personal' ? 'personal-usage-mon
     <p class="mt-4 text-xs text-muted-foreground">
       Cost is at pay-as-you-go prices from LiteLLM's price list, even for a coding plan key, where
       the real cost is the subscription. Days and months are UTC; new usage can take a minute to appear.
+      VM names reflect their current names; deleted VMs are shown by ID.
       <template v-if="hasUnpriced"> * Some models have no known price and are left out of the cost.</template>
     </p>
   </div>
