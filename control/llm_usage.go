@@ -90,13 +90,23 @@ func usageMonth(raw string) (time.Time, error) {
 	return time.Parse("2006-01", raw)
 }
 
-const usageRowsQuery = `
+const usageRowsByVMQuery = `
 SELECT user_id, vm_id, toString(toDate(timestamp)) AS day, provider, model,
        count(), sum(input_tokens), sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens)
 FROM llm_usage
 WHERE timestamp >= ? AND timestamp < ? AND (? OR user_id = toUUID(?))
   AND (? OR endsWith(provider, '@personal') = ?)
 GROUP BY user_id, vm_id, day, provider, model`
+
+// The fleet-wide admin summary does not display VMs. Keep its previous
+// grouping size instead of multiplying its result rows by VM count.
+const usageRowsByUserQuery = `
+SELECT user_id, any(vm_id), toString(toDate(timestamp)) AS day, provider, model,
+       count(), sum(input_tokens), sum(output_tokens), sum(cache_read_tokens), sum(cache_write_tokens)
+FROM llm_usage
+WHERE timestamp >= ? AND timestamp < ? AND (? OR user_id = toUUID(?))
+  AND (? OR endsWith(provider, '@personal') = ?)
+GROUP BY user_id, day, provider, model`
 
 type usageSource string
 
@@ -128,7 +138,7 @@ type usageRow struct {
 	usageTotals
 }
 
-func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.UUID, source usageSource) ([]usageRow, error) {
+func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.UUID, source usageSource, byVM bool) ([]usageRow, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -136,7 +146,11 @@ func (h *LLMUsageHandler) rows(ctx context.Context, month time.Time, user *uuid.
 	if user != nil {
 		all, who = false, *user
 	}
-	rs, err := h.ch.Query(ctx, usageRowsQuery, month, month.AddDate(0, 1, 0), all, who.String(), source == usageAll, source == usagePersonal)
+	query := usageRowsByUserQuery
+	if byVM {
+		query = usageRowsByVMQuery
+	}
+	rs, err := h.ch.Query(ctx, query, month, month.AddDate(0, 1, 0), all, who.String(), source == usageAll, source == usagePersonal)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +197,7 @@ func (h *LLMUsageHandler) report(c *echo.Context, user uuid.UUID, source usageSo
 	if h.ch == nil {
 		return c.JSON(http.StatusOK, rep)
 	}
-	rows, err := h.rows(c.Request().Context(), month, &user, source)
+	rows, err := h.rows(c.Request().Context(), month, &user, source, true)
 	if err != nil {
 		log.Printf("could not read llm usage for %s (is 0003_llm_usage applied?): %v", user, err)
 		return c.JSON(http.StatusOK, rep)
@@ -291,7 +305,7 @@ func (h *LLMUsageHandler) All(c *echo.Context) error {
 		return c.JSON(http.StatusOK, out)
 	}
 	ctx := c.Request().Context()
-	rows, err := h.rows(ctx, month, nil, usageGlobal)
+	rows, err := h.rows(ctx, month, nil, usageGlobal, false)
 	if err != nil {
 		log.Printf("could not read llm usage (is 0003_llm_usage applied?): %v", err)
 		return c.JSON(http.StatusOK, out)
