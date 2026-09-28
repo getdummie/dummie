@@ -25,3 +25,24 @@ func TestLocalVMProxyPortIgnoresInvalidValues(t *testing.T) {
 		})
 	}
 }
+
+func TestLocalVMSSHPort(t *testing.T) {
+	t.Setenv("LOCAL_VM_SSH_PORT", "2224")
+	if got := (&UserHandler{}).vmSSHPort(); got != 2224 {
+		t.Fatalf("development SSH port = %d, want 2224", got)
+	}
+	if got := (&UserHandler{prod: true}).vmSSHPort(); got != 0 {
+		t.Fatalf("production SSH port = %d, want default", got)
+	}
+}
+
+func TestLocalVMSSHPortIgnoresInvalidValues(t *testing.T) {
+	for _, port := range []string{"", "0", "65536", "not-a-port"} {
+		t.Run(port, func(t *testing.T) {
+			t.Setenv("LOCAL_VM_SSH_PORT", port)
+			if got := (&UserHandler{}).vmSSHPort(); got != 0 {
+				t.Fatalf("SSH port with %q = %d, want default", port, got)
+			}
+		})
+	}
+}

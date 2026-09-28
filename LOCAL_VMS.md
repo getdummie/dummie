@@ -35,6 +35,7 @@ to the ignored `control/.env` and restart the control server:
 ```dotenv
 S3_HOST_ENDPOINT=http://10.68.0.1:9000
 LOCAL_VM_PROXY_PORT=8080
+LOCAL_VM_SSH_PORT=2224
 ```
 
 `S3_PUBLIC_ENDPOINT` stays at `http://127.0.0.1:9000` from [DEV.md](DEV.md),
@@ -149,13 +150,23 @@ account profile. Set the host's dproxy download URL to
 
 ```sh
 just vm-local-proxy-tunnel
-ssh -p 2224 <vm-name>@127.0.0.1
+ssh -p 2224 <vm-name>@dummie.localhost
 ```
 
 The tunnel exposes the host's proxy only on local ports 8080 and 2224.
 `LOCAL_VM_PROXY_PORT=8080` makes the VM page's browser console use that
-HTTP/WebSocket port. Names under `dummie.localhost` resolve to loopback, so the
-console link works without editing `/etc/hosts`.
+HTTP/WebSocket port. `LOCAL_VM_SSH_PORT=2224` makes its copied SSH command use
+the forwarded SSH listener instead of your machine's own port 22. Names under
+`dummie.localhost` resolve to loopback, so the links work without editing
+`/etc/hosts`. The account that created the VM must have its SSH public key in
+**Settings → Profile**; the proxy uses that key to identify its owner. SSH
+editor links use your local SSH config, so add this if you want those links to
+use the tunnel too:
+
+```sshconfig
+Host dummie.localhost
+  Port 2224
+```
 
 ## Boot a small guest from the CLI
 

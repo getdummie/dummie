@@ -51,12 +51,26 @@ func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
 
 func (h *UserHandler) proxyURLHost(host string) string {
 	if !h.prod {
-		port, err := strconv.Atoi(os.Getenv("LOCAL_VM_PROXY_PORT"))
-		if err == nil && port > 0 && port <= 65535 {
+		if port := localVMPort("LOCAL_VM_PROXY_PORT"); port != 0 {
 			return net.JoinHostPort(host, strconv.Itoa(port))
 		}
 	}
 	return host
+}
+
+func localVMPort(key string) int {
+	port, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || port < 1 || port > 65535 {
+		return 0
+	}
+	return port
+}
+
+func (h *UserHandler) vmSSHPort() int {
+	if h.prod {
+		return 0
+	}
+	return localVMPort("LOCAL_VM_SSH_PORT")
 }
 
 func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
@@ -95,6 +109,7 @@ func (h *UserHandler) fillVMURLs(ctx context.Context, rows []db.Vm, items []vmDT
 		if v.Name == "" || i >= len(items) {
 			continue
 		}
+		items[i].SSHPort = h.vmSSHPort()
 		tld, seen := tlds[v.ClientID]
 		if !seen {
 			if client, err := h.q.GetClientByID(ctx, v.ClientID); err == nil && client.DomainID.Valid {
@@ -189,6 +204,7 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 	ctx := c.Request().Context()
 	items := []vmDTO{toVMDTO(v)}
 	items[0].URL = h.vmURL(ctx, v)
+	items[0].SSHPort = h.vmSSHPort()
 	items[0].ConsoleURL = h.consoleURL(ctx, v)
 	items[0].DesktopURL = h.desktopURL(ctx, v)
 	fillVMExpiries(ctx, h.q, items)
