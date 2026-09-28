@@ -161,8 +161,10 @@ upload `vm-artifacts/guest-vmlinuz` in **Admin → Kernels**, create an OS image
 from `docker.io/library/alpine:3.21` in **Admin → OS images**, then use
 **VMs → Create VM** with the connected host.
 
-The older `just kernel-setup` and `just kernel-build` recipes remain available
-when you need a custom kernel. They are not needed for this local setup.
+The existing `just kernel-setup` and `just kernel-build` recipes remain
+available when you need a custom kernel. `just kernel-setup-archive` downloads
+a stable source archive instead of cloning Git history. Neither is needed for
+this local setup.
 
 ## Codex in dubuntu
 

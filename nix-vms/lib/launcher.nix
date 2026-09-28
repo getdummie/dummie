@@ -29,11 +29,11 @@ let
 
   virtiofsdStart = lib.concatStringsSep "\n" (lib.imap0 (i: s: ''
         rm -f "$STATE_DIR/virtiofs-${toString i}.sock" "$STATE_DIR/virtiofs-${toString i}.pid"
-        nohup setsid virtiofsd \
+        ${lib.optionalString ((vm.networkMode or "tap") == "user") "nohup setsid "}virtiofsd \
           --socket-path="$STATE_DIR/virtiofs-${toString i}.sock" \
           --shared-dir="${s.source}" \
-          --sandbox=none \
-          >"$STATE_DIR/virtiofs-${toString i}.log" 2>&1 </dev/null &
+          --sandbox=none${lib.optionalString ((vm.networkMode or "tap") == "user") '' \
+          >"$STATE_DIR/virtiofs-${toString i}.log" 2>&1 </dev/null''} &
         echo "$!" > "$STATE_DIR/virtiofs-${toString i}.pid"
         for _ in $(seq 1 50); do [ -S "$STATE_DIR/virtiofs-${toString i}.sock" ] && break; sleep 0.1; done
   '') shares);

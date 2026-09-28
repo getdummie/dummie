@@ -324,6 +324,16 @@ vm-prebuilt-kernels:
 
 kernel-setup variant version:
   #!/usr/bin/env bash
+  case "{{ variant }}" in
+    host|guest) ;;
+    *) echo "error: variant must be 'host' or 'guest', got '{{ variant }}'" >&2; exit 1 ;;
+  esac
+  cd kernel
+  git clone --depth 1 --branch "{{version}}" https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git "linux-{{variant}}-{{version}}"
+
+# Download a stable kernel source archive without the Git object database.
+kernel-setup-archive variant version:
+  #!/usr/bin/env bash
   set -euo pipefail
   case "{{ variant }}" in
     host|guest) ;;
