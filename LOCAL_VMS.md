@@ -82,6 +82,18 @@ In the console, set these **Admin → Settings** values:
 | dproxy download URL | `http://10.68.0.1:8081/dproxy` |
 | dinit download URL | `http://10.68.0.1:8081/dinit` |
 | intproxy download URL | `http://10.68.0.1:8081/intproxy` |
+| ClickHouse URL | `http://10.68.0.1:8123` |
+| ClickHouse user | `control` |
+| ClickHouse password | `control` |
+
+These ClickHouse settings are for Vector inside the QEMU host. They are
+separate from `CLICKHOUSE_URL` in `control/.env`, which the control server uses
+to read reports and run migrations. QEMU maps `10.68.0.1` to the machine
+running Compose; the local ClickHouse HTTP port stays bound to that machine's
+loopback address. If you changed the Compose credentials, use those values
+here too. Leave the Vector version at its default unless you need a different
+release. The ClickHouse URL activates dclient's Vector installation and
+delivers its config to the host when it connects.
 
 In **Admin → Client keys**, create a one-use enrollment key. Inside the host
 VM, write `/etc/dclient/config.yaml` using `sudo`:
@@ -113,6 +125,20 @@ local disk and any private enrollment seed live under ignored
 `nix-vms/.microqemu/`; keep that directory private. If you delete
 `rootfs.ext4`, you need a new enrollment key unless you saved an
 `enrollment-seed.tar` there.
+
+Check that Vector is shipping usage logs from the host:
+
+```sh
+sudo systemctl is-active vector
+sudo journalctl -u vector -n 30 --no-pager
+```
+
+Both commands run inside the Debian host VM. The first should print `active`.
+After a guest makes an LLM request, `journalctl -u intproxy` should show an
+`intproxyusage` line. The **Integrations → LLM usage** report should then show
+the request, usually within a minute. Use its source dropdown to check
+personal, global, and combined usage. Existing local hosts receive the Vector
+config when these settings are saved; they do not need to be re-enrolled.
 
 ## Reach guest SSH and browser consoles
 
