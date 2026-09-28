@@ -82,6 +82,7 @@ let
       echo '127.0.1.1 ${name}'
     } > "$tmp/etc/hosts"
 
+    ${lib.optionalString ((vm.networkMode or "tap") == "user") ''
     mkdir -p "$tmp/etc/systemd/network" "$tmp/etc/systemd/system/multi-user.target.wants"
     cat > "$tmp/etc/systemd/network/10-enp0s2.network" <<'NETWORK'
     [Match]
@@ -94,6 +95,7 @@ let
     NETWORK
     ln -sf /lib/systemd/system/systemd-networkd.service \
       "$tmp/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
+    ''}
 
     ${lib.concatMapStrings (s: ''
       mkdir -p "$tmp${s.mountPoint}"
@@ -186,7 +188,7 @@ ${memBackendArgs}
           -m ${toString vm.mem} -smp ${toString vm.cpu}
           -kernel "${vm.kernel}"
           ${lib.optionalString (vm ? initrd) ''-initrd "${vm.initrd}"''}
-          -append "console=ttyS0 root=/dev/vda rw reboot=t quiet loglevel=3 tsc=reliable no_timer_check rcupdate.rcu_expedited=1"
+          -append "console=ttyS0 root=/dev/vda rw ${lib.optionalString ((vm.networkMode or "tap") == "tap") "ip=${vm.ip}::${vm.gateway}:${vm.netmask}:${name}:eth0:off "}reboot=t quiet loglevel=3 tsc=reliable no_timer_check rcupdate.rcu_expedited=1"
           -drive "id=root,file=$IMG,format=raw,if=none${lib.optionalString ephemeral ",snapshot=on"}"
           -device "virtio-blk-pci,drive=root"
           -netdev "${if (vm.networkMode or "tap") == "user" then "user,id=net0,net=10.68.0.0/16,host=${vm.gateway},dns=10.68.0.3,hostfwd=tcp:127.0.0.1:${toString (vm.sshForwardPort or 2223)}-${vm.ip}:2222" else "tap,id=net0,ifname=${vm.tap},script=no,downscript=no,queues=${toString vm.cpu}"}"

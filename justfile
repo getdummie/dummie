@@ -187,12 +187,40 @@ vm-ssh:
   ssh -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null \
       -o LogLevel=ERROR \
+      -p 2222 \
+      ubuntu@10.68.0.2
+
+# Local host VM: user networking, packaged kernels, and a persistent disk.
+vm-local-start:
+  #!/usr/bin/env bash
+  cd nix-vms/
+  nix run ".#qemu-local"
+
+vm-local-stop:
+  #!/usr/bin/env bash
+  cd nix-vms/
+  nix run ".#qemu-local" -- stop
+
+vm-local-ssh:
+  ssh -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR \
       -p 2223 \
       ubuntu@127.0.0.1
 
+vm-local-console:
+  #!/usr/bin/env bash
+  cd nix-vms/
+  nix run ".#qemu-local" -- console
+
+vm-local-stats:
+  #!/usr/bin/env bash
+  cd nix-vms/
+  nix run ".#qemu-local" -- stats
+
 # Forward the enrolled host's dproxy HTTP and SSH listeners to unprivileged
 # loopback ports on the development machine.
-vm-proxy-tunnel:
+vm-local-proxy-tunnel:
   ssh -fNT -o ExitOnForwardFailure=yes \
       -o StrictHostKeyChecking=no \
       -o UserKnownHostsFile=/dev/null \
@@ -243,11 +271,22 @@ image-build target:
     }
     build_args=(--build-arg "VM_SSH_PUBLIC_KEY=$(cat "$pubkey_file")")
   fi
+  if [ "{{target}}" = "dubuntu" ] && { [ -n "${DUMMIE_LLM_TLD:-}" ] || [ -n "${DUMMIE_LLM_PROXY_URL:-}" ]; }; then
+    [ -n "${DUMMIE_LLM_TLD:-}" ] && [ -n "${DUMMIE_LLM_PROXY_URL:-}" ] || {
+      echo "Set both DUMMIE_LLM_TLD and DUMMIE_LLM_PROXY_URL" >&2
+      exit 1
+    }
+    build_args+=(--build-arg "DUMMIE_LLM_TLD=$DUMMIE_LLM_TLD" --build-arg "DUMMIE_LLM_PROXY_URL=$DUMMIE_LLM_PROXY_URL")
+  fi
   docker build "${build_args[@]}" -t {{target}} .
   cid=$(docker create {{target}})
   rm -f rootfs.tar
   docker export "$cid" -o rootfs.tar
   docker rm "$cid"
+
+# Opt in to the Dummie provider for the local VM catalogue.
+image-build-local-dubuntu:
+  DUMMIE_LLM_TLD=dummie.localhost DUMMIE_LLM_PROXY_URL=http://10.64.255.254/v1 just image-build dubuntu
 
 # Reuse binary kernels: Debian's cloud kernel boots the host VM with its
 # initramfs; LinuxKit's built-in virtio/squashfs drivers boot sandbox guests.
