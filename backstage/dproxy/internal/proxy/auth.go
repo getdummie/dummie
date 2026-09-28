@@ -130,10 +130,10 @@ func (a *Authenticator) sign(b []byte) []byte {
 	return m.Sum(nil)
 }
 
-func (a *Authenticator) LoginURL(host, path string) string {
-	rd := "http://" + host + CallbackPath
+func (a *Authenticator) LoginURL(host, authority, path string) string {
+	rd := "http://" + authority + CallbackPath
 	if a.cfg.CookieSecure {
-		rd = "https://" + host + CallbackPath
+		rd = "https://" + authority + CallbackPath
 	}
 	q := url.Values{"rd": {rd}, "host": {host}, "next": {path}}
 	sep := "?"
@@ -200,7 +200,11 @@ func authorizeRequest(log *slog.Logger, router *Router, a *Authenticator, host s
 		return authVerdict{status: http.StatusUnauthorized}
 	}
 	log.Info("http auth: redirecting to control server", "host", host, "path", req.URL.Path)
-	return authVerdict{status: http.StatusFound, location: a.LoginURL(host, req.URL.RequestURI())}
+	authority := host
+	if req.Host != "" && httpsniff.NormalizeHost(req.Host) == host {
+		authority = req.Host
+	}
+	return authVerdict{status: http.StatusFound, location: a.LoginURL(host, authority, req.URL.RequestURI())}
 }
 
 func completeLogin(log *slog.Logger, a *Authenticator, host string, req *http.Request) authVerdict {
