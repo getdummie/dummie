@@ -96,8 +96,12 @@ func TestGenerateCoreDNSConfigAnswersLookupOnlyDomains(t *testing.T) {
 	if !strings.Contains(out, "github.com:53 {") {
 		t.Errorf("a lookup-only domain is not resolvable:\n%s", out)
 	}
-	if rules := generateSuricataRules(rows); strings.Contains(rules, "pass") {
-		t.Errorf("a lookup-only domain generated a pass rule:\n%s", rules)
+	rules := generateSuricataRules(rows)
+	for _, line := range strings.Split(rules, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "pass ") {
+			t.Errorf("a lookup-only domain generated a pass rule:\n%s", rules)
+			break
+		}
 	}
 }
 

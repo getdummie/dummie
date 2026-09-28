@@ -227,7 +227,7 @@ func TestHTTPUnknownHostIs502(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 1}}},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 1, UnauthenticatedPorts: []int{1}}}},
 	}
 	p := startProxy(t, cfg, 1)
 
@@ -286,9 +286,9 @@ func TestRawHandoffPreservesFirstBytes(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 1}}},
-		HTTPS:         &HTTPSConfig{Listen: "127.0.0.1:0"},
-		SSH: &SSHConfig{Listen: "127.0.0.1:0", Users: []SSHUser{{
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 1, UnauthenticatedPorts: []int{1}}}},
+		HTTPS:         &HTTPSConfig{Listen: "127.0.0.2:0"},
+		SSH: &SSHConfig{Listen: "127.0.0.3:0", Users: []SSHUser{{
 			PubKey:     authorizedLine(newTestKey(t), " test@example"),
 			VMName:     "build",
 			Target:     "127.0.0.1:22",
@@ -352,8 +352,8 @@ func TestResolveOverControlConnection(t *testing.T) {
 	f := startFakeDpipe(t)
 	cfg := &Config{
 		ControlSocket: f.path,
-		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 8001}}},
-		HTTPS:         &HTTPSConfig{Listen: "127.0.0.1:0"},
+		HTTP:          &HTTPConfig{Listen: "127.0.0.1:0", Hosts: map[string]HTTPHost{"one.vm.local": {Host: "127.0.0.1", DefaultPort: 8001, UnauthenticatedPorts: []int{8001}}}},
+		HTTPS:         &HTTPSConfig{Listen: "127.0.0.2:0"},
 	}
 	startProxy(t, cfg, 2)
 	peer := f.Peer(t)
