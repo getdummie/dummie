@@ -1684,7 +1684,7 @@ async function removeDomain() {
         </div>
 
         <p v-if="vm.ssh_port && sshHost" class="mt-2 text-xs text-muted-foreground">
-          Run <code class="font-mono">just vm-local-proxy-tunnel</code> before connecting. SSH editor links also need
+          The local proxy tunnel must be running before you connect. SSH editor links also need
           <code class="font-mono">Host {{ sshDomain }}</code> with
           <code class="font-mono">Port {{ vm.ssh_port }}</code> in your SSH config.
         </p>
