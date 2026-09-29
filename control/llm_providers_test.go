@@ -21,8 +21,8 @@ func TestOpenCodeProviderIsExposedWithoutInternalRouting(t *testing.T) {
 	if got == nil {
 		t.Fatal("opencode-go provider is missing")
 	}
-	if got.Label != "OpenCode Go" || got.KeyURL != "https://opencode.ai/auth" || len(got.Plans) != 2 ||
-		got.Plans[0].ID != "go" || got.Plans[1].ID != "go-plus" {
+	if got.Label != "OpenCode Go" || got.KeyURL != "https://opencode.ai/auth" || len(got.Plans) != 1 ||
+		got.Plans[0].ID != "go" || got.Plans[0].Label != "Go / Go Plus" {
 		t.Fatalf("provider = %+v", got)
 	}
 	raw, err := json.Marshal(got)

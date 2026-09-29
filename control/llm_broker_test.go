@@ -49,18 +49,19 @@ func TestLLMPlansResolveToHTTPS(t *testing.T) {
 	if _, ok := llmPlanFor("zai", "enterprise"); ok {
 		t.Error("an unknown plan resolved")
 	}
-	for _, plan := range []string{"go", "go-plus"} {
-		p, ok := llmPlanFor("opencode-go", plan)
-		if !ok {
-			t.Fatalf("opencode-go/%s did not resolve", plan)
-		}
-		if p.OpenAIBase != "https://opencode.ai/zen/go/v1" ||
-			p.AnthropicBase != "https://opencode.ai/zen/go" ||
-			p.ResponsesBase != "https://opencode.ai/zen/go/v1" {
-			t.Errorf("opencode-go/%s bases = %+v", plan, p)
-		}
-		if p.authHeader("anthropic") != "x-api-key" || p.authHeader("openai") != "" {
-			t.Errorf("opencode-go/%s auth headers = %v", plan, p.AuthHeaders)
-		}
+	p, ok := llmPlanFor("opencode-go", "go")
+	if !ok {
+		t.Fatal("opencode-go/go did not resolve")
+	}
+	if p.OpenAIBase != "https://opencode.ai/zen/go/v1" ||
+		p.AnthropicBase != "https://opencode.ai/zen/go" ||
+		p.ResponsesBase != "https://opencode.ai/zen/go/v1" {
+		t.Errorf("opencode-go/go bases = %+v", p)
+	}
+	if p.authHeader("anthropic") != "x-api-key" || p.authHeader("openai") != "" {
+		t.Errorf("opencode-go/go auth headers = %v", p.AuthHeaders)
+	}
+	if _, ok := llmPlanFor("opencode-go", "go-plus"); ok {
+		t.Error("the redundant go-plus plan resolved")
 	}
 }

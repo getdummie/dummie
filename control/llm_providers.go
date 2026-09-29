@@ -69,18 +69,12 @@ var llmProviders = []llmProvider{{
 }, {
 	ID:          "opencode-go",
 	Label:       "OpenCode Go",
-	Description: "Go and Go Plus use the same API and model catalog. Select the subscription attached to this key.",
+	Description: "Works with both Go and Go Plus subscriptions; OpenCode applies the limits for your account.",
 	KeyURL:      "https://opencode.ai/auth",
 	Auth:        llmAuthKey,
 	Plans: []llmPlan{
 		{
-			ID: "go", Label: "Go",
-			OpenAIBase: "https://opencode.ai/zen/go/v1", AnthropicBase: "https://opencode.ai/zen/go",
-			ResponsesBase: "https://opencode.ai/zen/go/v1", KeyCheckURL: "https://opencode.ai/zen/go/v1/usage",
-			AuthHeaders: map[string]string{"anthropic": "x-api-key"},
-		},
-		{
-			ID: "go-plus", Label: "Go Plus",
+			ID: "go", Label: "Go / Go Plus",
 			OpenAIBase: "https://opencode.ai/zen/go/v1", AnthropicBase: "https://opencode.ai/zen/go",
 			ResponsesBase: "https://opencode.ai/zen/go/v1", KeyCheckURL: "https://opencode.ai/zen/go/v1/usage",
 			AuthHeaders: map[string]string{"anthropic": "x-api-key"},
