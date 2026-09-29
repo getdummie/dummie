@@ -45,7 +45,7 @@ const chapters = [
           <div class="hero-grid">
             <div>
               <p class="eyebrow rise">Network and hypervisor isolated</p>
-              <h1 id="hero-h" class="rise" style="animation-delay:.06s">Secure computers <span class="soft">for everyone</span></h1>
+              <h1 id="hero-h" class="rise" style="animation-delay:.06s">Secure computers<span class="soft">for everyone</span></h1>
               <div class="ctas rise" style="animation-delay:.18s">
                 <div class="row">
                   <a class="btn btn-primary" :href="`${consoleUrl}/signin`">Boot a machine <span class="arr" aria-hidden="true">→</span></a>
@@ -192,7 +192,7 @@ const chapters = [
             <div class="flow-head">
               <div>
                 <p class="eyebrow">Network</p>
-                <h2 id="net-h" class="h2">Decide what gets in.</h2>
+                <h2 id="net-h" class="h2">Decide what gets in or out.</h2>
                 <p class="lede">A machine talks to nothing until you say so. Every attempt is logged, allowed or blocked.</p>
               </div>
               <p id="net-cap" class="cap" aria-live="polite" />
@@ -360,10 +360,12 @@ const chapters = [
         <circle cx="50" cy="50" r="48" fill="url(#orb-g)" />
         <g id="orb-eye">
           <circle cx="50" cy="50" r="40" fill="none" stroke="#0B1A1E" stroke-width="4.5" />
-          <line x1="31" y1="40" x2="69" y2="40" stroke="#0B1A1E" stroke-width="1.4" />
-          <g id="orb-lid">
-            <polygon points="50,29.5 69,40 50,50.5 31,40" fill="#0B1A1E" />
-            <line x1="50" y1="29.5" x2="50" y2="50.5" stroke="#0B1A1E" stroke-width="1.4" />
+          <g id="orb-pupil">
+            <line x1="31" y1="40" x2="69" y2="40" stroke="#0B1A1E" stroke-width="1.4" />
+            <g id="orb-lid">
+              <polygon points="50,29.5 69,40 50,50.5 31,40" fill="#0B1A1E" />
+              <line x1="50" y1="29.5" x2="50" y2="50.5" stroke="#0B1A1E" stroke-width="1.4" />
+            </g>
           </g>
         </g>
         <ellipse cx="36" cy="24" rx="13" ry="6.5" fill="#fff" opacity=".28" transform="rotate(-24 36 24)" />

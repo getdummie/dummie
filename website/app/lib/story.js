@@ -81,6 +81,7 @@ export function mountStory(root) {
   const measureHdr = () => {
     hdr = document.querySelector('header')?.offsetHeight || 0
     root.style.setProperty('--hdr', `${hdr}px`)
+    root.style.setProperty('--ftr', `${document.querySelector('footer')?.offsetHeight || 0}px`)
   }
   measureHdr()
 
@@ -113,7 +114,7 @@ export function mountStory(root) {
   }
 
   /* the protagonist */
-  const orb = { el: $('#orb'), light: $('#orb-light'), halo: $('#orb-halo'), eye: $('#orb-eye'), lid: $('#orb-lid'), x: 0, y: 0, s: 0.2, o: 0, g: 0.6, l: 0, lx: 0, ly: 0, init: false }
+  const orb = { el: $('#orb'), light: $('#orb-light'), halo: $('#orb-halo'), eye: $('#orb-eye'), pupil: $('#orb-pupil'), lid: $('#orb-lid'), x: 0, y: 0, s: 0.2, o: 0, g: 0.6, l: 0, lx: 0, ly: 0, init: false }
   const pointer = { x: innerWidth / 2, y: innerHeight / 2 }
   on(window, 'pointermove', e => { pointer.x = e.clientX; pointer.y = e.clientY }, { passive: true })
 
@@ -144,14 +145,17 @@ export function mountStory(root) {
     orb.el.style.opacity = orb.o.toFixed(3)
     orb.halo.style.opacity = (orb.g * (+token('--glow') || 1)).toFixed(3)
     orb.lid.style.transform = `scaleY(${Math.max(0.04, orb.l * blink).toFixed(3)})`
-    orb.eye.setAttribute('transform', `translate(${(orb.lx * 5).toFixed(2)} ${(orb.ly * 4).toFixed(2)})`)
+    orb.eye.setAttribute('transform', `translate(${(orb.lx * 3).toFixed(2)} ${(orb.ly * 2.5).toFixed(2)})`)
+    const sq = 1 - Math.abs(orb.lx) * 0.14
+    orb.pupil.setAttribute('transform', `translate(${(50 + orb.lx * 9).toFixed(2)} ${(40 + orb.ly * 8).toFixed(2)}) scale(${sq.toFixed(3)} 1) translate(-50 -40)`)
     orb.light.style.transform = `translate3d(${orb.x.toFixed(1)}px, ${orb.y.toFixed(1)}px, 0)`
     orb.light.style.opacity = (orb.o * orb.g).toFixed(3)
     if (d > 0 && d < 1) fx.emit.push({ rect: r, amt: d, color: '--oxide', n: 140, seed: 7 })
   }
 
   /* ---------- hero: plays once, on time rather than scroll ---------- */
-  const hero = { el: $('#hero'), t0: performance.now(), t: 0, done: false, T: 2450 }
+  const HERO_SLOW = 2.2
+  const hero = { el: $('#hero'), t0: performance.now(), t: 0, done: false, T: 2450 * HERO_SLOW }
   const H = {
     boot: $('#boot'), bootLog: $$('#boot-log div'), bootBar: $('#boot-bar'),
     term: $('#win-term'), cmd: $('#t-cmd'), ready: $('#t-ready'), local: $('#t-local'), prompt: $('#t-prompt'),
@@ -161,6 +165,7 @@ export function mountStory(root) {
   }
   let heroLast = ''
   function heroRender(t) {
+    t /= HERO_SLOW
     const q = (a, b) => seg(t, a, b)
     const bo = 1 - q(620, 860)
     H.boot.style.opacity = bo; H.boot.style.visibility = bo <= 0 ? 'hidden' : ''
@@ -190,7 +195,7 @@ export function mountStory(root) {
     const up = t > 2250
     H.badge.classList.toggle('up', up)
     H.badgeTxt.textContent = up ? 'my-app · running' : 'my-app · booting'
-    H.skip.style.visibility = t >= hero.T ? 'hidden' : ''
+    H.skip.style.visibility = t >= 2450 ? 'hidden' : ''
   }
   const heroSkip = () => { if (!hero.done) { hero.t = hero.T; hero.done = true; heroRender(hero.T) } }
   on(H.skip, 'click', heroSkip)
@@ -201,7 +206,7 @@ export function mountStory(root) {
   const heroScene = {
     id: 'hero', el: hero.el, tall: false,
     orb() {
-      const t = hero.t
+      const t = hero.t / HERO_SLOW
       if (t < 640) return { anchor: H.bootSlot, lid: seg(t, 380, 540), opacity: seg(t, 0, 220), glow: 0.9, stiff: 12 }
       return { anchor: H.badgeSlot, lid: 1, glow: 0.55, stiff: 7 }
     },
