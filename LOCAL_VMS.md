@@ -209,10 +209,13 @@ The local `dubuntu` image installs pi 0.87.1 and Codex CLI 0.158.0. Both start
 with `chatgpt/gpt-6-sol` through the internal LLM proxy, which uses the ChatGPT
 integration connected to your account under **Integrations** in the control
 console. No ChatGPT credential is stored in the guest. Pi's bundled Dummie
-extension loads available models from the proxy and selects the default. In
-the guest, run `pi` or `codex`. To pick another model, use pi's `/model` menu
-or run `codex -m chatgpt/gpt-6-astra`. Run `pi --list-models dummie` to see
-pi's current choices. To list the proxy's models directly:
+extension loads available models from the proxy and selects the default. It
+uses Pi's model catalog to retain each model's wire protocol and capabilities,
+so proxy models newer than the installed Pi release stay hidden until Pi is
+updated. In the guest, run `pi` or `codex`. To pick another model, use pi's
+`/model` menu or run `codex -m chatgpt/gpt-6-astra`. Run
+`pi --list-models dummie` to see pi's current choices. To list the proxy's
+models directly:
 
 ```sh
 curl -fsS -H 'Host: llm.int.dummie.localhost' \
