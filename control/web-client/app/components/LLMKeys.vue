@@ -20,6 +20,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 interface LLMKey {
   provider: string
   label: string
+  description?: string
+  key_url?: string
   auth: 'key' | 'device'
   plans: { id: string, label: string }[]
   plan: string
@@ -213,6 +215,17 @@ function cancelDevice() {
             {{ k.key_set ? 'Configured' : 'Not configured' }}
           </Badge>
         </div>
+
+        <p v-if="k.description" class="text-xs text-muted-foreground">
+          {{ k.description }}
+          <a
+            v-if="k.key_url"
+            :href="k.key_url"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="font-medium text-foreground underline underline-offset-4"
+          >Get an API key</a>.
+        </p>
 
         <div v-if="k.auth === 'device' && device?.provider === k.provider" class="space-y-2 rounded-md border border-border bg-muted/40 p-4">
           <p class="text-sm">

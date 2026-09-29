@@ -22,11 +22,13 @@ func TestClassify(t *testing.T) {
 		{"global key", http.MethodPost, "/v1/messages", `{"model":"zai@global/glm-4.6"}`, true, kindAnthropic, "zai@global/anthropic", ""},
 		{"no source", http.MethodPost, "/v1/chat/completions", `{"model":"glm-4.6"}`, false, "", "", ""},
 		{"bad source", http.MethodPost, "/v1/chat/completions", `{"model":"zai@team/glm-4.6"}`, false, "", "", ""},
+		{"bad hyphenated source", http.MethodPost, "/v1/chat/completions", `{"model":"open--code/glm-5.3"}`, false, "", "", ""},
 		{"empty model", http.MethodPost, "/v1/chat/completions", `{"model":"zai/"}`, false, "", "", ""},
 		{"not json", http.MethodPost, "/v1/chat/completions", `nope`, false, "", "", ""},
 		{"wrong method", http.MethodGet, "/v1/chat/completions", "", false, "", "", ""},
 		{"unknown path", http.MethodPost, "/v1/embeddings", `{"model":"zai/x"}`, false, "", "", ""},
 		{"responses", http.MethodPost, "/v1/responses", `{"model":"chatgpt/gpt-5-codex"}`, true, kindResponses, "chatgpt/responses", ""},
+		{"hyphenated source", http.MethodPost, "/v1/chat/completions", `{"model":"opencode-go/glm-5.3"}`, true, kindOpenAI, "opencode-go/openai", ""},
 	}
 	l := &LLM{}
 	for _, tc := range cases {

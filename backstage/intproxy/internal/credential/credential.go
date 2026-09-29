@@ -27,6 +27,9 @@ type Scope struct {
 
 type Token struct {
 	Value string
+	// AuthHeader is integration-defined. The llm integration recognizes
+	// x-api-key; empty keeps the usual Authorization bearer token.
+	AuthHeader string
 	// ExpiresAt zero means a static credential that never rotates.
 	ExpiresAt time.Time
 	// Upstream is an https base URL the source picked for this token, for
