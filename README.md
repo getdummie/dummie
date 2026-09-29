@@ -44,6 +44,12 @@ Each directory is a project in its own right.
 | `backstage/` | `dproxy` and `dpipe`, the connection services `dclient` runs on each host, plus `dinit`, the guest init copied into every rootfs and booted as pid 1. |
 | `website/` | Landing page, case studies and docs. Prerendered Nuxt with SSR on, shipped as its own container — deliberately separate from the console SPA in `control/web-client`. |
 
+## Contributing
+
+This repo is very open to contributions, specifically prompt requests! If you
+have an idea or improvement, feel free to open an issue describing what you'd
+like rather than submitting a pull request. We'll take it from there. :)
+
 ## License
 
 [GNU Affero General Public License v3.0](LICENSE).

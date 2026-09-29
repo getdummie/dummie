@@ -1,5 +1,5 @@
 
-@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=Geist:wght@100..900&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
 
 @import "tailwindcss";
 @import "tw-animate-css";
@@ -469,20 +469,6 @@
     flex-direction: column;
     justify-content: center;
     min-height: calc(100svh - 3.5rem);
-  }
-
-  /* opt-in: a page with no .panel would have the footer as its only snap
-     target, and mandatory snapping would jump straight to it on load. */
-  @media (min-width: 1024px) and (min-height: 44rem) {
-    html.snap-panels {
-      scroll-snap-type: y mandatory;
-      scroll-padding-top: 3.5rem;
-    }
-    html.snap-panels .panel,
-    html.snap-panels .panel-end {
-      scroll-snap-align: start;
-      scroll-snap-stop: always;
-    }
   }
 
   .anim-type {
