@@ -147,14 +147,35 @@ ENV CHROME_BIN=/headless-shell/headless-shell
 ENV PUPPETEER_EXECUTABLE_PATH=/headless-shell/headless-shell
 
 COPY bun-as-npm /usr/local/bin/npm
+ARG PI_VERSION=0.87.1
 RUN set -e \
   && apt-get install -y --no-install-recommends \
     fd-find \
     ripgrep \
-  && BUN_INSTALL=/usr/local bun install -g "@earendil-works/pi-coding-agent" \
+  && BUN_INSTALL=/usr/local bun install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" \
   && chmod -R a+rX /usr/local/lib \
   && chmod 0755 /usr/local/bin/npm \
-  && command -v pi
+  && command -v pi \
+  && pi --version
+
+ARG CODEX_VERSION=0.158.0
+RUN set -e \
+  && BUN_INSTALL=/usr/local bun add --global "@openai/codex@${CODEX_VERSION}" \
+  && command -v codex \
+  && codex --version
+
+# Configure the internal provider only when the fleet domain and proxy URL are
+# supplied at build time. A generic image must not point at a local-only TLD.
+ARG DUMMIE_LLM_TLD
+ARG DUMMIE_LLM_PROXY_URL
+RUN set -e \
+  && if [ -n "$DUMMIE_LLM_TLD" ] || [ -n "$DUMMIE_LLM_PROXY_URL" ]; then \
+       test -n "$DUMMIE_LLM_TLD" && test -n "$DUMMIE_LLM_PROXY_URL"; \
+       mkdir -p /home/ubuntu/.codex; \
+       printf 'model = "chatgpt/gpt-6-sol"\nmodel_provider = "dummie"\n\n[features]\nplugins = false\n\n[model_providers.dummie]\nname = "Dummie LLM proxy"\nbase_url = "%s"\nwire_api = "responses"\nhttp_headers = { Host = "llm.int.%s" }\n' "$DUMMIE_LLM_PROXY_URL" "$DUMMIE_LLM_TLD" \
+         > /home/ubuntu/.codex/config.toml; \
+       chmod 0644 /home/ubuntu/.codex/config.toml; \
+     fi
 
 ARG DOCKER_SUITE=
 RUN set -ex \
@@ -191,6 +212,19 @@ RUN set -ex \
   && mkdir -p /etc/systemd/system.conf.d \
   && printf '[Manager]\nDefaultEnvironment=PATH=%s:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n' "$VM_PATH_PREFIX" \
     > /etc/systemd/system.conf.d/10-vm-path.conf
+
+COPY pi-extension/index.ts /opt/dummie/pi-extension/index.ts
+COPY pi-extension/settings.json /opt/dummie/pi-extension/settings.json
+RUN set -e \
+  && if [ -n "$DUMMIE_LLM_TLD" ]; then \
+       mkdir -p /home/ubuntu/.pi/agent/extensions/dummie; \
+       cp /opt/dummie/pi-extension/index.ts /home/ubuntu/.pi/agent/extensions/dummie/index.ts; \
+       cp /opt/dummie/pi-extension/settings.json /home/ubuntu/.pi/agent/settings.json; \
+       jq -n --arg baseUrl "$DUMMIE_LLM_PROXY_URL" --arg host "llm.int.$DUMMIE_LLM_TLD" \
+         '{baseUrl: $baseUrl, host: $host}' \
+         > /home/ubuntu/.pi/agent/extensions/dummie/config.json; \
+       ln -s /usr/local/install/global/node_modules /home/ubuntu/.pi/agent/extensions/dummie/node_modules; \
+     fi
 
 RUN set -ex \
   && mkdir -p /home/ubuntu/app /home/ubuntu/.pi/agent
