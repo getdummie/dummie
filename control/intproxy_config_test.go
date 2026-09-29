@@ -1,9 +1,31 @@
 package main
 
 import (
+	"net"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+type parsedIntproxyConfig struct {
+	Listen    string `yaml:"listen"`
+	Reuseport bool   `yaml:"reuseport"`
+	TLS       struct {
+		Enabled *bool  `yaml:"enabled"`
+		Cert    string `yaml:"cert"`
+		Key     string `yaml:"key"`
+	} `yaml:"tls"`
+}
+
+func parseIntproxyConfig(t *testing.T, out string) parsedIntproxyConfig {
+	t.Helper()
+	var got parsedIntproxyConfig
+	if err := yaml.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("invalid intproxy config: %v\n%s", err, out)
+	}
+	return got
+}
 
 func TestGenerateIntproxyConfig(t *testing.T) {
 	out := generateIntproxyConfig("example.com", "https://control.example.com/", true)
@@ -43,11 +65,16 @@ func TestGenerateIntproxyConfigCarriesNoPolicy(t *testing.T) {
 // it rather than coexist.
 func TestGenerateIntproxyConfigNeverBindsAWildcard(t *testing.T) {
 	out := generateIntproxyConfig("example.com", "https://control.example.com", true)
+	got := parseIntproxyConfig(t, out)
 
-	if strings.Contains(out, "0.0.0.0") {
-		t.Errorf("the listen address is a wildcard:\n%s", out)
+	host, _, err := net.SplitHostPort(got.Listen)
+	if err != nil {
+		t.Fatalf("invalid listen address %q: %v", got.Listen, err)
 	}
-	if !strings.Contains(out, "reuseport: true") {
+	if ip := net.ParseIP(host); ip == nil || ip.IsUnspecified() {
+		t.Errorf("the listen address is not a concrete IP: %q", got.Listen)
+	}
+	if !got.Reuseport {
 		t.Errorf("reuseport is off, so the bind will fail against dproxy:\n%s", out)
 	}
 }
@@ -68,16 +95,15 @@ func TestGenerateIntproxyConfigSetsNoBodyDeadline(t *testing.T) {
 // credential is added on the upstream leg either way, so it is not exposed.
 func TestGenerateIntproxyConfigWithoutTLS(t *testing.T) {
 	out := generateIntproxyConfig("example.com", "https://control.example.com", false)
+	got := parseIntproxyConfig(t, out)
 
-	if !strings.Contains(out, `listen: "10.64.255.254:80"`) {
+	if got.Listen != "10.64.255.254:80" {
 		t.Errorf("expected the plain listener:\n%s", out)
 	}
-	if !strings.Contains(out, "enabled: false") {
+	if got.TLS.Enabled == nil || *got.TLS.Enabled {
 		t.Errorf("tls was not turned off:\n%s", out)
 	}
-	for _, forbidden := range []string{"fullchain.pem", "privkey.pem", ":443"} {
-		if strings.Contains(out, forbidden) {
-			t.Errorf("the tls-off config still names %q:\n%s", forbidden, out)
-		}
+	if got.TLS.Cert != "" || got.TLS.Key != "" {
+		t.Errorf("the tls-off config still has certificate paths:\n%s", out)
 	}
 }

@@ -34,9 +34,9 @@ type parsedProxyConfig struct {
 	HTTP struct {
 		Listen string `yaml:"listen"`
 		Hosts  map[string]struct {
-			Host string `yaml:"host"`
-			UnauthPorts []int `yaml:"unauthenticated_ports"`
-			DefaultPort int   `yaml:"default_port"`
+			Host        string `yaml:"host"`
+			UnauthPorts []int  `yaml:"unauthenticated_ports"`
+			DefaultPort int    `yaml:"default_port"`
 			RemoteUser  string `yaml:"remote_user"`
 		} `yaml:"hosts"`
 		Default string `yaml:"default"`
@@ -311,7 +311,11 @@ func TestGenerateProxyConfigSite(t *testing.T) {
 func TestGenerateProxyConfigSiteAbsentWithoutADomain(t *testing.T) {
 	out := generateProxyConfig(testProxyAuth, proxyHost{}, nil, nil, nil, nil)
 
-	if strings.Contains(out, "site:") {
+	var config map[string]any
+	if err := yaml.Unmarshal([]byte(out), &config); err != nil {
+		t.Fatalf("invalid proxy config: %v\n%s", err, out)
+	}
+	if _, present := config["site"]; present {
 		t.Errorf("a site block was written for a host with no domain:\n%s", out)
 	}
 }
@@ -421,8 +425,11 @@ func TestValidateVMName(t *testing.T) {
 			t.Errorf("%q was rejected: %v", name, err)
 		}
 	}
+	if got, err := validateVMName("  Hello-Kitty  "); err != nil || got != "hello-kitty" {
+		t.Errorf("mixed-case name was not normalized: got (%q, %v)", got, err)
+	}
 	for _, name := range []string{
-		"hello--kitty", "-kitty", "kitty-", "Hello-Kitty", "hello kitty", "hello.kitty",
+		"hello--kitty", "-kitty", "kitty-", "hello kitty", "hello.kitty",
 		"hello_kitty", "ab", strings.Repeat("a", 53),
 	} {
 		if _, err := validateVMName(name); err == nil {

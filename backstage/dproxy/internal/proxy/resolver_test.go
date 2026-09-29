@@ -426,7 +426,7 @@ func TestResolveSSHOtherUsersVM(t *testing.T) {
 	if rep.Authorized || rep.Target != "" {
 		t.Fatalf("alice must not reach bob's vm: %+v", rep)
 	}
-	if strings.Contains(rep.Notice, "bobs") {
-		t.Errorf("the notice must not name another user's vm: %q", rep.Notice)
+	if !strings.Contains(rep.Notice, "\n  alices\n") || strings.Contains(rep.Notice, "\n  bobs\n") {
+		t.Errorf("the notice must list only VMs owned by this key: %q", rep.Notice)
 	}
 }
