@@ -23,13 +23,15 @@ type LLMKeyHandler struct {
 }
 
 type llmKeyDTO struct {
-	Provider  string    `json:"provider"`
-	Label     string    `json:"label"`
-	Auth      string    `json:"auth"`
-	Plans     []llmPlan `json:"plans"`
-	Plan      string    `json:"plan"`
-	KeySet    bool      `json:"key_set"`
-	UpdatedAt string    `json:"updated_at,omitempty"`
+	Provider    string    `json:"provider"`
+	Label       string    `json:"label"`
+	Description string    `json:"description,omitempty"`
+	KeyURL      string    `json:"key_url,omitempty"`
+	Auth        string    `json:"auth"`
+	Plans       []llmPlan `json:"plans"`
+	Plan        string    `json:"plan"`
+	KeySet      bool      `json:"key_set"`
+	UpdatedAt   string    `json:"updated_at,omitempty"`
 }
 
 type putLLMKeyReq struct {
@@ -44,7 +46,10 @@ func toLLMKeyDTOs(keys []db.LlmKey) []llmKeyDTO {
 	}
 	out := make([]llmKeyDTO, 0, len(llmProviders))
 	for _, p := range llmProviders {
-		d := llmKeyDTO{Provider: p.ID, Label: p.Label, Auth: p.Auth, Plans: p.Plans, Plan: p.Plans[0].ID}
+		d := llmKeyDTO{
+			Provider: p.ID, Label: p.Label, Description: p.Description, KeyURL: p.KeyURL,
+			Auth: p.Auth, Plans: p.Plans, Plan: p.Plans[0].ID,
+		}
 		if k, ok := byProvider[p.ID]; ok {
 			d.Plan, d.KeySet = k.Plan, true
 			d.UpdatedAt = k.UpdatedAt.Time.Format(time.RFC3339)
@@ -156,7 +161,7 @@ func (h *LLMKeyHandler) put(c *echo.Context, owner, by pgtype.UUID) error {
 		}
 	}
 
-	if _, err := fetchLLMModels(ctx, plan, key); err != nil {
+	if err := checkLLMKey(ctx, plan, key); err != nil {
 		if errors.Is(err, errLLMKeyRejected) {
 			return echo.NewHTTPError(http.StatusBadRequest, "the provider rejected this key for the "+plan.Label+" plan")
 		}
