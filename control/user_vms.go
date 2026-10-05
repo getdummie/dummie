@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -45,7 +46,31 @@ func (h *UserHandler) vmURL(ctx context.Context, v db.Vm) string {
 	if h.prod {
 		scheme = "https"
 	}
-	return fmt.Sprintf("%s://%s.%s", scheme, v.Name, tld)
+	return fmt.Sprintf("%s://%s", scheme, h.proxyURLHost(v.Name+"."+tld))
+}
+
+func (h *UserHandler) proxyURLHost(host string) string {
+	if !h.prod {
+		if port := localVMPort("LOCAL_VM_PROXY_PORT"); port != 0 {
+			return net.JoinHostPort(host, strconv.Itoa(port))
+		}
+	}
+	return host
+}
+
+func localVMPort(key string) int {
+	port, err := strconv.Atoi(os.Getenv(key))
+	if err != nil || port < 1 || port > 65535 {
+		return 0
+	}
+	return port
+}
+
+func (h *UserHandler) vmSSHPort() int {
+	if h.prod {
+		return 0
+	}
+	return localVMPort("LOCAL_VM_SSH_PORT")
 }
 
 func (h *UserHandler) vmDomainTLD(ctx context.Context, v db.Vm) string {
@@ -84,6 +109,7 @@ func (h *UserHandler) fillVMURLs(ctx context.Context, rows []db.Vm, items []vmDT
 		if v.Name == "" || i >= len(items) {
 			continue
 		}
+		items[i].SSHPort = h.vmSSHPort()
 		tld, seen := tlds[v.ClientID]
 		if !seen {
 			if client, err := h.q.GetClientByID(ctx, v.ClientID); err == nil && client.DomainID.Valid {
@@ -97,7 +123,7 @@ func (h *UserHandler) fillVMURLs(ctx context.Context, rows []db.Vm, items []vmDT
 			tlds[v.ClientID] = tld
 		}
 		if tld != "" {
-			items[i].URL = fmt.Sprintf("%s://%s.%s", scheme, v.Name, tld)
+			items[i].URL = fmt.Sprintf("%s://%s", scheme, h.proxyURLHost(v.Name+"."+tld))
 		}
 	}
 }
@@ -178,6 +204,7 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 	ctx := c.Request().Context()
 	items := []vmDTO{toVMDTO(v)}
 	items[0].URL = h.vmURL(ctx, v)
+	items[0].SSHPort = h.vmSSHPort()
 	items[0].ConsoleURL = h.consoleURL(ctx, v)
 	items[0].DesktopURL = h.desktopURL(ctx, v)
 	fillVMExpiries(ctx, h.q, items)
@@ -607,12 +634,12 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	if req.DefaultPort == 0 && osImage.DefaultPort.Valid {
 		defaultPort = osImage.DefaultPort.Int32
 	}
-	kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
+	kernelURL, err := h.blobs.PresignGetForHost(ctx, kernel.ObjectKey, kernel.FileName)
 	if err != nil {
 		log.Printf("could not presign kernel %s for a create: %v", req.KernelID, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the kernel download")
 	}
-	osImageURL, err := h.blobs.PresignGet(ctx, osImage.ObjectKey, osImage.FileName)
+	osImageURL, err := h.blobs.PresignGetForHost(ctx, osImage.ObjectKey, osImage.FileName)
 	if err != nil {
 		log.Printf("could not presign os image %s for a create: %v", req.OSImageID, err)
 		return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the os image download")
@@ -1202,7 +1229,7 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 			if kernel.SoftDeletedAt.Valid {
 				return echo.NewHTTPError(http.StatusConflict, "that kernel has been withdrawn; choose another")
 			}
-			kernelURL, err := h.blobs.PresignGet(ctx, kernel.ObjectKey, kernel.FileName)
+			kernelURL, err := h.blobs.PresignGetForHost(ctx, kernel.ObjectKey, kernel.FileName)
 			if err != nil {
 				log.Printf("could not presign kernel %s for vm %s: %v", reqKernel, vm.Name, err)
 				return echo.NewHTTPError(http.StatusBadGateway, "could not prepare the kernel download")

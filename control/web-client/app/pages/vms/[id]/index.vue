@@ -73,6 +73,7 @@ interface VM {
   disk_mib: number
   ip: string
   url: string
+  ssh_port?: number
   console_url: string
   last_error: string
   created_at: string
@@ -359,7 +360,7 @@ const integrationHostForVM = computed(() =>
 const sshDestination = computed(() =>
   vm.value?.name ? `${vm.value.name}@${sshDomain.value}` : sshDomain.value,
 )
-const sshCommand = computed(() => `ssh ${sshDestination.value}`)
+const sshCommand = computed(() => `ssh${vm.value?.ssh_port ? ` -p ${vm.value.ssh_port}` : ''} ${sshDestination.value}`)
 const sshCopied = ref(false)
 
 const remoteHome = '/home/ubuntu'
@@ -1691,6 +1692,12 @@ async function removeDomain(d: CustomDomain) {
             </div>
           </div>
         </div>
+
+        <p v-if="vm.ssh_port && sshHost" class="mt-2 text-xs text-muted-foreground">
+          The local proxy tunnel must be running before you connect. SSH editor links also need
+          <code class="font-mono">Host {{ sshDomain }}</code> with
+          <code class="font-mono">Port {{ vm.ssh_port }}</code> in your SSH config.
+        </p>
 
         <div v-if="vm.status === 'running'" class="mt-4 rounded-md border border-border p-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
