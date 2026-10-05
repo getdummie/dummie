@@ -80,6 +80,7 @@ const rowOneKeys = [
 ]
 
 const rowTwoKeys = [
+  { label: 'Esc', data: '\x1b' },
   { label: 'Ctrl+c', data: '\x03' },
   { label: 'Ctrl+r', data: '\x12' },
 ]
