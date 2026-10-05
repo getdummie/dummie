@@ -203,7 +203,7 @@ func (h *UserHandler) AddCustomDomain(c *echo.Context) error {
 }
 
 // @Summary     Confirm the CNAME and start the certificate
-// @Description Call this once the CNAME exists. The server checks it resolves to this VM's name under the fleet domain and then has the host obtain a certificate over HTTP-01. Both happen in the background: poll GET /vms/{id}/domain until the status is active or failed.
+// @Description Call this once the CNAME exists. The server checks it resolves to this VM's name under the fleet domain (for an apex, which cannot hold a CNAME, that every address it resolves to is one of that name's, as CNAME flattening or ALIAS produces) and then has the host obtain a certificate over HTTP-01. Both happen in the background: poll GET /vms/{id}/domain until the status is active or failed.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth

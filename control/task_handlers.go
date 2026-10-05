@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
+	"net/netip"
+	"slices"
 	"strings"
 	"time"
 
@@ -259,8 +262,15 @@ func noteCustomDomain(ctx context.Context, r *taskRunner, id pgtype.UUID, status
 func verifyCNAME(ctx context.Context, q *db.Queries, domain, target string) error {
 	lookupCtx, cancel := context.WithTimeout(ctx, resolveTimeout)
 	defer cancel()
+	resolver := configuredResolver(lookupCtx, q)
 
-	cname, err := configuredResolver(lookupCtx, q).LookupCNAME(lookupCtx, domain)
+	// An apex cannot hold a CNAME, so providers flatten it into the target's
+	// addresses (CNAME flattening, ALIAS, ANAME). Matching those is all there is.
+	if host, _ := splitCustomDomain(domain); host == "@" {
+		return verifyFlattened(lookupCtx, resolver, domain, target)
+	}
+
+	cname, err := resolver.LookupCNAME(lookupCtx, domain)
 	if err != nil {
 		return fmt.Errorf("%s does not resolve yet", domain)
 	}
@@ -270,6 +280,31 @@ func verifyCNAME(ctx context.Context, q *db.Queries, domain, target string) erro
 	}
 	if got != strings.ToLower(target) {
 		return fmt.Errorf("%s is a CNAME for %s, not %s", domain, got, target)
+	}
+	return nil
+}
+
+func verifyFlattened(ctx context.Context, resolver *net.Resolver, domain, target string) error {
+	want, err := resolver.LookupNetIP(ctx, "ip", target)
+	if err != nil || len(want) == 0 {
+		return fmt.Errorf("%s does not resolve, so there is nothing to compare %s with", target, domain)
+	}
+	got, err := resolver.LookupNetIP(ctx, "ip", domain)
+	if err != nil || len(got) == 0 {
+		return fmt.Errorf("%s does not resolve yet", domain)
+	}
+	return matchFlattened(domain, target, got, want)
+}
+
+// matchFlattened wants every address of domain to be one of target's: a
+// stray A or AAAA record would send some visitors, and the ACME check, elsewhere.
+func matchFlattened(domain, target string, got, want []netip.Addr) error {
+	for _, a := range got {
+		if !slices.ContainsFunc(want, func(w netip.Addr) bool { return w.Unmap() == a.Unmap() }) {
+			return fmt.Errorf("%s resolves to %s, which is not an address of %s; "+
+				"flatten a CNAME (or ALIAS) at the root onto %s, and turn off any CDN proxying",
+				domain, a.Unmap(), target, target)
+		}
 	}
 	return nil
 }

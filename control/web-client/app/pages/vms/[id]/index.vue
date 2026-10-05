@@ -1906,8 +1906,9 @@ async function removeDomain(d: CustomDomain) {
                     </dd>
                     <dd v-if="d.cname_host === '@'" class="mt-1 text-xs text-muted-foreground">
                       <span class="font-mono">@</span> is the root of
-                      <span class="font-mono">{{ d.zone }}</span>. Many providers don't allow a CNAME
-                      there; use a subdomain like <span class="font-mono">www</span> if yours refuses.
+                      <span class="font-mono">{{ d.zone }}</span>. Most providers flatten a CNAME there
+                      (or offer ALIAS/ANAME), which works; turn off any CDN proxying. If yours offers
+                      neither, use a subdomain like <span class="font-mono">www</span>.
                     </dd>
                   </template>
                   <dd v-else class="mt-1 font-mono text-sm break-all">{{ d.cname_name }}</dd>
