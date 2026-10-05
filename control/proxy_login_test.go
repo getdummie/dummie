@@ -121,6 +121,26 @@ func TestParseRedirectTarget(t *testing.T) {
 	}
 }
 
+func TestSplitVMHost(t *testing.T) {
+	cases := []struct {
+		host, name, tld string
+		ok              bool
+	}{
+		{"vm1.example.com", "vm1", "example.com", true},
+		{"vm1--9000.example.com", "vm1", "example.com", true},
+		{"my-vm--9000.example.com", "my-vm", "example.com", true},
+		{"--9000.example.com", "", "example.com", false},
+		{"vm1", "vm1", "", false},
+	}
+	for _, c := range cases {
+		name, tld, ok := splitVMHost(c.host)
+		if name != c.name || tld != c.tld || ok != c.ok {
+			t.Errorf("splitVMHost(%q) = (%q, %q, %v), want (%q, %q, %v)",
+				c.host, name, tld, ok, c.name, c.tld, c.ok)
+		}
+	}
+}
+
 func TestSafeNextPath(t *testing.T) {
 	cases := map[string]string{
 		"/dashboard":             "/dashboard",

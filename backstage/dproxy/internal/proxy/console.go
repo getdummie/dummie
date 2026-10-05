@@ -90,7 +90,7 @@ func labelledVMHost(router *Router, label, host string) (string, bool) {
 		return "", false
 	}
 	vmHost := strings.Join(append([]string{labels[0]}, labels[2:]...), ".")
-	if _, ok := router.HostEntry(vmHost); !ok {
+	if _, ok := router.PublishedEntry(vmHost); !ok {
 		return "", false
 	}
 	return vmHost, true

@@ -72,6 +72,7 @@ http:                       # plaintext HTTP (dproxy sniffs + hands off copy)
       unauthenticated_ports: [8001]   # ports reachable without auth
       default_port: 8001
       remote_user: appuser            # console lands here; empty => console.remote_user
+      port_hosts: true                # one--9000.vm.local reaches port 9000; never for console/desktop
     two.vm.local:
       host: 127.0.0.1
       unauthenticated_ports: []       # empty => every port needs auth

@@ -186,10 +186,18 @@ func (h *ProxyLoginHandler) hostIsOurs(ctx context.Context, host string) (bool, 
 	return h.q.CustomDomainIsServed(ctx, host)
 }
 
+// splitVMHost reads name.tld, and name--<port>.tld as the same vm: a vm name
+// never contains "--", so whatever follows it is the port dproxy routes to.
+func splitVMHost(host string) (name, tld string, ok bool) {
+	label, tld, ok := strings.Cut(host, ".")
+	name, _, _ = strings.Cut(label, "--")
+	return name, tld, ok && name != "" && tld != ""
+}
+
 func (h *ProxyLoginHandler) mayReachHost(ctx context.Context, u db.User, host string) (bool, error) {
 	isAdmin := u.UserType == "admin"
 
-	if name, tld, ok := strings.Cut(host, "."); ok && name != "" && tld != "" {
+	if name, tld, ok := splitVMHost(host); ok {
 		_, err := h.q.GetVMForOwnerByHostname(ctx, db.GetVMForOwnerByHostnameParams{
 			Name:      name,
 			DomainTLD: tld,

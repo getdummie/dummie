@@ -38,6 +38,7 @@ type parsedProxyConfig struct {
 			UnauthPorts []int  `yaml:"unauthenticated_ports"`
 			DefaultPort int    `yaml:"default_port"`
 			RemoteUser  string `yaml:"remote_user"`
+			PortHosts   bool   `yaml:"port_hosts"`
 		} `yaml:"hosts"`
 		Default string `yaml:"default"`
 	} `yaml:"http"`
@@ -499,6 +500,25 @@ func TestGenerateProxyConfigRoutesACustomDomainToItsVM(t *testing.T) {
 	if got.HTTPS.Listen != proxyHTTPSListen {
 		t.Errorf("https.listen = %q, want %q: a custom domain has a certificate to serve",
 			got.HTTPS.Listen, proxyHTTPSListen)
+	}
+}
+
+func TestGenerateProxyConfigPublishesPortHostsForFleetNamesOnly(t *testing.T) {
+	httpRows := []db.ListProxyHTTPRoutesByClientRow{
+		{VMName: "amazing-jepsen", VMIP: "10.64.0.2", HostVMID: "abc123",
+			DomainTLD: "example.com", DefaultPort: 8000},
+	}
+	custom := []db.ListCustomDomainRoutesByClientRow{
+		{Domain: "codingcoffee.dev", VMName: "amazing-jepsen", VMIP: "10.64.0.2", DefaultPort: 8000},
+	}
+
+	got := parseProxyConfig(t, generateProxyConfig(testProxyAuth, proxyHost{}, nil, httpRows, custom, nil))
+
+	if !got.HTTP.Hosts["amazing-jepsen.example.com"].PortHosts {
+		t.Error("the fleet name does not publish name--<port>")
+	}
+	if got.HTTP.Hosts["codingcoffee.dev"].PortHosts {
+		t.Error("a custom domain publishes name--<port>, which it should not")
 	}
 }
 

@@ -93,6 +93,9 @@ type HTTPHost struct {
 	// console block because that block is one setting for the whole host, and
 	// this varies per VM. Empty falls back to the host-wide default.
 	RemoteUser string `yaml:"remote_user"`
+
+	// PortHosts also publishes name--<port>.rest, reaching any port on Host.
+	PortHosts bool `yaml:"port_hosts"`
 }
 
 func (h HTTPHost) Target() string {

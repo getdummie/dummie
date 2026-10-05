@@ -203,6 +203,8 @@ type proxyRoute struct {
 	// console block itself is one setting for the whole host, so the account to
 	// land in has to be recorded per VM here.
 	remoteUser string
+	// portHosts publishes name--<port>.tld; custom domains do not get it.
+	portHosts bool
 }
 
 func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByClientRow, custom []db.ListCustomDomainRoutesByClientRow) {
@@ -219,7 +221,7 @@ func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByClientRow
 		}
 		usable = append(usable, proxyRoute{
 			host: host, ip: r.VMIP, defaultPort: r.DefaultPort, publicPorts: r.PublicPorts,
-			remoteUser: guestLoginName(r.SessionUser),
+			remoteUser: guestLoginName(r.SessionUser), portHosts: true,
 		})
 	}
 	for _, r := range custom {
@@ -250,6 +252,9 @@ func writeProxyHTTP(b *strings.Builder, rows []db.ListProxyHTTPRoutesByClientRow
 			}
 			fmt.Fprintf(b, "      default_port: %d\n", u.defaultPort)
 			fmt.Fprintf(b, "      remote_user: %s\n", yamlString(u.remoteUser))
+			if u.portHosts {
+				b.WriteString("      port_hosts: true\n")
+			}
 		}
 	}
 
