@@ -24,16 +24,18 @@ func (l *LLM) Meter(resp *http.Response, done func(integration.Usage)) {
 		return
 	}
 	ct, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	resp.Body = &meterBody{rc: resp.Body, sse: ct == "text/event-stream", done: done}
+	resp.Body = &meterBody{rc: resp.Body, sse: ct == "text/event-stream", detectSSE: ct == "", done: done}
 }
 
 type meterBody struct {
-	rc   io.ReadCloser
-	sse  bool
-	buf  []byte
-	u    integration.Usage
-	done func(integration.Usage)
-	once sync.Once
+	rc  io.ReadCloser
+	sse bool
+	// The ChatGPT Responses endpoint can stream events without Content-Type.
+	detectSSE bool
+	buf       []byte
+	u         integration.Usage
+	done      func(integration.Usage)
+	once      sync.Once
 }
 
 func (m *meterBody) Read(p []byte) (int, error) {
@@ -60,7 +62,24 @@ func (m *meterBody) feed(p []byte) {
 		if len(m.buf)+len(p) <= maxMetered {
 			m.buf = append(m.buf, p...)
 		}
-		return
+		if !m.detectSSE {
+			return
+		}
+		start := bytes.TrimLeft(m.buf, " \t\r\n")
+		dataPrefix, eventPrefix := []byte("data:"), []byte("event:")
+		if bytes.HasPrefix(dataPrefix, start) || bytes.HasPrefix(eventPrefix, start) {
+			return // The first read may end in the middle of the prefix.
+		}
+		m.detectSSE = false
+		if !bytes.HasPrefix(start, dataPrefix) && !bytes.HasPrefix(start, eventPrefix) {
+			return // Keep buffering an unlabelled JSON response.
+		}
+		m.sse = true
+		p = nil // Process the bytes already buffered below.
+		if len(m.buf) > maxSSELine {
+			m.buf = nil
+			return
+		}
 	}
 	m.buf = append(m.buf, p...)
 	for {

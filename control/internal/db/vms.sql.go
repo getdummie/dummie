@@ -412,6 +412,41 @@ func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype
 	return items, nil
 }
 
+const listVMNamesByIDs = `-- name: ListVMNamesByIDs :many
+SELECT id, name FROM vms
+WHERE id = ANY($1::uuid[]) AND created_by = $2
+`
+
+type ListVMNamesByIDsParams struct {
+	VmIds   []pgtype.UUID
+	OwnerID pgtype.UUID
+}
+
+type ListVMNamesByIDsRow struct {
+	ID   pgtype.UUID
+	Name string
+}
+
+func (q *Queries) ListVMNamesByIDs(ctx context.Context, arg ListVMNamesByIDsParams) ([]ListVMNamesByIDsRow, error) {
+	rows, err := q.db.Query(ctx, listVMNamesByIDs, arg.VmIds, arg.OwnerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListVMNamesByIDsRow
+	for rows.Next() {
+		var i ListVMNamesByIDsRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVMs = `-- name: ListVMs :many
 SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id FROM vms
 ORDER BY created_at DESC
