@@ -26,7 +26,10 @@ const (
 	customDomainFailed     = "failed"
 )
 
-const customDomainMaxLen = 253
+const (
+	customDomainMaxLen = 253
+	customDomainsPerVM = 5
+)
 
 type customDomainDTO struct {
 	Domain string `json:"domain"`
@@ -94,38 +97,49 @@ func (h *UserHandler) customDomainTarget(ctx context.Context, vm db.Vm) string {
 	return vm.Name + "." + tld
 }
 
-// @Summary     Read this VM's custom domain
-// @Description The domain a VM answers to besides its own name under the fleet domain, and how far along its certificate is. 404 means none has been requested.
+type customDomainsDTO struct {
+	Domains []customDomainDTO `json:"domains"`
+	Limit   int               `json:"limit"`
+}
+
+// @Summary     List this VM's custom domains
+// @Description The domains a VM answers to besides its own name under the fleet domain, and how far along each certificate is.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
 // @Param       id path string true "vm id" format(uuid)
-// @Success     200 {object} customDomainDTO
+// @Success     200 {object} customDomainsDTO
 // @Failure     401 {object} apiError
 // @Failure     404 {object} apiError
 // @Router      /vms/{id}/domain [get]
-func (h *UserHandler) GetCustomDomain(c *echo.Context) error {
+func (h *UserHandler) ListCustomDomains(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {
 		return err
 	}
 	ctx := c.Request().Context()
-	row, err := h.q.GetCustomDomainByVM(ctx, vm.ID)
+	rows, err := h.q.ListCustomDomainsByVM(ctx, vm.ID)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "this vm has no custom domain")
-		}
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the custom domain")
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the custom domains")
 	}
-	return c.JSON(http.StatusOK, h.customDomainDTO(ctx, vm, row))
+	out := customDomainsDTO{Domains: make([]customDomainDTO, 0, len(rows)), Limit: customDomainsPerVM}
+	for _, row := range rows {
+		out.Domains = append(out.Domains, h.customDomainDTO(ctx, vm, row))
+	}
+	return c.JSON(http.StatusOK, out)
+}
+
+func (h *UserHandler) vmCustomDomain(ctx context.Context, vm db.Vm, raw string) (db.VmCustomDomain, error) {
+	domain := strings.TrimSuffix(strings.ToLower(raw), ".")
+	return h.q.GetCustomDomainForVM(ctx, db.GetCustomDomainForVMParams{VMID: vm.ID, Domain: domain})
 }
 
 type customDomainReq struct {
 	Domain string `json:"domain"`
 }
 
-// @Summary     Request a custom domain for this VM
-// @Description Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds one custom domain, so this replaces any earlier one. If you already obtained a certificate for this name and it has not expired, it is reused: the domain comes back active at once and pointing the CNAME at the new VM is all that is left to do.
+// @Summary     Add a custom domain to this VM
+// @Description Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds up to five custom domains. If you already obtained a certificate for this name and it has not expired, it is reused: the domain comes back active at once and pointing the CNAME at the new VM is all that is left to do.
 // @Tags        vms
 // @Accept      json
 // @Produce     json
@@ -136,9 +150,9 @@ type customDomainReq struct {
 // @Failure     400 {object} apiError
 // @Failure     401 {object} apiError
 // @Failure     404 {object} apiError
-// @Failure     409 {object} apiError "the host has no domain, or the name is already claimed by another vm"
+// @Failure     409 {object} apiError "the host has no domain, the vm is at its limit, or the name is already claimed by another vm"
 // @Router      /vms/{id}/domain [post]
-func (h *UserHandler) SetCustomDomain(c *echo.Context) error {
+func (h *UserHandler) AddCustomDomain(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {
 		return err
@@ -158,15 +172,19 @@ func (h *UserHandler) SetCustomDomain(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	if existing, err := h.q.GetCustomDomainByVM(ctx, vm.ID); err == nil {
-		if existing.Domain == domain {
-			return c.JSON(http.StatusCreated, h.customDomainDTO(ctx, vm, existing))
-		}
-		if err := h.dropCustomDomain(ctx, existing, vm.ClientID); err != nil {
-			return echo.NewHTTPError(http.StatusInternalServerError, "could not replace the previous custom domain")
-		}
+	if existing, err := h.vmCustomDomain(ctx, vm, domain); err == nil {
+		return c.JSON(http.StatusCreated, h.customDomainDTO(ctx, vm, existing))
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the custom domain")
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the custom domains")
+	}
+
+	count, err := h.q.CountCustomDomainsByVM(ctx, vm.ID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the custom domains")
+	}
+	if count >= customDomainsPerVM {
+		return echo.NewHTTPError(http.StatusConflict,
+			fmt.Sprintf("a vm holds at most %d custom domains; remove one first", customDomainsPerVM))
 	}
 
 	row, err := h.q.CreateCustomDomain(ctx, db.CreateCustomDomainParams{VMID: vm.ID, Domain: domain})
@@ -189,22 +207,23 @@ func (h *UserHandler) SetCustomDomain(c *echo.Context) error {
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id path string true "vm id" format(uuid)
+// @Param       id     path string true "vm id" format(uuid)
+// @Param       domain path string true "custom domain"
 // @Success     202 {object} customDomainDTO
 // @Failure     401 {object} apiError
 // @Failure     404 {object} apiError
 // @Failure     409 {object} apiError "a check is already running"
-// @Router      /vms/{id}/domain/verify [post]
+// @Router      /vms/{id}/domain/{domain}/verify [post]
 func (h *UserHandler) VerifyCustomDomain(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {
 		return err
 	}
 	ctx := c.Request().Context()
-	row, err := h.q.GetCustomDomainByVM(ctx, vm.ID)
+	row, err := h.vmCustomDomain(ctx, vm, c.Param("domain"))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return echo.NewHTTPError(http.StatusNotFound, "this vm has no custom domain")
+			return echo.NewHTTPError(http.StatusNotFound, "this vm has no such custom domain")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the custom domain")
 	}
@@ -224,23 +243,24 @@ func (h *UserHandler) VerifyCustomDomain(c *echo.Context) error {
 	return c.JSON(http.StatusAccepted, h.customDomainDTO(ctx, vm, updated))
 }
 
-// @Summary     Drop this VM's custom domain
+// @Summary     Drop a custom domain from this VM
 // @Description Stops serving the name, forgets its certificate and cancels any order in flight. The CNAME at your registrar is yours to remove.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
-// @Param       id path string true "vm id" format(uuid)
+// @Param       id     path string true "vm id" format(uuid)
+// @Param       domain path string true "custom domain"
 // @Success     204 "removed"
 // @Failure     401 {object} apiError
 // @Failure     404 {object} apiError
-// @Router      /vms/{id}/domain [delete]
+// @Router      /vms/{id}/domain/{domain} [delete]
 func (h *UserHandler) DeleteCustomDomain(c *echo.Context) error {
 	vm, err := h.ownedVM(c)
 	if err != nil {
 		return err
 	}
 	ctx := c.Request().Context()
-	row, err := h.q.GetCustomDomainByVM(ctx, vm.ID)
+	row, err := h.vmCustomDomain(ctx, vm, c.Param("domain"))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return c.NoContent(http.StatusNoContent)

@@ -836,9 +836,13 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 	// The binding goes with the VM so the host stops answering for the name.
 	// The certificate stays in the vault: rebuild a VM and claim the name again
 	// and it comes straight back.
-	if cd, err := h.q.GetCustomDomainByVM(ctx, row.ID); err == nil {
+	domains, err := h.q.ListCustomDomainsByVM(ctx, row.ID)
+	if err != nil {
+		log.Printf("could not list the custom domains of vm %s: %v", row.Name, err)
+	}
+	for _, cd := range domains {
 		if err := h.dropCustomDomain(ctx, cd, row.ClientID); err != nil {
-			log.Printf("could not drop the custom domain of vm %s: %v", row.Name, err)
+			log.Printf("could not drop the custom domain %s of vm %s: %v", cd.Domain, row.Name, err)
 		}
 	}
 

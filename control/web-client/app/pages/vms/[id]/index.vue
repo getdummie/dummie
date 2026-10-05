@@ -1066,28 +1066,39 @@ interface CustomDomain {
   cert_reused?: boolean
 }
 
-const domain = ref<CustomDomain | null>(null)
-const domainReused = ref(false)
+const domains = ref<CustomDomain[]>([])
+const domainLimit = ref(5)
+const domainReused = ref<string[]>([])
 const domainInput = ref('')
-const domainBusy = ref(false)
+const domainBusy = ref<string | null>(null)
 const domainError = ref<string | null>(null)
 let domainPoll: ReturnType<typeof setInterval> | null = null
-const domainCopied = ref<'' | 'name' | 'value'>('')
+const domainCopied = ref<{ domain: string, field: 'name' | 'value' } | null>(null)
 
-async function copyDomainRecord(field: 'name' | 'value', value: string) {
+async function copyDomainRecord(d: CustomDomain, field: 'name' | 'value', value: string) {
   try {
     await navigator.clipboard.writeText(value)
-    domainCopied.value = field
-    setTimeout(() => (domainCopied.value = ''), 2000)
+    domainCopied.value = { domain: d.domain, field }
+    setTimeout(() => (domainCopied.value = null), 2000)
   }
   catch {
     domainError.value = 'Could not copy to the clipboard'
   }
 }
 
-const domainSettling = computed(
-  () => domain.value?.status === 'verifying' || domain.value?.status === 'issuing',
-)
+function isCopied(d: CustomDomain, field: 'name' | 'value') {
+  return domainCopied.value?.domain === d.domain && domainCopied.value.field === field
+}
+
+function isSettling(d: CustomDomain) {
+  return d.status === 'verifying' || d.status === 'issuing'
+}
+
+function replaceDomain(d: CustomDomain) {
+  const i = domains.value.findIndex(x => x.domain === d.domain)
+  if (i === -1) domains.value.push(d)
+  else domains.value[i] = d
+}
 
 const domainStatusLabel: Record<CustomDomain['status'], string> = {
   pending_dns: 'Waiting for your CNAME',
@@ -1107,13 +1118,11 @@ const domainStatusVariant: Record<CustomDomain['status'], BadgeVariant> = {
 
 async function loadDomain() {
   const res = await authFetch(`/vms/${id.value}/domain`)
-  if (res.status === 404) {
-    domain.value = null
-    return
-  }
   if (!res.ok) return
-  domain.value = await res.json()
-  if (domainSettling.value) startDomainPoll()
+  const body: { domains: CustomDomain[], limit: number } = await res.json()
+  domains.value = body.domains
+  domainLimit.value = body.limit
+  if (domains.value.some(isSettling)) startDomainPoll()
   else stopDomainPoll()
 }
 
@@ -1133,7 +1142,7 @@ onBeforeUnmount(stopDomainPoll)
 async function saveDomain() {
   const wanted = domainInput.value.trim()
   if (!wanted) return
-  domainBusy.value = true
+  domainBusy.value = ''
   domainError.value = null
   try {
     const res = await authFetch(`/vms/${id.value}/domain`, {
@@ -1142,50 +1151,51 @@ async function saveDomain() {
       body: JSON.stringify({ domain: wanted }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    domain.value = await res.json()
-    domainReused.value = domain.value?.cert_reused === true
+    const added: CustomDomain = await res.json()
+    replaceDomain(added)
+    if (added.cert_reused) domainReused.value.push(added.domain)
     domainInput.value = ''
   }
   catch (e) {
     domainError.value = e instanceof Error ? e.message : 'Could not record that domain'
   }
   finally {
-    domainBusy.value = false
+    domainBusy.value = null
   }
 }
 
-async function verifyDomain() {
-  domainBusy.value = true
+async function verifyDomain(d: CustomDomain) {
+  domainBusy.value = d.domain
   domainError.value = null
   try {
-    const res = await authFetch(`/vms/${id.value}/domain/verify`, { method: 'POST' })
+    const res = await authFetch(`/vms/${id.value}/domain/${encodeURIComponent(d.domain)}/verify`, { method: 'POST' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    domain.value = await res.json()
+    replaceDomain(await res.json())
     startDomainPoll()
   }
   catch (e) {
     domainError.value = e instanceof Error ? e.message : 'Could not start the check'
   }
   finally {
-    domainBusy.value = false
+    domainBusy.value = null
   }
 }
 
-async function removeDomain() {
-  domainBusy.value = true
+async function removeDomain(d: CustomDomain) {
+  domainBusy.value = d.domain
   domainError.value = null
   try {
-    const res = await authFetch(`/vms/${id.value}/domain`, { method: 'DELETE' })
+    const res = await authFetch(`/vms/${id.value}/domain/${encodeURIComponent(d.domain)}`, { method: 'DELETE' })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    domain.value = null
-    domainReused.value = false
-    stopDomainPoll()
+    domains.value = domains.value.filter(x => x.domain !== d.domain)
+    domainReused.value = domainReused.value.filter(x => x !== d.domain)
+    if (!domains.value.some(isSettling)) stopDomainPoll()
   }
   catch (e) {
     domainError.value = e instanceof Error ? e.message : 'Could not remove the domain'
   }
   finally {
-    domainBusy.value = false
+    domainBusy.value = null
   }
 }
 </script>
@@ -1820,16 +1830,139 @@ async function removeDomain() {
               <span v-else class="font-mono text-foreground">{{ vm.name }}</span>.
             </p>
           </div>
-          <Badge v-if="domain" :variant="domainStatusVariant[domain.status]" class="font-mono text-xs">
-            {{ domainStatusLabel[domain.status] }}
-          </Badge>
+          <span v-if="domains.length" class="font-mono text-xs text-muted-foreground">
+            {{ domains.length }} / {{ domainLimit }}
+          </span>
         </div>
 
         <Alert v-if="domainError" variant="destructive" class="mt-3">
           <AlertDescription>{{ domainError }}</AlertDescription>
         </Alert>
 
-        <form v-if="!domain" class="mt-3 flex flex-wrap items-end gap-2" @submit.prevent="saveDomain">
+        <ul v-if="domains.length" class="mt-3 space-y-3">
+          <li v-for="d in domains" :key="d.domain" class="rounded-md border border-border p-3">
+            <div class="flex flex-wrap items-start justify-between gap-2">
+              <dl class="grid min-w-0 flex-1 gap-x-6 gap-y-3 sm:grid-cols-2">
+                <div class="min-w-0">
+                  <dt class="eyebrow text-muted-foreground">Domain</dt>
+                  <dd class="mt-1 font-mono text-sm font-semibold break-all">
+                    <a
+                      v-if="d.url"
+                      :href="d.url"
+                      target="_blank"
+                      rel="noopener"
+                      class="inline-flex items-center gap-1.5 underline-offset-4 hover:underline"
+                    >
+                      {{ d.domain }}
+                      <ExternalLink class="size-3.5" aria-hidden="true" />
+                    </a>
+                    <span v-else>{{ d.domain }}</span>
+                  </dd>
+                </div>
+                <div v-if="d.cert_not_after">
+                  <dt class="eyebrow text-muted-foreground">Certificate valid until</dt>
+                  <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(d.cert_not_after) }}</dd>
+                </div>
+              </dl>
+              <Badge :variant="domainStatusVariant[d.status]" class="font-mono text-xs">
+                {{ domainStatusLabel[d.status] }}
+              </Badge>
+            </div>
+
+            <div class="mt-3 rounded-md border border-border bg-muted/40 p-3">
+              <p v-if="domainReused.includes(d.domain)" class="text-xs text-muted-foreground">
+                You already had a certificate for this name and it has not expired, so it was reused —
+                nothing has to be issued. Point the CNAME at the target below and the name is live.
+              </p>
+              <p v-else-if="d.status !== 'active'" class="text-xs text-muted-foreground">
+                Add this record
+                <template v-if="d.zone">
+                  to <span class="font-mono font-semibold text-foreground">{{ d.zone }}</span>
+                </template>
+                at your DNS provider, then confirm below.
+              </p>
+              <p v-else class="text-xs text-muted-foreground">
+                This name is live. Its CNAME has to keep pointing here, or it stops resolving to this VM.
+              </p>
+              <dl class="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-3">
+                <div>
+                  <dt class="eyebrow text-muted-foreground">Type</dt>
+                  <dd class="mt-1 font-mono text-sm">CNAME</dd>
+                </div>
+                <div class="min-w-0">
+                  <dt class="eyebrow text-muted-foreground">Name</dt>
+                  <template v-if="d.zone">
+                    <dd class="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm">
+                      <span class="break-all">{{ d.cname_host }}</span>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        class="shrink-0"
+                        aria-label="Copy the name to the clipboard"
+                        @click="copyDomainRecord(d, 'name', d.cname_host)"
+                      >
+                        <component :is="isCopied(d, 'name') ? Check : Copy" aria-hidden="true" />
+                      </Button>
+                    </dd>
+                    <dd v-if="d.cname_host === '@'" class="mt-1 text-xs text-muted-foreground">
+                      <span class="font-mono">@</span> is the root of
+                      <span class="font-mono">{{ d.zone }}</span>. Many providers don't allow a CNAME
+                      there; use a subdomain like <span class="font-mono">www</span> if yours refuses.
+                    </dd>
+                  </template>
+                  <dd v-else class="mt-1 font-mono text-sm break-all">{{ d.cname_name }}</dd>
+                </div>
+                <div class="min-w-0">
+                  <dt class="eyebrow text-muted-foreground">Value</dt>
+                  <dd class="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm">
+                    <span class="break-all">{{ d.cname_target || '—' }}</span>
+                    <Button
+                      v-if="d.cname_target"
+                      variant="ghost"
+                      size="icon-xs"
+                      class="shrink-0"
+                      aria-label="Copy the value to the clipboard"
+                      @click="copyDomainRecord(d, 'value', d.cname_target)"
+                    >
+                      <component :is="isCopied(d, 'value') ? Check : Copy" aria-hidden="true" />
+                    </Button>
+                  </dd>
+                </div>
+              </dl>
+            </div>
+
+            <p v-if="d.last_error" class="mt-3 text-xs text-destructive">{{ d.last_error }}</p>
+            <p v-else-if="isSettling(d)" class="mt-3 text-xs text-muted-foreground">
+              Processing. This page keeps checking; a certificate usually lands within a minute of the
+              CNAME being visible.
+            </p>
+
+            <div class="mt-3 flex flex-wrap items-center gap-2">
+              <Button
+                v-if="d.status !== 'active'"
+                size="sm"
+                :disabled="domainBusy !== null || isSettling(d)"
+                @click="verifyDomain(d)"
+              >
+                <RefreshCw class="size-4" :class="{ 'animate-spin': isSettling(d) }" aria-hidden="true" />
+                {{ isSettling(d) ? 'Checking…' : 'I have added the CNAME' }}
+              </Button>
+              <Button variant="outline" size="sm" :disabled="domainBusy !== null" @click="removeDomain(d)">
+                <Trash2 class="size-4" aria-hidden="true" />
+                Remove
+              </Button>
+            </div>
+          </li>
+        </ul>
+        <span role="status" aria-live="polite" class="sr-only">
+          {{ domainCopied ? `Record ${domainCopied.field} copied to clipboard` : '' }}
+        </span>
+
+        <form
+          v-if="domains.length < domainLimit"
+          class="mt-3 flex flex-wrap items-end gap-2"
+          @submit.prevent="saveDomain"
+        >
           <div class="min-w-0 flex-1">
             <Input
               id="custom-domain"
@@ -1841,122 +1974,13 @@ async function removeDomain() {
               spellcheck="false"
             />
           </div>
-          <Button type="submit" size="sm" :disabled="domainBusy || !domainInput.trim()">
-            {{ domainBusy ? 'Saving…' : 'Add' }}
+          <Button type="submit" size="sm" :disabled="domainBusy !== null || !domainInput.trim()">
+            {{ domainBusy === '' ? 'Saving…' : 'Add' }}
           </Button>
         </form>
-
-        <template v-else>
-          <dl class="mt-3 grid gap-x-6 gap-y-3 sm:grid-cols-2">
-            <div>
-              <dt class="eyebrow text-muted-foreground">Domain</dt>
-              <dd class="mt-1 font-mono text-sm font-semibold break-all">
-                <a
-                  v-if="domain.url"
-                  :href="domain.url"
-                  target="_blank"
-                  rel="noopener"
-                  class="inline-flex items-center gap-1.5 underline-offset-4 hover:underline"
-                >
-                  {{ domain.domain }}
-                  <ExternalLink class="size-3.5" aria-hidden="true" />
-                </a>
-                <span v-else>{{ domain.domain }}</span>
-              </dd>
-            </div>
-            <div v-if="domain.cert_not_after">
-              <dt class="eyebrow text-muted-foreground">Certificate valid until</dt>
-              <dd class="mt-1 text-sm text-muted-foreground">{{ fmtDate(domain.cert_not_after) }}</dd>
-            </div>
-          </dl>
-
-          <div class="mt-3 rounded-md border border-border bg-muted/40 p-3">
-            <p v-if="domainReused" class="text-xs text-muted-foreground">
-              You already had a certificate for this name and it has not expired, so it was reused —
-              nothing has to be issued. Point the CNAME at the target below and the name is live.
-            </p>
-            <p v-else-if="domain.status !== 'active'" class="text-xs text-muted-foreground">
-              Add this record
-              <template v-if="domain.zone">
-                to <span class="font-mono font-semibold text-foreground">{{ domain.zone }}</span>
-              </template>
-              at your DNS provider, then confirm below.
-            </p>
-            <p v-else class="text-xs text-muted-foreground">
-              This name is live. Its CNAME has to keep pointing here, or it stops resolving to this VM.
-            </p>
-            <dl class="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-3">
-              <div>
-                <dt class="eyebrow text-muted-foreground">Type</dt>
-                <dd class="mt-1 font-mono text-sm">CNAME</dd>
-              </div>
-              <div class="min-w-0">
-                <dt class="eyebrow text-muted-foreground">Name</dt>
-                <template v-if="domain.zone">
-                  <dd class="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm">
-                    <span class="break-all">{{ domain.cname_host }}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      class="shrink-0"
-                      aria-label="Copy the name to the clipboard"
-                      @click="copyDomainRecord('name', domain.cname_host)"
-                    >
-                      <component :is="domainCopied === 'name' ? Check : Copy" aria-hidden="true" />
-                    </Button>
-                  </dd>
-                  <dd v-if="domain.cname_host === '@'" class="mt-1 text-xs text-muted-foreground">
-                    <span class="font-mono">@</span> is the root of
-                    <span class="font-mono">{{ domain.zone }}</span>. Many providers don't allow a CNAME
-                    there; use a subdomain like <span class="font-mono">www</span> if yours refuses.
-                  </dd>
-                </template>
-                <dd v-else class="mt-1 font-mono text-sm break-all">{{ domain.cname_name }}</dd>
-              </div>
-              <div class="min-w-0">
-                <dt class="eyebrow text-muted-foreground">Value</dt>
-                <dd class="mt-1 flex min-w-0 items-center gap-1 font-mono text-sm">
-                  <span class="break-all">{{ domain.cname_target || '—' }}</span>
-                  <Button
-                    v-if="domain.cname_target"
-                    variant="ghost"
-                    size="icon-xs"
-                    class="shrink-0"
-                    aria-label="Copy the value to the clipboard"
-                    @click="copyDomainRecord('value', domain.cname_target)"
-                  >
-                    <component :is="domainCopied === 'value' ? Check : Copy" aria-hidden="true" />
-                  </Button>
-                </dd>
-              </div>
-            </dl>
-            <span role="status" aria-live="polite" class="sr-only">
-              {{ domainCopied ? `Record ${domainCopied} copied to clipboard` : '' }}
-            </span>
-          </div>
-
-          <p v-if="domain.last_error" class="mt-3 text-xs text-destructive">{{ domain.last_error }}</p>
-          <p v-else-if="domainSettling" class="mt-3 text-xs text-muted-foreground">
-            Processing. This page keeps checking; a certificate usually lands within a minute of the
-            CNAME being visible.
-          </p>
-
-          <div class="mt-3 flex flex-wrap items-center gap-2">
-            <Button
-              v-if="domain.status !== 'active'"
-              size="sm"
-              :disabled="domainBusy || domainSettling"
-              @click="verifyDomain"
-            >
-              <RefreshCw class="size-4" :class="{ 'animate-spin': domainSettling }" aria-hidden="true" />
-              {{ domainSettling ? 'Checking…' : 'I have added the CNAME' }}
-            </Button>
-            <Button variant="outline" size="sm" :disabled="domainBusy" @click="removeDomain">
-              <Trash2 class="size-4" aria-hidden="true" />
-              Remove
-            </Button>
-          </div>
-        </template>
+        <p v-else class="mt-3 text-xs text-muted-foreground">
+          This VM is at its limit of {{ domainLimit }} domains. Remove one to add another.
+        </p>
       </section>
 
       <section aria-labelledby="targets-heading" class="mt-4 rounded-lg border border-border">

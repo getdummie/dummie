@@ -11,6 +11,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countCustomDomainsByVM = `-- name: CountCustomDomainsByVM :one
+SELECT count(*) FROM vm_custom_domains
+WHERE vm_id = $1
+`
+
+func (q *Queries) CountCustomDomainsByVM(ctx context.Context, vmID pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countCustomDomainsByVM, vmID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createCustomDomain = `-- name: CreateCustomDomain :one
 INSERT INTO vm_custom_domains (vm_id, domain)
 VALUES ($1, $2)
@@ -119,32 +131,6 @@ func (q *Queries) GetCustomDomainByDomain(ctx context.Context, domain string) (V
 	return i, err
 }
 
-const getCustomDomainByVM = `-- name: GetCustomDomainByVM :one
-SELECT id, vm_id, domain, status, last_error, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_issued_at, ordered_at, created_at, updated_at FROM vm_custom_domains
-WHERE vm_id = $1
-`
-
-func (q *Queries) GetCustomDomainByVM(ctx context.Context, vmID pgtype.UUID) (VmCustomDomain, error) {
-	row := q.db.QueryRow(ctx, getCustomDomainByVM, vmID)
-	var i VmCustomDomain
-	err := row.Scan(
-		&i.ID,
-		&i.VMID,
-		&i.Domain,
-		&i.Status,
-		&i.LastError,
-		&i.CertObjectKey,
-		&i.KeyObjectKey,
-		&i.CertFingerprint,
-		&i.CertNotAfter,
-		&i.CertIssuedAt,
-		&i.OrderedAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getCustomDomainClient = `-- name: GetCustomDomainClient :one
 SELECT v.client_id
 FROM vm_custom_domains cd
@@ -219,6 +205,37 @@ func (q *Queries) GetCustomDomainForIssue(ctx context.Context, id pgtype.UUID) (
 		&i.DomainTLD,
 		&i.AcmeEmail,
 		&i.AcmeDirectory,
+	)
+	return i, err
+}
+
+const getCustomDomainForVM = `-- name: GetCustomDomainForVM :one
+SELECT id, vm_id, domain, status, last_error, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_issued_at, ordered_at, created_at, updated_at FROM vm_custom_domains
+WHERE vm_id = $1 AND domain = $2
+`
+
+type GetCustomDomainForVMParams struct {
+	VMID   pgtype.UUID
+	Domain string
+}
+
+func (q *Queries) GetCustomDomainForVM(ctx context.Context, arg GetCustomDomainForVMParams) (VmCustomDomain, error) {
+	row := q.db.QueryRow(ctx, getCustomDomainForVM, arg.VMID, arg.Domain)
+	var i VmCustomDomain
+	err := row.Scan(
+		&i.ID,
+		&i.VMID,
+		&i.Domain,
+		&i.Status,
+		&i.LastError,
+		&i.CertObjectKey,
+		&i.KeyObjectKey,
+		&i.CertFingerprint,
+		&i.CertNotAfter,
+		&i.CertIssuedAt,
+		&i.OrderedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -409,6 +426,46 @@ func (q *Queries) ListCustomDomains(ctx context.Context) ([]ListCustomDomainsRow
 			&i.OwnerUsername,
 			&i.OwnerEmail,
 			&i.ClientHostname,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listCustomDomainsByVM = `-- name: ListCustomDomainsByVM :many
+SELECT id, vm_id, domain, status, last_error, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_issued_at, ordered_at, created_at, updated_at FROM vm_custom_domains
+WHERE vm_id = $1
+ORDER BY created_at
+`
+
+func (q *Queries) ListCustomDomainsByVM(ctx context.Context, vmID pgtype.UUID) ([]VmCustomDomain, error) {
+	rows, err := q.db.Query(ctx, listCustomDomainsByVM, vmID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []VmCustomDomain
+	for rows.Next() {
+		var i VmCustomDomain
+		if err := rows.Scan(
+			&i.ID,
+			&i.VMID,
+			&i.Domain,
+			&i.Status,
+			&i.LastError,
+			&i.CertObjectKey,
+			&i.KeyObjectKey,
+			&i.CertFingerprint,
+			&i.CertNotAfter,
+			&i.CertIssuedAt,
+			&i.OrderedAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

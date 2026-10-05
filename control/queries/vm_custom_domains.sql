@@ -1,5 +1,14 @@
--- name: GetCustomDomainByVM :one
+-- name: ListCustomDomainsByVM :many
 SELECT * FROM vm_custom_domains
+WHERE vm_id = $1
+ORDER BY created_at;
+
+-- name: GetCustomDomainForVM :one
+SELECT * FROM vm_custom_domains
+WHERE vm_id = $1 AND domain = $2;
+
+-- name: CountCustomDomainsByVM :one
+SELECT count(*) FROM vm_custom_domains
 WHERE vm_id = $1;
 
 -- name: GetCustomDomain :one

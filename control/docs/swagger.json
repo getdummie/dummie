@@ -227,6 +227,21 @@
                 },
                 "type": "object"
             },
+            "main.customDomainsDTO": {
+                "properties": {
+                    "domains": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.customDomainDTO"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "limit": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
             "main.deniedAttemptDTO": {
                 "properties": {
                     "address": {
@@ -2964,57 +2979,8 @@
             }
         },
         "/vms/{id}/domain": {
-            "delete": {
-                "description": "Stops serving the name, forgets its certificate and cancels any order in flight. The CNAME at your registrar is yours to remove.",
-                "parameters": [
-                    {
-                        "description": "vm id",
-                        "in": "path",
-                        "name": "id",
-                        "required": true,
-                        "schema": {
-                            "format": "uuid",
-                            "type": "string"
-                        }
-                    }
-                ],
-                "responses": {
-                    "204": {
-                        "description": "removed"
-                    },
-                    "401": {
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/main.apiError"
-                                }
-                            }
-                        },
-                        "description": "Unauthorized"
-                    },
-                    "404": {
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/main.apiError"
-                                }
-                            }
-                        },
-                        "description": "Not Found"
-                    }
-                },
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "summary": "Drop this VM's custom domain",
-                "tags": [
-                    "vms"
-                ]
-            },
             "get": {
-                "description": "The domain a VM answers to besides its own name under the fleet domain, and how far along its certificate is. 404 means none has been requested.",
+                "description": "The domains a VM answers to besides its own name under the fleet domain, and how far along each certificate is.",
                 "parameters": [
                     {
                         "description": "vm id",
@@ -3032,7 +2998,7 @@
                         "content": {
                             "application/json": {
                                 "schema": {
-                                    "$ref": "#/components/schemas/main.customDomainDTO"
+                                    "$ref": "#/components/schemas/main.customDomainsDTO"
                                 }
                             }
                         },
@@ -3064,13 +3030,13 @@
                         "BearerAuth": []
                     }
                 ],
-                "summary": "Read this VM's custom domain",
+                "summary": "List this VM's custom domains",
                 "tags": [
                     "vms"
                 ]
             },
             "post": {
-                "description": "Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds one custom domain, so this replaces any earlier one. If you already obtained a certificate for this name and it has not expired, it is reused: the domain comes back active at once and pointing the CNAME at the new VM is all that is left to do.",
+                "description": "Records the name and answers with the CNAME to create at your registrar. Nothing is verified and no certificate is asked for until you confirm the record exists. A VM holds up to five custom domains. If you already obtained a certificate for this name and it has not expired, it is reused: the domain comes back active at once and pointing the CNAME at the new VM is all that is left to do.",
                 "parameters": [
                     {
                         "description": "vm id",
@@ -3152,7 +3118,7 @@
                                 }
                             }
                         },
-                        "description": "the host has no domain, or the name is already claimed by another vm"
+                        "description": "the host has no domain, the vm is at its limit, or the name is already claimed by another vm"
                     }
                 },
                 "security": [
@@ -3160,13 +3126,73 @@
                         "BearerAuth": []
                     }
                 ],
-                "summary": "Request a custom domain for this VM",
+                "summary": "Add a custom domain to this VM",
                 "tags": [
                     "vms"
                 ]
             }
         },
-        "/vms/{id}/domain/verify": {
+        "/vms/{id}/domain/{domain}": {
+            "delete": {
+                "description": "Stops serving the name, forgets its certificate and cancels any order in flight. The CNAME at your registrar is yours to remove.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "custom domain",
+                        "in": "path",
+                        "name": "domain",
+                        "required": true,
+                        "schema": {
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "removed"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Drop a custom domain from this VM",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/{id}/domain/{domain}/verify": {
             "post": {
                 "description": "Call this once the CNAME exists. The server checks it resolves to this VM's name under the fleet domain and then has the host obtain a certificate over HTTP-01. Both happen in the background: poll GET /vms/{id}/domain until the status is active or failed.",
                 "parameters": [
@@ -3177,6 +3203,15 @@
                         "required": true,
                         "schema": {
                             "format": "uuid",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "custom domain",
+                        "in": "path",
+                        "name": "domain",
+                        "required": true,
+                        "schema": {
                             "type": "string"
                         }
                     }
