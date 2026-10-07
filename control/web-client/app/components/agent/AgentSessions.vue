@@ -133,11 +133,11 @@ function ago(ms: number) {
                 />
               </span>
               <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span class="flex items-baseline gap-2" :class="renamable.includes(s.harness) && 'pr-6'">
+                <span class="flex items-baseline gap-2">
                   <span class="truncate text-sm">{{ label(s) }}</span>
                   <span class="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">{{ ago(s.updated) }}</span>
                 </span>
-                <span class="flex items-center gap-1.5 font-mono text-[11px] text-muted-foreground">
+                <span class="flex items-center gap-1.5 pr-6 font-mono text-[11px] text-muted-foreground">
                   <span class="shrink-0">{{ s.harness }}</span>
                   <span aria-hidden="true">·</span>
                   <Folder class="size-3 shrink-0" aria-hidden="true" />
@@ -149,7 +149,7 @@ function ago(ms: number) {
               v-if="editing !== s.key && renamable.includes(s.harness)"
               variant="ghost"
               size="icon"
-              class="absolute top-1.5 right-1.5 size-6 text-muted-foreground lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+              class="absolute right-1.5 bottom-1 size-6 text-muted-foreground lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
               :aria-label="`rename ${label(s)}`"
               @click="startRename(s)"
             >
