@@ -6,10 +6,10 @@ const { consoleUrl } = useRuntimeConfig().public
 
 const description = 'Your own computer in the cloud. Ready in seconds, sealed off from everything else, and yours for as long as you need.'
 
-useHead({ title: 'dummie — secure computers for everyone' })
+useHead({ title: 'dummie — a smarter way to work' })
 useSeoMeta({
   description,
-  ogTitle: 'dummie — secure computers for everyone',
+  ogTitle: 'dummie — a smarter way to work',
   ogDescription: description,
 })
 
@@ -45,7 +45,7 @@ const chapters = [
           <div class="hero-grid">
             <div>
               <p class="eyebrow rise">Network and hypervisor isolated</p>
-              <h1 id="hero-h" class="rise" style="animation-delay:.06s">Secure computers<span class="soft">for everyone</span></h1>
+              <h1 id="hero-h" class="rise" style="animation-delay:.06s"><span class="nowrap">A smarter way</span><span class="soft">to work</span></h1>
               <div class="ctas rise" style="animation-delay:.18s">
                 <div class="row">
                   <a class="btn btn-primary" :href="`${consoleUrl}/signin`">Boot a machine <span class="arr" aria-hidden="true">→</span></a>

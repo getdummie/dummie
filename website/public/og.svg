@@ -28,8 +28,8 @@
     </text>
   </g>
 
-  <text x="80" y="300" font-family="Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#0B1A1E">Secure computers</text>
-  <text x="80" y="386" font-family="Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#6B7674">for everyone</text>
+  <text x="80" y="300" font-family="Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#0B1A1E">A smarter way</text>
+  <text x="80" y="386" font-family="Archivo, 'Helvetica Neue', Helvetica, Arial, sans-serif" font-size="76" font-weight="600" letter-spacing="-2" fill="#6B7674">to work</text>
 
   <g transform="translate(80 470)">
     <rect width="440" height="1" fill="#DCE2E0"/>

@@ -14,10 +14,10 @@ useSeoMeta({
   ogImageWidth: 1200,
   ogImageHeight: 630,
   ogImageType: 'image/png',
-  ogImageAlt: 'dummie — secure computers for everyone',
+  ogImageAlt: 'dummie — a smarter way to work',
   twitterCard: 'summary_large_image',
   twitterImage: ogImage,
-  twitterImageAlt: 'dummie — secure computers for everyone',
+  twitterImageAlt: 'dummie — a smarter way to work',
 })
 
 useHead({

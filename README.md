@@ -5,7 +5,7 @@
 <h2 align="center">dummie</h2>
 
 <p align="center">
-  Secure computers for everyone.<br>
+  A smarter way to work.<br>
   VM booted in seconds, sealed off from everything else,<br>
   and yours for as long as you need it.
 </p>

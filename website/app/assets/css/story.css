@@ -84,6 +84,7 @@
 @media (min-width: 1000px) { .story .hero-grid { grid-template-columns: .9fr 1.1fr; } }
 .story h1 { margin: 20px 0 0; font-size: clamp(2.8rem, 6.4vw, 5.6rem); font-weight: 600; line-height: 1; letter-spacing: -.045em; text-wrap: balance; }
 .story h1 .soft { display: block; color: var(--muted); font-weight: 500; }
+.story h1 .nowrap { white-space: nowrap; }
 .story .ctas { margin-top: 36px; display: flex; flex-direction: column; gap: 16px; align-items: flex-start; }
 .story .ctas .row { display: flex; flex-wrap: wrap; gap: 12px; }
 .story .rise { animation: st-rise .7s cubic-bezier(.2,.7,.2,1) both; }
