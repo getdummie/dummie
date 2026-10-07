@@ -37,7 +37,7 @@ watch(() => route.fullPath, () => {
       <NuxtLink v-else to="/dashboard" class="flex min-w-0 items-center gap-2.5">
         <img src="/logo.svg" alt="" aria-hidden="true" class="size-6 shrink-0">
         <span class="truncate font-mono text-sm font-semibold tracking-tight">
-          dummie<span class="text-primary-text">/</span>
+          <span class="text-primary-text">dumm</span>ie<span class="text-primary-text">/</span>
         </span>
       </NuxtLink>
 
@@ -69,7 +69,7 @@ watch(() => route.fullPath, () => {
       <SheetHeader class="h-14 shrink-0 flex-row items-center gap-2.5 border-b border-border/80 px-4">
         <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
         <SheetTitle class="font-mono text-sm font-semibold tracking-tight">
-          dummie<span class="text-primary-text">/</span>
+          <span class="text-primary-text">dumm</span>ie<span class="text-primary-text">/</span>
         </SheetTitle>
         <SheetDescription class="sr-only">Site navigation</SheetDescription>
       </SheetHeader>

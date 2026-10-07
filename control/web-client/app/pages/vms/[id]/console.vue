@@ -120,7 +120,7 @@ onBeforeUnmount(() => {
 
       <NuxtLink to="/dashboard" class="flex shrink-0 items-center gap-2" aria-label="dummie dashboard">
         <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
-        <span class="hidden font-mono text-sm font-semibold tracking-tight sm:inline">dummie<span class="text-primary-text">/</span></span>
+        <span class="hidden font-mono text-sm font-semibold tracking-tight sm:inline"><span class="text-primary-text">dumm</span>ie<span class="text-primary-text">/</span></span>
       </NuxtLink>
 
       <div class="flex items-center justify-end gap-1">

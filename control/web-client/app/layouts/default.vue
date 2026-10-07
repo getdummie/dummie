@@ -52,7 +52,7 @@ const initials = computed(() => {
       <NuxtLink to="/dashboard" class="flex items-center gap-2.5">
         <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
         <span class="font-mono text-sm font-semibold tracking-tight">
-          dummie<span class="text-primary-text">/</span>
+          <span class="text-primary-text">dumm</span>ie<span class="text-primary-text">/</span>
         </span>
       </NuxtLink>
     </header>
@@ -62,7 +62,7 @@ const initials = computed(() => {
         <NuxtLink to="/" class="group flex items-center gap-2.5">
           <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
           <span class="font-mono text-sm font-semibold tracking-tight">
-            dummie<span class="text-primary-text">/</span>
+            <span class="text-primary-text">dumm</span>ie<span class="text-primary-text">/</span>
           </span>
         </NuxtLink>
 
