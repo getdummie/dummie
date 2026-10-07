@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -98,7 +99,9 @@ func (d *daemon) runWatch(w *watch) {
 		case <-t.C:
 		case <-w.poke:
 		}
-		snap := snapshot(w.cwd)
+		// The page matches snapshots by the cwd it asked for, ~ and all.
+		snap := snapshot(d.expandHome(w.cwd))
+		snap.Cwd = w.cwd
 		b, err := json.Marshal(snap)
 		if err != nil {
 			continue
@@ -130,9 +133,11 @@ func snapshot(cwd string) diffSnapshot {
 	s := diffSnapshot{T: "diff", Cwd: cwd, Tree: []string{}}
 	if _, err := exec.LookPath("git"); err != nil {
 		s.Error = "git is not installed in this vm"
+		s.Tree, s.Truncated = walkTree(cwd)
 		return s
 	}
 	if out, err := git(cwd, "rev-parse", "--is-inside-work-tree"); err != nil || strings.TrimSpace(string(out)) != "true" {
+		s.Tree, s.Truncated = walkTree(cwd)
 		return s
 	}
 	s.Repo = true
@@ -183,6 +188,33 @@ func snapshot(cwd string) diffSnapshot {
 }
 
 const emptyTree = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
+// walkTree lists files outside a repo, where there is no .gitignore to lean on,
+// so hidden directories and node_modules are skipped.
+func walkTree(cwd string) ([]string, bool) {
+	tree := []string{}
+	truncated := false
+	_ = filepath.WalkDir(cwd, func(path string, e fs.DirEntry, err error) error {
+		if err != nil || path == cwd {
+			return nil
+		}
+		if e.IsDir() {
+			if strings.HasPrefix(e.Name(), ".") || e.Name() == "node_modules" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if len(tree) >= maxTreePaths {
+			truncated = true
+			return fs.SkipAll
+		}
+		if rel, err := filepath.Rel(cwd, path); err == nil {
+			tree = append(tree, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	return tree, truncated
+}
 
 func splitZ(b []byte) []string {
 	var out []string

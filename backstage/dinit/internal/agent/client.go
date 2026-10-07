@@ -299,7 +299,7 @@ func (c *client) prompt(r request) {
 }
 
 func (c *client) gitInit(r request) {
-	out, err := exec.Command("git", "-C", r.Cwd, "init").CombinedOutput()
+	out, err := exec.Command("git", "-C", c.d.expandHome(r.Cwd), "init").CombinedOutput()
 	if err != nil {
 		c.fail(r, fmt.Errorf("git init: %s", strings.TrimSpace(string(out))))
 		return

@@ -206,7 +206,7 @@ onBeforeUnmount(() => {
     <header class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2" :class="inSheet && 'pr-12'">
       <Tabs v-model="tab">
         <TabsList class="h-7">
-          <TabsTrigger value="changes" class="h-6 font-mono text-xs">changes · {{ files.length }}</TabsTrigger>
+          <TabsTrigger value="changes" class="h-6 font-mono text-xs">diff · {{ files.length }}</TabsTrigger>
           <TabsTrigger value="files" class="h-6 font-mono text-xs">files</TabsTrigger>
         </TabsList>
       </Tabs>
@@ -221,19 +221,18 @@ onBeforeUnmount(() => {
     </header>
 
     <div v-if="!diff" class="p-4 font-mono text-xs text-muted-foreground">Reading the working tree…</div>
-    <div v-else-if="!diff.repo" class="flex flex-col items-start gap-3 p-4 font-mono text-xs text-muted-foreground">
-      <p>{{ diff.error || `${diff.cwd} is not a git repository, so there is nothing to diff against.` }}</p>
-      <Button v-if="!diff.error" variant="outline" size="sm" class="h-7 font-mono text-xs" @click="emit('gitInit')">
-        Initialize git here
-      </Button>
-    </div>
-
     <template v-else>
-      <p v-if="diff.error" class="border-b border-border px-3 py-2 font-mono text-xs text-destructive">{{ diff.error }}</p>
-      <p v-if="diff.truncated || files.length > maxRendered" class="border-b border-border px-3 py-2 font-mono text-xs text-muted-foreground">
-        Too many changes to show them all here.
+      <div v-if="!diff.repo && tab === 'changes'" class="flex flex-col items-start gap-3 p-4 font-mono text-xs text-muted-foreground">
+        <p>{{ diff.error || `${diff.cwd} is not a git repository, so there is nothing to diff against.` }}</p>
+        <Button v-if="!diff.error" variant="outline" size="sm" class="h-7 font-mono text-xs" @click="emit('gitInit')">
+          Initialize git here
+        </Button>
+      </div>
+      <p v-if="diff.repo && diff.error" class="border-b border-border px-3 py-2 font-mono text-xs text-destructive">{{ diff.error }}</p>
+      <p v-if="(diff.repo || tab === 'files') && (diff.truncated || files.length > maxRendered)" class="border-b border-border px-3 py-2 font-mono text-xs text-muted-foreground">
+        {{ tab === 'files' ? 'Too many files to list them all here.' : 'Too many changes to show them all here.' }}
       </p>
-      <p v-if="tab === 'changes' && !files.length" class="p-4 font-mono text-xs text-muted-foreground">No uncommitted changes.</p>
+      <p v-if="diff.repo && tab === 'changes' && !files.length" class="p-4 font-mono text-xs text-muted-foreground">No uncommitted changes.</p>
     </template>
 
     <div v-show="diff?.repo && tab === 'changes'" class="min-h-0 flex-1 overflow-y-auto">
@@ -281,7 +280,7 @@ onBeforeUnmount(() => {
         <div v-show="!folded.has(f.name) && editingDiff !== f.name" :ref="el => el ? bodies.set(f.name, el as HTMLElement) : bodies.delete(f.name)" class="text-xs" />
       </section>
     </div>
-    <div v-show="diff?.repo && tab === 'files'" ref="treeHost" class="agent-tree min-h-0 flex-1" />
+    <div v-show="diff && tab === 'files'" ref="treeHost" class="agent-tree min-h-0 flex-1" />
   </section>
 </template>
 
