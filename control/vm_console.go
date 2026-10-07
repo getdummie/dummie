@@ -15,6 +15,11 @@ import (
 
 const proxyConsoleAudPrefix = "console:"
 
+const proxyAgentAudPrefix = "agent:"
+
+// proxyAgentPath is where dproxy opens the agent on a console host.
+const proxyAgentPath = "agent"
+
 func (h *UserHandler) consoleHost(ctx context.Context, v db.Vm) string {
 	tld := h.vmDomainTLD(ctx, v)
 	if tld == "" {
@@ -55,6 +60,27 @@ type consoleTokenDTO struct {
 // @Failure     503 {object} apiError "the console is not configured on this installation"
 // @Router      /vms/{id}/console-token [post]
 func (h *UserHandler) ConsoleToken(c *echo.Context) error {
+	return h.sessionToken(c, proxyConsoleAudPrefix, "")
+}
+
+// @Summary     Mint an agent token
+// @Description Returns the websocket url for this VM's coding agent and a short-lived token that opens it. It rides on the console's host under /agent, with a token only the agent accepts.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Param       id path string true "vm id" format(uuid)
+// @Success     200 {object} consoleTokenDTO
+// @Failure     400 {object} apiError
+// @Failure     401 {object} apiError
+// @Failure     404 {object} apiError
+// @Failure     409 {object} apiError "the host this vm runs on has no domain, so it has no agent"
+// @Failure     503 {object} apiError "the console is not configured on this installation"
+// @Router      /vms/{id}/agent-token [post]
+func (h *UserHandler) AgentToken(c *echo.Context) error {
+	return h.sessionToken(c, proxyAgentAudPrefix, proxyAgentPath)
+}
+
+func (h *UserHandler) sessionToken(c *echo.Context, audPrefix, path string) error {
 	owner, err := callerID(c)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusUnauthorized, "not signed in")
@@ -86,12 +112,12 @@ func (h *UserHandler) ConsoleToken(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the caller")
 	}
 
-	token, err := mintProxyToken(h.proxy.secret, u.Email, proxyConsoleAudPrefix+host, time.Now())
+	token, err := mintProxyToken(h.proxy.secret, u.Email, audPrefix+host, time.Now())
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not mint token")
 	}
 	return c.JSON(http.StatusOK, consoleTokenDTO{
-		URL:       h.consoleURL(ctx, v),
+		URL:       h.consoleURL(ctx, v) + path,
 		Token:     token,
 		ExpiresIn: int(proxyTokenTTL.Seconds()),
 	})

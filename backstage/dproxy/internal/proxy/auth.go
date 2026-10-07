@@ -31,6 +31,8 @@ const consoleAudPrefix = "console:"
 
 const desktopAudPrefix = "desktop:"
 
+const agentAudPrefix = "agent:"
+
 type Authenticator struct {
 	cfg    AuthConfig
 	secret []byte
@@ -78,7 +80,7 @@ func (a *Authenticator) Mint(sub, host string) string {
 func (a *Authenticator) Verify(value, host string) (string, bool) {
 	// A labelled audience is never a bare host, so an http session token can
 	// never open a console or a desktop, in either direction.
-	for _, prefix := range []string{consoleAudPrefix, desktopAudPrefix} {
+	for _, prefix := range []string{consoleAudPrefix, desktopAudPrefix, agentAudPrefix} {
 		if strings.HasPrefix(host, prefix) {
 			return "", false
 		}

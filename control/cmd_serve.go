@@ -311,6 +311,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.PUT("/:id/user", userH.UpdateDefaultUser)
 	vms.PUT("/:id/size", userH.UpdateSize)
 	vms.POST("/:id/console-token", userH.ConsoleToken)
+	vms.POST("/:id/agent-token", userH.AgentToken)
 	vms.POST("/:id/web-session", userH.WebSession)
 	vms.POST("/:id/desktop-token", userH.DesktopToken)
 	vms.GET("/:id/rdp-credentials", userH.RDPCredentials)

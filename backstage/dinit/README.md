@@ -114,6 +114,49 @@ It is not a service, so there is no unit and nothing is started: the binary only
 has to be on disk when dclient builds a rootfs. Its digest is part of the rootfs
 cache key, so moving dinit rebuilds those images as VMs are created from them.
 
+## The coding agent — `dinit agent`
+
+The console's agent tab (`wss://<vm>.shell.<tld>/agent`) is dpipe running
+`/sbin/dinit agent attach --tld <tld>` over ssh as the VM's session user. It is
+not pid 1 work, and it works the same in handoff and agent mode.
+
+- `attach` starts `dinit agent serve` if it is not running (setsid, logging to
+  `~/.dummie/agent.log`), then relays frames between its stdio and the daemon's
+  unix socket at `~/.dummie/agent-<version>-<inode>.sock` (mode 0600). A frame is one
+  opcode byte (1 text, 2 binary), a big-endian uint32 length, then the payload.
+- Before that it points pi at the fleet's llm proxy: the `dummie` and
+  `dummie-chatgpt` providers in `~/.pi/agent/models.json`, from
+  `llm.int.<tld>/v1/models`. Nothing else in that file is touched.
+- `serve` runs one `pi --mode rpc` per open session, lists sessions from
+  `~/.pi/agent/sessions`, polls `git` for the diff pane of every directory a tab
+  is watching, and stores uploads under `~/.dummie/uploads`. It stops a pi left
+  unused for 15 minutes and exits after 30 minutes with no tab and no agent at
+  work, so closing the tab does not stop a running agent.
+
+The socket is named after the binary, its version and its inode, since a
+local build always says `dev` and an upgrade renames a new file into place.
+After an upgrade the next tab starts a new daemon and tells the old one to
+retire: it exits as soon as none of its agents is mid-turn.
+
+## Upgrading in place — `dinit upgrade`
+
+A VM's rootfs keeps the dinit it was built with. `sudo /sbin/dinit upgrade`
+replaces `/sbin/dinit` inside the guest; the write lands in the VM's own
+overlay, so it survives restarts.
+
+```
+sudo /sbin/dinit upgrade                       # latest github.com/getdummie/dummie release
+sudo /sbin/dinit upgrade --version 0.0.37      # a given release
+sudo /sbin/dinit upgrade --source https://example.com/dinit.tar.gz --sha256 <hex>
+sudo /sbin/dinit upgrade --source /tmp/dinit   # a binary already copied in
+```
+
+Release downloads are checked against the release's `checksums.txt`. A
+`--source` is checked only when `--sha256` is given. Either way the binary must
+be a static ELF for the VM's architecture, and it is renamed into place so a
+boot never sees half a file. The agent picks it up on the next tab; pid 1 on the
+next boot.
+
 ## Building
 
 ```

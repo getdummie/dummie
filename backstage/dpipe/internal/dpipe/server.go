@@ -134,6 +134,8 @@ func (s *Server) handle(p *control.Peer, m control.Msg, fds []int) {
 		s.handleTLSAccept(p, m, fds)
 	case control.TypeConsoleAccept:
 		s.handleConsoleAccept(p, m, fds)
+	case control.TypeAgentAccept:
+		s.handleAgentAccept(p, m, fds)
 	case control.TypeRDPAccept:
 		s.handleRDPAccept(p, m, fds)
 	case control.TypeDesktopAccept:

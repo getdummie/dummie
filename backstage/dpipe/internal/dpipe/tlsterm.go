@@ -87,6 +87,10 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 		s.serveTLSConsole(log, id, rep, tc, routeHost, remoteIP, prefix)
 		return
 	}
+	if rep.Protocol == control.ProtoAgent {
+		s.serveTLSAgent(log, id, rep, tc, routeHost, remoteIP, prefix)
+		return
+	}
 
 	backend, err := net.DialTimeout("tcp", rep.Target, s.cfg.TLS.DialTimeout.Or(defaultDialTimeout))
 	if err != nil {

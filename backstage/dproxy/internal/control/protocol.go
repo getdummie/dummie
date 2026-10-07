@@ -36,6 +36,7 @@ const (
 	TypeConsoleAccept = "console_accept"
 	TypeRDPAccept     = "rdp_accept"
 	TypeDesktopAccept = "desktop_accept"
+	TypeAgentAccept   = "agent_accept"
 	TypeListenForward = "listen_forward"
 	TypeStop          = "stop"
 	TypeStatus        = "status"
@@ -64,6 +65,7 @@ const (
 	ProtoConsole = "console"
 	ProtoRDP     = "rdp"
 	ProtoDesktop = "desktop"
+	ProtoAgent   = "agent"
 )
 
 const (

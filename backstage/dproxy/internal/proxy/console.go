@@ -40,10 +40,6 @@ type sessionKind struct {
 	perVMRemoteUser bool
 }
 
-func (p *Proxy) consoleKind() (sessionKind, bool) {
-	return consoleKind(p.cfg.Console)
-}
-
 func (p *Proxy) desktopKind() (sessionKind, bool) {
 	return desktopKind(p.cfg.Desktop)
 }
@@ -78,6 +74,27 @@ func consoleKind(c *ConsoleConfig) (sessionKind, bool) {
 		acceptType:      control.TypeConsoleAccept,
 		perVMRemoteUser: true,
 	}, true
+}
+
+// agentPath on a console host opens the vm's coding agent instead of a shell.
+// It shares the console's host so it needs no certificate name of its own.
+const agentPath = "/agent"
+
+func agentKind(console sessionKind) sessionKind {
+	console.name = "agent"
+	console.audPrefix = agentAudPrefix
+	console.protocol = control.ProtoAgent
+	console.acceptType = control.TypeAgentAccept
+	return console
+}
+
+// consoleHostKind is the console, or the agent when the upgrade asks for it.
+func consoleHostKind(cc *ConsoleConfig, req *http.Request) (sessionKind, bool) {
+	k, ok := consoleKind(cc)
+	if ok && req != nil && req.URL.Path == agentPath {
+		return agentKind(k), true
+	}
+	return k, ok
 }
 
 // labelledVMHost maps "one.shell.vm.local" to the published host "one.vm.local".
@@ -184,7 +201,8 @@ func authorizeConsole(log *slog.Logger, router *Router, cc *ConsoleConfig, a *Au
 }
 
 func (p *Proxy) handleConsole(log *slog.Logger, client net.Conn, host, vmHost string, prefix []byte) {
-	k, ok := p.consoleKind()
+	req, _ := parseRequest(prefix)
+	k, ok := consoleHostKind(p.cfg.Console, req)
 	if !ok {
 		_ = client.Close()
 		return

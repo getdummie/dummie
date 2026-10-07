@@ -3,12 +3,15 @@ import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
-const props = defineProps<{
+// dark defaults to undefined, not false: left unset the terminal follows the
+// app theme, while the console page passes its own.
+const props = withDefaults(defineProps<{
   vmId: string
   fontSize?: number
-  // Left unset the terminal follows the app theme; the console passes its own.
   dark?: boolean
-}>()
+  // Directory the shell changes into each time it connects.
+  cwd?: string
+}>(), { dark: undefined, cwd: undefined })
 
 export type Phase = 'loading' | 'connecting' | 'open' | 'closed' | 'error'
 
@@ -150,6 +153,7 @@ async function connect() {
     sentCols = 0 // a fresh pty needs its size even if the grid did not change
     sentRows = 0
     fitAndResize()
+    if (props.cwd) send(`cd -- '${props.cwd.replaceAll('\'', `'\\''`)}' && clear\r`)
     term?.focus()
   }
   sock.onmessage = (ev) => {
