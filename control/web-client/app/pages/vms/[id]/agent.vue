@@ -177,6 +177,7 @@ function startNew() {
   sessionModels.value = []
   pickHarness(preferredHarness.value)
   sessionsOpen.value = false
+  centerTab.value = 'chat'
   newCwd.value = hello.value?.cwd ?? ''
   watchCwd(newCwd.value)
   void router.replace({ query: {} })
