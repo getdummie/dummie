@@ -92,20 +92,27 @@ onMounted(async () => {
 
 <template>
   <div class="flex h-dvh flex-col bg-background text-foreground">
-    <header class="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
-      <NuxtLink
-        :to="`/vms/${id}`"
-        class="inline-flex items-center gap-1.5 font-mono text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-      >
-        <ArrowLeft class="size-3.5" aria-hidden="true" />
-        Back to VM
+    <header class="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-border px-4 py-3">
+      <div class="flex min-w-0 items-center gap-4">
+        <NuxtLink
+          :to="`/vms/${id}`"
+          class="inline-flex shrink-0 items-center gap-1.5 font-mono text-xs text-muted-foreground underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          <ArrowLeft class="size-3.5" aria-hidden="true" />
+          <span class="hidden sm:inline">Back to VM</span>
+        </NuxtLink>
+
+        <h1 class="min-w-0 truncate font-mono text-sm font-semibold">
+          {{ vm?.name || vm?.vm_id || 'workspace' }}
+        </h1>
+      </div>
+
+      <NuxtLink to="/dashboard" class="flex shrink-0 items-center gap-2" aria-label="dummie dashboard">
+        <img src="/logo.svg" alt="" aria-hidden="true" class="size-6">
+        <span class="hidden font-mono text-sm font-semibold tracking-tight sm:inline">dummie<span class="text-primary-text">/</span></span>
       </NuxtLink>
 
-      <h1 class="font-mono text-sm font-semibold">
-        {{ vm?.name || vm?.vm_id || 'workspace' }}
-      </h1>
-
-      <div class="ml-auto flex items-center gap-2">
+      <div class="flex items-center justify-end gap-2">
         <Badge v-if="vm" variant="secondary" class="font-mono text-xs">{{ vm.status }}</Badge>
       </div>
     </header>

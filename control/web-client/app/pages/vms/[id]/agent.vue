@@ -17,6 +17,7 @@ import AgentThread from '@/components/agent/AgentThread.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import VmDestinations from '@/components/VmDestinations.vue'
 import VmTerminal, { type Phase as ConsolePhase } from '@/components/VmTerminal.vue'
+import VmTerminalKeypad from '@/components/VmTerminalKeypad.vue'
 import type { AgentSession } from '@/composables/useAgentSocket'
 import { emptyChat, type ChatState, type Draft, type Model } from '@/lib/agentChat'
 import { chatAdapter } from '@/lib/harness'
@@ -495,6 +496,11 @@ onBeforeUnmount(() => sock.close())
               :cwd="activeCwd || newCwd.trim() || undefined"
               @phase="consolePhase = $event"
               @message="consoleMessage = $event"
+            />
+            <VmTerminalKeypad
+              class="shrink-0 border-t border-border pb-[env(safe-area-inset-bottom)] sm:hidden"
+              :terminal="terminal"
+              :disabled="consolePhase !== 'open'"
             />
           </div>
         </section>
