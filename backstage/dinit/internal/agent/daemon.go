@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net"
 	"os"
@@ -27,12 +28,13 @@ type daemon struct {
 	home    string
 	sock    string
 
-	mu       sync.Mutex
-	clients  map[*client]struct{}
-	procs    map[string]*piProc
-	watches  map[string]*watch
-	lastBusy time.Time
-	retiring bool
+	mu        sync.Mutex
+	clients   map[*client]struct{}
+	procs     map[string]proc
+	harnesses []harness
+	watches   map[string]*watch
+	lastBusy  time.Time
+	retiring  bool
 }
 
 // Serve runs the daemon until it has been idle for idleExit: no browser
@@ -65,10 +67,13 @@ func Serve(version string) int {
 	defer os.Remove(sock)
 
 	home, _ := os.UserHomeDir()
+	// Lookups and every agent spawned from here inherit it.
+	_ = os.Setenv("PATH", withUserBins(home, os.Getenv("PATH")))
 	d := &daemon{
 		version: version, home: home, sock: sock,
-		clients: map[*client]struct{}{}, procs: map[string]*piProc{}, watches: map[string]*watch{},
+		clients: map[*client]struct{}{}, procs: map[string]proc{}, watches: map[string]*watch{},
 		lastBusy: time.Now(),
+		harnesses: []harness{piHarness{}, &claudeHarness{}, &codexHarness{}, newOpencodeHarness(), &geminiHarness{}},
 	}
 	log.Printf("agent %s serving on %s", id, sock)
 
@@ -148,11 +153,17 @@ func (d *daemon) idle() bool {
 	return time.Since(d.lastBusy) > idleExit
 }
 
-// reapProcs stops pi processes nobody has used for a while; each one is a whole
-// node runtime, and opening the session again restarts it from its file.
+// sharedServer is a harness that keeps one process for all its sessions.
+type sharedServer interface {
+	reap(d *daemon)
+	shutdown()
+}
+
+// reapProcs stops agents nobody has used for a while; most are a whole node
+// runtime, and opening the session again restarts it from its store.
 func (d *daemon) reapProcs() {
 	d.mu.Lock()
-	var stale []*piProc
+	var stale []proc
 	for _, p := range d.procs {
 		if !p.isStreaming() && time.Since(p.lastUsed()) > procIdle {
 			stale = append(stale, p)
@@ -162,17 +173,27 @@ func (d *daemon) reapProcs() {
 	for _, p := range stale {
 		p.stop()
 	}
+	for _, h := range d.harnesses {
+		if s, ok := h.(sharedServer); ok {
+			s.reap(d)
+		}
+	}
 }
 
 func (d *daemon) shutdown() {
 	d.mu.Lock()
-	procs := make([]*piProc, 0, len(d.procs))
+	procs := make([]proc, 0, len(d.procs))
 	for _, p := range d.procs {
 		procs = append(procs, p)
 	}
 	d.mu.Unlock()
 	for _, p := range procs {
 		p.stop()
+	}
+	for _, h := range d.harnesses {
+		if s, ok := h.(sharedServer); ok {
+			s.shutdown()
+		}
 	}
 }
 
@@ -200,71 +221,77 @@ func (d *daemon) broadcastSessions() {
 	d.broadcast(map[string]any{"t": "sessions", "sessions": d.sessions()})
 }
 
-func (d *daemon) proc(key string) (*piProc, bool) {
+func (d *daemon) proc(key string) (proc, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	p, ok := d.procs[key]
 	return p, ok
 }
 
-// open attaches to the pi process already running a session, or starts one.
-// An empty file starts a new session in cwd.
-func (d *daemon) open(file, cwd string) (*piProc, error) {
-	if file != "" {
-		if p, ok := d.proc(file); ok {
+// open attaches to the process already running a session, or starts one. An
+// empty id starts a new session in cwd.
+func (d *daemon) open(name, id, cwd string, model *modelRef) (proc, error) {
+	h, err := d.harnessFor(name)
+	if err != nil {
+		return nil, err
+	}
+	if id != "" {
+		if !sessionIDPattern.MatchString(id) {
+			return nil, fmt.Errorf("%q is not a session id", id)
+		}
+		if p, ok := d.proc(sessionKey(name, id)); ok {
 			return p, nil
 		}
-		h, err := readHeader(file)
-		if err != nil {
+	} else {
+		if cwd == "" {
+			cwd = d.defaultCwd()
+		}
+		if err := checkDir(cwd); err != nil {
 			return nil, err
 		}
-		cwd = h.Cwd
 	}
-	if cwd == "" {
-		cwd = d.defaultCwd()
-	}
-	if fi, err := os.Stat(cwd); err != nil || !fi.IsDir() {
-		return nil, errors.New(cwd + " is not a directory")
+	if err := available(h); err != nil {
+		return nil, err
 	}
 
-	p, err := startPi(cwd, file, d.onEvent, d.onExit)
+	p, err := h.start(d, id, cwd, model)
 	if err != nil {
 		return nil, err
 	}
 	d.mu.Lock()
-	if other, ok := d.procs[p.key]; ok {
+	if other, ok := d.procs[p.key()]; ok {
 		d.mu.Unlock()
 		p.stop()
 		return other, nil
 	}
-	d.procs[p.key] = p
+	d.procs[p.key()] = p
 	d.mu.Unlock()
 	d.broadcastSessions()
 	return p, nil
 }
 
-func (d *daemon) onEvent(p *piProc, ev json.RawMessage, kind string) {
-	d.broadcast(map[string]any{"t": "event", "key": p.key, "ev": ev})
-	switch kind {
-	case "tool_execution_end", "agent_settled":
-		d.poke(p.cwd)
+func (d *daemon) onEvent(p proc, ev json.RawMessage, sig signal) {
+	d.broadcast(map[string]any{"t": "event", "key": p.key(), "ev": ev})
+	switch sig {
+	case sigTouched, sigSettled:
+		d.poke(p.cwd())
 	}
-	switch kind {
-	case "agent_settled", "session_info_changed", "agent_start":
+	switch sig {
+	case sigBusy, sigSettled, sigRenamed:
 		d.broadcastSessions()
 	}
 }
 
-func (d *daemon) onExit(p *piProc, err error) {
+func (d *daemon) onExit(p proc, err error) {
 	d.mu.Lock()
-	if d.procs[p.key] == p {
-		delete(d.procs, p.key)
+	if d.procs[p.key()] == p {
+		delete(d.procs, p.key())
 	}
 	d.mu.Unlock()
 	msg := ""
 	if err != nil {
 		msg = err.Error()
 	}
-	d.broadcast(map[string]any{"t": "exit", "key": p.key, "error": msg})
+	d.broadcast(map[string]any{"t": "exit", "key": p.key(), "error": msg})
 	d.broadcastSessions()
 }

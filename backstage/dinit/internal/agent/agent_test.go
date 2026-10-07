@@ -59,7 +59,7 @@ func TestSummarize(t *testing.T) {
 		`{"type":"message","message":{"role":"user","content":"second"}}`,
 		`{"type":"session_info","name":"Auth"}`,
 	)
-	s, err := summarize(f)
+	s, err := summarize(f, statOf(t, f))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestSummarize(t *testing.T) {
 
 func TestSummarizeRejectsNonSession(t *testing.T) {
 	f := writeSession(t, `{"type":"message"}`)
-	if _, err := summarize(f); err == nil {
+	if _, err := summarize(f, statOf(t, f)); err == nil {
 		t.Fatal("a file without a session header was accepted")
 	}
 }
@@ -168,16 +168,11 @@ func TestFindSession(t *testing.T) {
 	if err := os.WriteFile(f, []byte(`{"type":"session","id":"01a1-77e4","cwd":"/work"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	d := &daemon{procs: map[string]*piProc{"/live.jsonl": {id: "live-1"}}}
-
-	if got, err := d.findSession("01a1-77e4"); err != nil || got != f {
+	if got, err := findPiSession("01a1-77e4"); err != nil || got != f {
 		t.Fatalf("got %q, %v", got, err)
 	}
-	if got, err := d.findSession("live-1"); err != nil || got != "/live.jsonl" {
-		t.Fatalf("a running session was not found: %q, %v", got, err)
-	}
 	for _, bad := range []string{"*", "../x", "", "nope"} {
-		if _, err := d.findSession(bad); err == nil {
+		if _, err := findPiSession(bad); err == nil {
 			t.Errorf("%q resolved to a session", bad)
 		}
 	}
@@ -288,5 +283,127 @@ func TestRetireOthers(t *testing.T) {
 	}
 	if _, err := os.Stat(own); err != nil {
 		t.Error("retireOthers touched this binary's own socket")
+	}
+}
+
+func statOf(t *testing.T, f string) os.FileInfo {
+	t.Helper()
+	fi, err := os.Stat(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi
+}
+
+func writeLines(t *testing.T, name string, lines ...string) string {
+	t.Helper()
+	f := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(f, []byte(strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestSummarizeClaude(t *testing.T) {
+	f := writeLines(t, "7f0c.jsonl",
+		`{"type":"summary","summary":"Login fix"}`,
+		`{"type":"user","isMeta":true,"cwd":"/work","message":{"role":"user","content":"Caveat"}}`,
+		`{"type":"user","isSidechain":true,"cwd":"/work","message":{"role":"user","content":"sub"}}`,
+		`{"type":"user","cwd":"/work","timestamp":"2026-10-01T00:00:00Z","message":{"role":"user","content":"<command-name>/clear</command-name>"}}`,
+		`{"type":"user","cwd":"/work","message":{"role":"user","content":[{"type":"text","text":"fix the login"}]}}`,
+	)
+	s, err := summarizeClaude(f, statOf(t, f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ID != "7f0c" || s.Cwd != "/work" || s.Name != "Login fix" || s.Title != "fix the login" {
+		t.Fatalf("got %+v", s)
+	}
+	empty := writeLines(t, "x.jsonl", `{"type":"summary","summary":"only"}`)
+	if _, err := summarizeClaude(empty, statOf(t, empty)); err == nil {
+		t.Fatal("a session without a prompt was listed")
+	}
+}
+
+func TestSummarizeCodex(t *testing.T) {
+	meta := `{"type":"session_meta","payload":{"id":"0199","timestamp":"2026-10-01T00:00:00Z","cwd":"/work","instructions":"` +
+		strings.Repeat("x", maxScanLine*2) + `"}}`
+	f := writeLines(t, "rollout-2026-10-01T00-00-00-0199.jsonl", meta,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"<environment_context>"}}`,
+		`{"type":"event_msg","payload":{"type":"user_message","message":"add tests"}}`,
+	)
+	s, err := summarizeCodex(f, statOf(t, f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ID != "0199" || s.Cwd != "/work" || s.Title != "add tests" {
+		t.Fatalf("got %+v", s)
+	}
+	bad := writeLines(t, "rollout-x.jsonl", `{"type":"event_msg"}`)
+	if _, err := summarizeCodex(bad, statOf(t, bad)); err == nil {
+		t.Fatal("a file without session_meta was listed")
+	}
+}
+
+func TestSummarizeGemini(t *testing.T) {
+	f := writeLines(t, "session-1.json",
+		`{"sessionId":"g1","startTime":"2026-10-01T00:00:00Z","messages":[{"type":"gemini","content":"hi"},{"type":"user","content":"write docs"}]}`)
+	s, err := summarizeGemini(f, statOf(t, f), "/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.ID != "g1" || s.Cwd != "/work" || s.Title != "write docs" {
+		t.Fatalf("got %+v", s)
+	}
+}
+
+func TestProxyModelsSplitByApi(t *testing.T) {
+	px := proxyInfo{Models: []llmModel{{ID: "zai/glm-4.6", OwnedBy: "zai"}, {ID: "chatgpt/gpt-5", OwnedBy: "chatgpt"}}}
+	if got := px.chatModels(); len(got) != 1 || got[0] != "zai/glm-4.6" {
+		t.Errorf("chat models = %v", got)
+	}
+	if got := px.responsesModels(); len(got) != 1 || got[0] != "chatgpt/gpt-5" {
+		t.Errorf("responses models = %v", got)
+	}
+	if got := pickModel(&modelRef{ID: "nope"}, px.chatModels()); got != "zai/glm-4.6" {
+		t.Errorf("an unknown model was kept: %q", got)
+	}
+}
+
+func TestNewUUID(t *testing.T) {
+	u := newUUID()
+	if len(u) != 36 || u[14] != '4' || !strings.ContainsRune("89ab", rune(u[19])) {
+		t.Fatalf("%q is not a v4 uuid", u)
+	}
+}
+
+func TestSummarizeAllCachesUntilChanged(t *testing.T) {
+	f := writeSession(t, `{"type":"session","id":"c1","cwd":"/a"}`)
+	calls := 0
+	fn := func(file string, fi os.FileInfo) (sessionSummary, error) {
+		calls++
+		return summarize(file, fi)
+	}
+	summarizeAll("test", []string{f}, fn)
+	got := summarizeAll("test", []string{f}, fn)
+	if calls != 1 || len(got) != 1 || got[0].Key != "test:c1" {
+		t.Fatalf("calls = %d, got %+v", calls, got)
+	}
+	if err := os.WriteFile(f, []byte(`{"type":"session","id":"c1","cwd":"/b"}`+"\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := summarizeAll("test", []string{f}, fn); calls != 2 || got[0].Cwd != "/b" {
+		t.Fatalf("a changed file was not read again: calls = %d, got %+v", calls, got)
+	}
+}
+
+func TestWithUserBins(t *testing.T) {
+	got := withUserBins("/home/u", "/home/u/.local/bin:/usr/bin")
+	want := "/home/u/.bun/bin:/home/u/.opencode/bin:/home/u/.npm-global/bin:/home/u/.local/bin:/usr/bin"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+	if got := withUserBins("/home/u", ""); !strings.HasSuffix(got, "/home/u/.npm-global/bin") {
+		t.Fatalf("an empty PATH left a trailing separator: %q", got)
 	}
 }

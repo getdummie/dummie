@@ -3,6 +3,7 @@ package agent
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"errors"
 	"io"
@@ -11,6 +12,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
@@ -29,16 +32,58 @@ type sessionHeader struct {
 }
 
 type sessionSummary struct {
-	File      string `json:"file"`
+	Key       string `json:"key"`
+	Harness   string `json:"harness"`
 	ID        string `json:"id"`
 	Cwd       string `json:"cwd"`
 	Name      string `json:"name,omitempty"`
 	Title     string `json:"title,omitempty"`
 	Created   string `json:"created"`
 	Updated   int64  `json:"updated"`
-	Harness   string `json:"harness"`
 	Live      bool   `json:"live"`
 	Streaming bool   `json:"streaming"`
+}
+
+type cachedSummary struct {
+	mod  time.Time
+	size int64
+	s    sessionSummary
+}
+
+// A file is only read again once it changes. Failures are not kept, since a
+// gemini chat's directory may only become known later.
+var summaryCache = struct {
+	sync.Mutex
+	m map[string]map[string]cachedSummary
+}{m: map[string]map[string]cachedSummary{}}
+
+func summarizeAll(harness string, files []string, fn func(string, os.FileInfo) (sessionSummary, error)) []sessionSummary {
+	summaryCache.Lock()
+	prev := summaryCache.m[harness]
+	summaryCache.Unlock()
+	next := make(map[string]cachedSummary, len(files))
+	out := make([]sessionSummary, 0, len(files))
+	for _, f := range files {
+		fi, err := os.Stat(f)
+		if err != nil {
+			continue
+		}
+		c, ok := prev[f]
+		if !ok || !c.mod.Equal(fi.ModTime()) || c.size != fi.Size() {
+			s, err := fn(f, fi)
+			if err != nil {
+				continue
+			}
+			s.Harness, s.Key = harness, sessionKey(harness, s.ID)
+			c = cachedSummary{mod: fi.ModTime(), size: fi.Size(), s: s}
+		}
+		next[f] = c
+		out = append(out, c.s)
+	}
+	summaryCache.Lock()
+	summaryCache.m[harness] = next
+	summaryCache.Unlock()
+	return out
 }
 
 func piDir() string {
@@ -58,20 +103,10 @@ func piSessionDir() string {
 
 var sessionIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// findSession maps a pi session id to its file: a running session first, since
-// pi writes the file only once there is a message in it.
-func (d *daemon) findSession(id string) (string, error) {
+func findPiSession(id string) (string, error) {
 	if !sessionIDPattern.MatchString(id) {
 		return "", errors.New("not a pi session id")
 	}
-	d.mu.Lock()
-	for key, p := range d.procs {
-		if p.id == id {
-			d.mu.Unlock()
-			return key, nil
-		}
-	}
-	d.mu.Unlock()
 	files, _ := filepath.Glob(filepath.Join(piSessionDir(), "*", "*_"+id+".jsonl"))
 	for _, f := range files {
 		if h, err := readHeader(f); err == nil && h.ID == id {
@@ -98,47 +133,48 @@ func readHeader(file string) (sessionHeader, error) {
 	return h, nil
 }
 
-func (d *daemon) sessions() []sessionSummary {
+func piSessions() []sessionSummary {
 	files, _ := filepath.Glob(filepath.Join(piSessionDir(), "*", "*.jsonl"))
-	out := make([]sessionSummary, 0, len(files))
-	for _, f := range files {
-		s, err := summarize(f)
-		if err != nil {
-			continue
+	return summarizeAll("pi", files, summarize)
+}
+
+// sessions merges stored sessions with live ones; a just-started session may
+// have no file yet and is known only by its process.
+func (d *daemon) sessions() []sessionSummary {
+	var out []sessionSummary
+	for _, h := range d.harnesses {
+		if available(h) == nil {
+			out = append(out, h.list(d)...)
 		}
-		out = append(out, s)
 	}
 
 	d.mu.Lock()
 	seen := map[string]bool{}
 	for i := range out {
-		if p, ok := d.procs[out[i].File]; ok {
+		if p, ok := d.procs[out[i].Key]; ok {
 			out[i].Live, out[i].Streaming = true, p.isStreaming()
-			seen[out[i].File] = true
+			if n := p.name(); n != "" {
+				out[i].Name = n
+			}
+			seen[out[i].Key] = true
 		}
 	}
-	// pi writes a session file only once it has a message, so a session that
-	// was just started is known only by its process.
 	for key, p := range d.procs {
 		if !seen[key] {
-			out = append(out, sessionSummary{File: key, ID: p.id, Cwd: p.cwd, Harness: "pi", Live: true,
+			out = append(out, sessionSummary{Key: key, Harness: p.harness(), ID: p.id(), Cwd: p.cwd(), Name: p.name(), Live: true,
 				Streaming: p.isStreaming(), Updated: p.lastUsed().UnixMilli()})
 		}
 	}
 	d.mu.Unlock()
 
-	slices.SortFunc(out, func(a, b sessionSummary) int { return int(b.Updated - a.Updated) })
+	slices.SortFunc(out, func(a, b sessionSummary) int { return cmp.Compare(b.Updated, a.Updated) })
 	if len(out) > maxSessions {
 		out = out[:maxSessions]
 	}
 	return out
 }
 
-func summarize(file string) (sessionSummary, error) {
-	fi, err := os.Stat(file)
-	if err != nil {
-		return sessionSummary{}, err
-	}
+func summarize(file string, fi os.FileInfo) (sessionSummary, error) {
 	f, err := os.Open(file)
 	if err != nil {
 		return sessionSummary{}, err
@@ -156,8 +192,7 @@ func summarize(file string) (sessionSummary, error) {
 				if json.Unmarshal(line, &h) != nil || h.Type != "session" {
 					return sessionSummary{}, errors.New("not a pi session")
 				}
-				s = sessionSummary{File: file, ID: h.ID, Cwd: h.Cwd, Created: h.Timestamp,
-					Updated: fi.ModTime().UnixMilli(), Harness: "pi"}
+				s = sessionSummary{ID: h.ID, Cwd: h.Cwd, Created: h.Timestamp, Updated: fi.ModTime().UnixMilli()}
 				first = false
 			} else {
 				scanEntry(line, &s)

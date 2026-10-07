@@ -1,10 +1,18 @@
 <script setup lang="ts">
-import { CircleCheck, CircleDot, Folder, LoaderCircle, Plus } from '@lucide/vue'
+import { Check, CircleCheck, CircleDot, Folder, LoaderCircle, Pencil, Plus, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import AgentHarnessIcon from '@/components/agent/AgentHarnessIcon.vue'
 import type { AgentSession } from '@/composables/useAgentSocket'
 
-const props = defineProps<{ sessions: AgentSession[], active: string | null, home?: string }>()
+const props = defineProps<{
+  sessions: AgentSession[]
+  active: string | null
+  home?: string
+  // Harnesses that can rename a session, and how to do it.
+  renamable: string[]
+  rename: (s: AgentSession, name: string) => Promise<void>
+}>()
 const emit = defineEmits<{ open: [session: AgentSession], new: [] }>()
 
 // Grouped the way paseo does: what is working, what is waiting on you, the rest.
@@ -16,6 +24,38 @@ const groups = computed(() => [
 
 function label(s: AgentSession) {
   return s.name || s.title || 'new session'
+}
+
+const editing = ref<string | null>(null)
+const draft = ref('')
+const saving = ref(false)
+const renameError = ref<string | null>(null)
+
+async function startRename(s: AgentSession) {
+  editing.value = s.key
+  draft.value = s.name || s.title || ''
+  renameError.value = null
+  await nextTick()
+  const el = document.getElementById(`rename-${s.key}`) as HTMLInputElement | null
+  el?.focus()
+  el?.select()
+}
+
+async function saveRename(s: AgentSession) {
+  const name = draft.value.trim()
+  if (!name || saving.value) return
+  saving.value = true
+  renameError.value = null
+  try {
+    await props.rename(s, name)
+    editing.value = null
+  }
+  catch (e) {
+    renameError.value = e instanceof Error ? e.message : 'Could not rename the session'
+  }
+  finally {
+    saving.value = false
+  }
 }
 
 function shortCwd(cwd: string) {
@@ -50,12 +90,38 @@ function ago(ms: number) {
           {{ g.label }}
         </h3>
         <ul>
-          <li v-for="s in g.items" :key="s.file">
+          <li v-for="s in g.items" :key="s.key" class="group relative">
+            <form
+              v-if="editing === s.key"
+              class="rounded-md bg-muted px-2.5 py-2"
+              @submit.prevent="saveRename(s)"
+              @keydown.esc="editing = null"
+            >
+              <div class="flex items-center gap-1">
+                <Input
+                  :id="`rename-${s.key}`"
+                  v-model="draft"
+                  class="h-7 min-w-0 font-mono text-xs"
+                  maxlength="120"
+                  aria-label="session name"
+                  :aria-invalid="!!renameError"
+                  :disabled="saving"
+                />
+                <Button type="submit" variant="ghost" size="icon" class="size-7 shrink-0" :disabled="saving || !draft.trim()" aria-label="save name">
+                  <Check class="size-3.5" aria-hidden="true" />
+                </Button>
+                <Button type="button" variant="ghost" size="icon" class="size-7 shrink-0" aria-label="cancel renaming" @click="editing = null">
+                  <X class="size-3.5" aria-hidden="true" />
+                </Button>
+              </div>
+              <p v-if="renameError" class="mt-1.5 font-mono text-[11px] text-destructive" role="alert">{{ renameError }}</p>
+            </form>
             <button
+              v-else
               type="button"
               class="flex w-full items-start gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
-              :class="s.file === active && 'bg-muted'"
-              :aria-current="s.file === active ? 'page' : undefined"
+              :class="s.key === active && 'bg-muted'"
+              :aria-current="s.key === active ? 'page' : undefined"
               @click="emit('open', s)"
             >
               <span class="relative mt-[3px]">
@@ -67,7 +133,7 @@ function ago(ms: number) {
                 />
               </span>
               <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span class="flex items-baseline gap-2">
+                <span class="flex items-baseline gap-2" :class="renamable.includes(s.harness) && 'pr-6'">
                   <span class="truncate text-sm">{{ label(s) }}</span>
                   <span class="ml-auto shrink-0 font-mono text-[11px] text-muted-foreground">{{ ago(s.updated) }}</span>
                 </span>
@@ -79,6 +145,16 @@ function ago(ms: number) {
                 </span>
               </span>
             </button>
+            <Button
+              v-if="editing !== s.key && renamable.includes(s.harness)"
+              variant="ghost"
+              size="icon"
+              class="absolute top-1.5 right-1.5 size-6 text-muted-foreground lg:opacity-0 lg:group-hover:opacity-100 lg:focus-visible:opacity-100"
+              :aria-label="`rename ${label(s)}`"
+              @click="startRename(s)"
+            >
+              <Pencil class="size-3" aria-hidden="true" />
+            </Button>
           </li>
         </ul>
       </section>

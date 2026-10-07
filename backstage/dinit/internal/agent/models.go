@@ -45,9 +45,15 @@ type piProvider struct {
 	Models  []piModel `json:"models"`
 }
 
+// refreshModels also records the proxy for the other harnesses, and forgets it
+// when it cannot be reached so they fall back to their own logins.
 func refreshModels(tld string) error {
 	base, models, err := fetchModels(tld)
 	if err != nil {
+		forgetProxy()
+		return err
+	}
+	if err := saveProxy(base, models); err != nil {
 		return err
 	}
 	var chat, responses []piModel
@@ -143,10 +149,14 @@ func configuredModels() []listedModel {
 			out = append(out, listedModel{Provider: name, ID: m.ID, Name: m.Name})
 		}
 	}
+	sortModels(out)
+	return out
+}
+
+func sortModels(out []listedModel) {
 	slices.SortFunc(out, func(a, b listedModel) int {
 		return strings.Compare(a.Provider+"/"+a.ID, b.Provider+"/"+b.ID)
 	})
-	return out
 }
 
 // writeProviders sets or removes the named providers and leaves every other

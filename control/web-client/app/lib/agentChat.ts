@@ -1,5 +1,5 @@
-// Rebuilds pi's conversation from get_messages plus its rpc event stream.
-// Shapes follow pi's message-types and json event docs.
+// The chat every harness is turned into. pi's own shapes are the model, and
+// pi's reducer is here; the other harnesses' are in lib/harness/.
 
 export type Block =
   | { type: 'text', text: string }
@@ -8,6 +8,7 @@ export type Block =
   | { type: 'image', data: string, mimeType: string }
 
 export interface ChatMessage {
+  id?: string
   role: string
   content?: string | Block[]
   toolCallId?: string
@@ -45,17 +46,51 @@ export interface ChatState {
   results: Record<string, ToolResult>
   busy: boolean
   retry: string | null
+  // refs maps a harness's own message or item id to its index in messages.
+  refs: Record<string, number>
+  extra?: unknown
+}
+
+export interface ChatAdapter {
+  fromHistory: (history: any, streaming: boolean) => ChatState
+  applyEvent: (s: ChatState, ev: any) => void
 }
 
 export function emptyChat(): ChatState {
-  return { messages: [], results: {}, busy: false, retry: null }
+  return { messages: [], results: {}, busy: false, retry: null, refs: {} }
 }
 
-export function fromHistory(messages: ChatMessage[], streaming: boolean): ChatState {
-  const s = emptyChat()
-  s.busy = streaming
-  for (const m of messages) addMessage(s, m)
-  return s
+// settle ends whatever was still streaming once a turn is over.
+export function settle(s: ChatState) {
+  for (const m of s.messages) if (m.stopReason === 'pending') m.stopReason = 'stop'
+  for (const r of Object.values(s.results)) r.running = false
+}
+
+// upsert puts m at the index kept for id, or appends it.
+export function upsert(s: ChatState, id: string, m: ChatMessage): ChatMessage {
+  const at = s.refs[id]
+  if (at !== undefined) s.messages[at] = m
+  else s.refs[id] = s.messages.push(m) - 1
+  return m
+}
+
+export function dataUrlImage(url: string): Extract<Block, { type: 'image' }> | null {
+  const m = /^data:([^;,]+);base64,(.*)$/s.exec(url)
+  return m ? { type: 'image', mimeType: m[1]!, data: m[2]! } : null
+}
+
+export function textBlocks(text: string | undefined): Block[] {
+  return text ? [{ type: 'text', text }] : []
+}
+
+export const piChat: ChatAdapter = {
+  fromHistory(messages: ChatMessage[], streaming: boolean) {
+    const s = emptyChat()
+    s.busy = streaming
+    for (const m of messages ?? []) addMessage(s, m)
+    return s
+  },
+  applyEvent,
 }
 
 // Tool results render under their call, so they are kept apart from the
@@ -79,7 +114,7 @@ function streamingAssistant(s: ChatState): ChatMessage | null {
   return last?.role === 'assistant' && last.stopReason === 'pending' ? last : null
 }
 
-export function applyEvent(s: ChatState, ev: any) {
+function applyEvent(s: ChatState, ev: any) {
   switch (ev.type) {
     case 'agent_start':
       s.busy = true

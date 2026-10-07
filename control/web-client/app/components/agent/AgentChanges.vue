@@ -11,6 +11,8 @@ const props = defineProps<{
   diff: AgentDiff | null
   readFile: (cwd: string, path: string) => Promise<AgentFile>
   writeFile: (cwd: string, path: string, content: string, hash: string, force?: boolean) => Promise<string>
+  // In a sheet, whose close button sits over the header's right end.
+  inSheet?: boolean
 }>()
 // A file picked in the tree opens in the center panel, not here.
 const emit = defineEmits<{ gitInit: [], edited: [path: string], openFile: [file: { cwd: string, path: string }] }>()
@@ -201,7 +203,7 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="agent-changes flex size-full min-h-0 flex-col" aria-label="changes">
-    <header class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+    <header class="flex flex-wrap items-center gap-2 border-b border-border px-3 py-2" :class="inSheet && 'pr-12'">
       <Tabs v-model="tab">
         <TabsList class="h-7">
           <TabsTrigger value="changes" class="h-6 font-mono text-xs">changes · {{ files.length }}</TabsTrigger>

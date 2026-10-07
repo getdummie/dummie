@@ -126,12 +126,32 @@ not pid 1 work, and it works the same in handoff and agent mode.
   opcode byte (1 text, 2 binary), a big-endian uint32 length, then the payload.
 - Before that it points pi at the fleet's llm proxy: the `dummie` and
   `dummie-chatgpt` providers in `~/.pi/agent/models.json`, from
-  `llm.int.<tld>/v1/models`. Nothing else in that file is touched.
-- `serve` runs one `pi --mode rpc` per open session, lists sessions from
-  `~/.pi/agent/sessions`, polls `git` for the diff pane of every directory a tab
-  is watching, and stores uploads under `~/.dummie/uploads`. It stops a pi left
-  unused for 15 minutes and exits after 30 minutes with no tab and no agent at
-  work, so closing the tab does not stop a running agent.
+  `llm.int.<tld>/v1/models`. Nothing else in that file is touched. It also
+  records the proxy in `~/.dummie/llm.json`, and removes that file when the
+  proxy cannot be reached, so the other harnesses fall back to their own logins.
+- `serve` drives five harnesses, each in its own protocol, and forwards their
+  events to the browser as they are; the browser turns them into a chat.
+
+  | harness  | process                                | sessions listed from                       | on the proxy                                      |
+  | -------- | -------------------------------------- | ------------------------------------------ | ------------------------------------------------- |
+  | pi       | `pi --mode rpc` per session            | `~/.pi/agent/sessions`                     | models.json, above                                |
+  | claude   | `claude -p` in stream-json per session | `~/.claude/projects`                       | `ANTHROPIC_BASE_URL`, chat models                 |
+  | codex    | `codex app-server` per session         | `~/.codex/sessions`                        | `-c model_providers.dummie`, chatgpt models only  |
+  | opencode | one `opencode serve` on loopback       | its server's api                           | `OPENCODE_CONFIG_CONTENT`, both providers         |
+  | gemini   | `gemini --experimental-acp` per session| `~/.gemini/tmp`, by hashing known dirs     | never; the proxy has no gemini api                |
+
+  The proxy settings go into the child's environment or flags only; no
+  harness's own config file is written. Every harness runs without asking for
+  permission (the vm is the sandbox), and any question it still asks is
+  answered yes. Only pi steers a running turn; a prompt sent to the others
+  mid-turn waits for the turn to end.
+  ssh runs attach without a login shell, so the daemon puts `~/.bun/bin`,
+  `~/.local/bin`, `~/.opencode/bin` and `~/.npm-global/bin` ahead of the
+  image's `PATH`; a harness installed there as the user is found.
+- It polls `git` for the diff pane of every directory a tab is watching, and
+  stores uploads under `~/.dummie/uploads`. It stops an agent left unused for
+  15 minutes and exits after 30 minutes with no tab and no agent at work, so
+  closing the tab does not stop a running agent.
 
 The socket is named after the binary, its version and its inode, since a
 local build always says `dev` and an upgrade renames a new file into place.

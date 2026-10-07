@@ -34,17 +34,14 @@ type request struct {
 	T    string `json:"t"`
 	Req  string `json:"req"`
 	Key  string `json:"key"`
-	File string `json:"file"`
 	ID   string `json:"id"`
 	Cwd  string `json:"cwd"`
 
-	Harness string `json:"harness"`
-
-	Cmd json.RawMessage `json:"cmd"`
+	Harness string    `json:"harness"`
+	Model   *modelRef `json:"model"`
 
 	Text        string       `json:"text"`
 	Attachments []attachment `json:"attachments"`
-	Streaming   string       `json:"streaming"`
 
 	Name string `json:"name"`
 	Data string `json:"data"`
@@ -147,10 +144,21 @@ func (c *client) dispatch(r request) {
 		c.send(map[string]any{"t": "sessions", "req": r.Req, "sessions": c.d.sessions()})
 	case "open":
 		go c.open(r)
-	case "rpc":
-		go c.rpc(r, r.Cmd)
 	case "prompt":
 		go c.prompt(r)
+	case "abort":
+		go c.withProc(r, func(p proc) error { return p.abort() })
+	case "set_model":
+		go c.withProc(r, func(p proc) error {
+			if r.Model == nil {
+				return errors.New("no model given")
+			}
+			return p.setModel(*r.Model)
+		})
+	case "models":
+		go c.models(r)
+	case "rename":
+		go c.rename(r)
 	case "upload":
 		c.upload(r)
 	case "watch":
@@ -173,74 +181,102 @@ func (c *client) dispatch(r request) {
 }
 
 func (d *daemon) hello() map[string]any {
-	pi := map[string]any{"name": "pi", "available": true}
-	if err := piAvailable(); err != nil {
-		pi["available"] = false
-		pi["error"] = "pi is not installed in this vm"
+	harnesses := make([]map[string]any, 0, len(d.harnesses))
+	for _, h := range d.harnesses {
+		e := map[string]any{"name": h.name(), "available": true, "steers": h.steers(), "renames": h.renames(), "models": []listedModel{}}
+		if err := available(h); err != nil {
+			e["available"], e["error"] = false, err.Error()
+		} else if m := h.presetModels(); m != nil {
+			e["models"] = m
+		}
+		harnesses = append(harnesses, e)
 	}
 	return map[string]any{
 		"t": "hello", "version": d.version, "home": d.home, "cwd": d.defaultCwd(),
-		"harnesses": []any{pi}, "models": configuredModels(),
+		"harnesses": harnesses,
 	}
 }
 
-// open takes a session by harness and id (what the page's url carries), by
-// file, or a cwd for a new one.
+// open takes a session by harness and id (what the page's url carries), or a
+// harness and cwd for a new one.
 func (c *client) open(r request) {
-	if r.Harness != "" && r.Harness != "pi" {
-		c.fail(r, fmt.Errorf("harness %q is not supported yet", r.Harness))
-		return
+	name := r.Harness
+	if name == "" {
+		name = "pi"
 	}
-	file := r.File
-	if file == "" && r.ID != "" {
-		f, err := c.d.findSession(r.ID)
-		if err != nil {
-			c.fail(r, err)
-			return
-		}
-		file = f
-	}
-	p, err := c.d.open(file, c.d.expandHome(r.Cwd))
+	p, err := c.d.open(name, r.ID, c.d.expandHome(r.Cwd), r.Model)
 	if err != nil {
 		c.fail(r, err)
 		return
 	}
-	state, err := p.call(json.RawMessage(`{"type":"get_state"}`), rpcTimeout)
+	hist, err := p.history()
 	if err != nil {
 		c.fail(r, err)
 		return
 	}
-	msgs, err := p.call(json.RawMessage(`{"type":"get_messages"}`), rpcTimeout)
-	if err != nil {
-		c.fail(r, err)
-		return
-	}
-	c.send(map[string]any{"t": "opened", "req": r.Req, "key": p.key, "id": p.id, "harness": "pi",
-		"cwd": p.cwd, "state": state, "messages": msgs})
+	c.send(map[string]any{"t": "opened", "req": r.Req, "key": p.key(), "id": p.id(), "harness": p.harness(),
+		"cwd": p.cwd(), "streaming": p.isStreaming(), "model": p.model(), "history": hist})
 }
 
-func (c *client) rpc(r request, cmd json.RawMessage) {
+func (c *client) notRunning(r request) {
+	c.send(map[string]any{"t": "error", "req": r.Req, "key": r.Key, "code": "not_running", "message": "this session is not running; open it again"})
+}
+
+func (c *client) withProc(r request, fn func(proc) error) {
 	p, ok := c.d.proc(r.Key)
 	if !ok {
-		c.send(map[string]any{"t": "error", "req": r.Req, "key": r.Key, "code": "not_running", "message": "this session is not running; open it again"})
+		c.notRunning(r)
 		return
 	}
-	res, err := p.request(cmd, rpcTimeout)
+	if err := fn(p); err != nil {
+		c.fail(r, err)
+		return
+	}
+	c.send(map[string]any{"t": "ok", "req": r.Req})
+}
+
+func (c *client) models(r request) {
+	p, ok := c.d.proc(r.Key)
+	if !ok {
+		c.notRunning(r)
+		return
+	}
+	models, err := p.models()
 	if err != nil {
 		c.fail(r, err)
 		return
 	}
-	c.send(map[string]any{"t": "rpc", "req": r.Req, "key": r.Key, "res": res})
+	if models == nil {
+		models = []listedModel{}
+	}
+	c.send(map[string]any{"t": "models", "req": r.Req, "models": models, "current": p.model()})
 }
 
-// prompt turns uploaded files into what pi takes: images inline, anything else
-// as a path the agent can read.
-func (c *client) prompt(r request) {
-	type image struct {
-		Type     string `json:"type"`
-		Data     string `json:"data"`
-		MimeType string `json:"mimeType"`
+func (c *client) rename(r request) {
+	name := strings.TrimSpace(r.Name)
+	if name == "" || len([]rune(name)) > maxTitleRunes {
+		c.fail(r, fmt.Errorf("a session name must be 1 to %d characters", maxTitleRunes))
+		return
 	}
+	if r.ID == "" {
+		c.fail(r, errors.New("no session given"))
+		return
+	}
+	// Any listed session can be renamed, so one not running is started for it.
+	p, err := c.d.open(r.Harness, r.ID, "", nil)
+	if err == nil {
+		err = p.rename(name)
+	}
+	if err != nil {
+		c.fail(r, err)
+		return
+	}
+	c.d.broadcastSessions()
+	c.send(map[string]any{"t": "ok", "req": r.Req})
+}
+
+// prompt passes images inline and anything else as a path the agent can read.
+func (c *client) prompt(r request) {
 	var images []image
 	var files []string
 	for _, a := range r.Attachments {
@@ -254,24 +290,12 @@ func (c *client) prompt(r request) {
 				c.fail(r, err)
 				return
 			}
-			images = append(images, image{Type: "image", Data: base64.StdEncoding.EncodeToString(b), MimeType: a.Mime})
+			images = append(images, image{Data: base64.StdEncoding.EncodeToString(b), Mime: a.Mime})
 			continue
 		}
 		files = append(files, a.Path)
 	}
-	text := r.Text
-	if len(files) > 0 {
-		text += "\n\nAttached files:\n- " + strings.Join(files, "\n- ")
-	}
-	cmd := map[string]any{"type": "prompt", "message": text}
-	if len(images) > 0 {
-		cmd["images"] = images
-	}
-	if r.Streaming == "steer" || r.Streaming == "followUp" {
-		cmd["streamingBehavior"] = r.Streaming
-	}
-	b, _ := json.Marshal(cmd)
-	c.rpc(r, b)
+	c.withProc(r, func(p proc) error { return p.prompt(withFiles(r.Text, files), images) })
 }
 
 func (c *client) gitInit(r request) {

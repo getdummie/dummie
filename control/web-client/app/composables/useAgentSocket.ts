@@ -2,16 +2,32 @@ import { ref, shallowRef } from 'vue'
 
 export type AgentPhase = 'connecting' | 'open' | 'closed' | 'error'
 
+export interface AgentModel {
+  provider: string
+  id: string
+  name?: string
+}
+
+export interface AgentHarness {
+  name: string
+  available: boolean
+  error?: string
+  // steers says a prompt sent mid-turn reaches the running turn; for the
+  // rest it waits for the turn to end.
+  steers: boolean
+  renames: boolean
+  models: AgentModel[]
+}
+
 export interface AgentHello {
   version: string
   home: string
   cwd: string
-  harnesses: { name: string, available: boolean, error?: string }[]
-  models: { provider: string, id: string, name?: string }[]
+  harnesses: AgentHarness[]
 }
 
 export interface AgentSession {
-  file: string
+  key: string
   id: string
   cwd: string
   name?: string
@@ -51,7 +67,7 @@ export class AgentError extends Error {
 type Msg = Record<string, any>
 type Pending = { resolve: (m: Msg) => void, reject: (e: Error) => void }
 
-const replyTypes = new Set(['opened', 'rpc', 'uploaded', 'upload_ack', 'ok', 'sessions', 'stat', 'file', 'written', 'write_ack'])
+const replyTypes = new Set(['opened', 'models', 'uploaded', 'upload_ack', 'ok', 'sessions', 'stat', 'file', 'written', 'write_ack'])
 const uploadChunk = 192 * 1024
 // Characters, not bytes: JSON escaping can grow them, and dpipe takes 1 MiB.
 const writeChunk = 128 * 1024
@@ -162,17 +178,25 @@ export function useAgentSocket(vmId: () => string) {
     })
   }
 
-  // rpc sends a raw pi command and resolves to its data.
-  async function rpc(key: string, cmd: Msg): Promise<any> {
-    const m = await request({ t: 'rpc', key, cmd })
-    if (!m.res?.success) throw new Error(m.res?.error || 'pi refused the command')
-    return m.res.data
+  async function prompt(key: string, text: string, attachments: { path: string, mime: string }[]) {
+    await request({ t: 'prompt', key, text, attachments })
   }
 
-  async function prompt(key: string, text: string, attachments: { path: string, mime: string }[], streaming?: 'steer' | 'followUp') {
-    const m = await request({ t: 'prompt', key, text, attachments, streaming })
-    if (!m.res?.success) throw new Error(m.res?.error || 'pi refused the prompt')
-    return m.res.data
+  async function abort(key: string) {
+    await request({ t: 'abort', key })
+  }
+
+  async function models(key: string): Promise<{ models: AgentModel[], current: AgentModel | null }> {
+    const m = await request({ t: 'models', key })
+    return { models: m.models ?? [], current: m.current ?? null }
+  }
+
+  async function rename(harness: string, id: string, name: string) {
+    await request({ t: 'rename', harness, id, name })
+  }
+
+  async function setModel(key: string, model: AgentModel) {
+    await request({ t: 'set_model', key, model: { provider: model.provider, id: model.id } })
   }
 
   async function upload(file: File, onProgress?: (fraction: number) => void): Promise<string> {
@@ -236,7 +260,7 @@ export function useAgentSocket(vmId: () => string) {
     ws = null
   }
 
-  return { phase, error, hello, sessions, diff, connect, close, request, rpc, prompt, upload, readFile, writeFile, watch, on }
+  return { phase, error, hello, sessions, diff, connect, close, request, prompt, abort, models, setModel, rename, upload, readFile, writeFile, watch, on }
 }
 
 function toBase64(bytes: Uint8Array): string {
