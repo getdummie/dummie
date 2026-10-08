@@ -40,6 +40,7 @@ RUN set -ex \
     file \
     xsel \
     jq \
+    zip \
     unzip \
     bc \
     oathtool \
