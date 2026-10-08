@@ -20,11 +20,11 @@
     /* The wordmark sits on whatever is behind it, so it follows the viewer's
        scheme here: loaded as an image, this file never sees the host stylesheet. */
     .word { fill: #0B1A1E; }
-    .slash { fill: #2F9E72; }
+    .accent { fill: #2F9E72; }
 
     @media (prefers-color-scheme: dark) {
       .word { fill: #F2F5F4; }
-      .slash { fill: #48D597; }
+      .accent { fill: #48D597; }
     }
   </style>
 
@@ -41,6 +41,6 @@
   </g>
 
   <text class="word" x="128" y="68" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="50" font-weight="600">
-    dummie<tspan class="slash">/</tspan>
+    <tspan class="accent">dumm</tspan>ie<tspan class="accent">/</tspan>
   </text>
 </svg>

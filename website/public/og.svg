@@ -24,7 +24,7 @@
       <line x1="50" y1="27" x2="50" y2="51" stroke-width="1.5"/>
     </g>
     <text x="80" y="41" font-family="'IBM Plex Mono', ui-monospace, monospace" font-size="30" font-weight="600" fill="#0B1A1E">
-      dummie<tspan fill="#2F9E72">/</tspan>
+      <tspan fill="#2F9E72">dumm</tspan>ie<tspan fill="#2F9E72">/</tspan>
     </text>
   </g>
 
