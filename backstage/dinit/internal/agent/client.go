@@ -47,9 +47,10 @@ type request struct {
 	Data string `json:"data"`
 	Last bool   `json:"last"`
 
-	Path  string `json:"path"`
-	Hash  string `json:"hash"`
-	Force bool   `json:"force"`
+	Path   string `json:"path"`
+	Hash   string `json:"hash"`
+	Force  bool   `json:"force"`
+	Offset int64  `json:"offset"`
 }
 
 type attachment struct {
@@ -173,6 +174,8 @@ func (c *client) dispatch(r request) {
 		go c.readFile(r)
 	case "write_file":
 		c.writeFile(r)
+	case "read_raw":
+		go c.readRaw(r)
 	case "retire":
 		c.d.retire()
 	default:
@@ -335,6 +338,16 @@ func (c *client) readFile(r request) {
 		return
 	}
 	c.send(map[string]any{"t": "file", "req": r.Req, "path": r.Path, "file": f})
+}
+
+func (c *client) readRaw(r request) {
+	chunk, size, err := readRawChunk(r.Cwd, r.Path, r.Offset)
+	if err != nil {
+		c.fail(r, err)
+		return
+	}
+	last := r.Offset+int64(len(chunk)) >= size
+	c.send(map[string]any{"t": "raw", "req": r.Req, "data": base64.StdEncoding.EncodeToString(chunk), "size": size, "last": last})
 }
 
 func (c *client) writeFile(r request) {

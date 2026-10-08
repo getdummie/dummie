@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { File, FileDiff } from '@pierre/diffs'
 import { Editor } from '@pierre/diffs/edit'
-import { Check, LoaderCircle, Palette, Save, X } from '@lucide/vue'
+import { Check, Eye, EyeOff, LoaderCircle, Palette, Save, X } from '@lucide/vue'
 import { useLocalStorage } from '@vueuse/core'
 import { Button } from '@/components/ui/button'
 import {
@@ -11,7 +11,9 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import AgentMarkdown from '@/components/agent/AgentMarkdown.vue'
 import { AgentError, type AgentFile } from '@/composables/useAgentSocket'
+import { previewKind } from '@/lib/fileKind'
 
 // mode "file" edits the whole file; "diff" edits it inside its diff against HEAD.
 const props = defineProps<{
@@ -46,6 +48,21 @@ const conflict = ref(false)
 const confirmClose = ref(false)
 const error = ref<string | null>(null)
 
+const preview = computed(() => (props.mode === 'file' ? previewKind(props.path) : null))
+const previewing = ref(false)
+const text = ref('')
+const svgUrl = ref<string | null>(null)
+
+function togglePreview() {
+  if (!previewing.value && editor) text.value = editor.getText()
+  previewing.value = !previewing.value
+}
+
+watch([text, preview], ([t, p]) => {
+  if (svgUrl.value) URL.revokeObjectURL(svgUrl.value)
+  svgUrl.value = p === 'svg' && t ? URL.createObjectURL(new Blob([t], { type: 'image/svg+xml' })) : null
+})
+
 let hash = ''
 let view: File | FileDiff | null = null
 let editor: Editor<any> | null = null
@@ -67,6 +84,7 @@ async function load() {
   try {
     const f = await props.readFile(props.cwd, props.path)
     hash = f.exists ? f.hash : ''
+    text.value = f.content
     if (!host.value) return
     const name = props.path
     if (props.mode === 'diff') {
@@ -137,7 +155,10 @@ watch(editorTheme, (theme) => {
 watch(() => [props.cwd, props.path, props.mode], load)
 watch(dirty, () => { confirmClose.value = false })
 onMounted(load)
-onBeforeUnmount(teardown)
+onBeforeUnmount(() => {
+  teardown()
+  if (svgUrl.value) URL.revokeObjectURL(svgUrl.value)
+})
 </script>
 
 <template>
@@ -166,6 +187,19 @@ onBeforeUnmount(teardown)
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
+        <Button
+          v-if="preview"
+          variant="ghost"
+          size="sm"
+          class="h-6 px-2 font-mono text-xs"
+          :aria-pressed="previewing"
+          :disabled="loading"
+          @click="togglePreview"
+        >
+          <EyeOff v-if="previewing" class="size-3" aria-hidden="true" />
+          <Eye v-else class="size-3" aria-hidden="true" />
+          <span class="hidden sm:inline">{{ previewing ? 'Edit' : 'Preview' }}</span>
+        </Button>
         <Button size="sm" class="h-6 px-2 font-mono text-xs" :disabled="!dirty || saving || loading" @click="save()">
           <LoaderCircle v-if="saving" class="size-3 animate-spin" aria-hidden="true" />
           <Save v-else class="size-3" aria-hidden="true" />
@@ -186,6 +220,12 @@ onBeforeUnmount(teardown)
     <p v-if="error" class="border-b border-border px-3 py-2 font-mono text-xs text-destructive" role="alert">{{ error }}</p>
     <p v-if="loading" class="p-3 font-mono text-xs text-muted-foreground">Opening…</p>
 
-    <div ref="host" class="min-h-0 flex-1 overflow-auto text-xs" />
+    <div v-show="!previewing" ref="host" class="min-h-0 flex-1 overflow-auto text-xs" />
+    <!-- An empty sandbox runs no scripts and gives the page an opaque origin. -->
+    <iframe v-if="preview === 'html' && previewing" :srcdoc="text" sandbox="" :title="path" class="min-h-0 w-full flex-1 bg-white" />
+    <div v-else-if="preview && previewing" class="min-h-0 flex-1 overflow-auto p-4" aria-label="preview">
+      <AgentMarkdown v-if="preview === 'markdown'" :source="text" class="mx-auto max-w-3xl text-sm" />
+      <img v-else-if="svgUrl" :src="svgUrl" :alt="path" class="mx-auto max-w-full">
+    </div>
   </div>
 </template>

@@ -11,6 +11,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AgentChanges from '@/components/agent/AgentChanges.vue'
 import AgentComposer from '@/components/agent/AgentComposer.vue'
 import AgentFileEditor from '@/components/agent/AgentFileEditor.vue'
+import AgentMediaViewer from '@/components/agent/AgentMediaViewer.vue'
 import AgentHarnessIcon from '@/components/agent/AgentHarnessIcon.vue'
 import AgentSessions from '@/components/agent/AgentSessions.vue'
 import AgentThread from '@/components/agent/AgentThread.vue'
@@ -20,6 +21,7 @@ import VmTerminal, { type Phase as ConsolePhase } from '@/components/VmTerminal.
 import VmTerminalKeypad from '@/components/VmTerminalKeypad.vue'
 import type { AgentSession } from '@/composables/useAgentSocket'
 import { emptyChat, type ChatState, type Draft, type Model } from '@/lib/agentChat'
+import { mediaKind } from '@/lib/fileKind'
 import { chatAdapter } from '@/lib/harness'
 
 definePageMeta({ middleware: ['auth'], layout: false })
@@ -55,6 +57,7 @@ const changesOpen = ref(false)
 const centerTab = ref<'chat' | 'console' | 'files' | 'network'>('chat')
 // The file picked in the right panel's tree, edited in the center panel.
 const openedFile = ref<{ cwd: string, path: string } | null>(null)
+const openedMedia = computed(() => openedFile.value && mediaKind(openedFile.value.path))
 
 function onOpenFile(file: { cwd: string, path: string }) {
   openedFile.value = file
@@ -131,6 +134,7 @@ function watchCwd(cwd: string) {
 
 function openSession(s: AgentSession) {
   sessionsOpen.value = false
+  centerTab.value = 'chat'
   void open({ harness: s.harness, id: s.id })
 }
 
@@ -462,8 +466,18 @@ onBeforeUnmount(() => sock.close())
           </div>
 
           <div v-show="centerTab === 'files'" class="flex min-h-0 flex-1 flex-col">
+            <AgentMediaViewer
+              v-if="openedMedia && openedFile"
+              :key="`${openedFile.cwd}/${openedFile.path}`"
+              :cwd="openedFile.cwd"
+              :path="openedFile.path"
+              :kind="openedMedia.kind"
+              :mime="openedMedia.mime"
+              :read-raw="sock.readRaw"
+              @close="openedFile = null"
+            />
             <AgentFileEditor
-              v-if="openedFile"
+              v-else-if="openedFile"
               :key="`${openedFile.cwd}/${openedFile.path}`"
               :cwd="openedFile.cwd"
               :path="openedFile.path"

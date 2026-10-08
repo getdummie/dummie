@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -17,6 +18,12 @@ import (
 const (
 	maxEditable = 1 << 20
 	sniffBytes  = 8 << 10
+)
+
+// Media for the viewer is pulled in raw chunks, one request per chunk.
+const (
+	maxRaw   = 64 << 20
+	rawChunk = 512 << 10
 )
 
 var errConflict = errors.New("the file changed on disk since it was opened")
@@ -91,6 +98,37 @@ func readEditable(root, rel string) (fileContent, error) {
 		out.Base, out.BaseExists = string(base), true
 	}
 	return out, nil
+}
+
+func readRawChunk(root, rel string, off int64) ([]byte, int64, error) {
+	abs, err := resolveIn(root, rel)
+	if err != nil {
+		return nil, 0, err
+	}
+	f, err := os.Open(abs)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, 0, err
+	}
+	size := fi.Size()
+	switch {
+	case !fi.Mode().IsRegular():
+		return nil, 0, fmt.Errorf("%s is not a regular file", rel)
+	case size > maxRaw:
+		return nil, 0, fmt.Errorf("files over %d MiB cannot be previewed here", maxRaw>>20)
+	case off < 0 || off > size:
+		return nil, 0, fmt.Errorf("offset %d is outside the file", off)
+	}
+	buf := make([]byte, min(rawChunk, size-off))
+	n, err := f.ReadAt(buf, off)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, 0, err
+	}
+	return buf[:n], size, nil
 }
 
 func checkText(b []byte) error {

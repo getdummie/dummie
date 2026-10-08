@@ -245,6 +245,31 @@ func TestReadEditableRefusesBinary(t *testing.T) {
 	}
 }
 
+func TestReadRawChunkWalksTheFile(t *testing.T) {
+	root := t.TempDir()
+	want := bytes.Repeat([]byte{0, 1, 2}, rawChunk/2)
+	if err := os.WriteFile(filepath.Join(root, "a.bin"), want, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var got []byte
+	for {
+		b, size, err := readRawChunk(root, "a.bin", int64(len(got)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, b...)
+		if int64(len(got)) >= size {
+			break
+		}
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("read %d bytes, want %d", len(got), len(want))
+	}
+	if _, _, err := readRawChunk(root, "a.bin", int64(len(want))+1); err == nil {
+		t.Fatal("an offset past the end was accepted")
+	}
+}
+
 func TestRetireOthers(t *testing.T) {
 	dir := t.TempDir()
 	other := filepath.Join(dir, "agent-dev-1.sock")

@@ -67,7 +67,7 @@ export class AgentError extends Error {
 type Msg = Record<string, any>
 type Pending = { resolve: (m: Msg) => void, reject: (e: Error) => void }
 
-const replyTypes = new Set(['opened', 'models', 'uploaded', 'upload_ack', 'ok', 'sessions', 'stat', 'file', 'written', 'write_ack'])
+const replyTypes = new Set(['opened', 'models', 'uploaded', 'upload_ack', 'ok', 'sessions', 'stat', 'file', 'written', 'write_ack', 'raw'])
 const uploadChunk = 192 * 1024
 // Characters, not bytes: JSON escaping can grow them, and dpipe takes 1 MiB.
 const writeChunk = 128 * 1024
@@ -219,6 +219,18 @@ export function useAgentSocket(vmId: () => string) {
     return (await request({ t: 'read_file', cwd, path })).file as AgentFile
   }
 
+  async function readRaw(cwd: string, path: string, type: string, onProgress?: (fraction: number) => void): Promise<Blob> {
+    const parts: BlobPart[] = []
+    for (let offset = 0; ;) {
+      const m = await request({ t: 'read_raw', cwd, path, offset })
+      const chunk = fromBase64(m.data as string)
+      parts.push(chunk)
+      offset += chunk.length
+      onProgress?.(Math.min(1, offset / Math.max(m.size as number, 1)))
+      if (m.last || chunk.length === 0) return new Blob(parts, { type })
+    }
+  }
+
   // writeFile saves only if the file still has `hash`, unless forced; it
   // resolves to the new hash.
   async function writeFile(cwd: string, path: string, content: string, hash: string, force = false): Promise<string> {
@@ -260,7 +272,14 @@ export function useAgentSocket(vmId: () => string) {
     ws = null
   }
 
-  return { phase, error, hello, sessions, diff, connect, close, request, prompt, abort, models, setModel, rename, upload, readFile, writeFile, watch, on }
+  return { phase, error, hello, sessions, diff, connect, close, request, prompt, abort, models, setModel, rename, upload, readFile, readRaw, writeFile, watch, on }
+}
+
+function fromBase64(s: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(s)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
 }
 
 function toBase64(bytes: Uint8Array): string {
