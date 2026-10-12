@@ -178,15 +178,18 @@ func (q *Queries) RevokeAllForUser(ctx context.Context, userID pgtype.UUID) erro
 	return err
 }
 
-const revokeRefreshTokenByHash = `-- name: RevokeRefreshTokenByHash :exec
+const revokeRefreshTokenByHash = `-- name: RevokeRefreshTokenByHash :one
 UPDATE refresh_tokens
 SET revoked = true
 WHERE token_hash = $1
+RETURNING user_id
 `
 
-func (q *Queries) RevokeRefreshTokenByHash(ctx context.Context, tokenHash string) error {
-	_, err := q.db.Exec(ctx, revokeRefreshTokenByHash, tokenHash)
-	return err
+func (q *Queries) RevokeRefreshTokenByHash(ctx context.Context, tokenHash string) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, revokeRefreshTokenByHash, tokenHash)
+	var user_id pgtype.UUID
+	err := row.Scan(&user_id)
+	return user_id, err
 }
 
 const revokeRefreshTokenByID = `-- name: RevokeRefreshTokenByID :exec

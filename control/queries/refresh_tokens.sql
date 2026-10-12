@@ -8,10 +8,11 @@ SELECT * FROM refresh_tokens
 WHERE token_hash = $1
 LIMIT 1;
 
--- name: RevokeRefreshTokenByHash :exec
+-- name: RevokeRefreshTokenByHash :one
 UPDATE refresh_tokens
 SET revoked = true
-WHERE token_hash = $1;
+WHERE token_hash = $1
+RETURNING user_id;
 
 -- name: RevokeAllForUser :exec
 UPDATE refresh_tokens

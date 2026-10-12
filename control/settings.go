@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"control/internal/db"
@@ -31,6 +32,8 @@ const (
 	settingResolverUpstream = "resolver_upstream"
 
 	settingReservedVMNames = "reserved_vm_names"
+
+	settingAuditRetentionDays = "audit_log_retention_days"
 )
 
 type settingKind string
@@ -183,6 +186,24 @@ var settingDefs = []settingDef{
 		Placeholder: "status, api",
 		validate:    validateReservedVMNames,
 	},
+	{
+		Key:   settingAuditRetentionDays,
+		Kind:  settingString,
+		Label: "Audit log retention (days)",
+		Description: "How long entries in the audit log are kept. A daily sweep deletes " +
+			"anything older, so shortening this drops history for good on its next run.",
+		Placeholder: "30",
+		Default:     "30",
+		validate:    validateAuditRetentionDays,
+	},
+}
+
+func validateAuditRetentionDays(v string) error {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 1 || n > 3650 {
+		return errors.New("enter a whole number of days between 1 and 3650")
+	}
+	return nil
 }
 
 func validateReservedVMNames(v string) error {
@@ -280,4 +301,13 @@ func setting(ctx context.Context, q *db.Queries, key string) string {
 
 func boolSetting(ctx context.Context, q *db.Queries, key string) bool {
 	return parseSettingBool(setting(ctx, q, key))
+}
+
+func intSetting(ctx context.Context, q *db.Queries, key string) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(setting(ctx, q, key))); err == nil {
+		return n
+	}
+	def, _ := settingDefByKey(key)
+	n, _ := strconv.Atoi(def.Default)
+	return n
 }

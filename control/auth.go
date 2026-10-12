@@ -222,7 +222,11 @@ func (h *AuthHandler) Signup(c *echo.Context) error {
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not create user")
 	}
-	return h.issueSession(c, u)
+	if err := h.issueSession(c, u); err != nil {
+		return err
+	}
+	recordAudit(c, h.q, auditEntry{actorID: u.ID, authMethod: "password", action: auditSignup, status: http.StatusOK})
+	return nil
 }
 
 type signinReq struct {
@@ -255,9 +259,17 @@ func (h *AuthHandler) Signin(c *echo.Context) error {
 		u, err = h.q.GetUserByUsernameOrEmail(ctx, strings.ToLower(req.Identifier))
 	}
 	if err != nil || !checkPassword(u.PasswordHash, req.Password) {
+		recordAudit(c, h.q, auditEntry{
+			actorUsername: req.Identifier, authMethod: "password",
+			action: auditSigninFailed, status: http.StatusUnauthorized,
+		})
 		return echo.NewHTTPError(http.StatusUnauthorized, "invalid credentials")
 	}
-	return h.issueSession(c, u)
+	if err := h.issueSession(c, u); err != nil {
+		return err
+	}
+	recordAudit(c, h.q, auditEntry{actorID: u.ID, authMethod: "password", action: auditSignin, status: http.StatusOK})
+	return nil
 }
 
 // @Summary     Refresh the access token
@@ -299,7 +311,9 @@ func (h *AuthHandler) TokenRefresh(c *echo.Context) error {
 // @Router      /signout [post]
 func (h *AuthHandler) Signout(c *echo.Context) error {
 	if cookie, err := c.Request().Cookie("refresh_token"); err == nil && cookie.Value != "" {
-		_ = h.q.RevokeRefreshTokenByHash(c.Request().Context(), hashRefresh(cookie.Value))
+		if uid, err := h.q.RevokeRefreshTokenByHash(c.Request().Context(), hashRefresh(cookie.Value)); err == nil {
+			recordAudit(c, h.q, auditEntry{actorID: uid, authMethod: "session", action: auditSignout, status: http.StatusNoContent})
+		}
 	}
 	h.clearAuthCookies(c)
 	return c.NoContent(http.StatusNoContent)

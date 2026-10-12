@@ -54,6 +54,7 @@ const kindLabels: Record<string, string> = {
   'vm.expire': 'Destroy expired VM',
   'vm_target.expire': 'Withdraw temporary access',
   'tasks.cleanup': 'Prune settled tasks',
+  'audit.prune': 'Prune audit log',
 }
 
 function kindLabel(kind: string) {
@@ -309,6 +310,7 @@ async function runNow(t: TaskRow) {
           <NativeSelectOption value="vm.expire">Destroy expired VM</NativeSelectOption>
           <NativeSelectOption value="vm_target.expire">Withdraw temporary access</NativeSelectOption>
           <NativeSelectOption value="tasks.cleanup">Prune settled tasks</NativeSelectOption>
+          <NativeSelectOption value="audit.prune">Prune audit log</NativeSelectOption>
         </NativeSelect>
       </div>
     </div>

@@ -264,6 +264,10 @@ func (h *OIDCHandler) Callback(c *echo.Context) error {
 	if _, err := h.auth.startSession(c, u); err != nil {
 		return h.fail(c, "could not start a session")
 	}
+	recordAudit(c, h.q, auditEntry{
+		actorID: u.ID, authMethod: "oidc", action: auditOIDCSignin,
+		params: map[string]string{"provider": slug}, status: http.StatusFound,
+	})
 	http.Redirect(c.Response(), c.Request(), flow.Dest, http.StatusFound)
 	return nil
 }
@@ -279,6 +283,10 @@ func (h *OIDCHandler) oauthConfig(p db.OidcProvider, prov *oidc.Provider) *oauth
 }
 
 func (h *OIDCHandler) fail(c *echo.Context, msg string) error {
+	recordAudit(c, h.q, auditEntry{
+		authMethod: "oidc", action: auditOIDCFailed,
+		params: map[string]string{"provider": c.Param("slug"), "reason": msg}, status: http.StatusUnauthorized,
+	})
 	http.Redirect(c.Response(), c.Request(),
 		oidcErrorDest+"?oidc_error="+url.QueryEscape(msg), http.StatusFound)
 	return nil

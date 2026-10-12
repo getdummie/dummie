@@ -8,6 +8,7 @@ import {
   Globe,
   HardDrive,
   KeyRound,
+  ScrollText,
   Link2,
   Server,
   Settings,
@@ -29,6 +30,7 @@ const groups: AdminLink[][] = [
     { label: 'Users', to: '/admin/model/users', icon: Users },
     { label: 'Sessions', to: '/admin/model/sessions', icon: Ticket },
     { label: 'LLM usage', to: '/admin/model/llm-usage', icon: ChartColumn },
+    { label: 'Audit log', to: '/admin/model/audit-logs', icon: ScrollText },
   ],
   [
     { label: 'Enrollment keys', to: '/admin/model/client-keys', icon: KeyRound },

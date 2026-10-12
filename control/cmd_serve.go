@@ -185,7 +185,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 		controlURL: proxyCfg.controlURL,
 		proxy:      proxyCfg,
 	}
-	admin := api.Group("/admin", adminJWT(cfg))
+	admin := api.Group("/admin", adminJWT(cfg), auditMW(q))
 	admin.GET("/users", adminH.ListUsers)
 	admin.POST("/users", adminH.CreateUser)
 	admin.GET("/users/:id", adminH.GetUser)
@@ -270,9 +270,11 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/tasks/:id", adminH.GetScheduledTask)
 	admin.POST("/tasks/:id/cancel", adminH.CancelScheduledTask)
 	admin.POST("/tasks/:id/run-now", adminH.RunScheduledTaskNow)
+	auditH := &AuditHandler{q: q}
+	admin.GET("/audit-logs", auditH.List)
 
 	profileH := &ProfileHandler{q: q}
-	me := api.Group("/me", userJWT(cfg, q))
+	me := api.Group("/me", userJWT(cfg, q), auditMW(q))
 	me.GET("", profileH.GetMe)
 	me.PUT("", profileH.UpdateMe)
 
@@ -292,7 +294,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 
 	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL}
 	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
-	vms := api.Group("/vms", userJWT(cfg, q))
+	vms := api.Group("/vms", userJWT(cfg, q), auditMW(q))
 	vms.GET("", userH.ListVMs)
 	vms.POST("", userH.CreateVM)
 	vms.GET("/quota", userH.GetQuota)
@@ -329,7 +331,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.PUT("/:id/targets/:target_id", userH.UpdateTarget)
 	vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
 
-	integ := api.Group("/integrations", userJWT(cfg, q))
+	integ := api.Group("/integrations", userJWT(cfg, q), auditMW(q))
 	integ.GET("", integH.List)
 	integ.POST("", integH.Create)
 	integ.GET("/:id", integH.Get)

@@ -177,6 +177,7 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore)
 		taskCustomCertPurge:   handleCustomCertPurge,
 		taskOSImageBuild:      handleOSImageBuild,
 		taskLLMPrices:         handleLLMPrices,
+		taskAuditPrune:        handleAuditPrune,
 	}
 	return r
 }
@@ -203,6 +204,14 @@ func (r *taskRunner) run(ctx context.Context) {
 		DelaySeconds: taskCustomCertPurgeEvery.Seconds(),
 	}); err != nil {
 		log.Printf("could not schedule the custom certificate purge: %v", err)
+	}
+
+	if err := r.q.CreateSingletonScheduledTask(ctx, db.CreateSingletonScheduledTaskParams{
+		Kind:         taskAuditPrune,
+		Reason:       "prune audit log entries older than the retention setting",
+		DelaySeconds: taskAuditPruneEvery.Seconds(),
+	}); err != nil {
+		log.Printf("could not schedule the audit log prune: %v", err)
 	}
 
 	// No delay: usage has no cost until the first fetch lands.
