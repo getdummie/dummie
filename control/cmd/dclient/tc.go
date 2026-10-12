@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
@@ -164,7 +165,7 @@ func removeBandwidth(n *vmNet) error {
 		Handle:    netlink.MakeHandle(1, minor),
 		Parent:    netlink.MakeHandle(1, 0),
 	}, netlink.HtbClassAttrs{})
-	if err := netlink.ClassDel(class); err != nil {
+	if err := netlink.ClassDel(class); err != nil && !errors.Is(err, unix.ENOENT) {
 		return fmt.Errorf("could not remove the class for %s: %w", n.IP, err)
 	}
 	return nil

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 
@@ -329,24 +330,41 @@ func removeVMPolicy(v vm) error {
 		return nil
 	}
 
-	if idx, err := tapIndex(v.Net.Tap); err == nil {
-		_ = c.SetDeleteElements(&nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFIndex},
-			[]nftables.SetElement{{Key: idx}})
-		_ = c.SetDeleteElements(&nftables.Set{
-			Table: t, Name: setVMSrc, Concatenation: true,
-			KeyType: nftables.MustConcatSetType(nftables.TypeIFIndex, nftables.TypeIPAddr),
-		}, []nftables.SetElement{{Key: srcKey(idx, ip)}})
+	// A batch fails whole on one absent element, and a stopped vm's elements are
+	// usually gone already (teardown on stop, reconcile), so delete one at a time.
+	del := func(s *nftables.Set, e nftables.SetElement) error {
+		if err := c.SetDeleteElements(s, []nftables.SetElement{e}); err != nil {
+			return err
+		}
+		if err := c.Flush(); err != nil && !errors.Is(err, unix.ENOENT) {
+			return fmt.Errorf("could not remove %s from %s: %w", v.ID, s.Name, err)
+		}
+		return nil
 	}
-	_ = c.SetDeleteElements(&nftables.Set{Table: t, Name: setVMIPs, KeyType: nftables.TypeIPAddr},
-		[]nftables.SetElement{{Key: ip}})
 
-	if elems, err := egressElements(v, ip); err == nil && len(elems) > 0 {
-		_ = c.SetDeleteElements(&nftables.Set{
+	var errs []error
+	if idx, err := tapIndex(v.Net.Tap); err == nil {
+		errs = append(errs,
+			del(&nftables.Set{Table: t, Name: setTaps, KeyType: nftables.TypeIFIndex},
+				nftables.SetElement{Key: idx}),
+			del(&nftables.Set{
+				Table: t, Name: setVMSrc, Concatenation: true,
+				KeyType: nftables.MustConcatSetType(nftables.TypeIFIndex, nftables.TypeIPAddr),
+			}, nftables.SetElement{Key: srcKey(idx, ip)}))
+	}
+	errs = append(errs, del(&nftables.Set{Table: t, Name: setVMIPs, KeyType: nftables.TypeIPAddr},
+		nftables.SetElement{Key: ip}))
+
+	if elems, err := egressElements(v, ip); err == nil {
+		egress := &nftables.Set{
 			Table: t, Name: setEgress, Concatenation: true, Interval: true,
 			KeyType: nftables.MustConcatSetType(nftables.TypeIPAddr, nftables.TypeIPAddr),
-		}, elems)
+		}
+		for _, e := range elems {
+			errs = append(errs, del(egress, e))
+		}
 	}
-	return c.Flush()
+	return errors.Join(errs...)
 }
 
 func srcKey(idx []byte, ip net.IP) []byte {
