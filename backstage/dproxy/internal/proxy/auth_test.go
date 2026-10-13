@@ -1,6 +1,9 @@
 package proxy
 
 import (
+	"log/slog"
+	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,6 +38,42 @@ func TestVerifyRoundTrip(t *testing.T) {
 	sub, ok := a.Verify(tok, "one.vm.local")
 	if !ok || sub != "cc@example.com" {
 		t.Fatalf("Verify = (%q, %v)", sub, ok)
+	}
+}
+
+func TestProtectedHostLoginKeepsForwardedPort(t *testing.T) {
+	a := newTestAuth(t)
+	router := NewRouter(&Config{HTTP: &HTTPConfig{Hosts: map[string]HTTPHost{
+		"one.vm.local": {Host: "10.64.0.2", DefaultPort: 8000},
+	}}})
+	req, err := http.NewRequest(http.MethodGet, "http://one.vm.local:8080/dash", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Accept", "text/html")
+	verdict := authorizeRequest(slog.Default(), router, a, "one.vm.local", req)
+	if verdict.status != http.StatusFound {
+		t.Fatalf("login verdict = %+v, want redirect", verdict)
+	}
+	loginURL, err := url.Parse(verdict.location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loginURL.Query().Get("host"); got != "one.vm.local" {
+		t.Fatalf("token audience host = %q, want one.vm.local", got)
+	}
+	if got := loginURL.Query().Get("rd"); got != "http://one.vm.local:8080"+CallbackPath {
+		t.Fatalf("callback URL = %q, want the forwarded port", got)
+	}
+
+	req.Host = "other.vm.local:8080"
+	verdict = authorizeRequest(slog.Default(), router, a, "one.vm.local", req)
+	loginURL, err = url.Parse(verdict.location)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := loginURL.Query().Get("rd"); got != "http://one.vm.local"+CallbackPath {
+		t.Fatalf("mismatched authority redirected to %q", got)
 	}
 }
 

@@ -22,11 +22,12 @@ import (
 )
 
 type blobStore struct {
-	client  *s3.Client
-	presign *s3.PresignClient
-	bucket  string
-	prefix string
-	presignTTL time.Duration
+	client         *s3.Client
+	presign        *s3.PresignClient
+	hostPresign    *s3.PresignClient
+	bucket         string
+	prefix         string
+	presignTTL     time.Duration
 	maxUploadBytes int64
 }
 
@@ -54,6 +55,15 @@ func loadBlobStore(ctx context.Context) *blobStore {
 			presignClient = pc
 		}
 	}
+	hostPresignClient := presignClient
+	if host := strings.TrimSpace(os.Getenv("S3_HOST_ENDPOINT")); host != "" {
+		hc, err := s3Client(ctx, host)
+		if err != nil {
+			log.Printf("could not build the host-facing S3 client; host download links will use S3_PUBLIC_ENDPOINT: %v", err)
+		} else {
+			hostPresignClient = hc
+		}
+	}
 
 	prefix := strings.Trim(strings.TrimSpace(os.Getenv("S3_PREFIX")), "/")
 	if prefix != "" {
@@ -74,6 +84,7 @@ func loadBlobStore(ctx context.Context) *blobStore {
 	return &blobStore{
 		client:         client,
 		presign:        s3.NewPresignClient(presignClient),
+		hostPresign:    s3.NewPresignClient(hostPresignClient),
 		bucket:         bucket,
 		prefix:         prefix,
 		presignTTL:     time.Duration(presignMins) * time.Minute,
@@ -166,7 +177,17 @@ func (b *blobStore) Delete(ctx context.Context, key string) error {
 }
 
 func (b *blobStore) PresignGet(ctx context.Context, key, fileName string) (string, error) {
-	req, err := b.presign.PresignGetObject(ctx, &s3.GetObjectInput{
+	return b.presignGet(ctx, b.presign, key, fileName)
+}
+
+// PresignGetForHost signs a link for dclient on the fleet host. In local QEMU
+// development the host reaches RustFS at a different address from the browser.
+func (b *blobStore) PresignGetForHost(ctx context.Context, key, fileName string) (string, error) {
+	return b.presignGet(ctx, b.hostPresign, key, fileName)
+}
+
+func (b *blobStore) presignGet(ctx context.Context, signer *s3.PresignClient, key, fileName string) (string, error) {
+	req, err := signer.PresignGetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(b.bucket),
 		Key:    aws.String(key),
 		ResponseContentDisposition: aws.String(
@@ -186,7 +207,7 @@ func (b *blobStore) PresignGet(ctx context.Context, key, fileName string) (strin
 // the address by hand -- keeps it exact whatever the endpoint and path style
 // are. It has to agree with cacheURL and download in cmd/dclient/image.go.
 func (b *blobStore) DownloadCacheKey(ctx context.Context, key, fileName string) (string, error) {
-	raw, err := b.PresignGet(ctx, key, fileName)
+	raw, err := b.PresignGetForHost(ctx, key, fileName)
 	if err != nil {
 		return "", err
 	}

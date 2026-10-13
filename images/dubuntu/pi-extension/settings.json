@@ -1,0 +1,5 @@
+{
+  "defaultProvider": "dummie",
+  "defaultModel": "chatgpt/gpt-6-sol",
+  "defaultThinkingLevel": "off"
+}

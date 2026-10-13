@@ -1,5 +1,7 @@
 FROM golang:1.26.5-trixie
 
+ARG VM_SSH_PUBLIC_KEY
+
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN set -ex \
@@ -31,8 +33,6 @@ RUN set -ex \
   && systemctl enable ssh \
   && systemctl unmask systemd-udevd \
   && systemctl enable systemd-udevd-control.socket systemd-udevd-kernel.socket systemd-udevd.service \
-  && mkdir -p /root/.ssh \
-  && curl -sL https://github.com/codingcoffee.keys > /root/.ssh/authorized_keys \
   && adduser --disabled-password --gecos "" ubuntu \
   && adduser ubuntu sudo \
   && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
@@ -64,10 +64,17 @@ RUN set -ex \
 RUN set -ex \
   && sed -i 's/^#\?Port .*/Port 2222/' /etc/ssh/sshd_config
 
+RUN set -ex \
+  && apt update \
+  && apt install -y linux-image-cloud-amd64 initramfs-tools \
+  && apt clean
+
 USER ubuntu
 RUN set -ex \
-  && mkdir -p /home/ubuntu/.ssh/ \
-  && curl -sL https://github.com/codingcoffee.keys > /home/ubuntu/.ssh/authorized_keys \
+  && test -n "$VM_SSH_PUBLIC_KEY" \
+  && install -d -m 0700 /home/ubuntu/.ssh \
+  && printf '%s\n' "$VM_SSH_PUBLIC_KEY" > /home/ubuntu/.ssh/authorized_keys \
+  && chmod 0600 /home/ubuntu/.ssh/authorized_keys \
   && echo 'alias d=docker' >> /home/ubuntu/.bashrc \
   && echo 'alias dco="docker compose"' >> /home/ubuntu/.bashrc \
   && echo 'alias v=neovim' >> /home/ubuntu/.bashrc \

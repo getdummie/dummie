@@ -37,7 +37,7 @@ func (h *UserHandler) consoleURL(ctx context.Context, v db.Vm) string {
 	if h.prod {
 		scheme = "wss"
 	}
-	return fmt.Sprintf("%s://%s/", scheme, host)
+	return fmt.Sprintf("%s://%s/", scheme, h.proxyURLHost(host))
 }
 
 type consoleTokenDTO struct {

@@ -48,6 +48,8 @@ type vmDTO struct {
 	CreatedBy string `json:"created_by"`
 
 	URL string `json:"url"`
+	// SSHPort is set only for a local proxy tunnel listening off port 22.
+	SSHPort int `json:"ssh_port,omitempty"`
 
 	ConsoleURL string `json:"console_url"`
 

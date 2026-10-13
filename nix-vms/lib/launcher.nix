@@ -3,7 +3,7 @@
 let
   lib = pkgs.lib;
 
-  mq = vm.cpu > 1;
+  mq = vm.cpu > 1 && (vm.networkMode or "tap") == "tap";
 
   shares = vm.shares or [ ];
   guestUser = vm.guestUser or null;
@@ -29,10 +29,11 @@ let
 
   virtiofsdStart = lib.concatStringsSep "\n" (lib.imap0 (i: s: ''
         rm -f "$STATE_DIR/virtiofs-${toString i}.sock" "$STATE_DIR/virtiofs-${toString i}.pid"
-        virtiofsd \
+        ${lib.optionalString ((vm.networkMode or "tap") == "user") "nohup setsid "}virtiofsd \
           --socket-path="$STATE_DIR/virtiofs-${toString i}.sock" \
           --shared-dir="${s.source}" \
-          --sandbox=none &
+          --sandbox=none${lib.optionalString ((vm.networkMode or "tap") == "user") '' \
+          >"$STATE_DIR/virtiofs-${toString i}.log" 2>&1 </dev/null''} &
         echo "$!" > "$STATE_DIR/virtiofs-${toString i}.pid"
         for _ in $(seq 1 50); do [ -S "$STATE_DIR/virtiofs-${toString i}.sock" ] && break; sleep 0.1; done
   '') shares);
@@ -66,6 +67,11 @@ let
     tmp="$1"; img="$2"
 
     tar -xf "${vm.rootfsTar}" -C "$tmp"
+    ${lib.optionalString (vm ? seedTar) ''
+    if [ -f "${vm.seedTar}" ]; then
+      tar -xf "${vm.seedTar}" -C "$tmp"
+    fi
+    ''}
 
     rm -f "$tmp/etc/resolv.conf"
     echo 'nameserver ${vm.dns}' > "$tmp/etc/resolv.conf"
@@ -75,6 +81,21 @@ let
       echo '127.0.0.1 localhost'
       echo '127.0.1.1 ${name}'
     } > "$tmp/etc/hosts"
+
+    ${lib.optionalString ((vm.networkMode or "tap") == "user") ''
+    mkdir -p "$tmp/etc/systemd/network" "$tmp/etc/systemd/system/multi-user.target.wants"
+    cat > "$tmp/etc/systemd/network/10-enp0s2.network" <<'NETWORK'
+    [Match]
+    Name=enp0s2
+
+    [Network]
+    Address=${vm.ip}/16
+    Gateway=${vm.gateway}
+    DNS=${vm.dns}
+    NETWORK
+    ln -sf /lib/systemd/system/systemd-networkd.service \
+      "$tmp/etc/systemd/system/multi-user.target.wants/systemd-networkd.service"
+    ''}
 
     ${lib.concatMapStrings (s: ''
       mkdir -p "$tmp${s.mountPoint}"
@@ -114,6 +135,10 @@ pkgs.writeShellApplication {
   ];
   text = ''
     set -euo pipefail
+
+    # `just vm-start` runs from nix-vms/. A managed service can instead set
+    # DUMMIE_REPO_ROOT explicitly to its checkout path.
+    export DUMMIE_REPO_ROOT="''${DUMMIE_REPO_ROOT:-$(realpath "$PWD/..")}"
 
     STATE_DIR="''${MICROQEMU_STATE_DIR:-''${STATE_DIRECTORY:-$PWD/.microqemu/${name}}}"
     mkdir -p "$STATE_DIR"
@@ -162,10 +187,11 @@ ${memBackendArgs}
           -enable-kvm -cpu host
           -m ${toString vm.mem} -smp ${toString vm.cpu}
           -kernel "${vm.kernel}"
-          -append "console=ttyS0 root=/dev/vda rw ip=${vm.ip}::${vm.gateway}:${vm.netmask}:${name}:eth0:off reboot=t quiet loglevel=3 tsc=reliable no_timer_check rcupdate.rcu_expedited=1"
+          ${lib.optionalString (vm ? initrd) ''-initrd "${vm.initrd}"''}
+          -append "console=ttyS0 root=/dev/vda rw ${lib.optionalString ((vm.networkMode or "tap") == "tap") "ip=${vm.ip}::${vm.gateway}:${vm.netmask}:${name}:eth0:off "}reboot=t quiet loglevel=3 tsc=reliable no_timer_check rcupdate.rcu_expedited=1"
           -drive "id=root,file=$IMG,format=raw,if=none${lib.optionalString ephemeral ",snapshot=on"}"
           -device "virtio-blk-pci,drive=root"
-          -netdev "tap,id=net0,ifname=${vm.tap},script=no,downscript=no,queues=${toString vm.cpu}"
+          -netdev "${if (vm.networkMode or "tap") == "user" then "user,id=net0,net=10.68.0.0/16,host=${vm.gateway},dns=10.68.0.3,hostfwd=tcp:127.0.0.1:${toString (vm.sshForwardPort or 2223)}-${vm.ip}:2222" else "tap,id=net0,ifname=${vm.tap},script=no,downscript=no,queues=${toString vm.cpu}"}"
           -device "virtio-net-pci,netdev=net0,mac=${vm.mac}${if mq then ",mq=on" else ""}"
           -device "virtio-rng-pci"
 ${shareArgs}
@@ -179,7 +205,7 @@ ${shareArgs}
         else
           qemu-system-x86_64 -daemonize "''${args[@]}"
           echo "microqemu(${name}): started (pid $(cat "$PID"))"
-          echo "  ssh:     ssh root@${vm.ip}"
+          echo "  ssh:     ${if (vm.networkMode or "tap") == "user" then "ssh -p ${toString (vm.sshForwardPort or 2223)} ubuntu@127.0.0.1" else "ssh -p 2222 ubuntu@${vm.ip}"}"
           echo "  console: microqemu-${name} console   (log: $STATE_DIR/console.log)"
           echo "  stop:    microqemu-${name} stop"
         fi

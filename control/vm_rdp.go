@@ -37,7 +37,7 @@ func (h *UserHandler) desktopURL(ctx context.Context, v db.Vm) string {
 	if h.prod {
 		scheme = "wss"
 	}
-	return fmt.Sprintf("%s://%s/", scheme, host)
+	return fmt.Sprintf("%s://%s/", scheme, h.proxyURLHost(host))
 }
 
 // rdpGateway is the host:port a native client dials. The proxy listens on the

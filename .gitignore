@@ -1,6 +1,7 @@
 
 tempo/
 .envrc
+.env
 .claude/
 kernel/linux*
 sample/
@@ -18,3 +19,6 @@ postgres-data/
 
 clickhouse-data/
 .clickhouse.env
+
+# Binaries served only to the local QEMU host VM.
+vm-artifacts/

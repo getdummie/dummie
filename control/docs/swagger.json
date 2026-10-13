@@ -862,6 +862,10 @@
                     "spec": {
                         "type": "object"
                     },
+                    "ssh_port": {
+                        "description": "SSHPort is set only for a local proxy tunnel listening off port 22.",
+                        "type": "integer"
+                    },
                     "started_at": {
                         "type": "string"
                     },

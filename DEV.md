@@ -1,139 +1,92 @@
 
 # Setup
 
-## Compile a kernel
+## Local control plane and website
+
+This workflow runs the control server and Nuxt apps on the host for hot reload.
+Docker runs PostgreSQL, ClickHouse, and RustFS. You need Docker, Go 1.26.5 or
+newer, and Bun 1.4. The database ports are bound to localhost; PostgreSQL uses
+5433 so it can coexist with another local server on 5432.
+
+Create the ignored `.rustfs.env` first, with a locally generated secret:
 
 ```sh
-just kernel-setup v7.1.4
-just kernel-build v7.1.4
+printf 'RUSTFS_ACCESS_KEY=dummielocal\nRUSTFS_SECRET_KEY=%s\n' \
+  "$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')" > .rustfs.env
+chmod 600 .rustfs.env
 ```
-
-## Build a base debian image
 
 ```sh
-just build images
+docker compose -f docker-compose.local.yml up -d --wait
+
+cd control/web-client && bun install --frozen-lockfile && cd ../..
+cd website && bun install --frozen-lockfile --ignore-scripts && bun --bun run postinstall && cd ..
+
+cp -n control/.env.example control/.env
 ```
 
-## Run a VM
+In the RustFS console at `http://localhost:9001`, sign in with the two values
+from `.rustfs.env` and create a bucket named `dummie`. Set the following values
+in `control/.env`. Use the same storage credentials, and replace `JWT_SECRET`
+and `PROXY_AUTH_SECRET` with independent random values. Keep the file local;
+`control/.gitignore` excludes it.
+
+```dotenv
+DATABASE_URL=postgres://control:control@127.0.0.1:5433/control?sslmode=disable
+CLICKHOUSE_URL=clickhouse://control:control@127.0.0.1:9010/dummie
+API_HOST=127.0.0.1
+CONTROL_URL=http://localhost:1323
+CONSOLE_URL=http://localhost:1323/
+JWT_SECRET=replace-with-a-random-local-secret
+PROXY_AUTH_SECRET=replace-with-another-random-local-secret
+S3_BUCKET=dummie
+S3_REGION=us-east-1
+S3_ENDPOINT=http://127.0.0.1:9000
+S3_PUBLIC_ENDPOINT=http://127.0.0.1:9000
+S3_FORCE_PATH_STYLE=true
+S3_ACCESS_KEY_ID=copy-from-.rustfs.env
+S3_SECRET_ACCESS_KEY=copy-from-.rustfs.env
+LLM_KEY_ENCRYPTION_KEY=replace-with-base64-encoded-32-random-bytes
+```
+
+Generate the LLM key with `openssl rand -base64 32` and put the output in
+`control/.env`. Keep the same value across control server restarts: changing it
+makes stored LLM provider keys unreadable. Restart the control server after
+setting it.
+
+In development mode the database migrations are explicit. Apply both sets, then
+start the control server from `control/`; it also starts the console Nuxt server
+and proxies it at `http://localhost:1323`.
 
 ```sh
-just run
+cd control
+go run . migrate up
+go run . migrate-clickhouse up
+go run . serve
 ```
 
-## SSH into the VM
+In another terminal, start the public website at `http://localhost:3001`.
+The website uses Bun's SQLite connector, so run Nuxt under Bun:
 
 ```sh
-just ssh
+cd website
+CONSOLE_URL=http://localhost:1323 bun --bun run dev --port 3001
 ```
 
-## Check process running in VM
+Check the API at `http://localhost:1323/api/v1/health`. Then open
+`http://localhost:1323` and sign up. On a fresh database, the first
+account becomes the admin and can open the **Admin** sections used below.
 
-From inside the VM run
+Stop the apps with Ctrl-C and the backing services with
+`docker compose -f docker-compose.local.yml down`. The Compose volumes keep
+your development data; add `-v` to `down` if you want to remove them.
 
-```sh
-systemctl status microqemu-boot
-sudo systemctl restart microqemu-boot
-sudo systemctl stop microqemu-boot
-journalctl -u microqemu-boot -f
-```
+This starts the control plane and website. [Local VM setup](LOCAL_VMS.md)
+covers the prebuilt kernels, QEMU host, enrollment, and a sandbox smoke test.
 
-## Control Server
-
-For rustfs
-
-```sh
-mkdir -p rustfs-data rustfs-logs
-sudo chown -R 10001:10001 ./rustfs-data ./rustfs-logs
-```
-
-Running the control server
-
-```sh
-docker compose up -d
-docker compose logs -f
-```
-
-## QEMU Host Configuration
-
-Starting the host VM
-
-```sh
-just vm-start
-```
-
-SSH into the host VM
-
-```sh
-just vm-ssh
-```
-
-Starting a VM inside the host VM
-
-```sh
-sudo tee /etc/dclient/config.yaml > /dev/null <<'EOF'
-control_url: http://10.68.0.1:1323
-# enrollment_key: paste-once-then-it-is-ignored
-insecure: true
-
-data_dir: /var/lib/dclient
-socket: /run/dclient/dclient.sock
-group: dclient
-
-features:
-  ip_forward: true
-  kvm_access: true
-  nftables: true
-  docker_compat: true
-  suricata: true
-  dhcp: true
-  metadata: true
-
-network:
-  pool: 10.64.0.0/16
-  gateway: 10.64.0.1
-  uplink: enp0s2
-  dns: 1.1.1.1
-  queues: 4
-EOF
-
-sudo systemctl restart dclient
-```
-
-For generating python sdk
+## Python SDK
 
 ```sh
 just sdk-python
 just sdk-install
 ```
-
-Archlinux Setup
-
-```sh
-pacman -Syyu ncdu neovim sudo btop htop qemu-base qemu-img docker
-sudo systemctl enable --now docker
-```
-
-Ubuntu Setup
-
-```sh
-sudo apt install -y ncdu neovim sudo btop htop qemu-utils qemu-system-x86
-wget https://github.com/getdummie/dummie/releases/download/v0.0.26/dclient_0.0.26_linux_amd64.tar.gz
-tar -xvf dclient_0.0.26_linux_amd64.tar.gz
-sudo mv dclient /usr/local/bin/.
-
-# change default ssh port
-sudo tee /etc/systemd/system/ssh.socket.d/override.conf > /dev/null <<'EOF'
-[Socket]
-ListenStream=
-ListenStream=0.0.0.0:2202
-ListenStream=[::]:2202
-EOF
-
-sudo systemctl daemon-reload
-sudo systemctl restart ssh.socket
-
-# check doctor
-dclient doctor
-```
-
-dclient connect --control-url https://dummie-ww.zerodha.io --key 3bDZ-6kdPPDsStpnGQlOoikJ6LdVxVF_WJ1gVuTEjtw
