@@ -1410,10 +1410,18 @@
                         "schema": {
                             "type": "string"
                         }
+                    },
+                    {
+                        "description": "global (default), personal, or all",
+                        "in": "query",
+                        "name": "source",
+                        "schema": {
+                            "type": "string"
+                        }
                     }
                 ],
                 "responses": {},
-                "summary": "Your usage of the global llm keys for a month",
+                "summary": "Your usage of global, personal, or all llm keys for a month",
                 "tags": [
                     "llm"
                 ]

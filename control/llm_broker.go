@@ -18,6 +18,9 @@ import (
 const (
 	integrationKindLLM = "llm"
 	llmGlobalSuffix    = "@global"
+	// Vector stores this final meter segment as provider. Keep global providers
+	// unsuffixed so existing usage remains in the global report.
+	llmPersonalMeterSuffix = "@personal"
 )
 
 var llmResourceRe = regexp.MustCompile(`^([a-z0-9]+)(@global)?/(openai|anthropic|responses)$`)
@@ -83,9 +86,8 @@ func (h *ClientHandler) llmToken(c *echo.Context, client db.Client, vmIP, resour
 			}
 			resp.Token = key
 		}
-		// Only global keys are metered: they are the ones someone else pays for.
-		if global && k.VMOwner.Valid {
-			resp.Meter = domainIDString(k.VMOwner) + "/" + domainIDString(k.VmPk) + "/" + provider
+		if k.VMOwner.Valid {
+			resp.Meter = domainIDString(k.VMOwner) + "/" + domainIDString(k.VmPk) + "/" + llmMeterProvider(provider, global)
 		}
 		log.Printf("llm key issued: host=%s vm=%s provider=%s global=%t", clientLabel(client), k.VMName, provider, global)
 		return c.JSON(http.StatusOK, resp)
@@ -100,6 +102,13 @@ func (h *ClientHandler) llmToken(c *echo.Context, client db.Client, vmIP, resour
 		return echo.NewHTTPError(http.StatusForbidden, "no global key is configured for "+provider+"; ask an admin, or use your own key as "+provider+"/<model>")
 	}
 	return echo.NewHTTPError(http.StatusForbidden, "you have no "+provider+" key configured; add one under integrations, or use the shared one as "+name+llmGlobalSuffix+"/<model>")
+}
+
+func llmMeterProvider(provider string, global bool) string {
+	if global {
+		return provider
+	}
+	return provider + llmPersonalMeterSuffix
 }
 
 func llmKeyOwner(k db.ListLLMKeysForVMRow) (owner pgtype.UUID) {

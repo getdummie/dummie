@@ -88,6 +88,10 @@ WHERE created_by = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3;
 
+-- name: ListVMNamesByIDs :many
+SELECT id, name FROM vms
+WHERE id = ANY(sqlc.arg(vm_ids)::uuid[]) AND created_by = sqlc.arg(owner_id);
+
 -- name: GetVMForOwner :one
 SELECT * FROM vms
 WHERE id = $1 AND created_by = $2;

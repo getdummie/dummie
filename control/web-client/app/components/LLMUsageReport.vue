@@ -4,35 +4,50 @@ import { Label } from '@/components/ui/label'
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TableCell, TableRow } from '@/components/ui/table'
-import { fmtCost, fmtTokens, monthOptions, type UsageReport } from '@/lib/llm-usage'
+import { fmtCost, fmtTokens, monthOptions, type UsageReport, type UsageSource, type UsageTotals } from '@/lib/llm-usage'
 import type { DataTableColumn } from '@/lib/table'
 
-const props = defineProps<{ endpoint: string, month?: string }>()
+const props = defineProps<{ endpoint: string, month?: string, source?: UsageSource, selectableSource?: boolean }>()
 
 const { authFetch } = useAuth()
 const months = monthOptions()
 const month = ref(months.some(m => m.value === props.month) ? props.month! : months[0]!.value)
+const source = ref<UsageSource>(props.source ?? (props.selectableSource ? 'all' : 'global'))
+type Breakdown = 'vm' | 'model' | 'day'
+type BreakdownRow = UsageTotals & { key: string, label: string, title?: string }
+const breakdown = ref<Breakdown>('vm')
 const report = ref<UsageReport | null>(null)
 const loading = ref(true)
 const error = ref<string | null>(null)
+let activeLoad = 0
 
 async function load() {
+  const id = ++activeLoad
   loading.value = true
   error.value = null
   try {
-    const res = await authFetch(`${props.endpoint}?month=${month.value}`)
+    const params = new URLSearchParams({ month: month.value })
+    if (props.selectableSource || props.source) params.set('source', source.value)
+    const res = await authFetch(`${props.endpoint}?${params}`)
     if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    report.value = await res.json()
+    const body: UsageReport = await res.json()
+    if ((props.selectableSource || props.source) && body.source !== source.value) {
+      throw new Error('This server does not support the selected usage view yet')
+    }
+    if (id === activeLoad) {
+      report.value = body
+      if (!body.by_vm && breakdown.value === 'vm') breakdown.value = 'model'
+    }
   }
   catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not load usage'
+    if (id === activeLoad) error.value = e instanceof Error ? e.message : 'Could not load usage'
   }
   finally {
-    loading.value = false
+    if (id === activeLoad) loading.value = false
   }
 }
 onMounted(load)
-watch(month, load)
+watch([month, source], load)
 
 const stats = computed(() => {
   const t = report.value?.totals
@@ -56,18 +71,49 @@ const columns = (first: DataTableColumn): DataTableColumn[] => [
   { key: 'out', label: 'Out', align: 'right' },
   { key: 'cost', label: 'Cost', align: 'right' },
 ]
-const modelColumns = columns({ key: 'model', label: 'Model' })
-const dayColumns = columns({ key: 'date', label: 'Day' })
-
 const hasUnpriced = computed(() => !!report.value?.totals.unpriced)
+const modelPrefix = (provider: string, rowSource?: 'personal' | 'global') => `${provider}${rowSource === 'personal' ? '' : '@global'}`
+const breakdownLabel = computed(() => ({ vm: 'VM', model: 'Model', day: 'Day' })[breakdown.value])
+const breakdownColumns = computed(() => columns({ key: 'item', label: breakdownLabel.value }))
+const breakdownRows = computed<BreakdownRow[]>(() => {
+  if (!report.value) return []
+  switch (breakdown.value) {
+    case 'vm':
+      return (report.value.by_vm ?? []).map(vm => ({
+        ...vm,
+        key: vm.vm_id,
+        label: vm.vm_name || `VM ${vm.vm_id.slice(0, 8)}`,
+        title: vm.vm_id,
+      }))
+    case 'model':
+      return report.value.by_model.map(model => ({
+        ...model,
+        key: `${model.source ?? 'global'}/${model.provider}/${model.model}`,
+        label: `${modelPrefix(model.provider, model.source)}/${model.model}`,
+      }))
+    case 'day':
+      return report.value.by_day.map(day => ({ ...day, key: day.date, label: day.date }))
+  }
+})
+const monthId = 'llm-usage-month'
+const sourceId = 'llm-usage-source'
+const breakdownId = 'llm-usage-breakdown'
 </script>
 
 <template>
   <div>
     <div class="flex flex-wrap items-end gap-3">
+      <div v-if="selectableSource" class="space-y-1.5">
+        <Label :for="sourceId">Integrations</Label>
+        <NativeSelect :id="sourceId" v-model="source">
+          <NativeSelectOption value="all">All integrations</NativeSelectOption>
+          <NativeSelectOption value="personal">Personal integrations</NativeSelectOption>
+          <NativeSelectOption value="global">Global integrations</NativeSelectOption>
+        </NativeSelect>
+      </div>
       <div class="space-y-1.5">
-        <Label for="usage-month">Month</Label>
-        <NativeSelect id="usage-month" v-model="month">
+        <Label :for="monthId">Month</Label>
+        <NativeSelect :id="monthId" v-model="month">
           <NativeSelectOption v-for="m in months" :key="m.value" :value="m.value">{{ m.label }}</NativeSelectOption>
         </NativeSelect>
       </div>
@@ -93,51 +139,38 @@ const hasUnpriced = computed(() => !!report.value?.totals.unpriced)
       </div>
     </div>
 
-    <h3 class="mt-8 text-sm font-medium">By model</h3>
+    <div class="mt-8 space-y-1.5">
+      <Label :for="breakdownId">Break down by</Label>
+      <NativeSelect :id="breakdownId" v-model="breakdown">
+        <NativeSelectOption value="vm">VM</NativeSelectOption>
+        <NativeSelectOption value="model">Model</NativeSelectOption>
+        <NativeSelectOption value="day">Day</NativeSelectOption>
+      </NativeSelect>
+    </div>
     <DataTable
-      label="Usage by model"
-      :columns="modelColumns"
+      :label="`Usage by ${breakdownLabel}`"
+      :columns="breakdownColumns"
       :loading="loading"
       :loading-rows="2"
-      :empty="!report?.by_model.length"
+      :empty="!breakdownRows.length"
       class="mt-3"
     >
       <template #empty>No usage this month.</template>
-      <TableRow v-for="r in report?.by_model" :key="`${r.provider}/${r.model}`">
-        <TableCell class="font-mono text-xs">{{ r.provider }}@global/{{ r.model }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ r.requests.toLocaleString() }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(r.input_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(r.cache_read_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(r.cache_write_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(r.output_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtCost(r) }}</TableCell>
-      </TableRow>
-    </DataTable>
-
-    <h3 class="mt-8 text-sm font-medium">By day</h3>
-    <DataTable
-      label="Usage by day"
-      :columns="dayColumns"
-      :loading="loading"
-      :loading-rows="3"
-      :empty="!report?.by_day.length"
-      class="mt-3"
-    >
-      <template #empty>No usage this month.</template>
-      <TableRow v-for="d in report?.by_day" :key="d.date">
-        <TableCell class="font-mono text-xs">{{ d.date }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ d.requests.toLocaleString() }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(d.input_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(d.cache_read_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(d.cache_write_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtTokens(d.output_tokens) }}</TableCell>
-        <TableCell class="text-right tabular-nums">{{ fmtCost(d) }}</TableCell>
+      <TableRow v-for="row in breakdownRows" :key="row.key">
+        <TableCell class="font-mono text-xs" :title="row.title">{{ row.label }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ row.requests.toLocaleString() }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(row.input_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(row.cache_read_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(row.cache_write_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtTokens(row.output_tokens) }}</TableCell>
+        <TableCell class="text-right tabular-nums">{{ fmtCost(row, true) }}</TableCell>
       </TableRow>
     </DataTable>
 
     <p class="mt-4 text-xs text-muted-foreground">
       Cost is at pay-as-you-go prices from LiteLLM's price list, even for a coding plan key, where
       the real cost is the subscription. Days and months are UTC; new usage can take a minute to appear.
+      VM names reflect their current names; deleted VMs are shown by ID.
       <template v-if="hasUnpriced"> * Some models have no known price and are left out of the cost.</template>
     </p>
   </div>

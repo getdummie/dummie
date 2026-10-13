@@ -55,7 +55,7 @@ watch(month, load)
         <p class="eyebrow mb-2 text-primary-text">// admin · llm usage</p>
         <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">LLM usage</h1>
         <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Usage of the global keys, per user. Users' own keys are not tracked.
+          Usage of the global keys, per user. Personal key usage is visible to each key's owner.
         </p>
       </div>
       <div class="space-y-1.5">

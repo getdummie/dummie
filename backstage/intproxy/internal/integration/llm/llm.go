@@ -77,9 +77,9 @@ func withModel(r *http.Request, route integration.Route) (integration.Route, boo
 	}
 
 	body["model"], _ = json.Marshal(name)
-	// Only global keys are metered, and an openai stream carries no usage
-	// unless it is asked for.
-	if route.Kind == kindOpenAI && strings.HasSuffix(source, "@global") && string(body["stream"]) == "true" {
+	// An OpenAI stream carries no usage unless it is asked for. Both global
+	// and personal keys are metered.
+	if route.Kind == kindOpenAI && string(body["stream"]) == "true" {
 		if _, set := body["stream_options"]; !set {
 			body["stream_options"] = json.RawMessage(`{"include_usage":true}`)
 		}
