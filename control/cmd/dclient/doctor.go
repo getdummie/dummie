@@ -88,17 +88,18 @@ func runDoctor() error {
 		}
 	}
 
-	failed := 0
+	t := newDoctorTable(os.Stdout, width)
+	t.header()
+	counts := map[result]int{}
 	for _, c := range checks {
 		res, detail := c.run()
-		if res == fail {
-			failed++
-		}
-		fmt.Printf("%-4s  %-*s  %s\n", res, width, c.name, detail)
+		counts[res]++
+		t.row(res, c.name, detail)
 	}
+	t.footer(counts)
 
-	if failed > 0 {
-		return cli.Exit(fmt.Sprintf("%d check(s) failed", failed), 1)
+	if counts[fail] > 0 {
+		return cli.Exit("", 1)
 	}
 	return nil
 }
