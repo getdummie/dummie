@@ -75,6 +75,52 @@ func TestEndToEndLLMUsesTheBrokersUpstream(t *testing.T) {
 	}
 }
 
+func TestEndToEndLLMUsesAnthropicAPIKeyAndKeepsOpenCodeSession(t *testing.T) {
+	var seen struct{ auth, apiKey, session, client, userAgent, path, model string }
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct{ Model string }
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		seen.auth = r.Header.Get("Authorization")
+		seen.apiKey = r.Header.Get("X-Api-Key")
+		seen.session = r.Header.Get("X-OpenCode-Session")
+		seen.client = r.Header.Get("X-OpenCode-Client")
+		seen.userAgent = r.Header.Get("User-Agent")
+		seen.path, seen.model = r.URL.Path, body.Model
+		_, _ = w.Write([]byte(`{"id":"x"}`))
+	}))
+	defer upstream.Close()
+
+	src := fakeSource{fn: func(credential.Scope) (credential.Token, error) {
+		return credential.Token{Value: "go_key", AuthHeader: "x-api-key", Upstream: upstream.URL + "/zen/go"}, nil
+	}}
+	s := testServer(t, src, "")
+	s.rp.Transport = upstream.Client().Transport
+	host := withLLM(t, s)
+
+	r := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{"model":"opencode-go@global/minimax-m3","messages":[]}`))
+	r.Host = host
+	r.Header.Set("Authorization", "Bearer guest-key")
+	r.Header.Set("X-Api-Key", "guest-key")
+	r.Header.Set("X-OpenCode-Session", "conversation-1")
+	r.Header.Set("X-OpenCode-Client", "pi")
+	r.Header.Set("User-Agent", "pi/1.2.3")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %q", w.Code, w.Body.String())
+	}
+	if seen.auth != "" || seen.apiKey != "go_key" {
+		t.Fatalf("upstream auth = %q, x-api-key = %q", seen.auth, seen.apiKey)
+	}
+	if seen.session != "conversation-1" || seen.client != "pi" || seen.userAgent != "pi/1.2.3" {
+		t.Fatalf("upstream attribution headers = %+v", seen)
+	}
+	if seen.path != "/zen/go/v1/messages" || seen.model != "minimax-m3" {
+		t.Fatalf("upstream path = %q, model = %q", seen.path, seen.model)
+	}
+}
+
 func TestEndToEndChatGPTSendsTheBrokersAccount(t *testing.T) {
 	var seen struct{ auth, account, beta, path string }
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -187,6 +187,9 @@ type IntegrationTokenResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 	Account   string    `json:"account,omitempty"`
+	// AuthHeader is empty for Authorization: Bearer. The llm integration also
+	// accepts x-api-key for providers using the Anthropic wire protocol.
+	AuthHeader string `json:"auth_header,omitempty"`
 	// Upstream is the https base the token belongs to, when the integration
 	// has more than one.
 	Upstream string `json:"upstream,omitempty"`

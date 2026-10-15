@@ -32,7 +32,7 @@ const (
 	maxBody = 32 << 20
 )
 
-var sourcePattern = regexp.MustCompile(`^[a-z0-9]+(@global)?$`)
+var sourcePattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*(@global)?$`)
 
 type LLM struct{}
 
@@ -97,7 +97,11 @@ func withModel(r *http.Request, route integration.Route) (integration.Route, boo
 }
 
 func (l *LLM) Apply(pr *httputil.ProxyRequest, route integration.Route, tok credential.Token) {
-	pr.Out.Header.Set("Authorization", "Bearer "+tok.Value)
+	if tok.AuthHeader == "x-api-key" {
+		pr.Out.Header.Set("X-Api-Key", tok.Value)
+	} else {
+		pr.Out.Header.Set("Authorization", "Bearer "+tok.Value)
+	}
 	// A chatgpt subscription's backend wants the account and codex's own headers.
 	if tok.Account != "" {
 		pr.Out.Header.Set("Chatgpt-Account-Id", tok.Account)

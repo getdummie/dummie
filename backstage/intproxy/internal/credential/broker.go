@@ -52,11 +52,12 @@ type brokerRequest struct {
 }
 
 type brokerResponse struct {
-	Token     string    `json:"token"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Account   string    `json:"account,omitempty"`
-	Upstream  string    `json:"upstream,omitempty"`
-	Meter     string    `json:"meter,omitempty"`
+	Token      string    `json:"token"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	Account    string    `json:"account,omitempty"`
+	AuthHeader string    `json:"auth_header,omitempty"`
+	Upstream   string    `json:"upstream,omitempty"`
+	Meter      string    `json:"meter,omitempty"`
 }
 
 type brokerError struct {
@@ -102,7 +103,10 @@ func (b *Broker) Token(ctx context.Context, s Scope) (Token, error) {
 			Message: "intproxy: the control server returned an unusable token",
 		}
 	}
-	return Token{Value: br.Token, ExpiresAt: br.ExpiresAt, Upstream: br.Upstream, Meter: br.Meter, Account: br.Account}, nil
+	return Token{
+		Value: br.Token, ExpiresAt: br.ExpiresAt, Upstream: br.Upstream,
+		Meter: br.Meter, Account: br.Account, AuthHeader: br.AuthHeader,
+	}, nil
 }
 
 type relayRequest struct {

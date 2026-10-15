@@ -20,7 +20,7 @@ const (
 	llmGlobalSuffix    = "@global"
 )
 
-var llmResourceRe = regexp.MustCompile(`^([a-z0-9]+)(@global)?/(openai|anthropic|responses)$`)
+var llmResourceRe = regexp.MustCompile(`^([a-z0-9]+(?:-[a-z0-9]+)*)(@global)?/(openai|anthropic|responses)$`)
 
 var llmFormatPaths = map[string]string{
 	"openai":    "/v1/chat/completions",
@@ -64,7 +64,7 @@ func (h *ClientHandler) llmToken(c *echo.Context, client db.Client, vmIP, resour
 			}
 			return echo.NewHTTPError(http.StatusForbidden, provider+" does not serve "+llmFormatPaths[format]+"; use "+strings.Join(served, " or "))
 		}
-		resp := proto.IntegrationTokenResponse{Upstream: upstream}
+		resp := proto.IntegrationTokenResponse{Upstream: upstream, AuthHeader: plan.authHeader(format)}
 		if llmUsesDevice(k.Provider) {
 			cred, err := h.chatgptAccess(c.Request().Context(), k)
 			if errors.Is(err, errLLMKeyRejected) {

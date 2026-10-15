@@ -14,11 +14,13 @@ import (
 )
 
 type llmPlan struct {
-	ID            string `json:"id"`
-	Label         string `json:"label"`
-	OpenAIBase    string `json:"-"`
-	AnthropicBase string `json:"-"`
-	ResponsesBase string `json:"-"`
+	ID            string            `json:"id"`
+	Label         string            `json:"label"`
+	OpenAIBase    string            `json:"-"`
+	AnthropicBase string            `json:"-"`
+	ResponsesBase string            `json:"-"`
+	KeyCheckURL   string            `json:"-"`
+	AuthHeaders   map[string]string `json:"-"`
 }
 
 // base is where this plan serves the api format names, or "" if it does not.
@@ -34,16 +36,24 @@ func (p llmPlan) base(format string) string {
 	return ""
 }
 
+// authHeader is empty for the usual Authorization bearer token. A plan can
+// name x-api-key for an api format that follows Anthropic's wire protocol.
+func (p llmPlan) authHeader(format string) string {
+	return p.AuthHeaders[format]
+}
+
 const (
 	llmAuthKey    = "key"
 	llmAuthDevice = "device"
 )
 
 type llmProvider struct {
-	ID    string    `json:"id"`
-	Label string    `json:"label"`
-	Auth  string    `json:"auth"`
-	Plans []llmPlan `json:"plans"`
+	ID          string    `json:"id"`
+	Label       string    `json:"label"`
+	Description string    `json:"description,omitempty"`
+	KeyURL      string    `json:"key_url,omitempty"`
+	Auth        string    `json:"auth"`
+	Plans       []llmPlan `json:"plans"`
 }
 
 // llmProviders is every upstream a key can be stored for. The ids are also the
@@ -55,6 +65,20 @@ var llmProviders = []llmProvider{{
 	Plans: []llmPlan{
 		{ID: "api", Label: "API", OpenAIBase: "https://api.z.ai/api/paas/v4", AnthropicBase: "https://api.z.ai/api/anthropic"},
 		{ID: "coding", Label: "Coding plan", OpenAIBase: "https://api.z.ai/api/coding/paas/v4", AnthropicBase: "https://api.z.ai/api/anthropic"},
+	},
+}, {
+	ID:          "opencode-go",
+	Label:       "OpenCode Go",
+	Description: "Works with both Go and Go Plus subscriptions; OpenCode applies the limits for your account.",
+	KeyURL:      "https://opencode.ai/auth",
+	Auth:        llmAuthKey,
+	Plans: []llmPlan{
+		{
+			ID: "go", Label: "Go / Go Plus",
+			OpenAIBase: "https://opencode.ai/zen/go/v1", AnthropicBase: "https://opencode.ai/zen/go",
+			ResponsesBase: "https://opencode.ai/zen/go/v1", KeyCheckURL: "https://opencode.ai/zen/go/v1/usage",
+			AuthHeaders: map[string]string{"anthropic": "x-api-key"},
+		},
 	},
 }, {
 	ID:    "chatgpt",
@@ -130,6 +154,36 @@ func fetchLLMModels(ctx context.Context, plan llmPlan, key string) ([]llmModel, 
 		return nil, fmt.Errorf("could not decode the model list: %w", err)
 	}
 	return list.Data, nil
+}
+
+// checkLLMKey verifies a credential before it is stored. Most providers
+// authenticate their model catalog; OpenCode's catalog is public, so its plan
+// points at the authenticated, non-generating usage endpoint instead.
+func checkLLMKey(ctx context.Context, plan llmPlan, key string) error {
+	if plan.KeyCheckURL == "" {
+		_, err := fetchLLMModels(ctx, plan, key)
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, plan.KeyCheckURL, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	resp, err := llmHTTPClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+
+	switch {
+	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
+		return errLLMKeyRejected
+	case resp.StatusCode != http.StatusOK:
+		return fmt.Errorf("checking the key returned %d", resp.StatusCode)
+	default:
+		return nil
+	}
 }
 
 const llmModelsTTL = 10 * time.Minute
