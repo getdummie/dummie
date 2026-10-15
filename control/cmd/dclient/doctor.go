@@ -284,6 +284,9 @@ func lookSSHD() (string, error) {
 }
 
 func sshdPorts(bin string) ([]string, string, error) {
+	if ports, unit, ok := sshSocketPorts(); ok {
+		return ports, unit, nil
+	}
 	if out, err := exec.Command(bin, "-T").Output(); err == nil {
 		var ports []string
 		for _, line := range strings.Split(string(out), "\n") {
@@ -295,6 +298,40 @@ func sshdPorts(bin string) ([]string, string, error) {
 	}
 	ports, err := parseSSHDPorts(sshdConfigPath, 0)
 	return ports, sshdConfigPath, err
+}
+
+// A listening ssh.socket hands its sockets to sshd, so its ListenStream wins over
+// the Port in sshd_config, which sshd -T still reports.
+func sshSocketPorts() ([]string, string, bool) {
+	systemctl, err := exec.LookPath("systemctl")
+	if err != nil {
+		return nil, "", false
+	}
+	for _, unit := range []string{"ssh.socket", "sshd.socket"} {
+		out, err := exec.Command(systemctl, "show", "-p", "ActiveState", "-p", "Listen", unit).Output()
+		if err != nil || !strings.Contains(string(out), "ActiveState=active\n") {
+			continue
+		}
+		var ports []string
+		for _, line := range strings.Split(string(out), "\n") {
+			listen, ok := strings.CutPrefix(line, "Listen=")
+			if !ok {
+				continue
+			}
+			for _, addr := range strings.Fields(listen) {
+				if _, port, err := net.SplitHostPort(addr); err == nil {
+					ports = append(ports, port)
+				} else if _, err := strconv.Atoi(addr); err == nil {
+					ports = append(ports, addr)
+				}
+			}
+		}
+		if len(ports) > 0 {
+			slices.Sort(ports)
+			return slices.Compact(ports), unit, true
+		}
+	}
+	return nil, "", false
 }
 
 func parseSSHDPorts(path string, depth int) ([]string, error) {
