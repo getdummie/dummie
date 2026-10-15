@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/google/nftables"
 	"github.com/urfave/cli/v3"
@@ -57,6 +58,7 @@ var checks = []check{
 	{"nftables is usable", checkNftables},
 	{"ip forwarding is enabled", checkForwarding},
 	{"an uplink for egress exists", checkUplink},
+	{"docker is installed and running", checkDocker},
 	{"nfqueue matches the suricata configuration", checkQueues},
 	{"the suricata container is running", checkSuricata},
 	{"the coredns container is running", checkCoreDNS},
@@ -489,6 +491,30 @@ func checkUplink() (result, string) {
 		return warn, err.Error() + "; vm egress cannot be masqueraded"
 	}
 	return pass, name
+}
+
+func checkDocker() (result, string) {
+	cfg, err := loadNetConfig(defaultDataDir())
+	if err != nil {
+		return warn, "could not read the network config: " + err.Error()
+	}
+	missing := warn
+	if cfg.Suricata {
+		missing = fail
+	}
+
+	docker, err := exec.LookPath("docker")
+	if err != nil {
+		return missing, "docker is not on PATH; suricata and coredns run as containers"
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, docker, "version", "-f", "{{.Server.Version}}").CombinedOutput()
+	if err != nil {
+		return missing, "the docker daemon is not reachable (" + strings.TrimSpace(string(out)) +
+			"); start it with systemctl start docker"
+	}
+	return pass, "docker " + strings.TrimSpace(string(out)) + " at " + docker
 }
 
 func checkSuricata() (result, string) {
