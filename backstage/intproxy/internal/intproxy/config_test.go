@@ -110,6 +110,9 @@ func TestValidate(t *testing.T) {
 		{"gitlab by kind", func(c *Config) {
 			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "techgitlab", Kind: "gitlab", Enabled: true})
 		}, ""},
+		{"gitea by kind", func(c *Config) {
+			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "forge", Kind: "gitea", Enabled: true})
+		}, ""},
 		{"gitlab under local", func(c *Config) {
 			*c = *localConfig()
 			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "techgitlab", Kind: "gitlab", Enabled: true})

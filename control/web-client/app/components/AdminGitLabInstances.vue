@@ -14,7 +14,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { GitLabInstance } from '@/composables/useIntegrations'
+import type { GitFlavor, GitLabInstance } from '@/composables/useIntegrations'
+import { flavorLabel } from '@/composables/useIntegrations'
 
 const { authFetch } = useAuth()
 
@@ -41,7 +42,7 @@ async function load() {
     items.value = (await res.json()).items ?? []
   }
   catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not load the GitLab instances'
+    error.value = e instanceof Error ? e.message : 'Could not load the git instances'
   }
   finally {
     loading.value = false
@@ -53,7 +54,8 @@ onMounted(load)
 // only chosen once.
 const formOpen = ref(false)
 const editing = ref<GitLabInstance | null>(null)
-const form = reactive({ name: '', base_url: '' })
+const form = reactive<{ name: string, base_url: string, flavor: GitFlavor }>({ name: '', base_url: '', flavor: 'gitlab' })
+const flavors: GitFlavor[] = ['gitlab', 'gitea']
 const saving = ref(false)
 
 const nameValid = computed(() =>
@@ -66,6 +68,7 @@ function openForm(i: GitLabInstance | null) {
   editing.value = i
   form.name = i?.name ?? ''
   form.base_url = i?.base_url ?? ''
+  form.flavor = i?.flavor ?? 'gitlab'
   error.value = null
   formOpen.value = true
 }
@@ -83,14 +86,14 @@ async function save() {
       : await authFetch('/admin/gitlab-instances', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: form.name.trim(), base_url: form.base_url.trim() }),
+          body: JSON.stringify({ name: form.name.trim(), base_url: form.base_url.trim(), flavor: form.flavor }),
         })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     formOpen.value = false
     await load()
   }
   catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not save the GitLab instance'
+    error.value = e instanceof Error ? e.message : 'Could not save the instance'
   }
   finally {
     saving.value = false
@@ -111,7 +114,7 @@ async function remove() {
     await load()
   }
   catch (e) {
-    error.value = e instanceof Error ? e.message : 'Could not remove the GitLab instance'
+    error.value = e instanceof Error ? e.message : 'Could not remove the instance'
   }
   finally {
     removeBusy.value = false
@@ -124,9 +127,9 @@ async function remove() {
     <div class="flex flex-wrap items-end justify-between gap-3">
       <div>
         <p class="eyebrow mb-2 text-primary-text">// admin · integrations</p>
-        <h2 class="text-xl font-semibold tracking-tight">GitLab instances</h2>
+        <h2 class="text-xl font-semibold tracking-tight">Git instances</h2>
         <p class="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Each instance is served at
+          GitLab, Forgejo and Gitea instances. Each is served at
           <code class="rounded bg-muted px-1 py-0.5 font-mono text-xs">&lt;name&gt;.int.&lt;tld&gt;</code>.
           Users add their own personal access token for it, and VMs clone and push through the
           proxy without holding the token.
@@ -150,13 +153,16 @@ async function remove() {
       </div>
 
       <p v-else-if="!items.length" class="p-4 text-sm text-muted-foreground">
-        No GitLab instances yet.
+        No git instances yet.
       </p>
 
       <ul v-else class="divide-y divide-border">
         <li v-for="i in items" :key="i.id" class="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:gap-4">
           <div class="min-w-0 flex-1">
-            <p class="font-mono text-sm font-medium">{{ i.name }}<span class="text-muted-foreground">.int.&lt;tld&gt;</span></p>
+            <p class="flex flex-wrap items-center gap-2 text-sm font-medium">
+              <span class="font-mono">{{ i.name }}<span class="text-muted-foreground">.int.&lt;tld&gt;</span></span>
+              <span class="text-xs font-normal text-muted-foreground">{{ flavorLabel(i.flavor) }}</span>
+            </p>
             <p class="mt-0.5 truncate font-mono text-xs text-muted-foreground">{{ i.base_url }}</p>
           </div>
           <div class="flex shrink-0 items-center gap-2">
@@ -181,7 +187,7 @@ async function remove() {
       <DialogContent>
         <form @submit.prevent="save">
           <DialogHeader>
-            <DialogTitle>{{ editing ? `Edit ${editing.name}` : 'Add a GitLab instance' }}</DialogTitle>
+            <DialogTitle>{{ editing ? `Edit ${editing.name}` : 'Add a git instance' }}</DialogTitle>
             <DialogDescription>
               {{ editing ? 'The name is the subdomain, so only the URL can change.' : 'The name becomes the subdomain VMs clone from.' }}
             </DialogDescription>
@@ -192,6 +198,23 @@ async function remove() {
           </Alert>
 
           <div class="mt-4 space-y-4">
+            <div v-if="!editing" class="space-y-1.5">
+              <Label id="gitlab-flavor-label">Type</Label>
+              <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="gitlab-flavor-label">
+                <Button
+                  v-for="f in flavors"
+                  :key="f"
+                  type="button"
+                  size="sm"
+                  role="radio"
+                  :aria-checked="form.flavor === f"
+                  :variant="form.flavor === f ? 'default' : 'outline'"
+                  @click="form.flavor = f"
+                >
+                  {{ flavorLabel(f) }}
+                </Button>
+              </div>
+            </div>
             <div v-if="!editing" class="space-y-1.5">
               <Label for="gitlab-name">Name</Label>
               <Input
@@ -211,7 +234,7 @@ async function remove() {
               <Input
                 id="gitlab-url"
                 v-model="form.base_url"
-                placeholder="https://gitlab.example.com"
+                :placeholder="form.flavor === 'gitea' ? 'https://forgejo.example.com' : 'https://gitlab.example.com'"
                 spellcheck="false"
                 autocomplete="off"
                 class="font-mono text-sm"

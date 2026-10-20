@@ -28,7 +28,7 @@ func parseIntproxyConfig(t *testing.T, out string) parsedIntproxyConfig {
 }
 
 func TestGenerateIntproxyConfig(t *testing.T) {
-	out := generateIntproxyConfig("example.com", "https://control.example.com/", true, []string{"techgitlab"})
+	out := generateIntproxyConfig("example.com", "https://control.example.com/", true, []gitHost{{"techgitlab", "gitlab"}, {"forge", "gitea"}})
 
 	for _, want := range []string{
 		`listen: "10.64.255.254:443"`,
@@ -41,7 +41,8 @@ func TestGenerateIntproxyConfig(t *testing.T) {
 		"mode: broker",
 		"- name: github",
 		"- name: llm",
-		"- name: \"techgitlab\"\n    kind: gitlab",
+		"- name: \"techgitlab\"\n    kind: \"gitlab\"",
+		"- name: \"forge\"\n    kind: \"gitea\"",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)

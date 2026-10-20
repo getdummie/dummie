@@ -153,6 +153,7 @@ type GitlabInstance struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	UpdatedBy pgtype.UUID
+	Flavor    string
 }
 
 type Integration struct {

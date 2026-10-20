@@ -75,8 +75,10 @@ shutdown_grace: 5m
 log_level: info
 `
 
-// gitlab names the admin's gitlab instances; each one is its own vhost.
-func generateIntproxyConfig(tld, controlURL string, tls bool, gitlab []string) string {
+// gitHost is an admin-added git instance; its flavor is the intproxy kind.
+type gitHost struct{ name, flavor string }
+
+func generateIntproxyConfig(tld, controlURL string, tls bool, hosts []gitHost) string {
 	listen := intproxyPlainListen
 	if tls {
 		listen = intproxyTLSListen
@@ -106,8 +108,8 @@ func generateIntproxyConfig(tld, controlURL string, tls bool, gitlab []string) s
 	b.WriteString(intproxyStaticConfig)
 
 	b.WriteString("\nintegrations:\n  - name: github\n  - name: llm\n")
-	for _, name := range gitlab {
-		fmt.Fprintf(&b, "  - name: %s\n    kind: gitlab\n", yamlString(name))
+	for _, h := range hosts {
+		fmt.Fprintf(&b, "  - name: %s\n    kind: %s\n", yamlString(h.name), yamlString(h.flavor))
 	}
 	return b.String()
 }
@@ -139,9 +141,9 @@ func pushIntproxyConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hu
 		log.Printf("could not list gitlab instances for client %s: %v", id, err)
 		return
 	}
-	gitlab := make([]string, 0, len(instances))
+	hosts := make([]gitHost, 0, len(instances))
 	for _, g := range instances {
-		gitlab = append(gitlab, g.Name)
+		hosts = append(hosts, gitHost{name: g.Name, flavor: g.Flavor})
 	}
 
 	tls := cert != "" && key != ""
@@ -152,7 +154,7 @@ func pushIntproxyConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hu
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindIntproxyConfig,
 		Intproxy: &proto.IntproxyConfig{
-			Config: generateIntproxyConfig(tld, controlURL, tls, gitlab),
+			Config: generateIntproxyConfig(tld, controlURL, tls, hosts),
 			Cert:   cert,
 			Key:    key,
 		},

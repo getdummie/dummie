@@ -12,19 +12,25 @@ import (
 )
 
 const createGitLabInstance = `-- name: CreateGitLabInstance :one
-INSERT INTO gitlab_instances (name, base_url, updated_by)
-VALUES ($1, $2, $3)
-RETURNING id, name, base_url, created_at, updated_at, updated_by
+INSERT INTO gitlab_instances (name, base_url, flavor, updated_by)
+VALUES ($1, $2, $3, $4)
+RETURNING id, name, base_url, created_at, updated_at, updated_by, flavor
 `
 
 type CreateGitLabInstanceParams struct {
 	Name      string
 	BaseURL   string
+	Flavor    string
 	UpdatedBy pgtype.UUID
 }
 
 func (q *Queries) CreateGitLabInstance(ctx context.Context, arg CreateGitLabInstanceParams) (GitlabInstance, error) {
-	row := q.db.QueryRow(ctx, createGitLabInstance, arg.Name, arg.BaseURL, arg.UpdatedBy)
+	row := q.db.QueryRow(ctx, createGitLabInstance,
+		arg.Name,
+		arg.BaseURL,
+		arg.Flavor,
+		arg.UpdatedBy,
+	)
 	var i GitlabInstance
 	err := row.Scan(
 		&i.ID,
@@ -33,6 +39,7 @@ func (q *Queries) CreateGitLabInstance(ctx context.Context, arg CreateGitLabInst
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.Flavor,
 	)
 	return i, err
 }
@@ -92,7 +99,7 @@ func (q *Queries) DeleteGitLabInstance(ctx context.Context, id pgtype.UUID) (int
 }
 
 const getGitLabInstance = `-- name: GetGitLabInstance :one
-SELECT id, name, base_url, created_at, updated_at, updated_by FROM gitlab_instances WHERE id = $1
+SELECT id, name, base_url, created_at, updated_at, updated_by, flavor FROM gitlab_instances WHERE id = $1
 `
 
 func (q *Queries) GetGitLabInstance(ctx context.Context, id pgtype.UUID) (GitlabInstance, error) {
@@ -105,12 +112,13 @@ func (q *Queries) GetGitLabInstance(ctx context.Context, id pgtype.UUID) (Gitlab
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.Flavor,
 	)
 	return i, err
 }
 
 const getGitLabInstanceByName = `-- name: GetGitLabInstanceByName :one
-SELECT id, name, base_url, created_at, updated_at, updated_by FROM gitlab_instances WHERE name = $1
+SELECT id, name, base_url, created_at, updated_at, updated_by, flavor FROM gitlab_instances WHERE name = $1
 `
 
 func (q *Queries) GetGitLabInstanceByName(ctx context.Context, name string) (GitlabInstance, error) {
@@ -123,6 +131,7 @@ func (q *Queries) GetGitLabInstanceByName(ctx context.Context, name string) (Git
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.Flavor,
 	)
 	return i, err
 }
@@ -194,7 +203,7 @@ func (q *Queries) ListGitLabGrantsForVM(ctx context.Context, arg ListGitLabGrant
 }
 
 const listGitLabInstances = `-- name: ListGitLabInstances :many
-SELECT id, name, base_url, created_at, updated_at, updated_by FROM gitlab_instances ORDER BY name
+SELECT id, name, base_url, created_at, updated_at, updated_by, flavor FROM gitlab_instances ORDER BY name
 `
 
 func (q *Queries) ListGitLabInstances(ctx context.Context) ([]GitlabInstance, error) {
@@ -213,6 +222,7 @@ func (q *Queries) ListGitLabInstances(ctx context.Context) ([]GitlabInstance, er
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.UpdatedBy,
+			&i.Flavor,
 		); err != nil {
 			return nil, err
 		}
@@ -228,7 +238,7 @@ const updateGitLabInstance = `-- name: UpdateGitLabInstance :one
 UPDATE gitlab_instances
 SET base_url = $2, updated_by = $3, updated_at = now()
 WHERE id = $1
-RETURNING id, name, base_url, created_at, updated_at, updated_by
+RETURNING id, name, base_url, created_at, updated_at, updated_by, flavor
 `
 
 type UpdateGitLabInstanceParams struct {
@@ -247,6 +257,7 @@ func (q *Queries) UpdateGitLabInstance(ctx context.Context, arg UpdateGitLabInst
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.UpdatedBy,
+		&i.Flavor,
 	)
 	return i, err
 }

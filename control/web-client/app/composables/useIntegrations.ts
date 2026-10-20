@@ -14,13 +14,22 @@ export interface Integration {
   // Set for gitlab: the admin's instance name, which is also its subdomain.
   instance?: string
   base_url?: string
+  flavor?: GitFlavor
   created_at: string
+}
+
+// gitea stands for forgejo too: same api, same token.
+export type GitFlavor = 'gitlab' | 'gitea'
+
+export function flavorLabel(f?: string): string {
+  return f === 'gitea' ? 'Forgejo / Gitea' : 'GitLab'
 }
 
 export interface GitLabInstance {
   id: string
   name: string
   base_url: string
+  flavor: GitFlavor
   updated_at: string
 }
 

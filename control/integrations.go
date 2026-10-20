@@ -40,6 +40,7 @@ type integrationDTO struct {
 	Repos        []string `json:"repos,omitempty"`
 	Instance     string   `json:"instance,omitempty"`
 	BaseURL      string   `json:"base_url,omitempty"`
+	Flavor       string   `json:"flavor,omitempty"`
 	CreatedAt    string   `json:"created_at"`
 }
 
@@ -78,6 +79,7 @@ func (h *IntegrationHandler) List(c *echo.Context) error {
 			dto.Connected = true
 			dto.Instance = r.GitLabInstanceName.String
 			dto.BaseURL = r.GitLabBaseURL.String
+			dto.Flavor = r.GitLabFlavor.String
 		}
 		items = append(items, dto)
 	}
@@ -182,6 +184,7 @@ func (h *IntegrationHandler) Get(c *echo.Context) error {
 		dto.Connected = true
 		dto.Instance = row.GitLabInstanceName.String
 		dto.BaseURL = row.GitLabBaseURL.String
+		dto.Flavor = row.GitLabFlavor.String
 	}
 	return c.JSON(http.StatusOK, dto)
 }
@@ -506,6 +509,7 @@ func (h *IntegrationHandler) ListForVM(c *echo.Context) error {
 			Readonly: r.Readonly,
 			AllRepos: r.AllRepos,
 			Instance: r.GitLabInstanceName.String,
+			Flavor:   r.GitLabFlavor.String,
 		}
 		// Exactly what this vm can reach: the repositories picked for the
 		// attachment, and none when none are picked.

@@ -67,6 +67,7 @@ SELECT i.*,
        gi.repository_selection,
        g.name     AS gitlab_instance_name,
        g.base_url AS gitlab_base_url,
+       g.flavor   AS gitlab_flavor,
        (SELECT count(*) FROM integration_repos r WHERE r.integration_id = i.id) AS repo_count,
        (SELECT count(*) FROM vm_integrations v WHERE v.integration_id = i.id)   AS vm_count
 FROM integrations i
@@ -82,7 +83,8 @@ SELECT i.*,
        gi.repository_selection,
        gi.installation_id,
        g.name     AS gitlab_instance_name,
-       g.base_url AS gitlab_base_url
+       g.base_url AS gitlab_base_url,
+       g.flavor   AS gitlab_flavor
 FROM integrations i
 LEFT JOIN github_installations gi ON gi.id = i.installation_pk
 LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
@@ -149,7 +151,7 @@ WHERE vi.integration_id = $1
 ORDER BY v.name;
 
 -- name: ListVMIntegrationsForOwner :many
-SELECT i.id, i.name, i.kind, i.readonly, i.all_repos, g.name AS gitlab_instance_name
+SELECT i.id, i.name, i.kind, i.readonly, i.all_repos, g.name AS gitlab_instance_name, g.flavor AS gitlab_flavor
 FROM vm_integrations vi
 JOIN integrations i ON i.id = vi.integration_id
 LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id

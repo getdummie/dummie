@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { Integration, IntegrationVM, OwnedVM } from '@/composables/useIntegrations'
-import { integrationHost } from '@/composables/useIntegrations'
+import { flavorLabel, integrationHost } from '@/composables/useIntegrations'
 
 definePageMeta({ middleware: ['auth'] })
 
@@ -205,16 +205,16 @@ const usage = computed(() => {
           <h2 class="text-lg font-semibold tracking-tight">Token</h2>
           <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
             VMs reach whatever projects this token can. Replace it here when it expires or is
-            rotated; it is checked against GitLab before it is saved.
+            rotated; it is checked against {{ flavorLabel(item.flavor) }} before it is saved.
           </p>
           <form class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end" @submit.prevent="saveToken">
             <div class="min-w-0 flex-1 space-y-1.5">
-              <Label for="gitlab-new-token">New personal access token</Label>
+              <Label for="gitlab-new-token">New access token</Label>
               <Input
                 id="gitlab-new-token"
                 v-model="newToken"
                 type="password"
-                placeholder="glpat-…"
+                :placeholder="item.flavor === 'gitea' ? '' : 'glpat-…'"
                 spellcheck="false"
                 autocomplete="off"
                 class="font-mono text-sm"

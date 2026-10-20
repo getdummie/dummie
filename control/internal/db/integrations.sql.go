@@ -297,7 +297,8 @@ SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.reado
        gi.repository_selection,
        gi.installation_id,
        g.name     AS gitlab_instance_name,
-       g.base_url AS gitlab_base_url
+       g.base_url AS gitlab_base_url,
+       g.flavor   AS gitlab_flavor
 FROM integrations i
 LEFT JOIN github_installations gi ON gi.id = i.installation_pk
 LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
@@ -328,6 +329,7 @@ type GetIntegrationForOwnerRow struct {
 	InstallationID      pgtype.Int8
 	GitLabInstanceName  pgtype.Text
 	GitLabBaseURL       pgtype.Text
+	GitLabFlavor        pgtype.Text
 }
 
 func (q *Queries) GetIntegrationForOwner(ctx context.Context, arg GetIntegrationForOwnerParams) (GetIntegrationForOwnerRow, error) {
@@ -352,6 +354,7 @@ func (q *Queries) GetIntegrationForOwner(ctx context.Context, arg GetIntegration
 		&i.InstallationID,
 		&i.GitLabInstanceName,
 		&i.GitLabBaseURL,
+		&i.GitLabFlavor,
 	)
 	return i, err
 }
@@ -682,6 +685,7 @@ SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.reado
        gi.repository_selection,
        g.name     AS gitlab_instance_name,
        g.base_url AS gitlab_base_url,
+       g.flavor   AS gitlab_flavor,
        (SELECT count(*) FROM integration_repos r WHERE r.integration_id = i.id) AS repo_count,
        (SELECT count(*) FROM vm_integrations v WHERE v.integration_id = i.id)   AS vm_count
 FROM integrations i
@@ -709,6 +713,7 @@ type ListIntegrationsByOwnerRow struct {
 	RepositorySelection pgtype.Text
 	GitLabInstanceName  pgtype.Text
 	GitLabBaseURL       pgtype.Text
+	GitLabFlavor        pgtype.Text
 	RepoCount           int64
 	VmCount             int64
 }
@@ -740,6 +745,7 @@ func (q *Queries) ListIntegrationsByOwner(ctx context.Context, ownerID pgtype.UU
 			&i.RepositorySelection,
 			&i.GitLabInstanceName,
 			&i.GitLabBaseURL,
+			&i.GitLabFlavor,
 			&i.RepoCount,
 			&i.VmCount,
 		); err != nil {
@@ -790,7 +796,7 @@ func (q *Queries) ListVMIntegrationRepos(ctx context.Context, arg ListVMIntegrat
 }
 
 const listVMIntegrationsForOwner = `-- name: ListVMIntegrationsForOwner :many
-SELECT i.id, i.name, i.kind, i.readonly, i.all_repos, g.name AS gitlab_instance_name
+SELECT i.id, i.name, i.kind, i.readonly, i.all_repos, g.name AS gitlab_instance_name, g.flavor AS gitlab_flavor
 FROM vm_integrations vi
 JOIN integrations i ON i.id = vi.integration_id
 LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
@@ -810,6 +816,7 @@ type ListVMIntegrationsForOwnerRow struct {
 	Readonly           bool
 	AllRepos           bool
 	GitLabInstanceName pgtype.Text
+	GitLabFlavor       pgtype.Text
 }
 
 func (q *Queries) ListVMIntegrationsForOwner(ctx context.Context, arg ListVMIntegrationsForOwnerParams) ([]ListVMIntegrationsForOwnerRow, error) {
@@ -828,6 +835,7 @@ func (q *Queries) ListVMIntegrationsForOwner(ctx context.Context, arg ListVMInte
 			&i.Readonly,
 			&i.AllRepos,
 			&i.GitLabInstanceName,
+			&i.GitLabFlavor,
 		); err != nil {
 			return nil, err
 		}

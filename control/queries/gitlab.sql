@@ -8,8 +8,8 @@ SELECT * FROM gitlab_instances WHERE id = $1;
 SELECT * FROM gitlab_instances WHERE name = $1;
 
 -- name: CreateGitLabInstance :one
-INSERT INTO gitlab_instances (name, base_url, updated_by)
-VALUES ($1, $2, $3)
+INSERT INTO gitlab_instances (name, base_url, flavor, updated_by)
+VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: UpdateGitLabInstance :one

@@ -43,3 +43,4 @@ sql:
           gitlab_username: "GitLabUsername"
           gitlab_instance_name: "GitLabInstanceName"
           gitlab_base_url: "GitLabBaseURL"
+          gitlab_flavor: "GitLabFlavor"

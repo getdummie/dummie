@@ -308,9 +308,9 @@ func (c *Config) validateCredential() error {
 			return errors.New("config: policy is required under mode: local, or no client can reach anything")
 		}
 		for _, ic := range c.Integrations {
-			// llm's and gitlab's upstream comes with each key from the broker;
-			// a local token has nowhere to say it.
-			if ic.Enabled && (ic.kind() == "llm" || ic.kind() == "gitlab") {
+			// llm's and the git instances' upstream comes with each key from
+			// the broker; a local token has nowhere to say it.
+			if ic.Enabled && (ic.kind() == "llm" || ic.kind() == "gitlab" || ic.kind() == "gitea") {
 				return fmt.Errorf("config: integration %q needs credential.mode: broker", ic.Name)
 			}
 			if ic.Enabled && ic.Auth.Empty() {

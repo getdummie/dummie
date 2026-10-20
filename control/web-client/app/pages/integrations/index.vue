@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import type { GitLabInstance, Integration } from '@/composables/useIntegrations'
+import { flavorLabel } from '@/composables/useIntegrations'
 
 definePageMeta({ middleware: ['auth'] })
 useHead({ title: 'dummie — integrations' })
@@ -308,7 +309,7 @@ const failedInstall = computed(() => {
           >
             <GitBranch class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <span class="min-w-0">
-              <span class="block text-sm font-medium">GitLab · {{ g.name }}</span>
+              <span class="block text-sm font-medium">{{ flavorLabel(g.flavor) }} · {{ g.name }}</span>
               <span class="block truncate font-mono text-xs text-muted-foreground">{{ g.base_url }}</span>
             </span>
           </button>
@@ -357,13 +358,18 @@ const failedInstall = computed(() => {
       <DialogContent>
         <form @submit.prevent="createGitLab">
           <DialogHeader>
-            <DialogTitle>GitLab Integration · {{ gitlabInstance?.name }}</DialogTitle>
+            <DialogTitle>{{ flavorLabel(gitlabInstance?.flavor) }} Integration · {{ gitlabInstance?.name }}</DialogTitle>
             <DialogDescription>
-              Create a personal access token on
+              Create an access token on
               <span class="font-mono">{{ gitlabInstance?.base_url }}</span>
-              with the <span class="font-mono">read_repository</span> scope, and
-              <span class="font-mono">write_repository</span> to push. It stays on the control
-              server; VMs never see it.
+              <template v-if="gitlabInstance?.flavor === 'gitea'">
+                with <span class="font-mono">repository</span> read permission, and write to push.
+              </template>
+              <template v-else>
+                with the <span class="font-mono">read_repository</span> scope, and
+                <span class="font-mono">write_repository</span> to push.
+              </template>
+              It stays on the control server; VMs never see it.
             </DialogDescription>
           </DialogHeader>
 
@@ -387,12 +393,12 @@ const failedInstall = computed(() => {
               </p>
             </div>
             <div class="space-y-1.5">
-              <Label for="gitlab-token">Personal access token</Label>
+              <Label for="gitlab-token">Access token</Label>
               <Input
                 id="gitlab-token"
                 v-model="gitlabToken"
                 type="password"
-                placeholder="glpat-…"
+                :placeholder="gitlabInstance?.flavor === 'gitea' ? '' : 'glpat-…'"
                 spellcheck="false"
                 autocomplete="off"
                 class="font-mono text-sm"
@@ -423,7 +429,7 @@ const failedInstall = computed(() => {
           <DialogDescription>
             Every VM it is attached to loses access to those repositories on its next git command.
             <template v-if="removing?.kind === 'gitlab'">
-              The stored token is deleted here — revoke it on GitLab too if you no longer need it.
+              The stored token is deleted here — revoke it on {{ flavorLabel(removing?.flavor) }} too if you no longer need it.
             </template>
             <template v-else>
               The app stays installed on GitHub — remove it there too if you want to revoke it

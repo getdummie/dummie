@@ -25,6 +25,13 @@ import (
 
 const integrationKindGitLab = "gitlab"
 
+// Instance flavors. Each is also the intproxy kind serving that instance;
+// gitea stands for forgejo as well.
+const (
+	gitFlavorGitLab = "gitlab"
+	gitFlavorGitea  = "gitea"
+)
+
 // gitlabNameRe mirrors gitlab_instances_name_shape. The name is a hostname
 // label under int.<tld>, next to the built-in github and llm.
 var gitlabNameRe = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -56,6 +63,7 @@ type gitlabInstanceDTO struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	BaseURL   string `json:"base_url"`
+	Flavor    string `json:"flavor"`
 	UpdatedAt string `json:"updated_at"`
 }
 
@@ -64,6 +72,7 @@ func toGitLabInstanceDTO(g db.GitlabInstance) gitlabInstanceDTO {
 		ID:        domainIDString(g.ID),
 		Name:      g.Name,
 		BaseURL:   g.BaseURL,
+		Flavor:    g.Flavor,
 		UpdatedAt: g.UpdatedAt.Time.Format(time.RFC3339),
 	}
 }
@@ -92,6 +101,7 @@ func (h *AdminHandler) ListGitLabInstances(c *echo.Context) error {
 type gitlabInstanceReq struct {
 	Name    string `json:"name"`
 	BaseURL string `json:"base_url"`
+	Flavor  string `json:"flavor"`
 }
 
 // @Summary     Add a gitlab instance
@@ -116,12 +126,22 @@ func (h *AdminHandler) CreateGitLabInstance(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
+	flavor := req.Flavor
+	switch flavor {
+	case "":
+		flavor = gitFlavorGitLab
+	case gitFlavorGitLab, gitFlavorGitea:
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, "flavor must be gitlab or gitea")
+	}
 
 	ctx := c.Request().Context()
-	row, err := h.q.CreateGitLabInstance(ctx, db.CreateGitLabInstanceParams{Name: name, BaseURL: base, UpdatedBy: uid})
+	row, err := h.q.CreateGitLabInstance(ctx, db.CreateGitLabInstanceParams{
+		Name: name, BaseURL: base, Flavor: flavor, UpdatedBy: uid,
+	})
 	if err != nil {
 		if isUniqueViolation(err) {
-			return echo.NewHTTPError(http.StatusConflict, "a gitlab instance with that name already exists")
+			return echo.NewHTTPError(http.StatusConflict, "an instance with that name already exists")
 		}
 		log.Printf("could not create gitlab instance %s: %v", name, err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not save the gitlab instance")
@@ -218,6 +238,29 @@ type gitlabTokenInfo struct {
 	Username string
 }
 
+func checkGitToken(ctx context.Context, flavor, base, token string, readonly bool) (gitlabTokenInfo, error) {
+	if flavor == gitFlavorGitea {
+		return checkGiteaToken(ctx, base, token)
+	}
+	return checkGitLabToken(ctx, base, token, readonly)
+}
+
+// checkGiteaToken only proves the token is real: gitea has no endpoint that
+// reports a token's own scopes, and a repository-only token cannot read /user.
+func checkGiteaToken(ctx context.Context, base, token string) (gitlabTokenInfo, error) {
+	var user struct {
+		Login string `json:"login"`
+	}
+	err := gitlabGet(ctx, base+"/api/v1/user", "Authorization", "token "+token, &user)
+	if errors.Is(err, errGitLabNoAPIScope) {
+		return gitlabTokenInfo{}, nil
+	}
+	if err != nil {
+		return gitlabTokenInfo{}, err
+	}
+	return gitlabTokenInfo{Username: user.Login}, nil
+}
+
 // checkGitLabToken refuses a token that could not do what it is stored for.
 // A repository-only token cannot read its own scopes, so it is taken on trust.
 func checkGitLabToken(ctx context.Context, base, token string, readonly bool) (gitlabTokenInfo, error) {
@@ -225,7 +268,7 @@ func checkGitLabToken(ctx context.Context, base, token string, readonly bool) (g
 		Active bool     `json:"active"`
 		Scopes []string `json:"scopes"`
 	}
-	err := gitlabGet(ctx, base+"/api/v4/personal_access_tokens/self", token, &self)
+	err := gitlabGet(ctx, base+"/api/v4/personal_access_tokens/self", "PRIVATE-TOKEN", token, &self)
 	if errors.Is(err, errGitLabNoAPIScope) {
 		return gitlabTokenInfo{}, nil
 	}
@@ -246,16 +289,16 @@ func checkGitLabToken(ctx context.Context, base, token string, readonly bool) (g
 		Username string `json:"username"`
 	}
 	// read_repository alone cannot read /user, and the name is only shown.
-	_ = gitlabGet(ctx, base+"/api/v4/user", token, &user)
+	_ = gitlabGet(ctx, base+"/api/v4/user", "PRIVATE-TOKEN", token, &user)
 	return gitlabTokenInfo{Username: user.Username}, nil
 }
 
-func gitlabGet(ctx context.Context, u, token string, out any) error {
+func gitlabGet(ctx context.Context, u, header, value string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set(header, value)
 	resp, err := gitlabHTTPClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errGitLabUnreachable, err)
@@ -264,7 +307,7 @@ func gitlabGet(ctx context.Context, u, token string, out any) error {
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
-		log.Printf("gitlab refused a token at %s: %s", u, bytes.TrimSpace(raw))
+		log.Printf("a token was refused at %s: %s", u, bytes.TrimSpace(raw))
 		return errGitLabTokenRejected
 	case resp.StatusCode == http.StatusForbidden:
 		return errGitLabNoAPIScope
@@ -282,10 +325,10 @@ func gitlabGet(ctx context.Context, u, token string, out any) error {
 func gitlabCheckError(err error) error {
 	switch {
 	case errors.Is(err, errGitLabTokenRejected):
-		return echo.NewHTTPError(http.StatusBadRequest, "gitlab rejected this token")
+		return echo.NewHTTPError(http.StatusBadRequest, "the instance rejected this token")
 	case errors.Is(err, errGitLabUnreachable):
-		log.Printf("could not check a gitlab token: %v", err)
-		return echo.NewHTTPError(http.StatusBadGateway, "could not reach gitlab to check this token")
+		log.Printf("could not check a git instance token: %v", err)
+		return echo.NewHTTPError(http.StatusBadGateway, "could not reach the instance to check this token")
 	}
 	return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 }
@@ -319,7 +362,7 @@ func (h *IntegrationHandler) createGitLab(c *echo.Context, owner pgtype.UUID, re
 	if err != nil {
 		return notFoundOr(err, "no such gitlab instance", "could not read the gitlab instance")
 	}
-	info, err := checkGitLabToken(ctx, inst.BaseURL, token, req.Readonly)
+	info, err := checkGitToken(ctx, inst.Flavor, inst.BaseURL, token, req.Readonly)
 	if err != nil {
 		return gitlabCheckError(err)
 	}
@@ -352,6 +395,7 @@ func (h *IntegrationHandler) createGitLab(c *echo.Context, owner pgtype.UUID, re
 		Readonly:  row.Readonly,
 		Instance:  inst.Name,
 		BaseURL:   inst.BaseURL,
+		Flavor:    inst.Flavor,
 		CreatedAt: row.CreatedAt.Time.Format(time.RFC3339),
 	})
 }
@@ -389,7 +433,7 @@ func (h *IntegrationHandler) SetGitLabToken(c *echo.Context) error {
 	if row.Kind != integrationKindGitLab {
 		return echo.NewHTTPError(http.StatusBadRequest, "this is not a gitlab integration")
 	}
-	info, err := checkGitLabToken(ctx, row.GitLabBaseURL.String, token, row.Readonly)
+	info, err := checkGitToken(ctx, row.GitLabFlavor.String, row.GitLabBaseURL.String, token, row.Readonly)
 	if err != nil {
 		return gitlabCheckError(err)
 	}

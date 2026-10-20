@@ -1,6 +1,6 @@
-// Package gitlab fronts a gitlab instance for git over https. One build serves
-// any number of instances, each under its own name; the upstream base comes
-// with every token from the broker.
+// Package gitlab fronts a gitlab, forgejo or gitea instance for git over https.
+// All three take a token the same way, so one implementation serves them under
+// two kinds. The upstream base comes with every token from the broker.
 package gitlab
 
 import (
@@ -15,7 +15,10 @@ import (
 	"intproxy/internal/integration"
 )
 
-func init() { integration.Register("gitlab", New) }
+func init() {
+	integration.Register("gitlab", New)
+	integration.Register("gitea", New)
+}
 
 const kindGit = "git"
 
@@ -62,8 +65,8 @@ func (g *GitLab) Classify(r *http.Request) (integration.Route, bool) {
 	return integration.Route{}, false
 }
 
-// validProject wants a namespace and a project at least, since gitlab nests
-// groups to any depth.
+// validProject wants a namespace and a project at least. gitlab nests groups
+// to any depth; gitea simply 404s a path deeper than owner/repo.
 func validProject(p string) bool {
 	segs := strings.Split(p, "/")
 	if len(segs) < 2 {
@@ -104,5 +107,5 @@ func (g *GitLab) RenderError(_ integration.Route, _ int, msg string) (string, []
 }
 
 func (g *GitLab) Describe() string {
-	return "intproxy: this host serves git over https for gitlab, as /<group>/<project>.git"
+	return "intproxy: this host serves git over https, as /<owner>/<repo>.git"
 }
