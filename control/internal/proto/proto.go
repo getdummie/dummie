@@ -282,6 +282,15 @@ type VMSpec struct {
 	BurstKbit int      `json:"burst_kbit,omitempty"`
 
 	Image *ImageConfig `json:"image,omitempty"`
+
+	Git *GitIdentity `json:"git,omitempty"`
+}
+
+// GitIdentity is the creator's git user.name and user.email, set globally in the
+// guest on its first boot. Only a guest booted by dinit applies it.
+type GitIdentity struct {
+	Name  string `json:"name,omitempty"`
+	Email string `json:"email,omitempty"`
 }
 
 // VMResize is the new size of a vm that already exists. The host records it and

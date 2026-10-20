@@ -15,6 +15,12 @@
                     "first_name": {
                         "type": "string"
                     },
+                    "git_email": {
+                        "type": "string"
+                    },
+                    "git_name": {
+                        "type": "string"
+                    },
                     "id": {
                         "type": "string"
                     },
@@ -688,6 +694,12 @@
                     "first_name": {
                         "type": "string"
                     },
+                    "git_email": {
+                        "type": "string"
+                    },
+                    "git_name": {
+                        "type": "string"
+                    },
                     "last_name": {
                         "type": "string"
                     },
@@ -1355,7 +1367,7 @@
                 ]
             },
             "put": {
-                "description": "Only the display name and the SSH public key are editable. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it; VMs can still be created without one, they are only reachable through the web console.",
+                "description": "Only the display name, the SSH public key and the git identity are editable. The git name and email are set as git's global user.name and user.email in VMs created afterwards; empty leaves git alone. Username, email, role and every allowance are an admin's to set. An empty public key is accepted and clears it; VMs can still be created without one, they are only reachable through the web console.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -1395,7 +1407,7 @@
                                 }
                             }
                         },
-                        "description": "a name over 100 characters, or a key that is not a valid public key"
+                        "description": "a name over 100 characters, a key that is not a valid public key, or a git identity git would refuse"
                     },
                     "401": {
                         "content": {

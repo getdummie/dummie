@@ -107,3 +107,14 @@ func TestCheckGuestInitOnThisBinary(t *testing.T) {
 		t.Errorf("checkGuestInit on the test binary: %v", err)
 	}
 }
+
+func TestWithGitIdentity(t *testing.T) {
+	got := withGitIdentity("console=ttyS0", &proto.GitIdentity{Name: `Jane "J" Doe`, Email: "jane@example.com"})
+	want := `console=ttyS0 dclient.git.name=Jane%20%22J%22%20Doe dclient.git.email=jane@example.com`
+	if got != want {
+		t.Errorf("withGitIdentity = %q, want %q", got, want)
+	}
+	if got := withGitIdentity("console=ttyS0", nil); got != "console=ttyS0" {
+		t.Errorf("no identity changed the cmdline to %q", got)
+	}
+}

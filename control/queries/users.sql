@@ -49,6 +49,8 @@ UPDATE users
 SET first_name = $2,
     last_name = $3,
     public_key = $4,
+    git_name = $5,
+    git_email = $6,
     updated_at = now()
 WHERE id = $1
 RETURNING *;

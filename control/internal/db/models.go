@@ -318,6 +318,8 @@ type User struct {
 	MemoryLimitMiB int32
 	DiskLimitMiB   int32
 	PublicKey      string
+	GitName        string
+	GitEmail       string
 }
 
 type Vm struct {

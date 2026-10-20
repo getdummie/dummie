@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"os/signal"
 	"runtime"
@@ -45,6 +46,8 @@ const (
 	paramGateway  = "dclient.gw"
 	paramDNS      = "dclient.dns"
 	paramHostname = "systemd.hostname"
+	paramGitName  = "dclient.git.name"
+	paramGitEmail = "dclient.git.email"
 )
 
 var systemdPaths = []string{"/lib/systemd/systemd", "/usr/lib/systemd/systemd"}
@@ -76,16 +79,19 @@ func Run(version string) {
 	}
 	writeIdentity(p)
 
+	// Read before the handoff too: the git identity belongs to the image's user
+	// either way.
+	image = readImageConfig(ImageConfigPath)
+	configureGit(p, image)
+
 	if systemd := findSystemd(); systemd != "" {
 		execSystemd(systemd)
 	}
 
 	mount(agentMounts)
 
-	// Only the agent acts on the image's configuration: a handoff image runs its
-	// own services under its own init, and dinit is gone before any of this
-	// would apply.
-	image = readImageConfig(ImageConfigPath)
+	// Only the agent writes the image's environment: a handoff image runs its
+	// own services under its own init, and dinit is gone before this would apply.
 	writeEnvironment(image)
 	runAgent()
 }
@@ -122,6 +128,7 @@ func mount(specs []mountSpec) {
 
 type params struct {
 	ip, gateway, dns, hostname string
+	gitName, gitEmail          string
 }
 
 func readParams(path string) params {
@@ -145,6 +152,17 @@ func readParams(path string) params {
 			p.dns = v
 		case paramHostname:
 			p.hostname = v
+		case paramGitName, paramGitEmail:
+			dec, err := url.PathUnescape(v)
+			if err != nil {
+				log.Printf("ignoring %s: %v", k, err)
+				continue
+			}
+			if k == paramGitName {
+				p.gitName = dec
+			} else {
+				p.gitEmail = dec
+			}
 		}
 	}
 	return p

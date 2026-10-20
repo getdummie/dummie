@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -37,6 +38,9 @@ const (
 	paramIP      = "dclient.ip"
 	paramGateway = "dclient.gw"
 	paramDNS     = "dclient.dns"
+
+	paramGitName  = "dclient.git.name"
+	paramGitEmail = "dclient.git.email"
 )
 
 func ensureGuestInit(ctx context.Context, data string, rel proto.ServiceRelease, force bool) error {
@@ -199,6 +203,22 @@ func withGuestInit(line string, v vm) string {
 		if v.Net.DNS != "" {
 			add = append(add, paramDNS+"="+v.Net.DNS)
 		}
+	}
+	return strings.TrimSpace(line + " " + strings.Join(add, " "))
+}
+
+// withGitIdentity goes into the saved cmdline at creation, so every boot carries
+// it; dinit applies it once. Percent-encoded, since a name has spaces.
+func withGitIdentity(line string, g *proto.GitIdentity) string {
+	if g == nil {
+		return line
+	}
+	var add []string
+	if g.Name != "" {
+		add = append(add, paramGitName+"="+url.PathEscape(g.Name))
+	}
+	if g.Email != "" {
+		add = append(add, paramGitEmail+"="+url.PathEscape(g.Email))
 	}
 	return strings.TrimSpace(line + " " + strings.Join(add, " "))
 }

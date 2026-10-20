@@ -135,6 +135,9 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 		if v.Backing, v.GuestInit, err = ext4FromTar(ctx, cache, v.Backing, pubKey, cfg.resolver(), req.Image, rootfsSize, logf); err != nil {
 			return vm{}, err
 		}
+		if v.GuestInit {
+			v.Append = withGitIdentity(v.Append, req.Git)
+		}
 	}
 	if boot == bootDirect {
 		if v.Kernel, err = kernel.resolve(ctx, cache); err != nil {

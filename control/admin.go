@@ -128,6 +128,8 @@ type adminUserDTO struct {
 	LastName  string `json:"last_name"`
 	UserType  string `json:"user_type"`
 	PublicKey string `json:"public_key"`
+	GitName   string `json:"git_name"`
+	GitEmail  string `json:"git_email"`
 	VCPULimit      int32  `json:"vcpu_limit"`
 	MemoryLimitMiB int32  `json:"memory_limit_mib"`
 	DiskLimitMiB   int32  `json:"disk_limit_mib"`
@@ -144,6 +146,8 @@ func toAdminUserDTO(u db.User) adminUserDTO {
 		LastName:       u.LastName,
 		UserType:       u.UserType,
 		PublicKey:      u.PublicKey,
+		GitName:        u.GitName,
+		GitEmail:       u.GitEmail,
 		VCPULimit:      u.VCPULimit,
 		MemoryLimitMiB: u.MemoryLimitMiB,
 		DiskLimitMiB:   u.DiskLimitMiB,

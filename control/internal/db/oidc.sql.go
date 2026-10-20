@@ -41,7 +41,7 @@ func (q *Queries) ClearOIDCProviderSecret(ctx context.Context, id pgtype.UUID) (
 const createFederatedUser = `-- name: CreateFederatedUser :one
 INSERT INTO users (username, email, first_name, last_name, user_type)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email
 `
 
 type CreateFederatedUserParams struct {
@@ -75,6 +75,8 @@ func (q *Queries) CreateFederatedUser(ctx context.Context, arg CreateFederatedUs
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
@@ -207,7 +209,7 @@ func (q *Queries) GetOIDCProviderBySlug(ctx context.Context, slug string) (OidcP
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key FROM users
+SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email FROM users
 WHERE email = $1
 `
 
@@ -228,6 +230,8 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }

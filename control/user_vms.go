@@ -628,6 +628,9 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		EgressAny: true,
 		Image:     osImageConfigSpec(osImage),
 	}
+	if u.GitName != "" || u.GitEmail != "" {
+		spec.Git = &proto.GitIdentity{Name: u.GitName, Email: u.GitEmail}
+	}
 	var row db.Vm
 	insert := func(ctx context.Context, q *db.Queries, name string) error {
 		spec.Name = name

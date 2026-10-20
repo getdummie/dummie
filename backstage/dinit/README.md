@@ -16,6 +16,12 @@ init=/sbin/dinit dclient.ip=<addr> dclient.gw=<gateway> dclient.dns=<resolver>
 
 The hostname is read from `systemd.hostname=`, which dclient already sets.
 
+A VM created by someone with a git identity on their profile also gets
+`dclient.git.name=` and `dclient.git.email=`, percent-encoded. On first boot,
+before any systemd handoff, dinit sets them as `git config --global` for the
+image's user (or writes `~/.gitconfig` when the image has no git), then leaves
+`/etc/dclient/git-configured` so a reboot does not undo later changes.
+
 The image's own configuration is too large and too quote-hostile for a command
 line, so dclient writes it into the rootfs instead, at
 `/etc/dclient/image.json`, mode `0600`:

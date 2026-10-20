@@ -18,6 +18,8 @@ interface Profile {
   last_name: string
   user_type: string
   public_key: string
+  git_name: string
+  git_email: string
   vcpu_limit: number
   memory_limit_mib: number
   disk_limit_mib: number
@@ -60,7 +62,7 @@ function fmtDate(s: string) {
   return `${date}, ${d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`
 }
 
-const form = reactive({ first_name: '', last_name: '', public_key: '' })
+const form = reactive({ first_name: '', last_name: '', public_key: '', git_name: '', git_email: '' })
 const saving = ref(false)
 const saveError = ref<string | null>(null)
 const saved = ref(false)
@@ -69,6 +71,8 @@ function resetForm(p: Profile) {
   form.first_name = p.first_name
   form.last_name = p.last_name
   form.public_key = p.public_key
+  form.git_name = p.git_name
+  form.git_email = p.git_email
 }
 
 function discardEdits() {
@@ -82,6 +86,8 @@ const dirty = computed(() => {
   return form.first_name !== p.first_name
     || form.last_name !== p.last_name
     || form.public_key.trim() !== p.public_key
+    || form.git_name.trim() !== p.git_name
+    || form.git_email.trim() !== p.git_email
 })
 
 async function load() {
@@ -115,6 +121,8 @@ async function save() {
         first_name: form.first_name,
         last_name: form.last_name,
         public_key: form.public_key,
+        git_name: form.git_name,
+        git_email: form.git_email,
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -258,6 +266,31 @@ async function save() {
               <span class="font-mono">~/.ssh/id_ed25519.pub</span>. Never paste the matching private
               key, which has no <span class="font-mono">.pub</span> on the end.
             </p>
+          </div>
+        </section>
+
+        <section aria-labelledby="git-heading" class="rounded-lg border border-border p-4 sm:p-6">
+          <h2 id="git-heading" class="text-sm font-semibold">Git identity</h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Set as <span class="font-mono">git config --global</span> in every VM you create. Leave
+            both empty to keep git untouched. Changing it here does not reach VMs you already have.
+          </p>
+          <div class="mt-4 grid gap-4 sm:grid-cols-2">
+            <div class="space-y-2">
+              <Label for="p-git-name">Git name</Label>
+              <Input id="p-git-name" v-model="form.git_name" autocomplete="name" maxlength="100" placeholder="Jane Doe" />
+            </div>
+            <div class="space-y-2">
+              <Label for="p-git-email">Git email</Label>
+              <Input
+                id="p-git-email"
+                v-model="form.git_email"
+                type="email"
+                autocomplete="email"
+                maxlength="254"
+                placeholder="jane@example.com"
+              />
+            </div>
           </div>
         </section>
 

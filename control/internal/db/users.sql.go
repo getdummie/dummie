@@ -25,7 +25,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, first_name, last_name, user_type)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email
 `
 
 type CreateUserParams struct {
@@ -61,6 +61,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
@@ -76,7 +78,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getUserByID = `-- name: GetUserByID :one
-SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key FROM users
+SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email FROM users
 WHERE id = $1
 LIMIT 1
 `
@@ -98,12 +100,14 @@ func (q *Queries) GetUserByID(ctx context.Context, id pgtype.UUID) (User, error)
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
 
 const getUserByUsernameOrEmail = `-- name: GetUserByUsernameOrEmail :one
-SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key FROM users
+SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email FROM users
 WHERE username = $1 OR email = $1
 LIMIT 1
 `
@@ -125,12 +129,14 @@ func (q *Queries) GetUserByUsernameOrEmail(ctx context.Context, username string)
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key FROM users
+SELECT id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email FROM users
 ORDER BY created_at ASC
 LIMIT $1 OFFSET $2
 `
@@ -163,6 +169,8 @@ func (q *Queries) ListUsers(ctx context.Context, arg ListUsersParams) ([]User, e
 			&i.MemoryLimitMiB,
 			&i.DiskLimitMiB,
 			&i.PublicKey,
+			&i.GitName,
+			&i.GitEmail,
 		); err != nil {
 			return nil, err
 		}
@@ -179,9 +187,11 @@ UPDATE users
 SET first_name = $2,
     last_name = $3,
     public_key = $4,
+    git_name = $5,
+    git_email = $6,
     updated_at = now()
 WHERE id = $1
-RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email
 `
 
 type UpdateUserProfileParams struct {
@@ -189,6 +199,8 @@ type UpdateUserProfileParams struct {
 	FirstName string
 	LastName  string
 	PublicKey string
+	GitName   string
+	GitEmail  string
 }
 
 func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfileParams) (User, error) {
@@ -197,6 +209,8 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		arg.FirstName,
 		arg.LastName,
 		arg.PublicKey,
+		arg.GitName,
+		arg.GitEmail,
 	)
 	var i User
 	err := row.Scan(
@@ -213,6 +227,8 @@ func (q *Queries) UpdateUserProfile(ctx context.Context, arg UpdateUserProfilePa
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
@@ -222,7 +238,7 @@ UPDATE users
 SET public_key = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email
 `
 
 type UpdateUserPublicKeyParams struct {
@@ -247,6 +263,8 @@ func (q *Queries) UpdateUserPublicKey(ctx context.Context, arg UpdateUserPublicK
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
@@ -258,7 +276,7 @@ SET vcpu_limit = $2,
     disk_limit_mib = $4,
     updated_at = now()
 WHERE id = $1
-RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email
 `
 
 type UpdateUserQuotaParams struct {
@@ -290,6 +308,8 @@ func (q *Queries) UpdateUserQuota(ctx context.Context, arg UpdateUserQuotaParams
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
@@ -299,7 +319,7 @@ UPDATE users
 SET user_type = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key
+RETURNING id, username, email, password_hash, first_name, last_name, user_type, created_at, updated_at, vcpu_limit, memory_limit_mib, disk_limit_mib, public_key, git_name, git_email
 `
 
 type UpdateUserTypeParams struct {
@@ -324,6 +344,8 @@ func (q *Queries) UpdateUserType(ctx context.Context, arg UpdateUserTypeParams) 
 		&i.MemoryLimitMiB,
 		&i.DiskLimitMiB,
 		&i.PublicKey,
+		&i.GitName,
+		&i.GitEmail,
 	)
 	return i, err
 }
