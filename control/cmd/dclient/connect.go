@@ -29,6 +29,8 @@ const (
 	backoffMin = 1 * time.Second
 	backoffMax = 60 * time.Second
 
+	wsReadLimit = 16 << 20
+
 	reportInterval = 30 * time.Second
 )
 
@@ -273,6 +275,9 @@ func connectOnce(ctx context.Context, client *http.Client, base *url.URL, st sta
 		return err
 	}
 	defer ws.CloseNow()
+	// The dpipe job carries every custom domain's certificate inline, which
+	// outgrows the library's 32 KiB default after a handful of domains.
+	ws.SetReadLimit(wsReadLimit)
 
 	l := &link{ws: ws, data: dataDir}
 
