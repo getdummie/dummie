@@ -43,7 +43,15 @@ func (h *ClientHandler) IntegrationToken(c *echo.Context) error {
 	case integrationKindLLM:
 		return h.llmToken(c, client, ip.String(), req.Resource)
 	default:
-		return echo.NewHTTPError(http.StatusBadRequest, "unknown integration kind")
+		inst, ok, err := lookupGitLabInstance(c.Request().Context(), h.q, req.Integration)
+		if err != nil {
+			log.Printf("could not look up gitlab instance %q: %v", req.Integration, err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not read the integration")
+		}
+		if !ok {
+			return echo.NewHTTPError(http.StatusBadRequest, "unknown integration kind")
+		}
+		return h.gitlabToken(c, client, inst, ip.String(), req)
 	}
 
 	var owner, repo string

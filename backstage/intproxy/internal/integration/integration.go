@@ -71,6 +71,8 @@ type Metered interface {
 }
 
 type Options struct {
+	// Name is what the config called this integration, and so its subdomain.
+	Name string
 	// Decode hands the integration its own config block. Nil when the block
 	// carried nothing beyond a name.
 	Decode func(any) error

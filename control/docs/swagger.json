@@ -994,6 +994,60 @@
                 ]
             }
         },
+        "/admin/gitlab-instances": {
+            "get": {
+                "responses": {},
+                "summary": "GitLab instances reachable through integrations",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "post": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {},
+                "summary": "Add a gitlab instance",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
+        "/admin/gitlab-instances/{id}": {
+            "delete": {
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                },
+                "summary": "Remove a gitlab instance and every integration using it",
+                "tags": [
+                    "admin"
+                ]
+            },
+            "patch": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": {},
+                "summary": "Change a gitlab instance's url",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/llm-keys": {
             "get": {
                 "responses": {},
@@ -1118,6 +1172,15 @@
                 ]
             }
         },
+        "/integrations/gitlab-instances": {
+            "get": {
+                "responses": {},
+                "summary": "GitLab instances a gitlab integration can use",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
         "/integrations/{id}": {
             "delete": {
                 "responses": null,
@@ -1172,6 +1235,24 @@
             "get": {
                 "responses": {},
                 "summary": "Where to change the repositories granted to an installation",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
+        "/integrations/{id}/gitlab/token": {
+            "put": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": null,
+                "summary": "Replace a gitlab integration's personal access token",
                 "tags": [
                     "integrations"
                 ]

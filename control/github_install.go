@@ -37,11 +37,15 @@ func (h *IntegrationHandler) Install(c *echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	if _, err := h.q.GetIntegrationForOwner(ctx, db.GetIntegrationForOwnerParams{ID: id, OwnerID: owner}); err != nil {
+	row, err := h.q.GetIntegrationForOwner(ctx, db.GetIntegrationForOwnerParams{ID: id, OwnerID: owner})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return echo.NewHTTPError(http.StatusNotFound, "no such integration")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the integration")
+	}
+	if err := githubOnly(row.Kind); err != nil {
+		return err
 	}
 
 	app, err := h.q.GetGitHubApp(ctx)

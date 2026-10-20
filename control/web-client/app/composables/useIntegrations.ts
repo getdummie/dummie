@@ -11,7 +11,17 @@ export interface Integration {
   repo_count: number
   vm_count: number
   repos?: string[]
+  // Set for gitlab: the admin's instance name, which is also its subdomain.
+  instance?: string
+  base_url?: string
   created_at: string
+}
+
+export interface GitLabInstance {
+  id: string
+  name: string
+  base_url: string
+  updated_at: string
 }
 
 export interface IntegrationVM {
@@ -31,7 +41,7 @@ export interface OwnedVM {
 
 // integrationHost is what a guest clones from. The fleet domain is the VM's own
 // hostname minus its name, the same derivation the VM page uses.
-export function integrationHost(vm: OwnedVM | null | undefined): string {
+export function integrationHost(vm: OwnedVM | null | undefined, name = 'github'): string {
   if (!vm?.url) return ''
   let host: string
   try {
@@ -41,7 +51,7 @@ export function integrationHost(vm: OwnedVM | null | undefined): string {
     return ''
   }
   const tld = vm.name && host.startsWith(`${vm.name}.`) ? host.slice(vm.name.length + 1) : host
-  return tld ? `github.int.${tld}` : ''
+  return tld ? `${name}.int.${tld}` : ''
 }
 
 export function useIntegrations() {
@@ -72,6 +82,12 @@ export function useIntegrations() {
     list: () => request<{ items: Integration[] }>('/integrations').then(d => d.items ?? []),
     get: (id: string) => request<Integration>(`/integrations/${id}`),
     create: (name: string) => request<Integration>('/integrations', json('POST', { name })),
+    createGitLab: (body: { name: string, instance_id: string, token: string, readonly: boolean }) =>
+      request<Integration>('/integrations', json('POST', { kind: 'gitlab', ...body })),
+    setGitLabToken: (id: string, token: string) =>
+      request<void>(`/integrations/${id}/gitlab/token`, json('PUT', { token })),
+    gitlabInstances: () =>
+      request<{ items: GitLabInstance[] }>('/integrations/gitlab-instances').then(d => d.items ?? []),
     update: (id: string, patch: { all_repos: boolean, readonly: boolean }) =>
       request<void>(`/integrations/${id}`, json('PATCH', patch)),
     remove: (id: string) => request<void>(`/integrations/${id}`, { method: 'DELETE' }),

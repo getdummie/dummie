@@ -61,10 +61,6 @@ credential:
     socket: ` + intproxyBrokerSocket + `
     timeout: 5s
 
-integrations:
-  - name: github
-  - name: llm
-
 dial_timeout: 10s
 tls_handshake_timeout: 10s
 
@@ -79,7 +75,8 @@ shutdown_grace: 5m
 log_level: info
 `
 
-func generateIntproxyConfig(tld, controlURL string, tls bool) string {
+// gitlab names the admin's gitlab instances; each one is its own vhost.
+func generateIntproxyConfig(tld, controlURL string, tls bool, gitlab []string) string {
 	listen := intproxyPlainListen
 	if tls {
 		listen = intproxyTLSListen
@@ -107,6 +104,11 @@ func generateIntproxyConfig(tld, controlURL string, tls bool) string {
 	}
 
 	b.WriteString(intproxyStaticConfig)
+
+	b.WriteString("\nintegrations:\n  - name: github\n  - name: llm\n")
+	for _, name := range gitlab {
+		fmt.Fprintf(&b, "  - name: %s\n    kind: gitlab\n", yamlString(name))
+	}
 	return b.String()
 }
 
@@ -132,6 +134,16 @@ func pushIntproxyConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hu
 		return
 	}
 
+	instances, err := q.ListGitLabInstances(ctx)
+	if err != nil {
+		log.Printf("could not list gitlab instances for client %s: %v", id, err)
+		return
+	}
+	gitlab := make([]string, 0, len(instances))
+	for _, g := range instances {
+		gitlab = append(gitlab, g.Name)
+	}
+
 	tls := cert != "" && key != ""
 	if !tls {
 		log.Printf("client %s has no wildcard certificate, so intproxy serves integrations over plain http", id)
@@ -140,7 +152,7 @@ func pushIntproxyConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hu
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindIntproxyConfig,
 		Intproxy: &proto.IntproxyConfig{
-			Config: generateIntproxyConfig(tld, controlURL, tls),
+			Config: generateIntproxyConfig(tld, controlURL, tls, gitlab),
 			Cert:   cert,
 			Key:    key,
 		},

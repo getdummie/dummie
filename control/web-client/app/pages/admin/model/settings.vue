@@ -227,6 +227,8 @@ function isDirty(row: SettingRow) {
 
       <AdminGitHubApp />
 
+      <AdminGitLabInstances />
+
       <LLMKeys admin class="mt-12" />
 
       <p role="status" aria-live="polite" class="sr-only">

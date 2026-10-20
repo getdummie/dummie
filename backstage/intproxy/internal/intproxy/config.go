@@ -119,7 +119,10 @@ type BrokerConfig struct {
 // IntegrationConfig keeps the whole node so an integration decodes its own
 // options. Adding one therefore adds no fields to this struct.
 type IntegrationConfig struct {
-	Name    string
+	Name string
+	// Kind picks the implementation and defaults to Name. It lets one
+	// implementation, like gitlab, answer under several names.
+	Kind    string
 	Enabled bool
 	Auth    credential.StaticConfig
 
@@ -129,6 +132,7 @@ type IntegrationConfig struct {
 func (i *IntegrationConfig) UnmarshalYAML(n *yaml.Node) error {
 	var head struct {
 		Name    string                  `yaml:"name"`
+		Kind    string                  `yaml:"kind"`
 		Enabled *bool                   `yaml:"enabled"`
 		Auth    credential.StaticConfig `yaml:"auth"`
 	}
@@ -136,6 +140,7 @@ func (i *IntegrationConfig) UnmarshalYAML(n *yaml.Node) error {
 		return err
 	}
 	i.Name = head.Name
+	i.Kind = head.Kind
 	i.Enabled = head.Enabled == nil || *head.Enabled
 	i.Auth = head.Auth
 	i.node = *n
@@ -143,6 +148,13 @@ func (i *IntegrationConfig) UnmarshalYAML(n *yaml.Node) error {
 }
 
 func (i IntegrationConfig) Decode(v any) error { return i.node.Decode(v) }
+
+func (i IntegrationConfig) kind() string {
+	if i.Kind == "" {
+		return i.Name
+	}
+	return i.Kind
+}
 
 const defaultLabel = "int"
 
@@ -250,9 +262,12 @@ func (c *Config) validateIntegrations() error {
 			return fmt.Errorf("config: integration %q is listed twice", ic.Name)
 		}
 		seen[ic.Name] = true
-		if !integration.Known(ic.Name) {
+		if !labelPattern.MatchString(ic.Name) {
+			return fmt.Errorf("config: integration name %q must be a single hostname label", ic.Name)
+		}
+		if !integration.Known(ic.kind()) {
 			return fmt.Errorf("config: integration %q is not known; this build has %s",
-				ic.Name, strings.Join(integration.Names(), ", "))
+				ic.kind(), strings.Join(integration.Names(), ", "))
 		}
 		if ic.Enabled {
 			enabled++
@@ -293,10 +308,10 @@ func (c *Config) validateCredential() error {
 			return errors.New("config: policy is required under mode: local, or no client can reach anything")
 		}
 		for _, ic := range c.Integrations {
-			// llm's upstream comes with each key from the broker; a local
-			// token has nowhere to say it.
-			if ic.Enabled && ic.Name == "llm" {
-				return errors.New("config: integration \"llm\" needs credential.mode: broker")
+			// llm's and gitlab's upstream comes with each key from the broker;
+			// a local token has nowhere to say it.
+			if ic.Enabled && (ic.kind() == "llm" || ic.kind() == "gitlab") {
+				return fmt.Errorf("config: integration %q needs credential.mode: broker", ic.Name)
 			}
 			if ic.Enabled && ic.Auth.Empty() {
 				return fmt.Errorf("config: integration %q needs an auth block under mode: local", ic.Name)

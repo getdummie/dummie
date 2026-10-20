@@ -63,7 +63,7 @@ func (q *Queries) CreateGitHubInstallState(ctx context.Context, arg CreateGitHub
 const createIntegration = `-- name: CreateIntegration :one
 INSERT INTO integrations (owner_id, name, kind, readonly)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at
+RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username
 `
 
 type CreateIntegrationParams struct {
@@ -91,6 +91,9 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 		&i.Readonly,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.GitLabInstanceID,
+		&i.TokenEnc,
+		&i.GitLabUsername,
 	)
 	return i, err
 }
@@ -258,7 +261,7 @@ func (q *Queries) GetGitHubInstallation(ctx context.Context, id pgtype.UUID) (Gi
 }
 
 const getIntegrationByNameForOwner = `-- name: GetIntegrationByNameForOwner :one
-SELECT id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at FROM integrations
+SELECT id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username FROM integrations
 WHERE owner_id = $1 AND name = $2
 `
 
@@ -280,18 +283,24 @@ func (q *Queries) GetIntegrationByNameForOwner(ctx context.Context, arg GetInteg
 		&i.Readonly,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.GitLabInstanceID,
+		&i.TokenEnc,
+		&i.GitLabUsername,
 	)
 	return i, err
 }
 
 const getIntegrationForOwner = `-- name: GetIntegrationForOwner :one
-SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at,
+SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at, i.gitlab_instance_id, i.token_enc, i.gitlab_username,
        gi.account_login,
        gi.suspended,
        gi.repository_selection,
-       gi.installation_id
+       gi.installation_id,
+       g.name     AS gitlab_instance_name,
+       g.base_url AS gitlab_base_url
 FROM integrations i
 LEFT JOIN github_installations gi ON gi.id = i.installation_pk
+LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
 WHERE i.id = $1 AND i.owner_id = $2
 `
 
@@ -310,10 +319,15 @@ type GetIntegrationForOwnerRow struct {
 	Readonly            bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	GitLabInstanceID    pgtype.UUID
+	TokenEnc            []byte
+	GitLabUsername      string
 	AccountLogin        pgtype.Text
 	Suspended           pgtype.Bool
 	RepositorySelection pgtype.Text
 	InstallationID      pgtype.Int8
+	GitLabInstanceName  pgtype.Text
+	GitLabBaseURL       pgtype.Text
 }
 
 func (q *Queries) GetIntegrationForOwner(ctx context.Context, arg GetIntegrationForOwnerParams) (GetIntegrationForOwnerRow, error) {
@@ -329,10 +343,15 @@ func (q *Queries) GetIntegrationForOwner(ctx context.Context, arg GetIntegration
 		&i.Readonly,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.GitLabInstanceID,
+		&i.TokenEnc,
+		&i.GitLabUsername,
 		&i.AccountLogin,
 		&i.Suspended,
 		&i.RepositorySelection,
 		&i.InstallationID,
+		&i.GitLabInstanceName,
+		&i.GitLabBaseURL,
 	)
 	return i, err
 }
@@ -657,14 +676,17 @@ func (q *Queries) ListIntegrationVMs(ctx context.Context, integrationID pgtype.U
 }
 
 const listIntegrationsByOwner = `-- name: ListIntegrationsByOwner :many
-SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at,
+SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at, i.gitlab_instance_id, i.token_enc, i.gitlab_username,
        gi.account_login,
        gi.suspended,
        gi.repository_selection,
+       g.name     AS gitlab_instance_name,
+       g.base_url AS gitlab_base_url,
        (SELECT count(*) FROM integration_repos r WHERE r.integration_id = i.id) AS repo_count,
        (SELECT count(*) FROM vm_integrations v WHERE v.integration_id = i.id)   AS vm_count
 FROM integrations i
 LEFT JOIN github_installations gi ON gi.id = i.installation_pk
+LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
 WHERE i.owner_id = $1
 ORDER BY i.name
 `
@@ -679,9 +701,14 @@ type ListIntegrationsByOwnerRow struct {
 	Readonly            bool
 	CreatedAt           pgtype.Timestamptz
 	UpdatedAt           pgtype.Timestamptz
+	GitLabInstanceID    pgtype.UUID
+	TokenEnc            []byte
+	GitLabUsername      string
 	AccountLogin        pgtype.Text
 	Suspended           pgtype.Bool
 	RepositorySelection pgtype.Text
+	GitLabInstanceName  pgtype.Text
+	GitLabBaseURL       pgtype.Text
 	RepoCount           int64
 	VmCount             int64
 }
@@ -705,9 +732,14 @@ func (q *Queries) ListIntegrationsByOwner(ctx context.Context, ownerID pgtype.UU
 			&i.Readonly,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.GitLabInstanceID,
+			&i.TokenEnc,
+			&i.GitLabUsername,
 			&i.AccountLogin,
 			&i.Suspended,
 			&i.RepositorySelection,
+			&i.GitLabInstanceName,
+			&i.GitLabBaseURL,
 			&i.RepoCount,
 			&i.VmCount,
 		); err != nil {
@@ -758,9 +790,10 @@ func (q *Queries) ListVMIntegrationRepos(ctx context.Context, arg ListVMIntegrat
 }
 
 const listVMIntegrationsForOwner = `-- name: ListVMIntegrationsForOwner :many
-SELECT i.id, i.name, i.readonly, i.all_repos
+SELECT i.id, i.name, i.kind, i.readonly, i.all_repos, g.name AS gitlab_instance_name
 FROM vm_integrations vi
 JOIN integrations i ON i.id = vi.integration_id
+LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
 WHERE vi.vm_id = $1 AND i.owner_id = $2
 ORDER BY i.name
 `
@@ -771,10 +804,12 @@ type ListVMIntegrationsForOwnerParams struct {
 }
 
 type ListVMIntegrationsForOwnerRow struct {
-	ID       pgtype.UUID
-	Name     string
-	Readonly bool
-	AllRepos bool
+	ID                 pgtype.UUID
+	Name               string
+	Kind               string
+	Readonly           bool
+	AllRepos           bool
+	GitLabInstanceName pgtype.Text
 }
 
 func (q *Queries) ListVMIntegrationsForOwner(ctx context.Context, arg ListVMIntegrationsForOwnerParams) ([]ListVMIntegrationsForOwnerRow, error) {
@@ -789,8 +824,10 @@ func (q *Queries) ListVMIntegrationsForOwner(ctx context.Context, arg ListVMInte
 		if err := rows.Scan(
 			&i.ID,
 			&i.Name,
+			&i.Kind,
 			&i.Readonly,
 			&i.AllRepos,
+			&i.GitLabInstanceName,
 		); err != nil {
 			return nil, err
 		}
@@ -870,7 +907,7 @@ SET all_repos  = $2,
     readonly   = $3,
     updated_at = now()
 WHERE id = $1 AND owner_id = $4
-RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at
+RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username
 `
 
 type UpdateIntegrationFlagsParams struct {
@@ -898,6 +935,9 @@ func (q *Queries) UpdateIntegrationFlags(ctx context.Context, arg UpdateIntegrat
 		&i.Readonly,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.GitLabInstanceID,
+		&i.TokenEnc,
+		&i.GitLabUsername,
 	)
 	return i, err
 }

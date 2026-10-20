@@ -107,6 +107,19 @@ func TestValidate(t *testing.T) {
 			*c = *localConfig()
 			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "llm", Enabled: true})
 		}, "needs credential.mode: broker"},
+		{"gitlab by kind", func(c *Config) {
+			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "techgitlab", Kind: "gitlab", Enabled: true})
+		}, ""},
+		{"gitlab under local", func(c *Config) {
+			*c = *localConfig()
+			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "techgitlab", Kind: "gitlab", Enabled: true})
+		}, "needs credential.mode: broker"},
+		{"unknown kind", func(c *Config) {
+			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "techgitlab", Kind: "nope", Enabled: true})
+		}, "is not known"},
+		{"name not a label", func(c *Config) {
+			c.Integrations = append(c.Integrations, IntegrationConfig{Name: "a.b", Kind: "gitlab", Enabled: true})
+		}, "single hostname label"},
 	}
 
 	for _, tc := range cases {

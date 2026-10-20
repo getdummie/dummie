@@ -65,10 +65,13 @@ SELECT i.*,
        gi.account_login,
        gi.suspended,
        gi.repository_selection,
+       g.name     AS gitlab_instance_name,
+       g.base_url AS gitlab_base_url,
        (SELECT count(*) FROM integration_repos r WHERE r.integration_id = i.id) AS repo_count,
        (SELECT count(*) FROM vm_integrations v WHERE v.integration_id = i.id)   AS vm_count
 FROM integrations i
 LEFT JOIN github_installations gi ON gi.id = i.installation_pk
+LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
 WHERE i.owner_id = $1
 ORDER BY i.name;
 
@@ -77,9 +80,12 @@ SELECT i.*,
        gi.account_login,
        gi.suspended,
        gi.repository_selection,
-       gi.installation_id
+       gi.installation_id,
+       g.name     AS gitlab_instance_name,
+       g.base_url AS gitlab_base_url
 FROM integrations i
 LEFT JOIN github_installations gi ON gi.id = i.installation_pk
+LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
 WHERE i.id = $1 AND i.owner_id = $2;
 
 -- name: ListIntegrationIDsByInstallationID :many
@@ -143,9 +149,10 @@ WHERE vi.integration_id = $1
 ORDER BY v.name;
 
 -- name: ListVMIntegrationsForOwner :many
-SELECT i.id, i.name, i.readonly, i.all_repos
+SELECT i.id, i.name, i.kind, i.readonly, i.all_repos, g.name AS gitlab_instance_name
 FROM vm_integrations vi
 JOIN integrations i ON i.id = vi.integration_id
+LEFT JOIN gitlab_instances g ON g.id = i.gitlab_instance_id
 WHERE vi.vm_id = $1 AND i.owner_id = $2
 ORDER BY i.name;
 

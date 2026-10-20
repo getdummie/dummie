@@ -83,7 +83,8 @@ func New(cfg *Config, log *slog.Logger, version string) (*Server, error) {
 			continue
 		}
 		host := cfg.hostname(ic.Name)
-		ig, err := integration.New(ic.Name, integration.Options{
+		ig, err := integration.New(ic.kind(), integration.Options{
+			Name:    ic.Name,
 			Decode:  ic.Decode,
 			DocsURL: cfg.DocsURL,
 			SelfURL: func() string { return s.selfURL(host) },

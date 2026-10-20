@@ -236,11 +236,6 @@ const sshDomain = computed(() => {
   return host.startsWith(`${name}.`) ? host.slice(name.length + 1) : host
 })
 
-// The integration proxy lives under the same fleet domain the VM answers on.
-const integrationHostForVM = computed(() =>
-  sshDomain.value ? `github.int.${sshDomain.value}` : '',
-)
-
 const sshDestination = computed(() =>
   vm.value?.name ? `${vm.value.name}@${sshDomain.value}` : sshDomain.value,
 )
@@ -1363,7 +1358,7 @@ async function removeDomain(d: CustomDomain) {
       <VmIntegrations
         :vm-id="id"
         :vm-name="vm.name || vm.vm_id"
-        :host="integrationHostForVM"
+        :domain="sshDomain"
       />
 
       <section aria-labelledby="domain-heading" class="mt-4 rounded-lg border border-border p-4">

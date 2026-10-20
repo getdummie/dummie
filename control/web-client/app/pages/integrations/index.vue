@@ -15,7 +15,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import type { Integration } from '@/composables/useIntegrations'
+import { Switch } from '@/components/ui/switch'
+import type { GitLabInstance, Integration } from '@/composables/useIntegrations'
 
 definePageMeta({ middleware: ['auth'] })
 useHead({ title: 'dummie — integrations' })
@@ -50,9 +51,56 @@ const creating = ref(false)
 // rather than as a server error.
 const nameValid = computed(() => /^[a-z0-9]+(-[a-z0-9]+)*$/.test(name.value) && name.value.length >= 3 && name.value.length <= 52)
 
-function openPicker() {
+const gitlabInstances = ref<GitLabInstance[]>([])
+
+async function openPicker() {
   error.value = null
   pickOpen.value = true
+  try {
+    gitlabInstances.value = await api.gitlabInstances()
+  }
+  catch {
+    gitlabInstances.value = []
+  }
+}
+
+const gitlabOpen = ref(false)
+const gitlabInstance = ref<GitLabInstance | null>(null)
+const gitlabToken = ref('')
+const gitlabReadonly = ref(false)
+const gitlabError = ref<string | null>(null)
+
+async function pickGitLab(i: GitLabInstance) {
+  pickOpen.value = false
+  gitlabInstance.value = i
+  name.value = ''
+  gitlabToken.value = ''
+  gitlabReadonly.value = false
+  gitlabError.value = null
+  await nextTick()
+  gitlabOpen.value = true
+}
+
+async function createGitLab() {
+  if (!gitlabInstance.value) return
+  creating.value = true
+  gitlabError.value = null
+  try {
+    const created = await api.createGitLab({
+      name: name.value.trim(),
+      instance_id: gitlabInstance.value.id,
+      token: gitlabToken.value.trim(),
+      readonly: gitlabReadonly.value,
+    })
+    gitlabOpen.value = false
+    await navigateTo(`/integrations/${created.id}`)
+  }
+  catch (e) {
+    gitlabError.value = e instanceof Error ? e.message : 'Could not create the integration'
+  }
+  finally {
+    creating.value = false
+  }
 }
 
 // nextTick so the picker has finished closing before the next dialog opens.
@@ -151,8 +199,8 @@ const failedInstall = computed(() => {
         <GitBranch class="mx-auto size-8 text-muted-foreground" aria-hidden="true" />
         <p class="mt-3 text-sm font-medium">No integrations yet</p>
         <p class="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-          Create one, connect a GitHub account, then attach it to the VMs that should be able to
-          reach those repositories. It grants nothing until you attach it.
+          Create one, connect a GitHub account or a GitLab token, then attach it to the VMs that
+          should be able to reach those repositories. It grants nothing until you attach it.
         </p>
         <Button class="mt-4" @click="openPicker">
           <Plus class="size-4" aria-hidden="true" />
@@ -169,6 +217,7 @@ const failedInstall = computed(() => {
           <div class="min-w-0 flex-1">
             <p class="flex flex-wrap items-center gap-2 text-sm font-medium">
               <NuxtLink :to="`/integrations/${i.id}`" class="hover:underline">{{ i.name }}</NuxtLink>
+              <Badge v-if="i.kind === 'gitlab'" variant="outline" class="font-mono">{{ i.instance }}</Badge>
               <Badge v-if="!i.connected" variant="outline">Not connected</Badge>
               <Badge v-if="i.suspended" variant="destructive">
                 <TriangleAlert class="size-3" aria-hidden="true" />
@@ -177,7 +226,13 @@ const failedInstall = computed(() => {
               <Badge v-if="i.readonly" variant="secondary">Read-only</Badge>
             </p>
             <p class="mt-1 text-sm text-muted-foreground">
-              <template v-if="i.connected">
+              <template v-if="i.kind === 'gitlab'">
+                <span v-if="i.account" class="font-mono text-xs">{{ i.account }} ·</span>
+                <span :class="i.vm_count === 0 && 'text-foreground'">
+                  {{ i.vm_count }} {{ i.vm_count === 1 ? 'VM' : 'VMs' }}
+                </span>
+              </template>
+              <template v-else-if="i.connected">
                 <span class="font-mono text-xs">{{ i.account }}</span>
                 ·
                 {{ i.all_repos ? 'every repository' : `${i.repo_count} ${i.repo_count === 1 ? 'repository' : 'repositories'}` }}
@@ -244,6 +299,19 @@ const failedInstall = computed(() => {
               <span class="block text-xs text-muted-foreground">Clone private repositories from a VM.</span>
             </span>
           </button>
+          <button
+            v-for="g in gitlabInstances"
+            :key="g.id"
+            type="button"
+            class="mt-2 flex w-full items-center gap-3 rounded-lg border border-border p-4 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            @click="pickGitLab(g)"
+          >
+            <GitBranch class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium">GitLab · {{ g.name }}</span>
+              <span class="block truncate font-mono text-xs text-muted-foreground">{{ g.base_url }}</span>
+            </span>
+          </button>
         </div>
       </DialogContent>
     </Dialog>
@@ -285,14 +353,82 @@ const failedInstall = computed(() => {
       </DialogContent>
     </Dialog>
 
+    <Dialog v-model:open="gitlabOpen">
+      <DialogContent>
+        <form @submit.prevent="createGitLab">
+          <DialogHeader>
+            <DialogTitle>GitLab Integration · {{ gitlabInstance?.name }}</DialogTitle>
+            <DialogDescription>
+              Create a personal access token on
+              <span class="font-mono">{{ gitlabInstance?.base_url }}</span>
+              with the <span class="font-mono">read_repository</span> scope, and
+              <span class="font-mono">write_repository</span> to push. It stays on the control
+              server; VMs never see it.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Alert v-if="gitlabError" variant="destructive" class="mt-4">
+            <AlertDescription>{{ gitlabError }}</AlertDescription>
+          </Alert>
+
+          <div class="mt-4 space-y-4">
+            <div class="space-y-1.5">
+              <Label for="gitlab-integration-name">Name</Label>
+              <Input
+                id="gitlab-integration-name"
+                v-model="name"
+                placeholder="work"
+                spellcheck="false"
+                autocomplete="off"
+                class="font-mono text-sm"
+              />
+              <p class="text-xs text-muted-foreground">
+                Lowercase letters, digits and single dashes, 3 to 52 characters.
+              </p>
+            </div>
+            <div class="space-y-1.5">
+              <Label for="gitlab-token">Personal access token</Label>
+              <Input
+                id="gitlab-token"
+                v-model="gitlabToken"
+                type="password"
+                placeholder="glpat-…"
+                spellcheck="false"
+                autocomplete="off"
+                class="font-mono text-sm"
+              />
+            </div>
+            <div class="flex items-center justify-between gap-3">
+              <Label for="gitlab-readonly" class="font-normal">Read-only — refuse pushes</Label>
+              <Switch id="gitlab-readonly" v-model="gitlabReadonly" />
+            </div>
+          </div>
+
+          <DialogFooter class="mt-6">
+            <DialogClose as-child>
+              <Button type="button" variant="secondary">Cancel</Button>
+            </DialogClose>
+            <Button type="submit" :disabled="creating || !nameValid || !gitlabToken.trim()">
+              {{ creating ? 'Checking token…' : 'Add' }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
     <Dialog :open="!!removing" @update:open="(v: boolean) => { if (!v) removing = null }">
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete {{ removing?.name }}?</DialogTitle>
           <DialogDescription>
             Every VM it is attached to loses access to those repositories on its next git command.
-            The app stays installed on GitHub — remove it there too if you want to revoke it
-            entirely.
+            <template v-if="removing?.kind === 'gitlab'">
+              The stored token is deleted here — revoke it on GitLab too if you no longer need it.
+            </template>
+            <template v-else>
+              The app stays installed on GitHub — remove it there too if you want to revoke it
+              entirely.
+            </template>
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

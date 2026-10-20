@@ -22,6 +22,7 @@ type IntegrationHandler struct {
 	q          *db.Queries
 	pool       *pgxpool.Pool
 	controlURL string
+	sealer     *llmSealer
 }
 
 type integrationDTO struct {
@@ -37,6 +38,8 @@ type integrationDTO struct {
 	RepoCount    int64    `json:"repo_count"`
 	VMCount      int64    `json:"vm_count"`
 	Repos        []string `json:"repos,omitempty"`
+	Instance     string   `json:"instance,omitempty"`
+	BaseURL      string   `json:"base_url,omitempty"`
 	CreatedAt    string   `json:"created_at"`
 }
 
@@ -56,7 +59,7 @@ func (h *IntegrationHandler) List(c *echo.Context) error {
 	}
 	items := make([]integrationDTO, 0, len(rows))
 	for _, r := range rows {
-		items = append(items, integrationDTO{
+		dto := integrationDTO{
 			ID:           domainIDString(r.ID),
 			Name:         r.Name,
 			Kind:         r.Kind,
@@ -69,14 +72,21 @@ func (h *IntegrationHandler) List(c *echo.Context) error {
 			RepoCount:    r.RepoCount,
 			VMCount:      r.VmCount,
 			CreatedAt:    r.CreatedAt.Time.Format(time.RFC3339),
-		})
+		}
+		if r.Kind == integrationKindGitLab {
+			dto.Account = r.GitLabUsername
+			dto.Connected = true
+			dto.Instance = r.GitLabInstanceName.String
+			dto.BaseURL = r.GitLabBaseURL.String
+		}
+		items = append(items, dto)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
 type createIntegrationReq struct {
-	Name     string `json:"name"`
-	Readonly bool   `json:"readonly"`
+	Kind string `json:"kind"`
+	createGitLabIntegrationReq
 }
 
 // @Summary     Create an integration
@@ -92,6 +102,13 @@ func (h *IntegrationHandler) Create(c *echo.Context) error {
 	var req createIntegrationReq
 	if err := c.Bind(&req); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid request body")
+	}
+	switch req.Kind {
+	case "", integrationKindGitHub:
+	case integrationKindGitLab:
+		return h.createGitLab(c, owner, req.createGitLabIntegrationReq)
+	default:
+		return echo.NewHTTPError(http.StatusBadRequest, "unknown integration kind")
 	}
 	name := strings.ToLower(strings.TrimSpace(req.Name))
 	if err := validateIntegrationName(name); err != nil {
@@ -146,7 +163,7 @@ func (h *IntegrationHandler) Get(c *echo.Context) error {
 		names = append(names, r.RepoOwner+"/"+r.RepoName)
 	}
 
-	return c.JSON(http.StatusOK, integrationDTO{
+	dto := integrationDTO{
 		ID:           domainIDString(row.ID),
 		Name:         row.Name,
 		Kind:         row.Kind,
@@ -159,7 +176,14 @@ func (h *IntegrationHandler) Get(c *echo.Context) error {
 		RepoCount:    int64(len(names)),
 		Repos:        names,
 		CreatedAt:    row.CreatedAt.Time.Format(time.RFC3339),
-	})
+	}
+	if row.Kind == integrationKindGitLab {
+		dto.Account = row.GitLabUsername
+		dto.Connected = true
+		dto.Instance = row.GitLabInstanceName.String
+		dto.BaseURL = row.GitLabBaseURL.String
+	}
+	return c.JSON(http.StatusOK, dto)
 }
 
 type updateIntegrationReq struct {
@@ -228,6 +252,9 @@ func (h *IntegrationHandler) ListAvailableRepos(c *echo.Context) error {
 	if err != nil {
 		return notFoundOr(err, "no such integration", "could not read the integration")
 	}
+	if err := githubOnly(row.Kind); err != nil {
+		return err
+	}
 	if !row.InstallationPk.Valid {
 		return echo.NewHTTPError(http.StatusConflict, "connect a github account to this integration first")
 	}
@@ -273,8 +300,12 @@ func (h *IntegrationHandler) SetRepos(c *echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	if _, err := h.q.GetIntegrationForOwner(ctx, db.GetIntegrationForOwnerParams{ID: id, OwnerID: owner}); err != nil {
+	row, err := h.q.GetIntegrationForOwner(ctx, db.GetIntegrationForOwnerParams{ID: id, OwnerID: owner})
+	if err != nil {
 		return notFoundOr(err, "no such integration", "could not read the integration")
+	}
+	if err := githubOnly(row.Kind); err != nil {
+		return err
 	}
 
 	// Replaced as a unit: a half-applied list would silently widen or narrow
@@ -379,6 +410,9 @@ func (h *IntegrationHandler) SetVMRepos(c *echo.Context) error {
 	if err != nil {
 		return notFoundOr(err, "no such integration", "could not read the integration")
 	}
+	if err := githubOnly(row.Kind); err != nil {
+		return err
+	}
 
 	repos, err := parseRepoList(req.Repos)
 	if err != nil {
@@ -468,8 +502,10 @@ func (h *IntegrationHandler) ListForVM(c *echo.Context) error {
 		dto := integrationDTO{
 			ID:       domainIDString(r.ID),
 			Name:     r.Name,
+			Kind:     r.Kind,
 			Readonly: r.Readonly,
 			AllRepos: r.AllRepos,
+			Instance: r.GitLabInstanceName.String,
 		}
 		// Exactly what this vm can reach: the repositories picked for the
 		// attachment, and none when none are picked.
@@ -505,7 +541,7 @@ func (h *IntegrationHandler) Attach(c *echo.Context) error {
 	if err != nil {
 		return notFoundOr(err, "no such integration", "could not read the integration")
 	}
-	if !row.InstallationPk.Valid {
+	if row.Kind == integrationKindGitHub && !row.InstallationPk.Valid {
 		return echo.NewHTTPError(http.StatusConflict, "connect a github account to this integration first")
 	}
 
@@ -595,6 +631,13 @@ func validateIntegrationName(name string) error {
 		return errors.New("the name must be between 3 and 52 characters")
 	case !integrationNameShapeRe.MatchString(name):
 		return errors.New("the name may hold lowercase letters, digits and single dashes")
+	}
+	return nil
+}
+
+func githubOnly(kind string) error {
+	if kind != integrationKindGitHub {
+		return echo.NewHTTPError(http.StatusBadRequest, "this only applies to github integrations")
 	}
 	return nil
 }

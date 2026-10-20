@@ -7,13 +7,16 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import type { Integration } from '@/composables/useIntegrations'
 
-const props = defineProps<{ vmId: string, vmName: string, host: string }>()
+// domain is the fleet domain; each integration answers at <name>.int.<domain>.
+const props = defineProps<{ vmId: string, vmName: string, domain: string }>()
 
 // What this VM can reach through one integration: exactly the repositories
 // picked for it.
 interface VMIntegration {
   id: string
   name: string
+  kind: string
+  instance?: string
   readonly: boolean
   all_repos: boolean
   repos?: string[]
@@ -68,7 +71,7 @@ async function load() {
     // Warm the github call while the user is still reading, so opening the
     // editor does not wait on it. A failure here is not worth surfacing: the
     // open path reports it and retries.
-    for (const i of list.filter(x => x.connected)) loadChoices(i.id).catch(() => {})
+    for (const i of list.filter(x => x.connected && x.kind !== 'gitlab')) loadChoices(i.id).catch(() => {})
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not load the integrations'
@@ -78,6 +81,18 @@ async function load() {
   }
 }
 onMounted(load)
+
+// One snippet per host this VM can reach: github once, and each gitlab
+// instance it has an integration attached for.
+const usageHosts = computed(() => {
+  if (!props.domain) return []
+  const out = new Map<string, boolean>()
+  for (const a of attached.value.values()) {
+    const name = a.kind === 'gitlab' ? a.instance : 'github'
+    if (name) out.set(`${name}.int.${props.domain}`, a.kind === 'gitlab')
+  }
+  return [...out].map(([host, gitlab]) => ({ host, gitlab }))
+})
 
 function reachable(i: Integration) {
   return attached.value.get(i.id)?.repos ?? []
@@ -160,7 +175,7 @@ async function saveScope(i: Integration) {
       </Button>
     </div>
     <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-      Clone private github repositories without requiring ssh keys on the VM.
+      Clone private GitHub and GitLab repositories without requiring ssh keys on the VM.
     </p>
 
     <FormError v-if="error" id="vm-integrations-error" :message="error" class="mt-3" />
@@ -190,6 +205,9 @@ async function saveScope(i: Integration) {
               <p v-else-if="!attached.has(i.id)" class="mt-0.5 text-xs text-muted-foreground">
                 Not attached.
               </p>
+              <p v-else-if="i.kind === 'gitlab'" class="mt-0.5 text-xs text-muted-foreground">
+                Reaches whatever its token can on <span class="font-mono">{{ i.instance }}</span>.
+              </p>
               <p v-else-if="!reachable(i).length" class="mt-0.5 text-xs text-muted-foreground">
                 No repositories picked yet, so it grants nothing.
               </p>
@@ -205,7 +223,7 @@ async function saveScope(i: Integration) {
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <Button
-                v-if="attached.has(i.id)"
+                v-if="attached.has(i.id) && i.kind !== 'gitlab'"
                 variant="ghost"
                 size="sm"
                 class="font-mono text-xs"
@@ -255,8 +273,8 @@ async function saveScope(i: Integration) {
         </li>
       </ul>
 
-      <div v-if="host && attached.size" class="mt-4">
-        <IntegrationUsage :host="host" />
+      <div v-for="u in usageHosts" :key="u.host" class="mt-4">
+        <IntegrationUsage :host="u.host" :gitlab="u.gitlab" />
       </div>
     </template>
   </section>

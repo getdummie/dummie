@@ -28,7 +28,7 @@ func parseIntproxyConfig(t *testing.T, out string) parsedIntproxyConfig {
 }
 
 func TestGenerateIntproxyConfig(t *testing.T) {
-	out := generateIntproxyConfig("example.com", "https://control.example.com/", true)
+	out := generateIntproxyConfig("example.com", "https://control.example.com/", true, []string{"techgitlab"})
 
 	for _, want := range []string{
 		`listen: "10.64.255.254:443"`,
@@ -41,6 +41,7 @@ func TestGenerateIntproxyConfig(t *testing.T) {
 		"mode: broker",
 		"- name: github",
 		"- name: llm",
+		"- name: \"techgitlab\"\n    kind: gitlab",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
@@ -52,7 +53,7 @@ func TestGenerateIntproxyConfig(t *testing.T) {
 // second copy of the authorization rules, and a stale one would keep a detached
 // vm working.
 func TestGenerateIntproxyConfigCarriesNoPolicy(t *testing.T) {
-	out := generateIntproxyConfig("example.com", "https://control.example.com", true)
+	out := generateIntproxyConfig("example.com", "https://control.example.com", true, nil)
 
 	for _, forbidden := range []string{"10.64.0.", "integration:", "repos:", "installation"} {
 		if strings.Contains(out, forbidden) {
@@ -64,7 +65,7 @@ func TestGenerateIntproxyConfigCarriesNoPolicy(t *testing.T) {
 // dproxy holds 0.0.0.0:443 on the same host; a wildcard here would collide with
 // it rather than coexist.
 func TestGenerateIntproxyConfigNeverBindsAWildcard(t *testing.T) {
-	out := generateIntproxyConfig("example.com", "https://control.example.com", true)
+	out := generateIntproxyConfig("example.com", "https://control.example.com", true, nil)
 	got := parseIntproxyConfig(t, out)
 
 	host, _, err := net.SplitHostPort(got.Listen)
@@ -82,7 +83,7 @@ func TestGenerateIntproxyConfigNeverBindsAWildcard(t *testing.T) {
 // A packfile clone is one long request in each direction, so a total deadline
 // would cut it off mid-transfer.
 func TestGenerateIntproxyConfigSetsNoBodyDeadline(t *testing.T) {
-	out := generateIntproxyConfig("example.com", "https://control.example.com", true)
+	out := generateIntproxyConfig("example.com", "https://control.example.com", true, nil)
 
 	for _, forbidden := range []string{"\nread_timeout:", "\nwrite_timeout:"} {
 		if strings.Contains(out, forbidden) {
@@ -94,7 +95,7 @@ func TestGenerateIntproxyConfigSetsNoBodyDeadline(t *testing.T) {
 // A fleet with no wildcard still gets a usable proxy, over http on :80. The
 // credential is added on the upstream leg either way, so it is not exposed.
 func TestGenerateIntproxyConfigWithoutTLS(t *testing.T) {
-	out := generateIntproxyConfig("example.com", "https://control.example.com", false)
+	out := generateIntproxyConfig("example.com", "https://control.example.com", false, nil)
 	got := parseIntproxyConfig(t, out)
 
 	if got.Listen != "10.64.255.254:80" {

@@ -146,16 +146,28 @@ type GithubInstallation struct {
 	UpdatedAt           pgtype.Timestamptz
 }
 
+type GitlabInstance struct {
+	ID        pgtype.UUID
+	Name      string
+	BaseURL   string
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+	UpdatedBy pgtype.UUID
+}
+
 type Integration struct {
-	ID             pgtype.UUID
-	OwnerID        pgtype.UUID
-	Name           string
-	Kind           string
-	InstallationPk pgtype.UUID
-	AllRepos       bool
-	Readonly       bool
-	CreatedAt      pgtype.Timestamptz
-	UpdatedAt      pgtype.Timestamptz
+	ID               pgtype.UUID
+	OwnerID          pgtype.UUID
+	Name             string
+	Kind             string
+	InstallationPk   pgtype.UUID
+	AllRepos         bool
+	Readonly         bool
+	CreatedAt        pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+	GitLabInstanceID pgtype.UUID
+	TokenEnc         []byte
+	GitLabUsername   string
 }
 
 type IntegrationRepo struct {

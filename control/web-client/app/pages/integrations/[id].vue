@@ -3,6 +3,8 @@ import { ArrowLeft, ExternalLink, GitBranch, RefreshCw, TriangleAlert } from '@l
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { Integration, IntegrationVM, OwnedVM } from '@/composables/useIntegrations'
 import { integrationHost } from '@/composables/useIntegrations'
@@ -44,7 +46,7 @@ async function load() {
     item.value = i
     attachedVMs.value = a
     vms.value = v
-    if (i.connected) await loadAvailable()
+    if (i.kind !== 'gitlab' && i.connected) await loadAvailable()
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not load the integration'
@@ -95,12 +97,36 @@ async function manageOnGitHub() {
   }
 }
 
+const isGitLab = computed(() => item.value?.kind === 'gitlab')
+
+const newToken = ref('')
+const tokenSaving = ref(false)
+const tokenSaved = ref(false)
+
+async function saveToken() {
+  tokenSaving.value = true
+  tokenSaved.value = false
+  error.value = null
+  try {
+    await api.setGitLabToken(id.value, newToken.value.trim())
+    newToken.value = ''
+    tokenSaved.value = true
+    item.value = await api.get(id.value)
+  }
+  catch (e) {
+    error.value = e instanceof Error ? e.message : 'Could not save the token'
+  }
+  finally {
+    tokenSaving.value = false
+  }
+}
+
 // The usage snippet needs a fleet domain, which comes from a VM's own hostname.
 // An attached VM is the accurate source; otherwise any of the user's will do.
 const usage = computed(() => {
   const attachedVM = vms.value.find(v => attached.value.has(v.id))
-  const host = integrationHost(attachedVM ?? vms.value[0])
-  const repo = available.value[0]
+  const host = integrationHost(attachedVM ?? vms.value[0], isGitLab.value ? item.value?.instance : 'github')
+  const repo = isGitLab.value ? undefined : available.value[0]
   return host ? { host, repo } : null
 })
 </script>
@@ -127,7 +153,13 @@ const usage = computed(() => {
           {{ item.name }}
           <Badge v-if="item.readonly" variant="secondary">Read-only</Badge>
         </h1>
-        <p v-if="item.connected" class="mt-2 text-sm text-muted-foreground">
+        <p v-if="isGitLab" class="mt-2 text-sm text-muted-foreground">
+          <template v-if="item.account">Token for <span class="font-mono">{{ item.account }}</span> on </template>
+          <template v-else>Token on </template>
+          <span class="font-mono">{{ item.instance }}</span>
+          (<span class="font-mono break-all">{{ item.base_url }}</span>).
+        </p>
+        <p v-else-if="item.connected" class="mt-2 text-sm text-muted-foreground">
           Connected to <span class="font-mono">{{ item.account }}</span> on GitHub.
         </p>
       </div>
@@ -169,7 +201,33 @@ const usage = computed(() => {
       </div>
 
       <template v-else>
-        <section class="mt-8 rounded-lg border border-border p-4 sm:p-6">
+        <section v-if="isGitLab" class="mt-8 rounded-lg border border-border p-4 sm:p-6">
+          <h2 class="text-lg font-semibold tracking-tight">Token</h2>
+          <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+            VMs reach whatever projects this token can. Replace it here when it expires or is
+            rotated; it is checked against GitLab before it is saved.
+          </p>
+          <form class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-end" @submit.prevent="saveToken">
+            <div class="min-w-0 flex-1 space-y-1.5">
+              <Label for="gitlab-new-token">New personal access token</Label>
+              <Input
+                id="gitlab-new-token"
+                v-model="newToken"
+                type="password"
+                placeholder="glpat-…"
+                spellcheck="false"
+                autocomplete="off"
+                class="font-mono text-sm"
+              />
+            </div>
+            <Button type="submit" variant="secondary" :disabled="tokenSaving || !newToken.trim()">
+              {{ tokenSaving ? 'Checking…' : 'Replace' }}
+            </Button>
+          </form>
+          <p v-if="tokenSaved" class="mt-2 text-sm text-muted-foreground" role="status">Token replaced.</p>
+        </section>
+
+        <section v-else class="mt-8 rounded-lg border border-border p-4 sm:p-6">
           <div class="flex flex-wrap items-start justify-between gap-3">
             <h2 class="text-lg font-semibold tracking-tight">Repositories</h2>
             <div class="flex shrink-0 flex-wrap items-center gap-2">
@@ -221,7 +279,8 @@ const usage = computed(() => {
                 </NuxtLink>
                 <p class="font-mono text-xs text-muted-foreground">{{ vm.ip }}</p>
               </div>
-              <p v-if="!vmRepos(vm).length" class="shrink-0 text-xs text-muted-foreground">
+              <p v-if="isGitLab" class="sr-only">attached</p>
+              <p v-else-if="!vmRepos(vm).length" class="shrink-0 text-xs text-muted-foreground">
                 no repositories
               </p>
               <ul v-else class="flex flex-wrap gap-x-3 gap-y-1 sm:max-w-[60%] sm:justify-end">
@@ -252,7 +311,7 @@ const usage = computed(() => {
         <section v-if="usage" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
           <h2 class="text-lg font-semibold tracking-tight">Using it</h2>
           <div class="mt-4">
-            <IntegrationUsage :host="usage.host" :repo="usage.repo" />
+            <IntegrationUsage :host="usage.host" :repo="usage.repo" :gitlab="isGitLab" />
           </div>
         </section>
       </template>

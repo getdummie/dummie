@@ -6,10 +6,11 @@ const props = defineProps<{
   host: string
   repo?: string
   scheme?: string
+  gitlab?: boolean
 }>()
 
 const scheme = computed(() => props.scheme || 'https')
-const repo = computed(() => props.repo || '<owner>/<repo>')
+const repo = computed(() => props.repo || (props.gitlab ? '<group>/<project>' : '<owner>/<repo>'))
 
 const cloneCmd = computed(() => `git clone ${scheme.value}://${props.host}/${repo.value}.git`)
 const ghCmd = computed(() => `export GH_HOST=${props.host}\nexport GH_ENTERPRISE_TOKEN=unused`)
@@ -42,7 +43,7 @@ async function copy(key: string, value: string) {
       <pre class="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">{{ cloneCmd }}</pre>
     </div>
 
-    <div>
+    <div v-if="!gitlab">
       <div class="flex items-center justify-between gap-2">
         <p class="text-xs text-muted-foreground">For the <span class="font-mono">gh</span> CLI</p>
         <Button variant="ghost" size="sm" aria-label="Copy the gh environment" @click="copy('gh', ghCmd)">

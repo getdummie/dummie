@@ -218,6 +218,10 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/github-app", adminH.GetGitHubApp)
 	admin.PUT("/github-app", adminH.PutGitHubApp)
 	admin.DELETE("/github-app", adminH.DeleteGitHubApp)
+	admin.GET("/gitlab-instances", adminH.ListGitLabInstances)
+	admin.POST("/gitlab-instances", adminH.CreateGitLabInstance)
+	admin.PATCH("/gitlab-instances/:id", adminH.UpdateGitLabInstance)
+	admin.DELETE("/gitlab-instances/:id", adminH.DeleteGitLabInstance)
 	admin.PUT("/clients/:id/domain", adminH.SetClientDomain)
 	admin.PUT("/clients/:id/services", adminH.UpdateClientServices)
 	admin.POST("/clients/:id/services/upgrade", adminH.UpgradeClientServices)
@@ -292,7 +296,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	llmKeys.DELETE("/:provider", llmH.DeleteMine)
 	me.GET("/llm-usage", usageH.Mine)
 
-	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL}
+	integH := &IntegrationHandler{q: q, pool: pool, controlURL: proxyCfg.controlURL, sealer: llmSealer}
 	userH := &UserHandler{q: q, pool: pool, hub: hub, prod: cfg.prod, proxy: proxyCfg, blobs: adminH.blobs, ch: ch}
 	vms := api.Group("/vms", userJWT(cfg, q), auditMW(q))
 	vms.GET("", userH.ListVMs)
@@ -334,6 +338,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	integ := api.Group("/integrations", userJWT(cfg, q), auditMW(q))
 	integ.GET("", integH.List)
 	integ.POST("", integH.Create)
+	integ.GET("/gitlab-instances", integH.ListGitLabInstances)
 	integ.GET("/:id", integH.Get)
 	integ.PATCH("/:id", integH.Update)
 	integ.DELETE("/:id", integH.Delete)
@@ -345,6 +350,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	integ.PUT("/:id/vms/:vm_id/repos", integH.SetVMRepos)
 	integ.GET("/:id/github/install", integH.Install)
 	integ.GET("/:id/github/manage", integH.Manage)
+	integ.PUT("/:id/gitlab/token", integH.SetGitLabToken)
 
 	// Outside the group on purpose: github sends the browser here as a top-level
 	// redirect, which carries no access token. The single-use state authenticates it.
