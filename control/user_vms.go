@@ -1672,13 +1672,21 @@ func (h *UserHandler) resolver(ctx context.Context) *net.Resolver {
 	return configuredResolver(ctx, h.q)
 }
 
-func configuredResolver(ctx context.Context, q *db.Queries) *net.Resolver {
+func resolverUpstream(ctx context.Context, q *db.Queries) string {
 	upstream := setting(ctx, q, settingResolverUpstream)
 	if upstream == "" {
-		return net.DefaultResolver
+		return ""
 	}
 	if _, _, err := net.SplitHostPort(upstream); err != nil {
 		upstream = net.JoinHostPort(upstream, "53")
+	}
+	return upstream
+}
+
+func configuredResolver(ctx context.Context, q *db.Queries) *net.Resolver {
+	upstream := resolverUpstream(ctx, q)
+	if upstream == "" {
+		return net.DefaultResolver
 	}
 	return &net.Resolver{
 		PreferGo: true,

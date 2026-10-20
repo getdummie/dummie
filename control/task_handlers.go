@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/miekg/dns"
 
 	"control/internal/db"
 	"control/internal/proto"
@@ -270,18 +271,73 @@ func verifyCNAME(ctx context.Context, q *db.Queries, domain, target string) erro
 		return verifyFlattened(lookupCtx, resolver, domain, target)
 	}
 
-	cname, err := resolver.LookupCNAME(lookupCtx, domain)
+	answers, err := lookupAnswers(lookupCtx, resolverUpstream(ctx, q), domain)
 	if err != nil {
 		return fmt.Errorf("%s does not resolve yet", domain)
 	}
-	got := strings.TrimSuffix(strings.ToLower(cname), ".")
-	if got == strings.ToLower(domain) {
+	return matchCNAMEChain(domain, target, cnameChain(domain, answers))
+}
+
+// lookupAnswers asks for domain's A record, which a recursive resolver answers
+// with every CNAME it followed on the way. net.Resolver only reports the last.
+func lookupAnswers(ctx context.Context, upstream, domain string) ([]dns.RR, error) {
+	if upstream == "" {
+		conf, err := dns.ClientConfigFromFile("/etc/resolv.conf")
+		if err != nil || len(conf.Servers) == 0 {
+			return nil, fmt.Errorf("no resolver configured: %v", err)
+		}
+		upstream = net.JoinHostPort(conf.Servers[0], conf.Port)
+	}
+	msg := new(dns.Msg)
+	msg.SetQuestion(dns.Fqdn(domain), dns.TypeA)
+	msg.RecursionDesired = true
+
+	res, _, err := new(dns.Client).ExchangeContext(ctx, msg, upstream)
+	if err == nil && res.Truncated {
+		res, _, err = (&dns.Client{Net: "tcp"}).ExchangeContext(ctx, msg, upstream)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if res.Rcode != dns.RcodeSuccess {
+		return nil, fmt.Errorf("%s: %s", domain, dns.RcodeToString[res.Rcode])
+	}
+	return res.Answer, nil
+}
+
+func cnameChain(domain string, answers []dns.RR) []string {
+	next := map[string]string{}
+	for _, rr := range answers {
+		if c, ok := rr.(*dns.CNAME); ok {
+			next[normalizeDNSName(c.Hdr.Name)] = normalizeDNSName(c.Target)
+		}
+	}
+	var chain []string
+	for name := normalizeDNSName(domain); len(chain) < 16; {
+		target, ok := next[name]
+		if !ok {
+			break
+		}
+		chain = append(chain, target)
+		name = target
+	}
+	return chain
+}
+
+// matchCNAMEChain accepts target anywhere in the chain, since the fleet's own
+// names may themselves be CNAMEs (a wildcard onto the apex, say).
+func matchCNAMEChain(domain, target string, chain []string) error {
+	if len(chain) == 0 {
 		return fmt.Errorf("%s has no CNAME record yet; point it at %s", domain, target)
 	}
-	if got != strings.ToLower(target) {
-		return fmt.Errorf("%s is a CNAME for %s, not %s", domain, got, target)
+	if !slices.Contains(chain, normalizeDNSName(target)) {
+		return fmt.Errorf("%s is a CNAME for %s, not %s", domain, chain[0], target)
 	}
 	return nil
+}
+
+func normalizeDNSName(name string) string {
+	return strings.TrimSuffix(strings.ToLower(name), ".")
 }
 
 func verifyFlattened(ctx context.Context, resolver *net.Resolver, domain, target string) error {
