@@ -117,7 +117,7 @@ func qemuArgs(data string, v vm, kvm bool) []string {
 	)
 
 	args = append(args,
-		"-drive", "file="+v.Disk+",format=qcow2,if=none,id=root",
+		"-drive", "file="+v.Disk+",format=qcow2,if=none,id=root,cache=none",
 		"-device", device("virtio-blk", mmio)+",drive=root",
 		"-device", device("virtio-rng", mmio),
 	)
