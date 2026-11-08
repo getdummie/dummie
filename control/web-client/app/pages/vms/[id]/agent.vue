@@ -15,6 +15,7 @@ import AgentMediaViewer from '@/components/agent/AgentMediaViewer.vue'
 import AgentHarnessIcon from '@/components/agent/AgentHarnessIcon.vue'
 import AgentSessions from '@/components/agent/AgentSessions.vue'
 import AgentThread from '@/components/agent/AgentThread.vue'
+import AgentTransfer from '@/components/agent/AgentTransfer.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import VmDestinations from '@/components/VmDestinations.vue'
 import VmTerminal, { type Phase as ConsolePhase } from '@/components/VmTerminal.vue'
@@ -54,7 +55,9 @@ const sending = ref(false)
 const actionError = ref<string | null>(null)
 const sessionsOpen = ref(false)
 const changesOpen = ref(false)
-const centerTab = ref<'chat' | 'console' | 'files' | 'network'>('chat')
+const centerTab = ref<'chat' | 'console' | 'files' | 'transfer' | 'network'>('chat')
+// The transfer tab mounts on first use and then stays, so its queue survives tab switches.
+const transferMounted = ref(false)
 // The file picked in the right panel's tree, edited in the center panel.
 const openedFile = ref<{ cwd: string, path: string } | null>(null)
 const openedMedia = computed(() => openedFile.value && mediaKind(openedFile.value.path))
@@ -72,6 +75,7 @@ const consoleMessage = ref<string | null>(null)
 const terminal = useTemplateRef<InstanceType<typeof VmTerminal>>('terminal')
 
 watch(centerTab, async (tab) => {
+  if (tab === 'transfer') transferMounted.value = true
   if (tab !== 'console') return
   consoleMounted.value = true
   await nextTick()
@@ -377,6 +381,7 @@ onBeforeUnmount(() => sock.close())
                 <TabsTrigger value="chat" class="h-6 font-mono text-xs">chat</TabsTrigger>
                 <TabsTrigger value="console" class="h-6 font-mono text-xs">console</TabsTrigger>
                 <TabsTrigger value="files" class="h-6 font-mono text-xs">files</TabsTrigger>
+                <TabsTrigger value="transfer" class="h-6 font-mono text-xs">transfer</TabsTrigger>
                 <TabsTrigger value="network" class="h-6 font-mono text-xs">network</TabsTrigger>
               </TabsList>
             </Tabs>
@@ -490,6 +495,16 @@ onBeforeUnmount(() => sock.close())
             <p v-else class="p-4 font-mono text-xs text-muted-foreground">
               Pick a file in the right panel's files tab to open it here.
             </p>
+          </div>
+
+          <div v-if="transferMounted" v-show="centerTab === 'transfer'" class="flex min-h-0 flex-1 flex-col">
+            <AgentTransfer
+              :initial-path="activeCwd || hello?.cwd || hello?.home || ''"
+              :connected="phase === 'open'"
+              :list="sock.list"
+              :upload="sock.upload"
+              :read-raw="sock.readRaw"
+            />
           </div>
 
           <div v-if="centerTab === 'network'" class="min-h-0 flex-1 overflow-y-auto p-4">

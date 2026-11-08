@@ -253,7 +253,7 @@ func TestReadRawChunkWalksTheFile(t *testing.T) {
 	}
 	var got []byte
 	for {
-		b, size, err := readRawChunk(root, "a.bin", int64(len(got)))
+		b, size, err := readRawChunk(root, "a.bin", int64(len(got)), maxRaw, "previewed")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -265,7 +265,7 @@ func TestReadRawChunkWalksTheFile(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("read %d bytes, want %d", len(got), len(want))
 	}
-	if _, _, err := readRawChunk(root, "a.bin", int64(len(want))+1); err == nil {
+	if _, _, err := readRawChunk(root, "a.bin", int64(len(want))+1, maxRaw, "previewed"); err == nil {
 		t.Fatal("an offset past the end was accepted")
 	}
 }
@@ -430,5 +430,27 @@ func TestWithUserBins(t *testing.T) {
 	}
 	if got := withUserBins("/home/u", ""); !strings.HasSuffix(got, "/home/u/.npm-global/bin") {
 		t.Fatalf("an empty PATH left a trailing separator: %q", got)
+	}
+}
+
+func TestStartUploadIntoDest(t *testing.T) {
+	dir := t.TempDir()
+	c := &client{d: &daemon{home: dir}}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.startUpload(request{Dest: dir, Name: "a.txt"}); !errors.Is(err, errExists) {
+		t.Fatalf("an existing file was not refused: %v", err)
+	}
+	u, err := c.startUpload(request{Dest: "~", Name: "../a.txt", Overwrite: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.f.Close()
+	if u.final != filepath.Join(dir, "a.txt") || filepath.Dir(u.path) != dir {
+		t.Errorf("upload landed at %s via %s", u.final, u.path)
+	}
+	if _, err := c.startUpload(request{Dest: "relative", Name: "b"}); err == nil {
+		t.Error("a relative dest was accepted")
 	}
 }

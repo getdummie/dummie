@@ -339,6 +339,9 @@
                     },
                     "docker_images": {
                         "type": "boolean"
+                    },
+                    "max_upload_mib": {
+                        "type": "integer"
                     }
                 },
                 "type": "object"
@@ -2268,7 +2271,7 @@
         },
         "/vms/features": {
             "get": {
-                "description": "Admin toggles for the \"Allow everything\" egress entry and for building OS images from Docker images.",
+                "description": "Admin toggles for the \"Allow everything\" egress entry and for building OS images from Docker images, and the largest upload the agent page's transfer tab accepts.",
                 "responses": {
                     "200": {
                         "content": {

@@ -22,8 +22,9 @@ const (
 
 // Media for the viewer is pulled in raw chunks, one request per chunk.
 const (
-	maxRaw   = 64 << 20
-	rawChunk = 512 << 10
+	maxRaw      = 64 << 20
+	maxDownload = 1 << 30
+	rawChunk    = 512 << 10
 )
 
 var errConflict = errors.New("the file changed on disk since it was opened")
@@ -100,7 +101,7 @@ func readEditable(root, rel string) (fileContent, error) {
 	return out, nil
 }
 
-func readRawChunk(root, rel string, off int64) ([]byte, int64, error) {
+func readRawChunk(root, rel string, off, limit int64, what string) ([]byte, int64, error) {
 	abs, err := resolveIn(root, rel)
 	if err != nil {
 		return nil, 0, err
@@ -118,8 +119,8 @@ func readRawChunk(root, rel string, off int64) ([]byte, int64, error) {
 	switch {
 	case !fi.Mode().IsRegular():
 		return nil, 0, fmt.Errorf("%s is not a regular file", rel)
-	case size > maxRaw:
-		return nil, 0, fmt.Errorf("files over %d MiB cannot be previewed here", maxRaw>>20)
+	case size > limit:
+		return nil, 0, fmt.Errorf("files over %d MiB cannot be %s here", limit>>20, what)
 	case off < 0 || off > size:
 		return nil, 0, fmt.Errorf("offset %d is outside the file", off)
 	}

@@ -11,14 +11,16 @@ import (
 	"time"
 )
 
-// Uploads live outside the session's directory so they never show up in its
-// diff, and arrive in base64 chunks small enough for dpipe's websocket.
-const maxUpload = 25 << 20
+// Chat attachments live outside the session's directory so they never show up
+// in its diff; uploads with a dest land there instead. Both arrive in base64
+// chunks small enough for dpipe's websocket.
+const maxUpload = 1 << 30
 
 type upload struct {
-	f    *os.File
-	path string
-	size int
+	f     *os.File
+	path  string
+	final string
+	size  int
 }
 
 var unsafeName = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
@@ -42,6 +44,42 @@ func safeName(name string) string {
 	return name
 }
 
+var errExists = errors.New("a file with that name already exists there")
+
+func (c *client) startUpload(r request) (*upload, error) {
+	if r.Dest == "" {
+		dir := c.d.uploadDir()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return nil, err
+		}
+		path := filepath.Join(dir, fmt.Sprintf("%d-%s", time.Now().UnixNano(), safeName(r.Name)))
+		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return nil, err
+		}
+		return &upload{f: f, path: path, final: path}, nil
+	}
+
+	dest := c.d.expandHome(r.Dest)
+	if !filepath.IsAbs(dest) {
+		return nil, fmt.Errorf("%s is not an absolute path", r.Dest)
+	}
+	if fi, err := os.Stat(dest); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("%s is not a directory", r.Dest)
+	}
+	name := safeName(r.Name)
+	final := filepath.Join(dest, name)
+	if _, err := os.Lstat(final); err == nil && !r.Overwrite {
+		return nil, errExists
+	}
+	tmp := filepath.Join(dest, fmt.Sprintf(".%s.%d.part", name, time.Now().UnixNano()))
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return nil, err
+	}
+	return &upload{f: f, path: tmp, final: final}, nil
+}
+
 func (c *client) upload(r request) {
 	if r.Req == "" {
 		c.fail(r, errors.New("an upload needs a req id"))
@@ -57,18 +95,15 @@ func (c *client) upload(r request) {
 	u, ok := c.uploads[r.Req]
 	c.mu.Unlock()
 	if !ok {
-		dir := c.d.uploadDir()
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			c.fail(r, err)
+		u, err = c.startUpload(r)
+		if errors.Is(err, errExists) {
+			c.send(map[string]any{"t": "error", "req": r.Req, "code": "exists", "message": err.Error()})
 			return
 		}
-		path := filepath.Join(dir, fmt.Sprintf("%d-%s", time.Now().UnixNano(), safeName(r.Name)))
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			c.fail(r, err)
 			return
 		}
-		u = &upload{f: f, path: path}
 		c.mu.Lock()
 		c.uploads[r.Req] = u
 		c.mu.Unlock()
@@ -97,7 +132,14 @@ func (c *client) upload(r request) {
 		c.fail(r, err)
 		return
 	}
-	c.send(map[string]any{"t": "uploaded", "req": r.Req, "path": u.path})
+	if u.final != u.path {
+		if err := os.Rename(u.path, u.final); err != nil {
+			_ = os.Remove(u.path)
+			c.fail(r, err)
+			return
+		}
+	}
+	c.send(map[string]any{"t": "uploaded", "req": r.Req, "path": u.final})
 }
 
 func (c *client) dropUpload(req string, u *upload) {

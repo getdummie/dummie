@@ -51,6 +51,10 @@ type request struct {
 	Hash   string `json:"hash"`
 	Force  bool   `json:"force"`
 	Offset int64  `json:"offset"`
+
+	Dest      string `json:"dest"`
+	Overwrite bool   `json:"overwrite"`
+	Download  bool   `json:"download"`
 }
 
 type attachment struct {
@@ -170,6 +174,8 @@ func (c *client) dispatch(r request) {
 		c.stat(r)
 	case "mkdir":
 		c.mkdir(r)
+	case "ls":
+		go c.list(r)
 	case "read_file":
 		go c.readFile(r)
 	case "write_file":
@@ -341,7 +347,11 @@ func (c *client) readFile(r request) {
 }
 
 func (c *client) readRaw(r request) {
-	chunk, size, err := readRawChunk(r.Cwd, r.Path, r.Offset)
+	limit, what := int64(maxRaw), "previewed"
+	if r.Download {
+		limit, what = maxDownload, "downloaded"
+	}
+	chunk, size, err := readRawChunk(r.Cwd, r.Path, r.Offset, limit, what)
 	if err != nil {
 		c.fail(r, err)
 		return
@@ -399,4 +409,33 @@ func (c *client) setWatch(cwd string) {
 	if cwd != "" {
 		c.d.watchFor(cwd, c)
 	}
+}
+
+type dirEntry struct {
+	Name     string `json:"name"`
+	Dir      bool   `json:"dir"`
+	Size     int64  `json:"size"`
+	Modified int64  `json:"modified"`
+}
+
+func (c *client) list(r request) {
+	path := c.d.expandHome(r.Path)
+	if !filepath.IsAbs(path) {
+		c.fail(r, fmt.Errorf("%s is not an absolute path", r.Path))
+		return
+	}
+	des, err := os.ReadDir(path)
+	if err != nil {
+		c.fail(r, err)
+		return
+	}
+	entries := make([]dirEntry, 0, len(des))
+	for _, de := range des {
+		fi, err := os.Stat(filepath.Join(path, de.Name()))
+		if err != nil {
+			continue
+		}
+		entries = append(entries, dirEntry{Name: de.Name(), Dir: fi.IsDir(), Size: fi.Size(), Modified: fi.ModTime().Unix()})
+	}
+	c.send(map[string]any{"t": "ls", "req": r.Req, "path": path, "entries": entries})
 }

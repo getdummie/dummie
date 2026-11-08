@@ -37,6 +37,8 @@ const (
 
 	settingVMAllowEverything = "vm_allow_everything_enabled"
 	settingUserDockerImages  = "user_docker_images_enabled"
+
+	settingVMMaxUploadMiB = "vm_max_upload_mib"
 )
 
 type settingKind string
@@ -97,6 +99,17 @@ var settingDefs = []settingDef{
 			"Every image they add joins the catalogue for everyone. With this off only admins " +
 			"can add OS images.",
 		Default: "false",
+	},
+	{
+		Key:   settingVMMaxUploadMiB,
+		Kind:  settingString,
+		Label: "VM upload limit (MiB)",
+		Description: "The largest file a user can upload into a VM from the agent page's transfer " +
+			"tab. Checked in the browser, so it guards the relay rather than the VM: the user " +
+			"already has a shell in there.",
+		Placeholder: "100",
+		Default:     "100",
+		validate:    validateMaxUploadMiB,
 	},
 	{
 		Key:   settingDclientDownloadURL,
@@ -218,6 +231,14 @@ var settingDefs = []settingDef{
 		Default:     "30",
 		validate:    validateAuditRetentionDays,
 	},
+}
+
+func validateMaxUploadMiB(v string) error {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 1 || n > 1024 {
+		return errors.New("enter a whole number of MiB between 1 and 1024")
+	}
+	return nil
 }
 
 func validateAuditRetentionDays(v string) error {

@@ -196,10 +196,11 @@ type quotaDTO struct {
 type featuresDTO struct {
 	AllowEverything bool `json:"allow_everything"`
 	DockerImages    bool `json:"docker_images"`
+	MaxUploadMiB    int  `json:"max_upload_mib"`
 }
 
 // @Summary     Which optional VM features are enabled
-// @Description Admin toggles for the "Allow everything" egress entry and for building OS images from Docker images.
+// @Description Admin toggles for the "Allow everything" egress entry and for building OS images from Docker images, and the largest upload the agent page's transfer tab accepts.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
@@ -211,6 +212,7 @@ func (h *UserHandler) GetFeatures(c *echo.Context) error {
 	return c.JSON(http.StatusOK, featuresDTO{
 		AllowEverything: boolSetting(ctx, h.q, settingVMAllowEverything),
 		DockerImages:    boolSetting(ctx, h.q, settingUserDockerImages),
+		MaxUploadMiB:    intSetting(ctx, h.q, settingVMMaxUploadMiB),
 	})
 }
 

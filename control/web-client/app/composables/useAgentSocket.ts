@@ -57,6 +57,13 @@ export interface AgentFile {
   baseExists: boolean
 }
 
+export interface AgentDirEntry {
+  name: string
+  dir: boolean
+  size: number
+  modified: number
+}
+
 // AgentError keeps the daemon's code, e.g. "conflict" on a stale save.
 export class AgentError extends Error {
   constructor(message: string, readonly code?: string) {
@@ -67,8 +74,9 @@ export class AgentError extends Error {
 type Msg = Record<string, any>
 type Pending = { resolve: (m: Msg) => void, reject: (e: Error) => void }
 
-const replyTypes = new Set(['opened', 'models', 'uploaded', 'upload_ack', 'ok', 'sessions', 'stat', 'file', 'written', 'write_ack', 'raw'])
-const uploadChunk = 192 * 1024
+const replyTypes = new Set(['opened', 'models', 'uploaded', 'upload_ack', 'ok', 'sessions', 'stat', 'file', 'written', 'write_ack', 'raw', 'ls'])
+// Base64 grows a chunk by a third, and dpipe takes 1 MiB per message.
+const uploadChunk = 512 * 1024
 // Characters, not bytes: JSON escaping can grow them, and dpipe takes 1 MiB.
 const writeChunk = 128 * 1024
 const maxBackoff = 15_000
@@ -199,7 +207,8 @@ export function useAgentSocket(vmId: () => string) {
     await request({ t: 'set_model', key, model: { provider: model.provider, id: model.id } })
   }
 
-  async function upload(file: File, onProgress?: (fraction: number) => void): Promise<string> {
+  // Without dest the file goes to dinit's uploads directory, for chat attachments.
+  async function upload(file: File, onProgress?: (fraction: number) => void, opts: { dest?: string, overwrite?: boolean } = {}): Promise<string> {
     const req = `u${++seq}`
     for (let off = 0; off < file.size || off === 0; off += uploadChunk) {
       const chunk = new Uint8Array(await file.slice(off, off + uploadChunk).arrayBuffer())
@@ -207,7 +216,7 @@ export function useAgentSocket(vmId: () => string) {
       const reply = await new Promise<Msg>((resolve, reject) => {
         if (ws?.readyState !== WebSocket.OPEN) return reject(new Error('not connected to the vm'))
         pending.set(req, { resolve, reject })
-        ws.send(JSON.stringify({ t: 'upload', req, name: file.name, data: toBase64(chunk), last }))
+        ws.send(JSON.stringify({ t: 'upload', req, name: file.name, data: toBase64(chunk), last, ...opts }))
       })
       onProgress?.(Math.min(1, (off + chunk.length) / Math.max(file.size, 1)))
       if (last) return reply.path as string
@@ -219,10 +228,10 @@ export function useAgentSocket(vmId: () => string) {
     return (await request({ t: 'read_file', cwd, path })).file as AgentFile
   }
 
-  async function readRaw(cwd: string, path: string, type: string, onProgress?: (fraction: number) => void): Promise<Blob> {
+  async function readRaw(cwd: string, path: string, type: string, onProgress?: (fraction: number) => void, download = false): Promise<Blob> {
     const parts: BlobPart[] = []
     for (let offset = 0; ;) {
-      const m = await request({ t: 'read_raw', cwd, path, offset })
+      const m = await request({ t: 'read_raw', cwd, path, offset, download })
       const chunk = fromBase64(m.data as string)
       parts.push(chunk)
       offset += chunk.length
@@ -253,6 +262,11 @@ export function useAgentSocket(vmId: () => string) {
     }
   }
 
+  async function list(path: string): Promise<{ path: string, entries: AgentDirEntry[] }> {
+    const m = await request({ t: 'ls', path })
+    return { path: m.path as string, entries: m.entries ?? [] }
+  }
+
   function watch(cwd: string) {
     if (cwd === watching) return
     watching = cwd
@@ -272,7 +286,7 @@ export function useAgentSocket(vmId: () => string) {
     ws = null
   }
 
-  return { phase, error, hello, sessions, diff, connect, close, request, prompt, abort, models, setModel, rename, upload, readFile, readRaw, writeFile, watch, on }
+  return { phase, error, hello, sessions, diff, connect, close, request, prompt, abort, models, setModel, rename, upload, readFile, readRaw, writeFile, list, watch, on }
 }
 
 function fromBase64(s: string): Uint8Array<ArrayBuffer> {
