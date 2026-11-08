@@ -42,6 +42,8 @@ func (h *ClientHandler) IntegrationToken(c *echo.Context) error {
 	case integrationKindGitHub:
 	case integrationKindLLM:
 		return h.llmToken(c, client, ip.String(), req.Resource)
+	case userProxyFamily:
+		return h.httpProxyToken(c, client, ip.String(), req.Resource)
 	default:
 		inst, ok, err := lookupGitLabInstance(c.Request().Context(), h.q, req.Integration)
 		if err != nil {

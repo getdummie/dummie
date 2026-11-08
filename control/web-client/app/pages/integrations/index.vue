@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { GitBranch, Plus, Trash2, TriangleAlert } from '@lucide/vue'
+import { GitBranch, Globe, Plus, Trash2, TriangleAlert } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import type { GitLabInstance, Integration } from '@/composables/useIntegrations'
 import { flavorLabel } from '@/composables/useIntegrations'
+import type { HTTPProxyForm } from '@/components/HttpProxyFields.vue'
+import { emptyProxyForm, proxyFormBody, proxyFormValid } from '@/components/HttpProxyFields.vue'
 
 definePageMeta({ middleware: ['auth'] })
 useHead({ title: 'dummie — integrations' })
@@ -98,6 +100,35 @@ async function createGitLab() {
   }
   catch (e) {
     gitlabError.value = e instanceof Error ? e.message : 'Could not create the integration'
+  }
+  finally {
+    creating.value = false
+  }
+}
+
+const httpOpen = ref(false)
+const httpForm = ref<HTTPProxyForm>(emptyProxyForm())
+const httpError = ref<string | null>(null)
+
+async function pickHTTP() {
+  pickOpen.value = false
+  name.value = ''
+  httpForm.value = emptyProxyForm()
+  httpError.value = null
+  await nextTick()
+  httpOpen.value = true
+}
+
+async function createHTTP() {
+  creating.value = true
+  httpError.value = null
+  try {
+    const created = await api.createHTTP({ name: name.value.trim(), ...proxyFormBody(httpForm.value) })
+    httpOpen.value = false
+    await navigateTo(`/integrations/${created.id}`)
+  }
+  catch (e) {
+    httpError.value = e instanceof Error ? e.message : 'Could not create the proxy'
   }
   finally {
     creating.value = false
@@ -219,6 +250,7 @@ const failedInstall = computed(() => {
             <p class="flex flex-wrap items-center gap-2 text-sm font-medium">
               <NuxtLink :to="`/integrations/${i.id}`" class="hover:underline">{{ i.name }}</NuxtLink>
               <Badge v-if="i.kind === 'gitlab'" variant="outline" class="font-mono">{{ i.instance }}</Badge>
+              <Badge v-if="i.kind === 'http'" variant="outline">HTTP proxy</Badge>
               <Badge v-if="!i.connected" variant="outline">Not connected</Badge>
               <Badge v-if="i.suspended" variant="destructive">
                 <TriangleAlert class="size-3" aria-hidden="true" />
@@ -227,7 +259,14 @@ const failedInstall = computed(() => {
               <Badge v-if="i.readonly" variant="secondary">Read-only</Badge>
             </p>
             <p class="mt-1 text-sm text-muted-foreground">
-              <template v-if="i.kind === 'gitlab'">
+              <template v-if="i.kind === 'http'">
+                <span class="break-all font-mono text-xs">{{ i.target_url }}</span>
+                ·
+                <span :class="i.vm_count === 0 && 'text-foreground'">
+                  {{ i.vm_count }} {{ i.vm_count === 1 ? 'VM' : 'VMs' }}
+                </span>
+              </template>
+              <template v-else-if="i.kind === 'gitlab'">
                 <span v-if="i.account" class="font-mono text-xs">{{ i.account }} ·</span>
                 <span :class="i.vm_count === 0 && 'text-foreground'">
                   {{ i.vm_count }} {{ i.vm_count === 1 ? 'VM' : 'VMs' }}
@@ -311,6 +350,17 @@ const failedInstall = computed(() => {
             <span class="min-w-0">
               <span class="block text-sm font-medium">{{ flavorLabel(g.flavor) }} · {{ g.name }}</span>
               <span class="block truncate font-mono text-xs text-muted-foreground">{{ g.base_url }}</span>
+            </span>
+          </button>
+          <button
+            type="button"
+            class="mt-2 flex w-full items-center gap-3 rounded-lg border border-border p-4 text-left transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            @click="pickHTTP"
+          >
+            <Globe class="size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span class="min-w-0">
+              <span class="block text-sm font-medium">HTTP proxy</span>
+              <span class="block text-xs text-muted-foreground">Reach any HTTP service from a VM, with headers added on the way.</span>
             </span>
           </button>
         </div>
@@ -422,13 +472,62 @@ const failedInstall = computed(() => {
       </DialogContent>
     </Dialog>
 
+    <Dialog v-model:open="httpOpen">
+      <DialogContent class="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
+        <form @submit.prevent="createHTTP">
+          <DialogHeader>
+            <DialogTitle>HTTP proxy</DialogTitle>
+            <DialogDescription>
+              Attached VMs reach it at
+              <span class="font-mono">{{ name.trim() || 'name' }}-u.int.&lt;your domain&gt;</span>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <Alert v-if="httpError" variant="destructive" class="mt-4">
+            <AlertDescription>{{ httpError }}</AlertDescription>
+          </Alert>
+
+          <div class="mt-4 space-y-4">
+            <div class="space-y-1.5">
+              <Label for="http-integration-name">Name</Label>
+              <Input
+                id="http-integration-name"
+                v-model="name"
+                placeholder="jira"
+                spellcheck="false"
+                autocomplete="off"
+                class="font-mono text-sm"
+              />
+              <p class="text-xs text-muted-foreground">
+                Becomes the hostname, so it is unique across every user and cannot be changed later.
+                Lowercase letters, digits and single dashes, 3 to 52 characters.
+              </p>
+            </div>
+            <HttpProxyFields v-model="httpForm" id-prefix="new-proxy" />
+          </div>
+
+          <DialogFooter class="mt-6">
+            <DialogClose as-child>
+              <Button type="button" variant="secondary">Cancel</Button>
+            </DialogClose>
+            <Button type="submit" :disabled="creating || !nameValid || !proxyFormValid(httpForm)">
+              {{ creating ? 'Creating…' : 'Create' }}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+
     <Dialog :open="!!removing" @update:open="(v: boolean) => { if (!v) removing = null }">
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Delete {{ removing?.name }}?</DialogTitle>
           <DialogDescription>
-            Every VM it is attached to loses access to those repositories on its next git command.
-            <template v-if="removing?.kind === 'gitlab'">
+            Every VM it is attached to loses access{{ removing?.kind === 'http' ? '' : ' to those repositories on its next git command' }}.
+            <template v-if="removing?.kind === 'http'">
+              Its stored headers are deleted with it.
+            </template>
+            <template v-else-if="removing?.kind === 'gitlab'">
               The stored token is deleted here — revoke it on {{ flavorLabel(removing?.flavor) }} too if you no longer need it.
             </template>
             <template v-else>

@@ -6,5 +6,6 @@ package all
 import (
 	_ "intproxy/internal/integration/github"
 	_ "intproxy/internal/integration/gitlab"
+	_ "intproxy/internal/integration/httpproxy"
 	_ "intproxy/internal/integration/llm"
 )

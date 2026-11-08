@@ -72,7 +72,7 @@ func testServer(t *testing.T, src credential.Source, ghOptions string) *Server {
 	}
 	s.hosts[host] = ig
 	s.names = []string{host}
-	s.rp = s.newReverseProxy()
+	s.rp = s.newReverseProxy(s.newTransport())
 	return s
 }
 

@@ -15,7 +15,27 @@ export interface Integration {
   instance?: string
   base_url?: string
   flavor?: GitFlavor
+  // Set for an http proxy. Header values are write-only, so only names come back.
+  target_url?: string
+  methods?: HTTPMethod[]
+  verify_tls?: boolean
+  header_names?: string[]
   created_at: string
+}
+
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const
+export type HTTPMethod = typeof HTTP_METHODS[number]
+
+// value undefined keeps the stored one for that header name.
+export interface HTTPProxyBody {
+  target_url: string
+  methods: HTTPMethod[]
+  verify_tls: boolean
+  headers: { name: string, value?: string }[]
+}
+
+export function proxyHost(name: string, domain: string): string {
+  return `${name}-u.int.${domain}`
 }
 
 // gitea stands for forgejo too: same api, same token.
@@ -93,6 +113,10 @@ export function useIntegrations() {
     create: (name: string) => request<Integration>('/integrations', json('POST', { name })),
     createGitLab: (body: { name: string, instance_id: string, token: string, readonly: boolean }) =>
       request<Integration>('/integrations', json('POST', { kind: 'gitlab', ...body })),
+    createHTTP: (body: HTTPProxyBody & { name: string }) =>
+      request<Integration>('/integrations', json('POST', { kind: 'http', ...body })),
+    updateHTTP: (id: string, body: HTTPProxyBody) =>
+      request<void>(`/integrations/${id}/http`, json('PUT', body)),
     setGitLabToken: (id: string, token: string) =>
       request<void>(`/integrations/${id}/gitlab/token`, json('PUT', { token })),
     gitlabInstances: () =>

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/netip"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,7 +36,9 @@ type Server struct {
 	creds *credential.Cache
 	relay credential.Relayer
 	hosts map[string]integration.Integration
-	names []string
+	// families answer for every <x><suffix> label; the key is "-<name>".
+	families map[string]integration.Integration
+	names    []string
 
 	rp *httputil.ReverseProxy
 
@@ -49,7 +52,8 @@ func New(cfg *Config, log *slog.Logger, version string) (*Server, error) {
 		cfg:     cfg,
 		log:     log,
 		version: version,
-		hosts:   map[string]integration.Integration{},
+		hosts:    map[string]integration.Integration{},
+		families: map[string]integration.Integration{},
 	}
 
 	if cfg.TLS.enabled() {
@@ -78,27 +82,35 @@ func New(cfg *Config, log *slog.Logger, version string) (*Server, error) {
 		s.policy.Store(cfg.Policy)
 	}
 
+	transport := s.newTransport()
 	for _, ic := range cfg.Integrations {
 		if !ic.Enabled {
 			continue
 		}
 		host := cfg.hostname(ic.Name)
 		ig, err := integration.New(ic.kind(), integration.Options{
-			Name:    ic.Name,
-			Decode:  ic.Decode,
-			DocsURL: cfg.DocsURL,
-			SelfURL: func() string { return s.selfURL(host) },
-			Version: version,
+			Name:        ic.Name,
+			Decode:      ic.Decode,
+			DocsURL:     cfg.DocsURL,
+			SelfURL:     func() string { return s.selfURL(host) },
+			Version:     version,
+			Transport:   transport,
+			DialTimeout: cfg.DialTimeout.Or(10 * time.Second),
 		})
 		if err != nil {
 			return nil, err
+		}
+		if _, ok := ig.(integration.Family); ok {
+			s.families["-"+ic.Name] = ig
+			s.names = append(s.names, cfg.hostname("*-"+ic.Name))
+			continue
 		}
 		s.hosts[host] = ig
 		s.names = append(s.names, host)
 	}
 	sort.Strings(s.names)
 
-	s.rp = s.newReverseProxy()
+	s.rp = s.newReverseProxy(transport)
 	return s, nil
 }
 
@@ -162,8 +174,25 @@ func (s *Server) selfURL(host string) string {
 	return "http://" + host
 }
 
+// lookup prefers an exact name, so a family can never shadow a built-in.
+func (s *Server) lookup(host string) (integration.Integration, bool) {
+	if ig, ok := s.hosts[host]; ok {
+		return ig, true
+	}
+	label, ok := strings.CutSuffix(host, "."+s.cfg.label()+"."+s.cfg.TLD)
+	if !ok || strings.Contains(label, ".") {
+		return nil, false
+	}
+	for suffix, ig := range s.families {
+		if prefix, ok := strings.CutSuffix(label, suffix); ok && prefix != "" {
+			return ig, true
+		}
+	}
+	return nil, false
+}
+
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ig, ok := s.hosts[hostOnly(r.Host)]
+	ig, ok := s.lookup(hostOnly(r.Host))
 	if !ok {
 		s.notFound(w)
 		return
@@ -205,6 +234,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tok, err := s.creds.Token(r.Context(), scope)
 	if err != nil {
 		s.deny(w, ig, route, ip, err)
+		return
+	}
+
+	if len(tok.Methods) > 0 && !slices.Contains(tok.Methods, r.Method) {
+		w.Header().Set("Allow", strings.Join(tok.Methods, ", "))
+		s.writeError(w, ig, route, http.StatusMethodNotAllowed,
+			"intproxy: "+r.Method+" is not one of the methods this proxy allows")
 		return
 	}
 

@@ -42,8 +42,10 @@ func validateGitLabName(name string) error {
 		return errors.New("the name must be between 2 and 63 characters")
 	case !gitlabNameRe.MatchString(name):
 		return errors.New("the name may hold lowercase letters, digits and single dashes")
-	case name == integrationKindGitHub || name == integrationKindLLM:
+	case name == integrationKindGitHub || name == integrationKindLLM || name == userProxyFamily:
 		return errors.New("that name is taken by a built-in integration")
+	case strings.HasSuffix(name, userProxySuffix):
+		return errors.New("names ending in " + userProxySuffix + " are reserved for user proxies")
 	}
 	return nil
 }

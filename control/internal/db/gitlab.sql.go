@@ -47,7 +47,7 @@ func (q *Queries) CreateGitLabInstance(ctx context.Context, arg CreateGitLabInst
 const createGitLabIntegration = `-- name: CreateGitLabIntegration :one
 INSERT INTO integrations (owner_id, name, kind, readonly, all_repos, gitlab_instance_id, token_enc, gitlab_username)
 VALUES ($1, $2, 'gitlab', $3, true, $4, $5, $6)
-RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username
+RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username, proxy_target_url, proxy_methods, proxy_verify_tls, proxy_headers_enc
 `
 
 type CreateGitLabIntegrationParams struct {
@@ -82,6 +82,10 @@ func (q *Queries) CreateGitLabIntegration(ctx context.Context, arg CreateGitLabI
 		&i.GitLabInstanceID,
 		&i.TokenEnc,
 		&i.GitLabUsername,
+		&i.ProxyTargetURL,
+		&i.ProxyMethods,
+		&i.ProxyVerifyTLS,
+		&i.ProxyHeadersEnc,
 	)
 	return i, err
 }

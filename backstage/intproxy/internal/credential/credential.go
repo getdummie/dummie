@@ -38,6 +38,13 @@ type Token struct {
 	// Account is the upstream account the token acts for, when its api asks
 	// for one alongside the token.
 	Account string
+
+	// Headers go upstream as is, for a user-configured proxy.
+	Headers map[string]string
+	// Methods, when set, are the only request methods allowed through.
+	Methods []string
+	// InsecureTLS skips verifying the upstream's certificate.
+	InsecureTLS bool
 }
 
 func (t Token) stale(skew time.Duration) bool {

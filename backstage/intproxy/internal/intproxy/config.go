@@ -310,7 +310,7 @@ func (c *Config) validateCredential() error {
 		for _, ic := range c.Integrations {
 			// llm's and the git instances' upstream comes with each key from
 			// the broker; a local token has nowhere to say it.
-			if ic.Enabled && (ic.kind() == "llm" || ic.kind() == "gitlab" || ic.kind() == "gitea") {
+			if ic.Enabled && (ic.kind() == "llm" || ic.kind() == "gitlab" || ic.kind() == "gitea" || ic.kind() == "http") {
 				return fmt.Errorf("config: integration %q needs credential.mode: broker", ic.Name)
 			}
 			if ic.Enabled && ic.Auth.Empty() {

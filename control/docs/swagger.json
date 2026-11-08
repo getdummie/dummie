@@ -1457,6 +1457,24 @@
                 ]
             }
         },
+        "/integrations/{id}/http": {
+            "put": {
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "type": "object"
+                            }
+                        }
+                    }
+                },
+                "responses": null,
+                "summary": "Replace an http proxy's target, methods, tls check and headers",
+                "tags": [
+                    "integrations"
+                ]
+            }
+        },
         "/integrations/{id}/repos": {
             "put": {
                 "requestBody": {

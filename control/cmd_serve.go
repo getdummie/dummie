@@ -361,6 +361,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	integ.GET("/:id/github/install", integH.Install)
 	integ.GET("/:id/github/manage", integH.Manage)
 	integ.PUT("/:id/gitlab/token", integH.SetGitLabToken)
+	integ.PUT("/:id/http", integH.UpdateHTTPProxy)
 
 	// Outside the group on purpose: github sends the browser here as a top-level
 	// redirect, which carries no access token. The single-use state authenticates it.
