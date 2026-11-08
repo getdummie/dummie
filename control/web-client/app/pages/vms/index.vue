@@ -27,11 +27,12 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import type { DataTableColumn } from '@/lib/table'
 import type { TargetForm } from '@/lib/targets'
 import { blankTarget, toTargetPayload } from '@/lib/targets'
-import { recipeTargetToForm, type Recipe, type RecipeIntegration } from '@/lib/recipes'
+import { recipeSummary, recipeTargetToForm, type Recipe, type RecipeIntegration } from '@/lib/recipes'
 import TargetFormRow from '@/components/TargetFormRow.vue'
 
 const maxTargets = 32
@@ -459,6 +460,7 @@ function resetForm() {
   fromRecipe.value = null
   recipeIntegrations.value = []
   recipeWarnings.value = []
+  createTab.value = 'configure'
   createError.value = null
   copiedFrom.value = null
   cancelAddImage()
@@ -473,20 +475,44 @@ const recipeWarnings = ref<string[]>([])
 const route = useRoute()
 const integrationsApi = useIntegrations()
 
-// Anything the recipe leaves out keeps the form's own default.
+const createTab = ref<'configure' | 'recipes'>('configure')
+const recipes = ref<Recipe[] | null>(null)
+const recipesError = ref<string | null>(null)
+
+async function loadRecipes() {
+  recipesError.value = null
+  try {
+    const res = await authFetch('/recipes')
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    recipes.value = (await res.json()).items ?? []
+  }
+  catch (e) {
+    recipesError.value = e instanceof Error ? e.message : 'Could not load your recipes'
+  }
+}
+
+watch(createTab, (tab) => {
+  if (tab === 'recipes') void loadRecipes()
+})
+
 async function openRecipe(id: string) {
   resetForm()
   createOpen.value = true
-  let r: Recipe
   try {
     const res = await authFetch(`/recipes/${id}`)
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    r = await res.json()
+    await applyRecipe(await res.json())
   }
   catch (e) {
     createError.value = e instanceof Error ? e.message : 'Could not load the recipe'
-    return
   }
+}
+
+// Anything the recipe leaves out keeps the form's own default.
+async function applyRecipe(r: Recipe) {
+  const kept = { client_id: form.client_id, name: form.name }
+  resetForm()
+  Object.assign(form, kept)
   fromRecipe.value = r.name
   const c = r.config
   if (c.cpus) form.cpus = String(c.cpus)
@@ -502,7 +528,7 @@ async function openRecipe(id: string) {
     c.integrations?.length ? integrationsApi.list().catch(() => null) : [],
     loadHosts(), loadKernels(), loadOSImages(), loadFeatures(),
   ])
-  if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
+  if (!form.client_id && hosts.value.length === 1) form.client_id = hosts.value[0]!.id
   form.kernel_id = kernels.value.some(k => k.id === c.kernel_id) ? c.kernel_id! : kernels.value[0]?.id ?? ''
   if (c.kernel_id && form.kernel_id !== c.kernel_id) recipeWarnings.value.push('The recipe\'s kernel is gone, so the newest one is picked.')
   if (c.osimage_id) {
@@ -754,7 +780,7 @@ async function confirmDelete() {
             <Plus class="size-4" aria-hidden="true" />
             New VM
           </Button>
-          <DialogContent class="max-h-[85svh] overflow-y-auto sm:max-w-lg">
+          <DialogContent class="max-h-[85svh] overflow-y-auto sm:max-w-3xl">
             <DialogHeader>
               <DialogTitle>{{ fromRecipe ? `New VM from ${fromRecipe}` : copiedFrom ? 'New VM from a copy' : 'New VM' }}</DialogTitle>
               <DialogDescription>
@@ -773,7 +799,45 @@ async function confirmDelete() {
               </DialogDescription>
             </DialogHeader>
 
-            <form class="space-y-4" :aria-busy="creating" @submit.prevent="create">
+            <Tabs v-model="createTab">
+              <TabsList class="h-8">
+                <TabsTrigger value="configure" class="h-7 font-mono text-xs">configure</TabsTrigger>
+                <TabsTrigger value="recipes" class="h-7 font-mono text-xs">recipes</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
+            <div v-if="createTab === 'recipes'" class="space-y-2" aria-live="polite">
+              <p v-if="recipesError" class="text-sm text-destructive">{{ recipesError }}</p>
+              <div v-else-if="recipes === null" class="space-y-2" aria-hidden="true">
+                <Skeleton v-for="n in 2" :key="n" class="h-14 w-full" />
+              </div>
+              <div v-else-if="!recipes.length" class="rounded-lg border border-dashed border-border p-6 text-center text-sm text-muted-foreground">
+                No recipes yet. Save one under
+                <NuxtLink to="/recipes" class="font-mono underline underline-offset-4">Recipes</NuxtLink>,
+                or from an existing VM's page.
+              </div>
+              <ul v-else class="divide-y divide-border rounded-lg border border-border">
+                <li v-for="r in recipes" :key="r.id">
+                  <button
+                    type="button"
+                    class="flex w-full flex-wrap items-start gap-3 p-3 text-left transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-ring"
+                    @click="applyRecipe(r)"
+                  >
+                    <span class="min-w-0 flex-1">
+                      <span class="block truncate font-mono text-sm font-medium">{{ r.name }}</span>
+                      <span v-if="r.description" class="mt-0.5 block text-xs text-muted-foreground">{{ r.description }}</span>
+                      <span class="mt-1.5 flex flex-wrap gap-1.5">
+                        <Badge v-for="x in recipeSummary(r.config)" :key="x" variant="secondary" class="font-mono text-xs font-normal">{{ x }}</Badge>
+                        <span v-if="!recipeSummary(r.config).length" class="font-mono text-xs text-muted-foreground">all defaults</span>
+                      </span>
+                    </span>
+                    <span class="shrink-0 font-mono text-xs text-primary-text">Use →</span>
+                  </button>
+                </li>
+              </ul>
+            </div>
+
+            <form v-show="createTab === 'configure'" class="space-y-4" :aria-busy="creating" @submit.prevent="create">
               <ul v-if="recipeWarnings.length" class="space-y-1 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground" role="status">
                 <li v-for="w in recipeWarnings" :key="w">{{ w }}</li>
               </ul>
