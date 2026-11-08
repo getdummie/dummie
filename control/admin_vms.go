@@ -45,7 +45,8 @@ type vmDTO struct {
 	CreatedAt string          `json:"created_at"`
 	StartedAt string          `json:"started_at"`
 
-	CreatedBy string `json:"created_by"`
+	CreatedBy         string `json:"created_by"`
+	CreatedByUsername string `json:"created_by_username"`
 
 	URL string `json:"url"`
 
@@ -116,6 +117,29 @@ func fillVMExpiries(ctx context.Context, q *db.Queries, items []vmDTO) {
 	}
 }
 
+func fillVMCreators(ctx context.Context, q *db.Queries, items []vmDTO) {
+	ids := make([]pgtype.UUID, 0, len(items))
+	for _, d := range items {
+		if id, err := parseUUID(d.CreatedBy); err == nil {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	names, err := q.ListUsernamesByIDs(ctx, ids)
+	if err != nil {
+		return
+	}
+	byID := make(map[string]string, len(names))
+	for _, n := range names {
+		byID[uuid.UUID(n.ID.Bytes).String()] = n.Username
+	}
+	for i := range items {
+		items[i].CreatedByUsername = byID[items[i].CreatedBy]
+	}
+}
+
 func (h *AdminHandler) ListVMs(c *echo.Context) error {
 	ctx := c.Request().Context()
 	limit, offset := pageParams(c)
@@ -132,6 +156,7 @@ func (h *AdminHandler) ListVMs(c *echo.Context) error {
 		items = append(items, toVMDTO(v))
 	}
 	fillVMExpiries(ctx, h.q, items)
+	fillVMCreators(ctx, h.q, items)
 	return c.JSON(http.StatusOK, pageEnvelope(items, total, limit, offset))
 }
 

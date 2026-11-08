@@ -826,6 +826,9 @@
                     "created_by": {
                         "type": "string"
                     },
+                    "created_by_username": {
+                        "type": "string"
+                    },
                     "default_port": {
                         "type": "integer"
                     },

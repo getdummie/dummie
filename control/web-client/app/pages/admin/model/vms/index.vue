@@ -23,6 +23,7 @@ import type { DataTableColumn } from '@/lib/table'
 
 const columns: DataTableColumn[] = [
   { key: 'vm', label: 'VM' },
+  { key: 'user', label: 'User' },
   { key: 'host', label: 'Host' },
   { key: 'status', label: 'Status' },
   { key: 'boot', label: 'Boot' },
@@ -51,6 +52,7 @@ interface VMRow {
   created_at: string
   started_at: string
   reported_at: string
+  created_by_username: string
 }
 
 const staleAfterMs = 2 * 60_000
@@ -765,6 +767,7 @@ function closeDialogs() {
           </div>
           <div class="truncate font-mono text-xs text-muted-foreground">{{ v.vm_id || 'not assigned yet' }}</div>
         </TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ v.created_by_username || '—' }}</TableCell>
         <TableCell class="font-mono text-muted-foreground">{{ clientLabel(v.client_id) }}</TableCell>
         <TableCell>
           <Badge :variant="statusVariant[displayStatus(v)]" class="font-mono">
