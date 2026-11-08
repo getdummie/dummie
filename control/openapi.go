@@ -61,6 +61,13 @@ type targetList struct {
 	Items []vmTargetDTO `json:"items"`
 }
 
+type targetActivityList struct {
+	Items     []targetActivityDTO `json:"items"`
+	Available bool                `json:"available"`
+
+	WindowSeconds int64 `json:"window_seconds"`
+}
+
 type deniedEgressList struct {
 	Items []deniedAttemptDTO `json:"items"`
 	Available bool          `json:"available"`

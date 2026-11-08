@@ -68,6 +68,17 @@
                 },
                 "type": "object"
             },
+            "main.connectedHostDTO": {
+                "properties": {
+                    "host": {
+                        "type": "string"
+                    },
+                    "last_seen": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.consoleTokenDTO": {
                 "properties": {
                     "expires_in": {
@@ -798,6 +809,42 @@
                 "properties": {
                     "enabled": {
                         "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "main.targetActivityDTO": {
+                "properties": {
+                    "hosts": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.connectedHostDTO"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "last_connected": {
+                        "type": "string"
+                    },
+                    "target_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "main.targetActivityList": {
+                "properties": {
+                    "available": {
+                        "type": "boolean"
+                    },
+                    "items": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.targetActivityDTO"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "window_seconds": {
+                        "type": "integer"
                     }
                 },
                 "type": "object"
@@ -3267,6 +3314,74 @@
                 "summary": "Mint an agent token",
                 "tags": [
                     "vms"
+                ]
+            }
+        },
+        "/vms/{id}/connected": {
+            "get": {
+                "description": "One item per allowed destination. last_connected is empty when nothing has connected through it since it was added. hosts lists, for a domain, every name under it that was connected to, newest first; an address allowance has none, and is only seen when it carried http or tls.\n\nLike the denied list, only the last 7 days are read, or less if the VM is younger; window_seconds reports the window actually read. An empty last_connected means nothing within it.\n\nRead available first: when it is false nothing could be read, which says nothing about whether the destinations are in use.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.targetActivityList"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "When each allowed destination was last used",
+                "tags": [
+                    "egress"
                 ]
             }
         },

@@ -38,7 +38,7 @@ import {
   tempAllowPayload,
   toTargetPayload,
 } from '@/lib/targets'
-import type { DeniedAttempt, TargetRecord } from '@/lib/targets'
+import type { DeniedAttempt, TargetActivity, TargetRecord } from '@/lib/targets'
 import type { DataTableColumn } from '@/lib/table'
 
 const props = defineProps<{ vmId: string }>()
@@ -50,6 +50,11 @@ const targets = ref<TargetRecord[]>([])
 const denied = ref<DeniedAttempt[]>([])
 const deniedAvailable = ref(true)
 const deniedRecording = ref({ packets: false, lookups: false })
+const activity = ref(new Map<string, TargetActivity>())
+const activityAvailable = ref(false)
+const activityWindowSeconds = ref(0)
+const shownHosts = 3
+const expandedHosts = ref(new Set<string>())
 const loadError = ref<string | null>(null)
 
 async function readMessage(res: Response): Promise<string | null> {
@@ -117,6 +122,7 @@ const targetColumns: DataTableColumn[] = [
   { key: 'ports', label: 'Ports' },
   { key: 'note', label: 'Note' },
   { key: 'expires', label: 'Expires' },
+  { key: 'last_connected', label: 'Last connected', align: 'right' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
 
@@ -134,6 +140,31 @@ async function loadTargets() {
   const res = await authFetch(`/vms/${id.value}/targets`)
   if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
   targets.value = (await res.json()).items ?? []
+  loadActivity()
+}
+
+async function loadActivity() {
+  const res = await authFetch(`/vms/${id.value}/connected`).catch(() => null)
+  const data = res?.ok ? await res.json() : null
+  activityAvailable.value = data?.available ?? false
+  activityWindowSeconds.value = data?.window_seconds ?? 0
+  activity.value = new Map((data?.items ?? []).map((a: TargetActivity) => [a.target_id, a]))
+}
+
+function lastConnected(t: TargetRecord) {
+  const at = activity.value.get(t.id)?.last_connected
+  if (at) return timeAgo(at)
+  return activityWindowSeconds.value < 7 * 86_400 - 60 ? 'never' : 'not in 7 days'
+}
+
+function visibleHosts(t: TargetRecord) {
+  const hosts = activity.value.get(t.id)?.hosts.filter(h => h.host !== t.destination) ?? []
+  return expandedHosts.value.has(t.id) ? hosts : hosts.slice(0, shownHosts)
+}
+
+function hiddenHostCount(t: TargetRecord) {
+  const n = activity.value.get(t.id)?.hosts.filter(h => h.host !== t.destination).length ?? 0
+  return expandedHosts.value.has(t.id) ? 0 : Math.max(0, n - shownHosts)
 }
 
 const deniedLoading = ref(true)
@@ -885,6 +916,16 @@ async function removeTarget(t: TargetRecord) {
         <TableRow v-for="t in targets" :key="t.id">
           <TableCell class="font-mono break-all">
             <Hostname :name="t.destination" />
+            <ul v-if="visibleHosts(t).length" class="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              <li v-for="h in visibleHosts(t)" :key="h.host">
+                {{ h.host }} <span class="whitespace-nowrap">· {{ timeAgo(h.last_seen) }}</span>
+              </li>
+              <li v-if="hiddenHostCount(t)">
+                <button type="button" class="underline-offset-2 hover:underline" @click="expandedHosts.add(t.id)">
+                  +{{ hiddenHostCount(t) }} more
+                </button>
+              </li>
+            </ul>
           </TableCell>
           <TableCell class="font-mono text-xs text-muted-foreground">
             {{ matchedOn(t) }}
@@ -897,6 +938,10 @@ async function removeTarget(t: TargetRecord) {
             <span v-else :class="timeLeft(t.expires_at) === 'overdue' ? 'text-destructive' : 'text-muted-foreground'">
               {{ timeLeft(t.expires_at) }}
             </span>
+          </TableCell>
+          <TableCell class="text-right text-xs whitespace-nowrap text-muted-foreground">
+            <template v-if="!activityAvailable">—</template>
+            <template v-else>{{ lastConnected(t) }}</template>
           </TableCell>
           <TableCell class="text-right">
             <div v-if="timeLeft(t.expires_at) !== 'overdue'" class="flex items-center justify-end gap-1">

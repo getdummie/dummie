@@ -37,6 +37,12 @@ export function isEverywhere(t: TargetRecord) {
   return t.kind === 'ip' && t.destination === everywhere && t.transport === 'any' && !t.ports
 }
 
+export interface TargetActivity {
+  target_id: string
+  last_connected: string
+  hosts: { host: string, last_seen: string }[]
+}
+
 export interface DeniedAttempt {
   kind: 'lookup' | 'packet'
   domain: string

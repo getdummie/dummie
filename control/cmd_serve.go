@@ -331,6 +331,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.DELETE("/:id/domain/:domain", userH.DeleteCustomDomain)
 	vms.GET("/:id/targets", userH.ListTargets)
 	vms.GET("/:id/denied", userH.ListDeniedEgress)
+	vms.GET("/:id/connected", userH.ListTargetActivity)
 	vms.GET("/:id/integrations", integH.ListForVM)
 	vms.POST("/:id/targets", userH.CreateTarget)
 	vms.POST("/:id/targets/resolve", userH.ResolveTargetHost)
