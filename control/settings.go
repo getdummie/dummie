@@ -34,6 +34,9 @@ const (
 	settingReservedVMNames = "reserved_vm_names"
 
 	settingAuditRetentionDays = "audit_log_retention_days"
+
+	settingVMAllowEverything = "vm_allow_everything_enabled"
+	settingUserDockerImages  = "user_docker_images_enabled"
 )
 
 type settingKind string
@@ -74,6 +77,25 @@ var settingDefs = []settingDef{
 			"Anything that can reach the enrollment endpoint can then join the fleet, " +
 			"so leave this off unless the control plane is on a network you own.",
 		Warn:    true,
+		Default: "false",
+	},
+	{
+		Key:   settingVMAllowEverything,
+		Kind:  settingBool,
+		Label: "Let users allow everything",
+		Description: "Show the \"Allow everything\" button on a VM's allowed destinations, which " +
+			"takes the VM off the egress allowlist for a while. With this off the button is hidden " +
+			"and the API refuses that entry; ones already recorded stay until they expire.",
+		Warn:    true,
+		Default: "false",
+	},
+	{
+		Key:   settingUserDockerImages,
+		Kind:  settingBool,
+		Label: "Let users add Docker images",
+		Description: "Let users build an OS image from a public Docker image when creating a VM. " +
+			"Every image they add joins the catalogue for everyone. With this off only admins " +
+			"can add OS images.",
 		Default: "false",
 	},
 	{

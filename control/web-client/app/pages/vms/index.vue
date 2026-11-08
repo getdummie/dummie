@@ -307,6 +307,13 @@ async function loadKernels() {
   }
 }
 
+const dockerImagesEnabled = ref(false)
+
+async function loadFeatures() {
+  const res = await authFetch('/vms/features').catch(() => null)
+  if (res?.ok) dockerImagesEnabled.value = !!(await res.json()).docker_images
+}
+
 async function loadOSImages() {
   osImagesError.value = null
   try {
@@ -474,7 +481,7 @@ async function openCreate() {
   resetForm()
   copiedFrom.value = null
   createOpen.value = true
-  await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
+  await Promise.all([loadHosts(), loadKernels(), loadOSImages(), loadFeatures()])
   if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
   form.kernel_id = kernels.value[0]?.id ?? ''
 }
@@ -499,7 +506,7 @@ async function openCopy(v: VM) {
   form.disk_size = specStr(v.spec, 'disk_size') || '5G'
 
   createOpen.value = true
-  await Promise.all([loadHosts(), loadKernels(), loadOSImages()])
+  await Promise.all([loadHosts(), loadKernels(), loadOSImages(), loadFeatures()])
   form.kernel_id = kernels.value[0]?.id ?? ''
   if (hosts.value.some(h => h.id === v.client_id)) form.client_id = v.client_id
   else if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
@@ -797,7 +804,7 @@ async function confirmDelete() {
                         </CommandGroup>
                       </CommandList>
                     </Command>
-                    <div class="border-t border-border p-1">
+                    <div v-if="dockerImagesEnabled" class="border-t border-border p-1">
                       <Button
                         type="button"
                         variant="ghost"
@@ -812,7 +819,7 @@ async function confirmDelete() {
                 </Popover>
 
                 <Button
-                  v-if="!osImages.length && !osImagesError"
+                  v-if="dockerImagesEnabled && !osImages.length && !osImagesError"
                   type="button"
                   variant="outline"
                   class="w-full justify-start gap-2 font-mono text-xs font-normal"
@@ -822,7 +829,7 @@ async function confirmDelete() {
                   Add a Docker image
                 </Button>
 
-                <div v-if="addImageOpen" class="space-y-3 rounded-md border border-border bg-muted/30 p-3">
+                <div v-if="dockerImagesEnabled && addImageOpen" class="space-y-3 rounded-md border border-border bg-muted/30 p-3">
                   <div class="space-y-2">
                     <Label for="vm-img-name">Image name</Label>
                     <Input
@@ -895,7 +902,8 @@ async function confirmDelete() {
                   {{ osImagesError }}
                 </p>
                 <p v-else-if="!osImages.length" class="text-xs text-muted-foreground">
-                  No OS images yet. Name a Docker image above and this server builds one from it.
+                  <template v-if="dockerImagesEnabled">No OS images yet. Name a Docker image above and this server builds one from it.</template>
+                  <template v-else>No OS images yet. Ask an admin to add one.</template>
                 </p>
               </div>
 

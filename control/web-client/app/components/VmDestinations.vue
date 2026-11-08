@@ -62,9 +62,17 @@ async function readMessage(res: Response): Promise<string | null> {
   }
 }
 
+const allowEverythingEnabled = ref(false)
+
+async function loadFeatures() {
+  const res = await authFetch('/vms/features').catch(() => null)
+  if (res?.ok) allowEverythingEnabled.value = !!(await res.json()).allow_everything
+}
+
 async function load() {
   loadError.value = null
   loadDenied()
+  loadFeatures()
   try {
     await loadTargets()
   }
@@ -548,7 +556,7 @@ async function removeTarget(t: TargetRecord) {
       <div class="flex flex-wrap items-center justify-between gap-3 p-4">
         <h2 id="targets-heading" class="text-sm font-semibold">Allowed destinations</h2>
         <div class="flex flex-wrap items-center gap-2">
-        <Dialog v-if="!allowAll" v-model:open="openAllOpen" @update:open="(v: boolean) => !v && resetOpenAllForm()">
+        <Dialog v-if="!allowAll && allowEverythingEnabled" v-model:open="openAllOpen" @update:open="(v: boolean) => !v && resetOpenAllForm()">
           <Button size="sm" variant="outline" class="font-mono text-xs" @click="resetOpenAllForm(); openAllOpen = true">
             <Globe class="size-4" aria-hidden="true" />
             Allow everything

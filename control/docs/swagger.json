@@ -332,6 +332,17 @@
                 },
                 "type": "object"
             },
+            "main.featuresDTO": {
+                "properties": {
+                    "allow_everything": {
+                        "type": "boolean"
+                    },
+                    "docker_images": {
+                        "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
             "main.githubAppDTO": {
                 "properties": {
                     "app_id": {
@@ -2255,6 +2266,42 @@
                 ]
             }
         },
+        "/vms/features": {
+            "get": {
+                "description": "Admin toggles for the \"Allow everything\" egress entry and for building OS images from Docker images.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.featuresDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Which optional VM features are enabled",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
         "/vms/hosts": {
             "get": {
                 "description": "Only hosts with a live socket to this server. One whose row still says 'online' but whose connection dropped would fail the create, so it is left out. The id is what you pass as client_id.",
@@ -2423,7 +2470,7 @@
                                 }
                             }
                         },
-                        "description": "at your image limit, or a build of yours is already running"
+                        "description": "disabled by the admin, at your image limit, or a build of yours is already running"
                     },
                     "409": {
                         "content": {

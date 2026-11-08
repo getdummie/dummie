@@ -68,7 +68,7 @@ func (h *UserHandler) ListMyOSImages(c *echo.Context) error {
 // @Success     201 {object} osImageDTO "queued; the build has not run yet"
 // @Failure     400 {object} apiError "no name, no reference, a reference that does not parse, or a registry this server does not pull from"
 // @Failure     401 {object} apiError
-// @Failure     403 {object} apiError "at your image limit, or a build of yours is already running"
+// @Failure     403 {object} apiError "disabled by the admin, at your image limit, or a build of yours is already running"
 // @Failure     409 {object} apiError "an os image with that name already exists"
 // @Failure     503 {object} apiError "no blob store is configured on this installation"
 // @Router      /vms/osimages [post]
@@ -83,6 +83,9 @@ func (h *UserHandler) CreateOSImage(c *echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
+	if !boolSetting(ctx, h.q, settingUserDockerImages) {
+		return echo.NewHTTPError(http.StatusForbidden, "adding docker images is disabled by the admin")
+	}
 	live, err := h.q.CountLiveOSImagesByOwner(ctx, owner)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not count your os images")

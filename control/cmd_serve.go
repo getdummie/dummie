@@ -302,6 +302,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.GET("", userH.ListVMs)
 	vms.POST("", userH.CreateVM)
 	vms.GET("/quota", userH.GetQuota)
+	vms.GET("/features", userH.GetFeatures)
 	vms.GET("/hosts", userH.ListHosts)
 	vms.GET("/kernels", userH.ListKernels)
 	vms.GET("/osimages", userH.ListOSImages)

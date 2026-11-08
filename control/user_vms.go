@@ -193,6 +193,35 @@ type quotaDTO struct {
 	DiskUsedMiB    int32 `json:"disk_used_mib"`
 }
 
+type featuresDTO struct {
+	AllowEverything bool `json:"allow_everything"`
+	DockerImages    bool `json:"docker_images"`
+}
+
+// @Summary     Which optional VM features are enabled
+// @Description Admin toggles for the "Allow everything" egress entry and for building OS images from Docker images.
+// @Tags        vms
+// @Produce     json
+// @Security    BearerAuth
+// @Success     200 {object} featuresDTO
+// @Failure     401 {object} apiError
+// @Router      /vms/features [get]
+func (h *UserHandler) GetFeatures(c *echo.Context) error {
+	ctx := c.Request().Context()
+	return c.JSON(http.StatusOK, featuresDTO{
+		AllowEverything: boolSetting(ctx, h.q, settingVMAllowEverything),
+		DockerImages:    boolSetting(ctx, h.q, settingUserDockerImages),
+	})
+}
+
+func (h *UserHandler) refuseEverywhere(ctx context.Context, p db.CreateVMNetworkTargetParams) error {
+	if p.Kind == "ip" && p.Destination == targetEverywhere && p.Transport == "any" && p.Ports == "" &&
+		!boolSetting(ctx, h.q, settingVMAllowEverything) {
+		return echo.NewHTTPError(http.StatusForbidden, "allowing everything is disabled by the admin")
+	}
+	return nil
+}
+
 // @Summary     Read your quota
 // @Description What you may hold across every VM at once, and what your active VMs already use. Check this before a create rather than discovering the refusal.
 // @Tags        vms
@@ -1499,6 +1528,9 @@ func (h *UserHandler) CreateTarget(c *echo.Context) error {
 	ttl := nt.ttl
 
 	ctx := c.Request().Context()
+	if err := h.refuseEverywhere(ctx, nt.params); err != nil {
+		return err
+	}
 	var t db.VmNetworkTarget
 	var expiry db.ScheduledTask
 	create := func(q *db.Queries) error {
@@ -1565,6 +1597,9 @@ func (h *UserHandler) UpdateTarget(c *echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
+	if err := h.refuseEverywhere(ctx, nt.params); err != nil {
+		return err
+	}
 	existing, err := h.q.GetVMNetworkTargetForExpiry(ctx, targetID)
 	if err != nil || existing.VMID != vm.ID {
 		return echo.NewHTTPError(http.StatusNotFound, "no such destination")
