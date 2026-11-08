@@ -118,7 +118,11 @@ func chownVM(data string, v vm) error {
 	if err := os.Chmod(v.Disk, 0o600); err != nil {
 		return err
 	}
-	for _, path := range []string{v.Disk, vmPath(data, v.ID, vmRunDir)} {
+	paths := []string{v.Disk, vmPath(data, v.ID, vmRunDir)}
+	if v.InitDisk != "" {
+		paths = append(paths, v.InitDisk)
+	}
+	for _, path := range paths {
 		if err := os.Lchown(path, v.UID, v.UID); err != nil {
 			return err
 		}

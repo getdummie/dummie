@@ -19,6 +19,7 @@ const (
 	vmPIDFile      = "qemu.pid"
 	vmQEMULog      = "qemu.log"
 	vmOverlayImage = "root.qcow2"
+	vmInitDisk     = "init-script.img"
 
 	vmRunDir      = "run"
 	vmQMPSocket   = vmRunDir + "/qmp.sock"
@@ -68,6 +69,8 @@ type vm struct {
 
 	Disk   string `json:"disk"`
 	Cgroup string `json:"cgroup,omitempty"`
+
+	InitDisk string `json:"init_disk,omitempty"`
 
 	// DiskBytes is the size the overlay should have. A resize only records it
 	// here; the disk is grown to match on the next start, when no qemu holds it.

@@ -376,9 +376,13 @@ type createVMReq struct {
 	TTLSeconds int64 `json:"ttl_seconds"`
 
 	Targets []createTargetReq `json:"targets"`
+
+	InitScript string `json:"init_script"`
 }
 
 const maxCreateTargets = 32
+
+const maxInitScript = 64 << 10
 
 const defaultVMPort = 8000
 
@@ -475,7 +479,7 @@ func parseSizeMiB(s string) (int32, error) {
 // @Security    BearerAuth
 // @Param       body body createVMReq true "client_id, kernel_id and osimage_id are required"
 // @Success     202 {object} vmDTO "accepted and pending; the host has not reported yet"
-// @Failure     400 {object} apiError "bad size, bad port count, cpus under 1, memory under 64 MiB, or a destination that is not allowable"
+// @Failure     400 {object} apiError "bad size, bad port count, cpus under 1, memory under 64 MiB, an init script over 64 KiB, or a destination that is not allowable"
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "over quota"
 // @Failure     404 {object} apiError "no such host, kernel or os image"
@@ -511,6 +515,12 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	req.DiskSize = strings.TrimSpace(req.DiskSize)
 	req.KernelID = strings.TrimSpace(req.KernelID)
 	req.OSImageID = strings.TrimSpace(req.OSImageID)
+	if strings.TrimSpace(req.InitScript) == "" {
+		req.InitScript = ""
+	}
+	if len(req.InitScript) > maxInitScript {
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("the init script is over %d KiB", maxInitScript>>10))
+	}
 
 	if req.CPUs < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, "cpus must be at least 1")
@@ -650,14 +660,15 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	}
 
 	spec := proto.VMSpec{
-		Boot:      "direct",
-		Kernel:    kernelURL,
-		RootfsTar: osImageURL,
-		DiskSize:  req.DiskSize,
-		CPUs:      int(req.CPUs),
-		Memory:    int(req.MemoryMiB),
-		EgressAny: true,
-		Image:     osImageConfigSpec(osImage),
+		Boot:       "direct",
+		Kernel:     kernelURL,
+		RootfsTar:  osImageURL,
+		DiskSize:   req.DiskSize,
+		CPUs:       int(req.CPUs),
+		Memory:     int(req.MemoryMiB),
+		EgressAny:  true,
+		Image:      osImageConfigSpec(osImage),
+		InitScript: req.InitScript,
 	}
 	if u.GitName != "" || u.GitEmail != "" {
 		spec.Git = &proto.GitIdentity{Name: u.GitName, Email: u.GitEmail}

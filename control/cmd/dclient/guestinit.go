@@ -222,3 +222,21 @@ func withGitIdentity(line string, g *proto.GitIdentity) string {
 	}
 	return strings.TrimSpace(line + " " + strings.Join(add, " "))
 }
+
+// The header dinit looks for on the init script's disk; see backstage/dinit.
+const (
+	initScriptMagic = "dummie-init-script v1 "
+	initScriptMax   = 64 << 10
+)
+
+// writeInitDisk lays the script out as a raw disk, padded to whole sectors.
+func writeInitDisk(path, script string) error {
+	if len(script) > initScriptMax {
+		return fmt.Errorf("the init script is over %d KiB", initScriptMax>>10)
+	}
+	body := fmt.Sprintf("%s%d\n%s", initScriptMagic, len(script), script)
+	if pad := len(body) % 512; pad != 0 {
+		body += strings.Repeat("\x00", 512-pad)
+	}
+	return os.WriteFile(path, []byte(body), 0o400)
+}

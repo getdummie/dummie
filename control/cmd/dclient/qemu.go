@@ -119,8 +119,15 @@ func qemuArgs(data string, v vm, kvm bool) []string {
 	args = append(args,
 		"-drive", "file="+v.Disk+",format=qcow2,if=none,id=root,cache=none",
 		"-device", device("virtio-blk", mmio)+",drive=root",
-		"-device", device("virtio-rng", mmio),
 	)
+	// After root, so root stays /dev/vda; dinit finds this one by its header.
+	if v.InitDisk != "" {
+		args = append(args,
+			"-drive", "file="+v.InitDisk+",format=raw,if=none,id=initscript,readonly=on",
+			"-device", device("virtio-blk", mmio)+",drive=initscript",
+		)
+	}
+	args = append(args, "-device", device("virtio-rng", mmio))
 
 	if v.Boot == bootDirect {
 		args = append(args, "-kernel", v.Kernel)

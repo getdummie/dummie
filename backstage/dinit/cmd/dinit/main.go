@@ -19,7 +19,8 @@ const usage = `usage:
   dinit --version
   dinit upgrade [--source <url|path>] [--version X.Y.Z] [--sha256 <hex>]
   dinit agent attach [--tld <tld>]
-  dinit agent serve`
+  dinit agent serve
+  dinit init-script`
 
 func main() {
 	if len(os.Args) > 1 {
@@ -31,6 +32,8 @@ func main() {
 			os.Exit(upgrade.Run(version, os.Args[2:]))
 		case "agent":
 			os.Exit(runAgent(os.Args[2:]))
+		case "init-script":
+			os.Exit(dinit.RunInitScript())
 		case "-h", "--help", "help":
 			fmt.Println(usage)
 			return

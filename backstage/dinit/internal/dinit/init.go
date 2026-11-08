@@ -50,6 +50,8 @@ const (
 	paramGitEmail = "dclient.git.email"
 )
 
+var pendingScript bool
+
 var systemdPaths = []string{"/lib/systemd/systemd", "/usr/lib/systemd/systemd"}
 
 var shells = []string{"/bin/bash", "/bin/sh", "/usr/bin/bash", "/usr/bin/sh", "/bin/busybox"}
@@ -83,8 +85,12 @@ func Run(version string) {
 	// either way.
 	image = readImageConfig(ImageConfigPath)
 	configureGit(p, image)
+	pendingScript = stageInitScript()
 
 	if systemd := findSystemd(); systemd != "" {
+		if pendingScript {
+			installInitUnit()
+		}
 		execSystemd(systemd)
 	}
 
@@ -340,6 +346,9 @@ func runAgent() {
 	go serveSSH(r)
 	go superviseConsole(r)
 	go superviseWorkload(r, image)
+	if pendingScript {
+		startInitScript(r)
+	}
 
 	sig := make(chan os.Signal, 2)
 	signal.Notify(sig, unix.SIGTERM, unix.SIGINT)

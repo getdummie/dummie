@@ -284,6 +284,10 @@ type VMSpec struct {
 	Image *ImageConfig `json:"image,omitempty"`
 
 	Git *GitIdentity `json:"git,omitempty"`
+
+	// InitScript runs once as root on the first boot. Only a guest booted by
+	// dinit runs it.
+	InitScript string `json:"init_script,omitempty"`
 }
 
 // GitIdentity is the creator's git user.name and user.email, set globally in the

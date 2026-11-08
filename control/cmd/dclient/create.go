@@ -170,6 +170,18 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 		return vm{}, err
 	}
 
+	if req.InitScript != "" {
+		if !v.GuestInit {
+			cleanup()
+			return vm{}, errors.New("an init script needs a rootfs booted by dinit")
+		}
+		v.InitDisk = vmPath(data, id, vmInitDisk)
+		if err := writeInitDisk(v.InitDisk, req.InitScript); err != nil {
+			cleanup()
+			return vm{}, err
+		}
+	}
+
 	var tap *os.File
 	if !req.NoNetwork {
 		tap, err = setupVMNetwork(data, &v, netOptions{

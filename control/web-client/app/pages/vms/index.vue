@@ -27,6 +27,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import type { DataTableColumn } from '@/lib/table'
 import type { TargetForm } from '@/lib/targets'
 import {
@@ -341,8 +342,10 @@ const blankForm = {
   kernel_id: '',
   osimage_id: '',
   ttl_seconds: '0',
+  init_script: '',
 }
 const form = reactive({ ...blankForm })
+const maxInitScriptBytes = 64 * 1024
 
 const targets = ref<TargetForm[]>([])
 
@@ -504,6 +507,7 @@ async function openCopy(v: VM) {
   form.default_port = String(v.default_port || 8000)
   form.public_ports = (v.public_ports ?? []).join(', ')
   form.disk_size = specStr(v.spec, 'disk_size') || '5G'
+  form.init_script = specStr(v.spec, 'init_script')
 
   createOpen.value = true
   await Promise.all([loadHosts(), loadKernels(), loadOSImages(), loadFeatures()])
@@ -569,6 +573,7 @@ function validate(): string | null {
   if (!Number.isInteger(ttl) || ttl < 0) return 'TTL must be a whole number of seconds, or 0 for no limit.'
   if (ttl > 0 && ttl < 10) return 'A TTL must be at least 10 seconds. Use 0 for no limit.'
   if (ttl > 30 * 24 * 3600) return 'A TTL must be at most 30 days (2592000 seconds).'
+  if (new TextEncoder().encode(form.init_script).length > maxInitScriptBytes) return 'The init script must be at most 64 KiB.'
 
   if (targets.value.length > maxTargets) {
     return `A VM can start with at most ${maxTargets} destinations. Add the rest after it is created.`
@@ -607,6 +612,7 @@ async function create() {
         osimage_id: form.osimage_id,
         ttl_seconds: Number(form.ttl_seconds),
         targets: targets.value.map(toTargetPayload),
+        init_script: form.init_script,
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -1030,6 +1036,24 @@ async function confirmDelete() {
                 </p>
                 <p v-else-if="!kernels.length" class="text-xs text-muted-foreground">
                   {{ kernelsError ?? 'No kernels have been uploaded yet. Ask an admin to add one.' }}
+                </p>
+              </div>
+
+              <div class="space-y-2">
+                <Label for="vm-init-script">Init script <span class="font-normal text-muted-foreground">(optional)</span></Label>
+                <Textarea
+                  id="vm-init-script"
+                  v-model="form.init_script"
+                  rows="5"
+                  class="font-mono text-xs"
+                  spellcheck="false"
+                  placeholder="#!/bin/sh&#10;apt-get update && apt-get install -y htop"
+                  aria-describedby="vm-init-script-hint"
+                />
+                <p id="vm-init-script-hint" class="text-xs text-muted-foreground">
+                  Runs once as root on the first boot, in the background. Output goes to
+                  <span class="font-mono">/var/log/dummie-init.log</span>. It can only reach the
+                  destinations allowed below, and it is stored with the VM, so keep secrets out of it.
                 </p>
               </div>
 

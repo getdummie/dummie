@@ -144,6 +144,9 @@
                     "disk_size": {
                         "type": "string"
                     },
+                    "init_script": {
+                        "type": "string"
+                    },
                     "kernel_id": {
                         "type": "string"
                     },
@@ -2195,7 +2198,7 @@
                                 }
                             }
                         },
-                        "description": "bad size, bad port count, cpus under 1, memory under 64 MiB, or a destination that is not allowable"
+                        "description": "bad size, bad port count, cpus under 1, memory under 64 MiB, an init script over 64 KiB, or a destination that is not allowable"
                     },
                     "401": {
                         "content": {
