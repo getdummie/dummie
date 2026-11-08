@@ -266,6 +266,16 @@ type PersonalAccessToken struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type Recipe struct {
+	ID          pgtype.UUID
+	OwnerID     pgtype.UUID
+	Name        string
+	Description string
+	Config      []byte
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type RefreshToken struct {
 	ID        pgtype.UUID
 	UserID    pgtype.UUID
@@ -345,6 +355,7 @@ type Vm struct {
 	RdpNonce    string
 	DefaultUser string
 	KernelID    pgtype.UUID
+	OSImageID   pgtype.UUID
 }
 
 type VmCustomDomain struct {

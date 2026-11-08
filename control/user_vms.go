@@ -378,6 +378,8 @@ type createVMReq struct {
 	Targets []createTargetReq `json:"targets"`
 
 	InitScript string `json:"init_script"`
+
+	Integrations []recipeIntegration `json:"integrations"`
 }
 
 const maxCreateTargets = 32
@@ -479,7 +481,7 @@ func parseSizeMiB(s string) (int32, error) {
 // @Security    BearerAuth
 // @Param       body body createVMReq true "client_id, kernel_id and osimage_id are required"
 // @Success     202 {object} vmDTO "accepted and pending; the host has not reported yet"
-// @Failure     400 {object} apiError "bad size, bad port count, cpus under 1, memory under 64 MiB, an init script over 64 KiB, or a destination that is not allowable"
+// @Failure     400 {object} apiError "bad size, bad port count, cpus under 1, memory under 64 MiB, an init script over 64 KiB, a destination that is not allowable, or a repository an integration does not cover"
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "over quota"
 // @Failure     404 {object} apiError "no such host, kernel or os image"
@@ -673,6 +675,10 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	if u.GitName != "" || u.GitEmail != "" {
 		spec.Git = &proto.GitIdentity{Name: u.GitName, Email: u.GitEmail}
 	}
+	attach, err := h.integrationsForCreate(ctx, owner, req.Integrations)
+	if err != nil {
+		return err
+	}
 	var row db.Vm
 	insert := func(ctx context.Context, q *db.Queries, name string) error {
 		spec.Name = name
@@ -697,12 +703,18 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			// root, which is also what the check constraint on the column allows.
 			DefaultUser: loginName(osImage.ConfigUser),
 			KernelID:    pgKernelID,
+			OSImageID:   pgOSImageID,
 		})
 		if err != nil {
 			return err
 		}
 		for _, nt := range targets {
 			if _, _, err := insertTarget(ctx, q, row, nt); err != nil {
+				return err
+			}
+		}
+		for _, a := range attach {
+			if err := a.apply(ctx, q, row.ID); err != nil {
 				return err
 			}
 		}
@@ -722,7 +734,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		return err
 	}
 	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
-		if ttl == 0 && len(targets) == 0 {
+		if ttl == 0 && len(targets) == 0 && len(attach) == 0 {
 			return insert(ctx, h.q, name)
 		}
 		return inTx(ctx, h.pool, h.q, func(q *db.Queries) error {

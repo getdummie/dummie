@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Bot, Check, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Info, Monitor, Pencil, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Bot, Check, ScrollText, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Info, Monitor, Pencil, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -335,6 +335,42 @@ async function copyRdp(field: 'address' | 'username' | 'password') {
 
 // The .rdp download goes through authFetch because the endpoint needs a bearer
 // token; a plain link would arrive unauthenticated.
+const recipeOpen = ref(false)
+const recipeName = ref('')
+const recipeDesc = ref('')
+const savingRecipe = ref(false)
+const recipeError = ref<string | null>(null)
+const savedRecipe = ref(false)
+
+function openRecipe() {
+  recipeName.value = vm.value?.name ?? ''
+  recipeDesc.value = ''
+  recipeError.value = null
+  savedRecipe.value = false
+  recipeOpen.value = true
+}
+
+async function saveRecipe() {
+  if (!vm.value || !recipeName.value.trim()) return
+  savingRecipe.value = true
+  recipeError.value = null
+  try {
+    const res = await authFetch(`/vms/${vm.value.id}/recipe`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: recipeName.value.trim(), description: recipeDesc.value.trim() }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    savedRecipe.value = true
+  }
+  catch (e) {
+    recipeError.value = e instanceof Error ? e.message : 'Could not save the recipe'
+  }
+  finally {
+    savingRecipe.value = false
+  }
+}
+
 async function downloadRdpFile() {
   if (!vm.value) return
   try {
@@ -869,6 +905,43 @@ async function removeDomain(d: CustomDomain) {
               @update:model-value="togglePower"
             />
           </div>
+          <Dialog v-model:open="recipeOpen">
+            <Button variant="outline" size="sm" class="font-mono text-xs" @click="openRecipe">
+              <ScrollText class="size-4" aria-hidden="true" />
+              Save as recipe
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Save as recipe</DialogTitle>
+                <DialogDescription>
+                  Keeps this VM's image, kernel, sizes, ports, init script, integrations and permanent
+                  allowed destinations, so you can launch more like it from Recipes.
+                </DialogDescription>
+              </DialogHeader>
+              <p v-if="savedRecipe" class="text-sm" role="status">
+                Saved. Find it under <NuxtLink to="/recipes" class="font-mono underline underline-offset-4">Recipes</NuxtLink>.
+              </p>
+              <form v-else class="space-y-4" :aria-busy="savingRecipe" @submit.prevent="saveRecipe">
+                <div class="space-y-2">
+                  <Label for="recipe-name">Name</Label>
+                  <Input id="recipe-name" v-model="recipeName" maxlength="64" autocomplete="off" />
+                </div>
+                <div class="space-y-2">
+                  <Label for="recipe-desc">Description</Label>
+                  <Input id="recipe-desc" v-model="recipeDesc" maxlength="500" placeholder="what it is for" />
+                </div>
+                <FormError id="recipe-save-error" :message="recipeError" />
+                <DialogFooter>
+                  <DialogClose as-child>
+                    <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                  </DialogClose>
+                  <Button type="submit" class="font-mono text-xs" :disabled="savingRecipe || !recipeName.trim()">
+                    {{ savingRecipe ? 'Saving…' : 'Save' }}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
           <Button
             variant="outline"
             size="sm"

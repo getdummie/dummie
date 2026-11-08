@@ -422,24 +422,8 @@ func (h *IntegrationHandler) SetVMRepos(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	// A scope naming something the integration itself does not cover would be
-	// silently ineffective, so refuse it rather than store a lie.
-	if !row.AllRepos {
-		covered, err := h.q.ListIntegrationRepos(ctx, id)
-		if err != nil {
-			log.Printf("could not read the repositories of integration %s: %v", domainIDString(id), err)
-			return echo.NewHTTPError(http.StatusInternalServerError, "could not read the repositories")
-		}
-		allowed := map[string]bool{}
-		for _, r := range covered {
-			allowed[strings.ToLower(r.RepoOwner+"/"+r.RepoName)] = true
-		}
-		for _, r := range repos {
-			if !allowed[strings.ToLower(r.owner+"/"+r.name)] {
-				return echo.NewHTTPError(http.StatusBadRequest,
-					r.owner+"/"+r.name+" is not one of this integration's repositories")
-			}
-		}
+	if err := checkReposCovered(ctx, h.q, row, repos); err != nil {
+		return err
 	}
 
 	tx, err := h.pool.Begin(ctx)
@@ -635,6 +619,30 @@ func validateIntegrationName(name string) error {
 		return errors.New("the name must be between 3 and 52 characters")
 	case !integrationNameShapeRe.MatchString(name):
 		return errors.New("the name may hold lowercase letters, digits and single dashes")
+	}
+	return nil
+}
+
+// checkReposCovered refuses a scope naming something the integration itself
+// does not cover, which would be silently ineffective.
+func checkReposCovered(ctx context.Context, q *db.Queries, row db.GetIntegrationForOwnerRow, repos []repoRef) error {
+	if row.AllRepos || len(repos) == 0 {
+		return nil
+	}
+	covered, err := q.ListIntegrationRepos(ctx, row.ID)
+	if err != nil {
+		log.Printf("could not read the repositories of integration %s: %v", domainIDString(row.ID), err)
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the repositories")
+	}
+	allowed := map[string]bool{}
+	for _, r := range covered {
+		allowed[strings.ToLower(r.RepoOwner+"/"+r.RepoName)] = true
+	}
+	for _, r := range repos {
+		if !allowed[strings.ToLower(r.owner+"/"+r.name)] {
+			return echo.NewHTTPError(http.StatusBadRequest,
+				r.owner+"/"+r.name+" is not one of "+row.Name+"'s repositories")
+		}
 	}
 	return nil
 }

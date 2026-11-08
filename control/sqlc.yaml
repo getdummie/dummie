@@ -37,6 +37,7 @@ sql:
           dinit_download_url: "DinitDownloadURL"
           intproxy_download_url: "IntproxyDownloadURL"
           oci_ref: "OCIRef"
+          osimage_id: "OSImageID"
           oci_digest: "OCIDigest"
           base_url: "BaseURL"
           gitlab_instance_id: "GitLabInstanceID"

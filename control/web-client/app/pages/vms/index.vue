@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Check, ChevronsUpDown, Copy, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { Check, ChevronsUpDown, Copy, Plus, RefreshCw, Trash2, X } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -30,16 +30,9 @@ import { TableCell, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import type { DataTableColumn } from '@/lib/table'
 import type { TargetForm } from '@/lib/targets'
-import {
-  applyPreset,
-  blankTarget,
-  describeTarget,
-  destinationPlaceholder,
-  domainPortChoices,
-  portPresets,
-  resetForKind,
-  toTargetPayload,
-} from '@/lib/targets'
+import { blankTarget, toTargetPayload } from '@/lib/targets'
+import { recipeTargetToForm, type Recipe, type RecipeIntegration } from '@/lib/recipes'
+import TargetFormRow from '@/components/TargetFormRow.vue'
 
 const maxTargets = 32
 
@@ -357,14 +350,6 @@ function removeTargetRow(i: number) {
   targets.value = targets.value.filter((_, n) => n !== i)
 }
 
-function onTargetKindChange(t: TargetForm) {
-  resetForKind(t)
-}
-
-function onTargetPresetChange(t: TargetForm, key: string) {
-  applyPreset(t, key)
-}
-
 const selectedKernel = computed(() => kernels.value.find(k => k.id === form.kernel_id) ?? null)
 const selectedOSImage = computed(() => osImages.value.find(o => o.id === form.osimage_id) ?? null)
 
@@ -471,6 +456,9 @@ async function pollBuild() {
 function resetForm() {
   Object.assign(form, blankForm)
   targets.value = []
+  fromRecipe.value = null
+  recipeIntegrations.value = []
+  recipeWarnings.value = []
   createError.value = null
   copiedFrom.value = null
   cancelAddImage()
@@ -479,6 +467,62 @@ function resetForm() {
 }
 
 const copiedFrom = ref<string | null>(null)
+const fromRecipe = ref<string | null>(null)
+const recipeIntegrations = ref<(RecipeIntegration & { name: string })[]>([])
+const recipeWarnings = ref<string[]>([])
+const route = useRoute()
+const integrationsApi = useIntegrations()
+
+// Anything the recipe leaves out keeps the form's own default.
+async function openRecipe(id: string) {
+  resetForm()
+  createOpen.value = true
+  let r: Recipe
+  try {
+    const res = await authFetch(`/recipes/${id}`)
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    r = await res.json()
+  }
+  catch (e) {
+    createError.value = e instanceof Error ? e.message : 'Could not load the recipe'
+    return
+  }
+  fromRecipe.value = r.name
+  const c = r.config
+  if (c.cpus) form.cpus = String(c.cpus)
+  if (c.memory_mib) form.memory_mib = String(c.memory_mib)
+  if (c.disk_size) form.disk_size = c.disk_size
+  if (c.default_port) form.default_port = String(c.default_port)
+  if (c.public_ports?.length) form.public_ports = c.public_ports.join(', ')
+  if (c.ttl_seconds) form.ttl_seconds = String(c.ttl_seconds)
+  if (c.init_script) form.init_script = c.init_script
+  targets.value = (c.targets ?? []).map(recipeTargetToForm)
+
+  const [owned] = await Promise.all([
+    c.integrations?.length ? integrationsApi.list().catch(() => null) : [],
+    loadHosts(), loadKernels(), loadOSImages(), loadFeatures(),
+  ])
+  if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
+  form.kernel_id = kernels.value.some(k => k.id === c.kernel_id) ? c.kernel_id! : kernels.value[0]?.id ?? ''
+  if (c.kernel_id && form.kernel_id !== c.kernel_id) recipeWarnings.value.push('The recipe\'s kernel is gone, so the newest one is picked.')
+  if (c.osimage_id) {
+    if (osImages.value.some(o => o.id === c.osimage_id)) form.osimage_id = c.osimage_id
+    else recipeWarnings.value.push('The recipe\'s OS image is no longer available; pick another.')
+  }
+  for (const ri of c.integrations ?? []) {
+    const found = owned?.find(i => i.id === ri.id)
+    if (found) recipeIntegrations.value.push({ ...ri, name: found.name })
+    else if (owned) recipeWarnings.value.push('An integration in the recipe no longer exists and is left out.')
+    else recipeIntegrations.value.push({ ...ri, name: ri.id })
+  }
+}
+
+onMounted(() => {
+  const id = route.query.recipe
+  if (typeof id !== 'string' || !id) return
+  void navigateTo({ query: {} }, { replace: true })
+  void openRecipe(id)
+})
 
 async function openCreate() {
   resetForm()
@@ -613,6 +657,7 @@ async function create() {
         ttl_seconds: Number(form.ttl_seconds),
         targets: targets.value.map(toTargetPayload),
         init_script: form.init_script,
+        integrations: recipeIntegrations.value.map(({ id, repos }) => ({ id, repos })),
       }),
     })
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
@@ -711,9 +756,13 @@ async function confirmDelete() {
           </Button>
           <DialogContent class="max-h-[85svh] overflow-y-auto sm:max-w-lg">
             <DialogHeader>
-              <DialogTitle>{{ copiedFrom ? 'New VM from a copy' : 'New VM' }}</DialogTitle>
+              <DialogTitle>{{ fromRecipe ? `New VM from ${fromRecipe}` : copiedFrom ? 'New VM from a copy' : 'New VM' }}</DialogTitle>
               <DialogDescription>
-                <template v-if="copiedFrom">
+                <template v-if="fromRecipe">
+                  Prefilled from the recipe <span class="font-mono">{{ fromRecipe }}</span>; anything it
+                  leaves out keeps its default. Pick a host and a name, and change whatever you need.
+                </template>
+                <template v-else-if="copiedFrom">
                   Prefilled from <span class="font-mono">{{ copiedFrom }}</span>. Nothing is created
                   until you submit, so change whatever you need first.
                 </template>
@@ -725,6 +774,9 @@ async function confirmDelete() {
             </DialogHeader>
 
             <form class="space-y-4" :aria-busy="creating" @submit.prevent="create">
+              <ul v-if="recipeWarnings.length" class="space-y-1 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground" role="status">
+                <li v-for="w in recipeWarnings" :key="w">{{ w }}</li>
+              </ul>
               <div class="space-y-2">
                 <Label for="vm-host">Host</Label>
                 <Select v-model="form.client_id">
@@ -1079,123 +1131,29 @@ async function confirmDelete() {
                   </Button>
                 </div>
 
-                <div
+                <TargetFormRow
                   v-for="(t, i) in targets"
                   :key="i"
-                  class="space-y-3 rounded-lg border border-border p-3"
-                >
-                  <div class="flex items-center justify-between gap-2">
-                    <p class="eyebrow text-muted-foreground">Destination {{ i + 1 }}</p>
-                    <Button
+                  v-model="targets[i]!"
+                  :index="i"
+                  @remove="removeTargetRow(i)"
+                />
+              </div>
+
+              <div v-if="recipeIntegrations.length" class="space-y-2 border-t border-border pt-4">
+                <p class="text-sm font-medium">Integrations</p>
+                <div class="flex flex-wrap gap-1.5">
+                  <Badge v-for="ri in recipeIntegrations" :key="ri.id" variant="secondary" class="gap-1 font-mono text-xs font-normal">
+                    {{ ri.name }}{{ ri.repos?.length ? ` · ${ri.repos.join(', ')}` : '' }}
+                    <button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      class="size-7 text-destructive hover:text-destructive"
-                      :aria-label="`Remove destination ${i + 1}`"
-                      @click="removeTargetRow(i)"
+                      class="ml-0.5 rounded-sm opacity-70 hover:opacity-100 focus-visible:outline-2 focus-visible:outline-ring"
+                      :aria-label="`Leave out ${ri.name}`"
+                      @click="recipeIntegrations = recipeIntegrations.filter(x => x.id !== ri.id)"
                     >
-                      <Trash2 class="size-4" aria-hidden="true" />
-                    </Button>
-                  </div>
-
-                  <div class="grid gap-3 sm:grid-cols-2">
-                    <div class="space-y-2">
-                      <Label :for="`t-kind-${i}`">Type</Label>
-                      <Select v-model="t.kind" @update:model-value="onTargetKindChange(t)">
-                        <SelectTrigger :id="`t-kind-${i}`" class="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="domain">Domain</SelectItem>
-                          <SelectItem value="ip">IP address or CIDR</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div class="space-y-2">
-                      <Label :for="`t-dest-${i}`">Destination</Label>
-                      <Input
-                        :id="`t-dest-${i}`"
-                        v-model="t.destination"
-                        :placeholder="destinationPlaceholder(t.kind)"
-                      />
-                    </div>
-                  </div>
-
-                  <div v-if="t.kind === 'domain'" class="space-y-2">
-                    <Label :for="`t-dports-${i}`">Allow on</Label>
-                    <Select v-model="t.domainPorts">
-                      <SelectTrigger :id="`t-dports-${i}`" class="w-full">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem v-for="c in domainPortChoices" :key="c.value" :value="c.value">
-                          {{ c.label }}
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <template v-else>
-                    <div class="space-y-2">
-                      <Label :for="`t-preset-${i}`">Protocol</Label>
-                      <Select v-model="t.preset" @update:model-value="(v: unknown) => onTargetPresetChange(t, String(v))">
-                        <SelectTrigger :id="`t-preset-${i}`" class="w-full">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem v-for="p in portPresets" :key="p.key" :value="p.key">
-                            {{ p.label }}
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div class="grid gap-3 sm:grid-cols-2">
-                      <div class="space-y-2">
-                        <Label :for="`t-transport-${i}`">Transport</Label>
-                        <Select v-model="t.transport">
-                          <SelectTrigger :id="`t-transport-${i}`" class="w-full">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="tcp">tcp</SelectItem>
-                            <SelectItem value="udp">udp</SelectItem>
-                            <SelectItem value="icmp">icmp (ping)</SelectItem>
-                            <SelectItem value="any">any</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div v-if="t.transport !== 'icmp'" class="space-y-2">
-                        <Label :for="`t-ports-${i}`">Ports</Label>
-                        <Input
-                          :id="`t-ports-${i}`"
-                          v-model="t.ports"
-                          placeholder="443, 80,443, 1000:2000"
-                        />
-                      </div>
-                    </div>
-                  </template>
-
-                  <div class="grid gap-3 sm:grid-cols-2">
-                    <div class="space-y-2">
-                      <Label :for="`t-note-${i}`">Note</Label>
-                      <Input :id="`t-note-${i}`" v-model="t.note" placeholder="why this is needed" />
-                    </div>
-                    <div class="space-y-2">
-                      <Label :for="`t-ttl-${i}`">TTL (seconds)</Label>
-                      <Input
-                        :id="`t-ttl-${i}`"
-                        v-model="t.ttl_seconds"
-                        type="number"
-                        min="0"
-                        step="1"
-                        inputmode="numeric"
-                      />
-                    </div>
-                  </div>
-
-                  <p class="font-mono text-xs text-muted-foreground">
-                    {{ describeTarget(t) }}{{ Number(t.ttl_seconds) > 0 ? ` · expires in ${t.ttl_seconds}s` : '' }}
-                  </p>
+                      <X class="size-3" aria-hidden="true" />
+                    </button>
+                  </Badge>
                 </div>
               </div>
 

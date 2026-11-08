@@ -303,6 +303,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.POST("", userH.CreateVM)
 	vms.GET("/quota", userH.GetQuota)
 	vms.GET("/features", userH.GetFeatures)
+	vms.POST("/:id/recipe", userH.SaveVMAsRecipe)
 	vms.GET("/hosts", userH.ListHosts)
 	vms.GET("/kernels", userH.ListKernels)
 	vms.GET("/osimages", userH.ListOSImages)
@@ -335,6 +336,13 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	vms.POST("/:id/targets/resolve", userH.ResolveTargetHost)
 	vms.PUT("/:id/targets/:target_id", userH.UpdateTarget)
 	vms.DELETE("/:id/targets/:target_id", userH.DeleteTarget)
+
+	recipes := api.Group("/recipes", userJWT(cfg, q), auditMW(q))
+	recipes.GET("", userH.ListRecipes)
+	recipes.POST("", userH.CreateRecipe)
+	recipes.GET("/:id", userH.GetRecipe)
+	recipes.PUT("/:id", userH.UpdateRecipe)
+	recipes.DELETE("/:id", userH.DeleteRecipe)
 
 	integ := api.Group("/integrations", userJWT(cfg, q), auditMW(q))
 	integ.GET("", integH.List)

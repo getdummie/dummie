@@ -147,6 +147,13 @@
                     "init_script": {
                         "type": "string"
                     },
+                    "integrations": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.recipeIntegration"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
                     "kernel_id": {
                         "type": "string"
                     },
@@ -603,6 +610,108 @@
                 },
                 "type": "object"
             },
+            "main.recipeConfig": {
+                "properties": {
+                    "cpus": {
+                        "type": "integer"
+                    },
+                    "default_port": {
+                        "type": "integer"
+                    },
+                    "disk_size": {
+                        "type": "string"
+                    },
+                    "init_script": {
+                        "type": "string"
+                    },
+                    "integrations": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.recipeIntegration"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "kernel_id": {
+                        "type": "string"
+                    },
+                    "memory_mib": {
+                        "type": "integer"
+                    },
+                    "osimage_id": {
+                        "type": "string"
+                    },
+                    "public_ports": {
+                        "items": {
+                            "type": "integer"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "targets": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.createTargetReq"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "ttl_seconds": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "main.recipeDTO": {
+                "properties": {
+                    "config": {
+                        "$ref": "#/components/schemas/main.recipeConfig"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "main.recipeIntegration": {
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "repos": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "main.recipeReq": {
+                "properties": {
+                    "config": {
+                        "$ref": "#/components/schemas/main.recipeConfig"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.resolveHostReq": {
                 "properties": {
                     "host": {
@@ -628,6 +737,17 @@
                     },
                     "truncated": {
                         "type": "boolean"
+                    }
+                },
+                "type": "object"
+            },
+            "main.saveVMRecipeReq": {
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
                     }
                 },
                 "type": "object"
@@ -1905,6 +2025,272 @@
                 ]
             }
         },
+        "/recipes": {
+            "get": {
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "items": {
+                                            "$ref": "#/components/schemas/main.recipeDTO"
+                                        },
+                                        "type": "array"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List your recipes",
+                "tags": [
+                    "recipes"
+                ]
+            },
+            "post": {
+                "description": "Everything in config is optional; a field left out falls back to the create form's default when the recipe is launched. Ids are not checked here -- an image or integration can go away after the recipe is saved, so the create that launches it is where they are checked.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.recipeReq",
+                                        "summary": "body",
+                                        "description": "name is required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "name is required",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.recipeDTO"
+                                }
+                            }
+                        },
+                        "description": "Created"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "you already have a recipe with that name"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Save a recipe",
+                "tags": [
+                    "recipes"
+                ]
+            }
+        },
+        "/recipes/{id}": {
+            "delete": {
+                "description": "VMs launched from it are not affected.",
+                "parameters": [
+                    {
+                        "description": "recipe id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Delete one of your recipes",
+                "tags": [
+                    "recipes"
+                ]
+            },
+            "get": {
+                "parameters": [
+                    {
+                        "description": "recipe id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.recipeDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Read one of your recipes",
+                "tags": [
+                    "recipes"
+                ]
+            },
+            "put": {
+                "parameters": [
+                    {
+                        "description": "recipe id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.recipeReq",
+                                        "summary": "body",
+                                        "description": "name is required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "name is required",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.recipeDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "you already have a recipe with that name"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Replace one of your recipes",
+                "tags": [
+                    "recipes"
+                ]
+            }
+        },
         "/signin": {
             "post": {
                 "description": "The identifier is a username (case-sensitive) or an email. Sets the httpOnly access and refresh cookies as well as returning the access token.",
@@ -2198,7 +2584,7 @@
                                 }
                             }
                         },
-                        "description": "bad size, bad port count, cpus under 1, memory under 64 MiB, an init script over 64 KiB, or a destination that is not allowable"
+                        "description": "bad size, bad port count, cpus under 1, memory under 64 MiB, an init script over 64 KiB, a destination that is not allowable, or a repository an integration does not cover"
                     },
                     "401": {
                         "content": {
@@ -3864,6 +4250,94 @@
                 "summary": "Rotate this VM's remote desktop password",
                 "tags": [
                     "vms"
+                ]
+            }
+        },
+        "/vms/{id}/recipe": {
+            "post": {
+                "description": "Takes the VM's image, kernel, sizes, ports, init script, integrations and its permanent allowed destinations. Temporary destinations and \"allow everything\" are left out. A VM created before recipes existed has no record of its OS image, so that field is left empty.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.saveVMRecipeReq",
+                                        "summary": "body",
+                                        "description": "name is required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "name is required",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.recipeDTO"
+                                }
+                            }
+                        },
+                        "description": "Created"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "you already have a recipe with that name"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Save one of your VMs as a recipe",
+                "tags": [
+                    "recipes"
                 ]
             }
         },
