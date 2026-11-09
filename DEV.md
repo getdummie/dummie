@@ -53,21 +53,107 @@ docker compose up -d
 docker compose logs -f
 ```
 
-## QEMU Host Configuration
+## Local VMs
 
-Starting the host VM
+Three VMs share the host bridge `vm-br0` (`10.68.0.1/16`). The host's NixOS
+config provides the bridge, the taps and NAT.
+
+| VM            | IP         | tap         | role                           |
+| ------------- | ---------- | ----------- | ------------------------------ |
+| `qemu-host-1` | 10.68.0.2  | `vm-tap0`   | qemu host running `dclient`    |
+| `qemu-host-2` | 10.68.0.3  | `vm-tap1`   | qemu host running `dclient`    |
+| `fakefsx`     | 10.68.0.10 | `vm-tapfsx` | ZFS + NFS + fake FSx API :8080 |
+
+Run these from `nix-vms/`: state lives in `.microqemu/<vm>/` under the directory
+you launch from, which is also where the `just vm-*` recipes look.
 
 ```sh
-just vm-start
+cd nix-vms
+
+nix run .#qemu-host-1                # start (also: `just vm-start`)
+nix run .#qemu-host-2
+nix run .#fakefsx
+
+nix run .#<vm> -- status
+nix run .#<vm> -- stop
+nix run .#<vm> -- console            # serial console, Ctrl-] to detach
+nix run .#<vm> -- stats              # qemu hosts only
 ```
 
-SSH into the host VM
+The qemu hosts boot from `images/debian-vm-host/rootfs.tar`, built with
+`just image-build debian-vm-host`. Their root disk is ephemeral; to rebuild it
+from the tar after changing the image, delete it while stopped:
 
 ```sh
-just vm-ssh
+nix run .#qemu-host-1 -- stop
+rm -f .microqemu/qemu-host-1/rootfs.ext4     # or `just vm-clean` for host 1
 ```
 
-Starting a VM inside the host VM
+Deleting `fakefsx` wipes the pool and every volume on it. Remove the matching
+FSx images and disks in the admin panel afterwards, since control still
+points at them:
+
+```sh
+nix run .#fakefsx -- stop
+rm -rf .microqemu/fakefsx
+ssh-keygen -R 10.68.0.10
+```
+
+### SSH
+
+```sh
+just vm-ssh-1                        # ubuntu@10.68.0.2, port 2222
+just vm-ssh-2                        # ubuntu@10.68.0.3, port 2222
+ssh root@10.68.0.10                  # fakefsx, keys from github.com/codingcoffee.keys
+```
+
+### FSx disks locally
+
+Point control at the fake in `control/.env`, then recreate the container with
+`docker compose up -d --force-recreate control`:
+
+```sh
+AWS_ENDPOINT_URL_FSX=http://10.68.0.10:8080
+AWS_REGION=ap-south-1
+AWS_ACCESS_KEY_ID=test
+AWS_SECRET_ACCESS_KEY=test
+```
+
+In Admin → Settings: turn on FSx for OpenZFS VM disks, set the file system ID
+to `fs-0fa4ef5a00000001` and the NFS clients to `10.68.0.0/16`. Leave the
+parent volume empty; the root volume's ID changes whenever the pool is recreated.
+
+Inside `fakefsx` (`ssh root@10.68.0.10`), each FSx volume is a ZFS dataset
+under the pool `fsx`, golden images are `img-*` with an `@golden` snapshot,
+and VM disks are `vm-<uuid>` clones of one:
+
+```sh
+zfs list -o name,used,refer,quota,mountpoint         # volumes
+zfs list -t snapshot                                 # golden snapshots
+zfs list -o name,origin                              # which image a disk is cloned from
+zfs get -r -o name,value fakefsx:id fsx              # FSx ids (fsvol-…, fsvolsnap-…)
+zpool list fsx                                       # pool usage
+exportfs -v                                          # NFS exports and their clients
+journalctl -u fakefsx -f                             # API calls control makes
+systemctl status fakefsx-pool fakefsx
+```
+
+Delete volumes from Admin → FSx images / FSx disks rather than with
+`zfs destroy`, so control's records stay in step.
+
+From a qemu host, check the API and NFS:
+
+```sh
+curl -s -X POST \
+  -H 'X-Amz-Target: AWSSimbaAPIService_v20180301.DescribeFileSystems' \
+  -H 'Content-Type: application/x-amz-json-1.1' \
+  -d '{}' http://10.68.0.10:8080 | jq
+showmount -e 10.68.0.10
+mount | grep nfs                     # FSx disks of the VMs on this host
+sudo dclient doctor                  # "fsx volumes can be mounted" should pass
+```
+
+## Starting a VM inside a qemu host
 
 ```sh
 sudo tee /etc/dclient/config.yaml > /dev/null <<'EOF'
@@ -135,5 +221,3 @@ sudo systemctl restart ssh.socket
 # check doctor
 dclient doctor
 ```
-
-dclient connect --control-url https://dummie-ww.zerodha.io --key 3bDZ-6kdPPDsStpnGQlOoikJ6LdVxVF_WJ1gVuTEjtw
