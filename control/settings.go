@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -39,6 +40,13 @@ const (
 	settingUserDockerImages  = "user_docker_images_enabled"
 
 	settingVMMaxUploadMiB = "vm_max_upload_mib"
+
+	settingDiskLocalEnabled  = "vm_disk_local_enabled"
+	settingDiskFSxEnabled    = "vm_disk_fsx_enabled"
+	settingFSxFileSystemID   = "fsx_file_system_id"
+	settingFSxRegion         = "fsx_region"
+	settingFSxParentVolumeID = "fsx_parent_volume_id"
+	settingFSxNFSClients     = "fsx_nfs_clients"
 )
 
 type settingKind string
@@ -231,6 +239,89 @@ var settingDefs = []settingDef{
 		Default:     "30",
 		validate:    validateAuditRetentionDays,
 	},
+	{
+		Key:   settingDiskLocalEnabled,
+		Kind:  settingBool,
+		Label: "Local VM disks",
+		Description: "Let users create VMs whose disk is a qcow2 file on the host. VMs that " +
+			"already have one keep it when this is turned off.",
+		Default: "true",
+	},
+	{
+		Key:   settingDiskFSxEnabled,
+		Kind:  settingBool,
+		Label: "FSx for OpenZFS VM disks",
+		Description: "Let users create VMs whose whole disk is its own FSx for OpenZFS volume, " +
+			"cloned from a snapshot of its OS image. Needs the file system below, an IAM role " +
+			"for this server that may manage its volumes and snapshots, and nfs-common on every host.",
+		Default: "false",
+	},
+	{
+		Key:   settingFSxFileSystemID,
+		Kind:  settingString,
+		Label: "FSx file system ID",
+		Description: "The FSx for OpenZFS file system VM disks are created on. Use a " +
+			"SINGLE_AZ_HA_2 deployment in the hosts' region so a file server failure does not take the disks with it.",
+		Placeholder: "fs-0123456789abcdef0",
+		validate:    validatePattern(fsxFileSystemIDPattern, "must look like fs-0123456789abcdef0"),
+	},
+	{
+		Key:         settingFSxRegion,
+		Kind:        settingString,
+		Label:       "FSx region",
+		Description: "The AWS region of the file system. Empty uses the region of this server's AWS configuration.",
+		Placeholder: "ap-south-1",
+		validate:    validatePattern(awsRegionPattern, "must be a region like ap-south-1"),
+	},
+	{
+		Key:   settingFSxParentVolumeID,
+		Kind:  settingString,
+		Label: "FSx parent volume ID",
+		Description: "The volume every VM and image volume is created under. Empty uses the " +
+			"file system's root volume.",
+		Placeholder: "fsvol-0123456789abcdef0",
+		validate:    validatePattern(fsxVolumeIDPattern, "must look like fsvol-0123456789abcdef0"),
+	},
+	{
+		Key:   settingFSxNFSClients,
+		Kind:  settingString,
+		Label: "FSx NFS clients",
+		Description: "The CIDR every disk volume is exported to: the hosts' subnet, and nothing " +
+			"wider. Hosts mount as root, so the export does not squash root.",
+		Placeholder: "10.0.1.0/24",
+		Warn:        true,
+		validate:    validateFSxClients,
+	},
+}
+
+var (
+	fsxFileSystemIDPattern = regexp.MustCompile(`^fs-[0-9a-f]{8,17}$`)
+	fsxVolumeIDPattern     = regexp.MustCompile(`^fsvol-[0-9a-f]{8,17}$`)
+	awsRegionPattern       = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-\d$`)
+)
+
+func validatePattern(re *regexp.Regexp, msg string) func(string) error {
+	return func(v string) error {
+		if v = strings.TrimSpace(v); v != "" && !re.MatchString(v) {
+			return errors.New(msg)
+		}
+		return nil
+	}
+}
+
+func validateFSxClients(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	_, n, err := net.ParseCIDR(v)
+	if err != nil {
+		return errors.New("must be a CIDR like 10.0.1.0/24")
+	}
+	if ones, _ := n.Mask.Size(); ones < 8 {
+		return errors.New("that is wider than any hosts' subnet should be; name the subnet the hosts are in")
+	}
+	return nil
 }
 
 func validateMaxUploadMiB(v string) error {

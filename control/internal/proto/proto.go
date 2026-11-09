@@ -100,6 +100,9 @@ const (
 
 	KindCacheReport JobKind = "cache.report"
 	KindCachePurge  JobKind = "cache.purge"
+
+	KindDiskPrepare JobKind = "disk.prepare"
+	KindDiskSeed    JobKind = "disk.seed"
 )
 
 type Job struct {
@@ -119,6 +122,25 @@ type Job struct {
 	Services *ServicesConfig `json:"services,omitempty"`
 	CustomCert *CustomCertOrder `json:"custom_cert,omitempty"`
 	Cache *CachePurge `json:"cache,omitempty"`
+	Seed  *DiskSeed   `json:"seed,omitempty"`
+}
+
+// FSxDisk is an NFS export holding a vm's whole disk as disk.raw.
+type FSxDisk struct {
+	Server string `json:"server"`
+	Path   string `json:"path"`
+}
+
+// DiskSeed asks a host to write a rootfs from its cache into an empty volume.
+type DiskSeed struct {
+	Rootfs string  `json:"rootfs"`
+	FSx    FSxDisk `json:"fsx"`
+}
+
+// PreparedRootfs names the rootfs a disk.prepare left in the host's cache.
+type PreparedRootfs struct {
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 // CachePurge names files in the host's image cache to delete. The names are
@@ -294,6 +316,8 @@ type VMSpec struct {
 	// InitScript runs once as root on the first boot. Only a guest booted by
 	// dinit runs it.
 	InitScript string `json:"init_script,omitempty"`
+
+	FSx *FSxDisk `json:"fsx,omitempty"`
 }
 
 // GitIdentity is the creator's git user.name and user.email, set globally in the
@@ -335,7 +359,8 @@ type JobResult struct {
 
 	Domain string `json:"domain,omitempty"`
 	Cert   *IssuedCert `json:"cert,omitempty"`
-	Cache *CachePurgeResult `json:"cache,omitempty"`
+	Cache  *CachePurgeResult `json:"cache,omitempty"`
+	Rootfs *PreparedRootfs   `json:"rootfs,omitempty"`
 }
 
 // CachePurgeResult answers both cache job kinds. Entries is what the cache

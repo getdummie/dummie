@@ -49,6 +49,7 @@ interface VM {
   cpus: number
   memory_mib: number
   disk_mib: number
+  disk_backend: 'local' | 'fsx'
   ip: string
   url: string
   console_url: string
@@ -797,7 +798,7 @@ async function removeDomain(d: CustomDomain) {
             <Badge :variant="statusVariant[vm.status]" class="font-mono">{{ vm.status }}</Badge>
             <p class="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
               {{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }} ·
-              {{ vm.disk_mib ? `${fmtMiB(vm.disk_mib)} disk` : 'disk not recorded' }}
+              {{ vm.disk_mib ? `${fmtMiB(vm.disk_mib)} disk` : 'disk not recorded' }}{{ vm.disk_backend === 'fsx' ? ' on FSx' : '' }}
               <Dialog v-model:open="sizeOpen">
                 <Button
                   variant="ghost"

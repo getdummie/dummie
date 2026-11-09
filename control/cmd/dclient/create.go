@@ -114,30 +114,27 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 		v.Append = withHostname(v.Append, name)
 	}
 
+	if req.FSx != nil && !fromTar {
+		return vm{}, errors.New("an fsx disk is built from a rootfs tar; use --rootfs-tar")
+	}
+
 	cache := imagesDir(data)
 	logf("resolving images")
-	if v.Backing, err = backing.resolve(ctx, cache); err != nil {
-		return vm{}, err
-	}
 	if fromTar {
-		pubKey, err := readClientPubKey()
-		if err != nil {
-			return vm{}, err
-		}
-		if pubKey == "" {
-			logf("no dpipe key at %s; this vm will not accept dpipe's ssh key", clientPubKeyPath)
-		}
-		cfg, err := loadNetConfig(data)
-		if err != nil {
-			return vm{}, err
-		}
-		logf("building an ext4 rootfs from the tar (cached after the first time)")
-		if v.Backing, v.GuestInit, err = ext4FromTar(ctx, cache, v.Backing, pubKey, cfg.resolver(), req.Image, rootfsSize, logf); err != nil {
+		if v.Backing, v.GuestInit, err = buildRootfs(ctx, data, backing, req.Image, rootfsSize, logf); err != nil {
 			return vm{}, err
 		}
 		if v.GuestInit {
 			v.Append = withGitIdentity(v.Append, req.Git)
 		}
+	} else if v.Backing, err = backing.resolve(ctx, cache); err != nil {
+		return vm{}, err
+	}
+	if req.FSx != nil {
+		fsx := *req.FSx
+		v.FSx = &fsx
+		v.Disk = fsxDiskPath(data, id)
+		v.Backing = ""
 	}
 	if boot == bootDirect {
 		if v.Kernel, err = kernel.resolve(ctx, cache); err != nil {
@@ -161,13 +158,25 @@ func createVM(ctx context.Context, data string, req createRequest, logf func(str
 	cleanup := func() {
 		_ = teardownVMNetwork(v)
 		_ = removeCgroup(v.Cgroup)
-		_ = os.RemoveAll(vmDir(data, id))
+		_ = removeVMDir(context.WithoutCancel(ctx), data, v)
 	}
 
-	logf("creating the disk overlay")
-	if err := newOverlay(ctx, v.Backing, v.Disk, size); err != nil {
-		cleanup()
-		return vm{}, err
+	if v.FSx != nil {
+		logf("mounting %s:%s", v.FSx.Server, v.FSx.Path)
+		if err := mountFSx(ctx, *v.FSx, fsxMountPoint(data, v)); err != nil {
+			cleanup()
+			return vm{}, err
+		}
+		if _, err := growDisk(ctx, v); err != nil {
+			cleanup()
+			return vm{}, err
+		}
+	} else {
+		logf("creating the disk overlay")
+		if err := newOverlay(ctx, v.Backing, v.Disk, size); err != nil {
+			cleanup()
+			return vm{}, err
+		}
 	}
 
 	if req.InitScript != "" {
@@ -242,6 +251,11 @@ func startVM(ctx context.Context, data string, v vm, logf func(string, ...any)) 
 		}
 	}
 
+	if v.FSx != nil {
+		if err := mountFSx(ctx, *v.FSx, fsxMountPoint(data, v)); err != nil {
+			return 0, err
+		}
+	}
 	if grown, err := growDisk(ctx, v); err != nil {
 		return 0, err
 	} else if grown {
@@ -308,6 +322,11 @@ func resizeVM(ctx context.Context, data string, v vm, req proto.VMResize) error 
 	// recorded is the only case worth opening it for.
 	if size > 0 && size != v.DiskBytes {
 		current := v.DiskBytes
+		if current == 0 && v.FSx != nil {
+			if err := mountFSx(ctx, *v.FSx, fsxMountPoint(data, v)); err != nil {
+				return err
+			}
+		}
 		if current == 0 {
 			if current, err = imageVirtualSize(ctx, v.Disk); err != nil {
 				return err
@@ -344,7 +363,33 @@ func growDisk(ctx context.Context, v vm) (bool, error) {
 	if current >= v.DiskBytes {
 		return false, nil
 	}
+	if v.FSx != nil {
+		return true, os.Truncate(v.Disk, v.DiskBytes)
+	}
 	return true, resizeImage(ctx, v.Disk, v.DiskBytes)
+}
+
+// buildRootfs fetches a rootfs tar and turns it into the cached ext4 a vm boots,
+// reporting whether dinit was installed into it.
+func buildRootfs(ctx context.Context, data string, tar artifact, image *proto.ImageConfig, sizeBytes int64, logf func(string, ...any)) (string, bool, error) {
+	cache := imagesDir(data)
+	path, err := tar.resolve(ctx, cache)
+	if err != nil {
+		return "", false, err
+	}
+	pubKey, err := readClientPubKey()
+	if err != nil {
+		return "", false, err
+	}
+	if pubKey == "" {
+		logf("no dpipe key at %s; this vm will not accept dpipe's ssh key", clientPubKeyPath)
+	}
+	cfg, err := loadNetConfig(data)
+	if err != nil {
+		return "", false, err
+	}
+	logf("building an ext4 rootfs from the tar (cached after the first time)")
+	return ext4FromTar(ctx, cache, path, pubKey, cfg.resolver(), image, sizeBytes, logf)
 }
 
 func removeVM(ctx context.Context, data string, v vm) error {
@@ -357,7 +402,7 @@ func removeVM(ctx context.Context, data string, v vm) error {
 	if err := removeCgroup(v.Cgroup); err != nil {
 		return err
 	}
-	return os.RemoveAll(vmDir(data, v.ID))
+	return removeVMDir(ctx, data, v)
 }
 
 func orDefault(v, fallback string) string {

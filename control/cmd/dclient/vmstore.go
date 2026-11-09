@@ -12,6 +12,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"control/internal/proto"
 )
 
 const (
@@ -69,6 +71,10 @@ type vm struct {
 
 	Disk   string `json:"disk"`
 	Cgroup string `json:"cgroup,omitempty"`
+
+	// FSx is set when Disk is a raw image on an FSx volume mounted in the vm's
+	// directory, rather than a qcow2 overlay on a cached rootfs.
+	FSx *proto.FSxDisk `json:"fsx,omitempty"`
 
 	InitDisk string `json:"init_disk,omitempty"`
 

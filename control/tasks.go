@@ -59,7 +59,7 @@ const (
 
 	// The lease has to outlast the timeout, or the reclaim sweep would queue a
 	// second copy of a build that is still running.
-	taskLongLease = taskOSImageBuildTimeout + 2*time.Minute
+	taskLongLease = max(taskOSImageBuildTimeout, taskVMDiskFSxTimeout) + 2*time.Minute
 
 	taskReclaimEvery = 30 * time.Second
 
@@ -126,6 +126,7 @@ func taskRetry(after time.Duration, format string, args ...any) taskOutcome {
 // listed here is also leased for taskLongLease by the reclaim sweep.
 var taskKindTimeouts = map[string]time.Duration{
 	taskOSImageBuild: taskOSImageBuildTimeout,
+	taskVMDiskFSx:    taskVMDiskFSxTimeout,
 }
 
 func taskKindTimeout(kind string) time.Duration {
@@ -178,6 +179,8 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore)
 		taskOSImageBuild:      handleOSImageBuild,
 		taskLLMPrices:         handleLLMPrices,
 		taskAuditPrune:        handleAuditPrune,
+		taskVMDiskFSx:         handleVMDiskFSx,
+		taskFSxGC:             handleFSxGC,
 	}
 	return r
 }
@@ -212,6 +215,14 @@ func (r *taskRunner) run(ctx context.Context) {
 		DelaySeconds: taskAuditPruneEvery.Seconds(),
 	}); err != nil {
 		log.Printf("could not schedule the audit log prune: %v", err)
+	}
+
+	if err := r.q.CreateSingletonScheduledTask(ctx, db.CreateSingletonScheduledTaskParams{
+		Kind:         taskFSxGC,
+		Reason:       "delete fsx volumes no vm or image needs",
+		DelaySeconds: taskFSxGCEvery.Seconds(),
+	}); err != nil {
+		log.Printf("could not schedule the fsx sweep: %v", err)
 	}
 
 	// No delay: usage has no cost until the first fetch lands.

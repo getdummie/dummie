@@ -24,6 +24,7 @@ RUN set -ex \
     e2fsprogs \
     qemu-system-x86 \
     qemu-utils \
+    nfs-common \
     neovim \
     udev \
   && echo 'root:root' | chpasswd \

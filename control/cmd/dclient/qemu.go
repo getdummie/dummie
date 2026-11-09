@@ -116,8 +116,12 @@ func qemuArgs(data string, v vm, kvm bool) []string {
 		"-serial", "chardev:con0",
 	)
 
+	format := "qcow2"
+	if v.FSx != nil {
+		format = "raw"
+	}
 	args = append(args,
-		"-drive", "file="+v.Disk+",format=qcow2,if=none,id=root,cache=none",
+		"-drive", "file="+v.Disk+",format="+format+",if=none,id=root,cache=none",
 		"-device", device("virtio-blk", mmio)+",drive=root",
 	)
 	// After root, so root stays /dev/vda; dinit finds this one by its header.

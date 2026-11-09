@@ -47,3 +47,4 @@ sql:
           gitlab_flavor: "GitLabFlavor"
           proxy_target_url: "ProxyTargetURL"
           proxy_verify_tls: "ProxyVerifyTLS"
+          snapshot_arn: "SnapshotARN"

@@ -152,6 +152,14 @@
                     "default_port": {
                         "type": "integer"
                     },
+                    "disk_backend": {
+                        "description": "DiskBackend is where the disk lives: \"local\" (the default) or \"fsx\".",
+                        "enum": [
+                            "local",
+                            "fsx"
+                        ],
+                        "type": "string"
+                    },
                     "disk_size": {
                         "type": "string"
                     },
@@ -357,6 +365,13 @@
                 "properties": {
                     "allow_everything": {
                         "type": "boolean"
+                    },
+                    "disk_backends": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
                     },
                     "docker_images": {
                         "type": "boolean"
@@ -1021,6 +1036,13 @@
                         "type": "string"
                     },
                     "desktop_url": {
+                        "type": "string"
+                    },
+                    "disk_backend": {
+                        "enum": [
+                            "local",
+                            "fsx"
+                        ],
                         "type": "string"
                     },
                     "disk_mib": {
@@ -2725,7 +2747,7 @@
         },
         "/vms/features": {
             "get": {
-                "description": "Admin toggles for the \"Allow everything\" egress entry and for building OS images from Docker images, and the largest upload the agent page's transfer tab accepts.",
+                "description": "Admin toggles for the \"Allow everything\" egress entry and for building OS images from Docker images, the largest upload the agent page's transfer tab accepts, and the disk backends a create may name.",
                 "responses": {
                     "200": {
                         "content": {

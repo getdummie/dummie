@@ -63,6 +63,7 @@ interface VM {
   cpus: number
   memory_mib: number
   disk_mib: number
+  disk_backend: DiskBackend
   ip: string
   last_error: string
   created_at: string
@@ -304,9 +305,17 @@ async function loadKernels() {
 
 const dockerImagesEnabled = ref(false)
 
+type DiskBackend = 'local' | 'fsx'
+const diskBackendLabels: Record<DiskBackend, string> = { local: 'Host disk', fsx: 'FSx for OpenZFS' }
+const diskBackends = ref<DiskBackend[]>([])
+
 async function loadFeatures() {
   const res = await authFetch('/vms/features').catch(() => null)
-  if (res?.ok) dockerImagesEnabled.value = !!(await res.json()).docker_images
+  if (!res?.ok) return
+  const f = await res.json()
+  dockerImagesEnabled.value = !!f.docker_images
+  diskBackends.value = f.disk_backends ?? []
+  if (!diskBackends.value.includes(form.disk_backend)) form.disk_backend = diskBackends.value[0] ?? 'local'
 }
 
 async function loadOSImages() {
@@ -333,6 +342,7 @@ const blankForm = {
   default_port: '8000',
   public_ports: '',
   disk_size: '5G',
+  disk_backend: 'local' as DiskBackend,
   kernel_id: '',
   osimage_id: '',
   ttl_seconds: '0',
@@ -577,6 +587,7 @@ async function openCopy(v: VM) {
   form.default_port = String(v.default_port || 8000)
   form.public_ports = (v.public_ports ?? []).join(', ')
   form.disk_size = specStr(v.spec, 'disk_size') || '5G'
+  form.disk_backend = v.disk_backend || 'local'
   form.init_script = specStr(v.spec, 'init_script')
 
   createOpen.value = true
@@ -678,6 +689,7 @@ async function create() {
         default_port: Number(form.default_port),
         public_ports: parsePorts(form.public_ports),
         disk_size: form.disk_size,
+        disk_backend: form.disk_backend,
         kernel_id: form.kernel_id,
         osimage_id: form.osimage_id,
         ttl_seconds: Number(form.ttl_seconds),
@@ -1080,6 +1092,33 @@ async function confirmDelete() {
                   Size of this VM's disk. The guest still has to grow its own filesystem to use the space.
                 </p>
                 <p class="font-mono text-xs text-muted-foreground">{{ fmtMiB(diskRemaining) }} left</p>
+              </div>
+
+              <div v-if="diskBackends.length > 1" class="space-y-2">
+                <Label id="vm-disk-backend-label">Disk storage</Label>
+                <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="vm-disk-backend-label">
+                  <Button
+                    v-for="b in diskBackends"
+                    :key="b"
+                    type="button"
+                    size="sm"
+                    role="radio"
+                    :aria-checked="form.disk_backend === b"
+                    :variant="form.disk_backend === b ? 'default' : 'outline'"
+                    @click="form.disk_backend = b"
+                  >
+                    {{ diskBackendLabels[b] }}
+                  </Button>
+                </div>
+                <p class="text-xs text-muted-foreground">
+                  <template v-if="form.disk_backend === 'fsx'">
+                    The whole disk lives on its own network volume, independent of the host. The first VM from an
+                    OS image takes a few minutes longer while its image is prepared.
+                  </template>
+                  <template v-else>
+                    The disk is a file on the host this VM runs on.
+                  </template>
+                </p>
               </div>
 
               <div class="space-y-2">

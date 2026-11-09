@@ -30,6 +30,8 @@ type vmDTO struct {
 	DiskMiB   int32  `json:"disk_mib"`
 	IP        string `json:"ip"`
 
+	DiskBackend string `json:"disk_backend" enums:"local,fsx"`
+
 	DefaultPort int32   `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
 
@@ -71,6 +73,7 @@ func toVMDTO(v db.Vm) vmDTO {
 		MemoryMiB:   v.MemoryMiB,
 		DiskMiB:     v.DiskMiB,
 		IP:          v.IP,
+		DiskBackend: v.DiskBackend,
 		DefaultPort: v.DefaultPort,
 		PublicPorts: v.PublicPorts,
 		DefaultUser: v.DefaultUser,
@@ -281,9 +284,12 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
 	}
 
 	diskMiB, _ := parseSizeMiB(spec.DiskSize)
+	// A raw spec only makes local disks; an fsx volume is control's to allocate.
+	spec.FSx = nil
 
 	params := db.CreateVMParams{
 		ClientID:    pgClientID,
+		DiskBackend: diskBackendLocal,
 		Boot:        spec.Boot,
 		CPUs:        int32(spec.CPUs),
 		MemoryMiB:   int32(spec.Memory),

@@ -115,6 +115,31 @@ type Domain struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type FsxDisk struct {
+	ID         pgtype.UUID
+	Vm         pgtype.UUID
+	Image      pgtype.UUID
+	VolumeID   string
+	VolumePath string
+	Released   bool
+	CreatedAt  pgtype.Timestamptz
+}
+
+type FsxImage struct {
+	ID          pgtype.UUID
+	Rootfs      string
+	OSImageID   pgtype.UUID
+	SizeBytes   int64
+	VolumeID    string
+	VolumePath  string
+	SnapshotID  string
+	SnapshotARN string
+	Status      string
+	ClaimedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
 type GithubApp struct {
 	ID         pgtype.UUID
 	AppID      int64
@@ -360,6 +385,7 @@ type Vm struct {
 	DefaultUser string
 	KernelID    pgtype.UUID
 	OSImageID   pgtype.UUID
+	DiskBackend string
 }
 
 type VmCustomDomain struct {

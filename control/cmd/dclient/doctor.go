@@ -48,6 +48,7 @@ var checks = []check{
 	{"distribution is supported", checkDistro},
 	{"qemu is installed", checkQEMU},
 	{"qemu-img is installed", checkQEMUImg},
+	{"fsx volumes can be mounted", checkNFSClient},
 	{"hardware virtualisation is usable", checkKVM},
 	{"cgroup v2 is available", checkCgroup2},
 	{"vms can run as their own uid", checkVMUID},
@@ -146,6 +147,17 @@ func checkQEMUImg() (result, string) {
 	path, err := exec.LookPath("qemu-img")
 	if err != nil {
 		return fail, "qemu-img is not on PATH; install qemu-utils on debian, qemu-img on arch (per-vm disk overlays need it)"
+	}
+	return pass, path
+}
+
+func checkNFSClient() (result, string) {
+	path, err := exec.LookPath("mount.nfs")
+	if err != nil {
+		if _, serr := os.Stat("/sbin/mount.nfs"); serr == nil {
+			return pass, "/sbin/mount.nfs"
+		}
+		return warn, "mount.nfs is not installed; vms with an FSx disk cannot start here (install nfs-common on debian, nfs-utils on arch)"
 	}
 	return pass, path
 }

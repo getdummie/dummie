@@ -372,6 +372,11 @@ func (h *ClientHandler) handleResult(ctx context.Context, client db.Client, clie
 	case proto.KindVMStart:
 		h.settleEnd(ctx, clientID, env.ID, rowID, res, "running")
 	case proto.KindVMDestroy:
+		if res.OK {
+			if err := h.q.ReleaseFSxDiskForVM(ctx, rowID); err != nil {
+				log.Printf("client %s: could not release the fsx disk of vm %s: %v", clientID, env.ID, err)
+			}
+		}
 		h.settleDestroy(ctx, clientID, env.ID, rowID, res)
 		if res.OK {
 			pushSuricataRules(ctx, h.q, h.hub, client.ID)

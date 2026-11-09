@@ -437,6 +437,18 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.purgeImages(ctx, env.ID, job.Cache.Names)
+	case proto.KindDiskPrepare:
+		if job.VM == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no vm spec"})
+			return
+		}
+		go l.prepareDisk(ctx, env.ID, *job.VM)
+	case proto.KindDiskSeed:
+		if job.Seed == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no rootfs to seed"})
+			return
+		}
+		go l.seedDisk(ctx, env.ID, *job.Seed)
 	case proto.KindSuricataConfig, proto.KindDpipeConfig, proto.KindCoreDNSConfig:
 		if job.File == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
@@ -476,6 +488,32 @@ func (l *link) createVM(ctx context.Context, jobID string, spec proto.VMSpec) {
 		info.IP = v.Net.IP
 	}
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMCreate, OK: true, VM: &info})
+}
+
+func (l *link) prepareDisk(ctx context.Context, jobID string, spec proto.VMSpec) {
+	ctx = context.WithoutCancel(ctx)
+	logf := func(format string, args ...any) {
+		log.Printf("job %s: "+format, append([]any{jobID}, args...)...)
+	}
+	rootfs, err := prepareRootfs(ctx, l.data, spec, logf)
+	if err != nil {
+		logf("could not prepare the rootfs: %v", err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskPrepare, Error: err.Error()})
+		return
+	}
+	logf("rootfs %s is ready (%d MiB)", rootfs.Name, rootfs.SizeBytes>>20)
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskPrepare, OK: true, Rootfs: &rootfs})
+}
+
+func (l *link) seedDisk(ctx context.Context, jobID string, seed proto.DiskSeed) {
+	ctx = context.WithoutCancel(ctx)
+	log.Printf("job %s: writing %s into %s:%s", jobID, seed.Rootfs, seed.FSx.Server, seed.FSx.Path)
+	if err := seedFSx(ctx, l.data, seed); err != nil {
+		log.Printf("job %s: could not seed the volume: %v", jobID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskSeed, Error: err.Error()})
+		return
+	}
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskSeed, OK: true})
 }
 
 func (l *link) applyRules(ctx context.Context, jobID, rules string) {

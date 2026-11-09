@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -197,10 +198,12 @@ type featuresDTO struct {
 	AllowEverything bool `json:"allow_everything"`
 	DockerImages    bool `json:"docker_images"`
 	MaxUploadMiB    int  `json:"max_upload_mib"`
+
+	DiskBackends []string `json:"disk_backends"`
 }
 
 // @Summary     Which optional VM features are enabled
-// @Description Admin toggles for the "Allow everything" egress entry and for building OS images from Docker images, and the largest upload the agent page's transfer tab accepts.
+// @Description Admin toggles for the "Allow everything" egress entry and for building OS images from Docker images, the largest upload the agent page's transfer tab accepts, and the disk backends a create may name.
 // @Tags        vms
 // @Produce     json
 // @Security    BearerAuth
@@ -213,7 +216,42 @@ func (h *UserHandler) GetFeatures(c *echo.Context) error {
 		AllowEverything: boolSetting(ctx, h.q, settingVMAllowEverything),
 		DockerImages:    boolSetting(ctx, h.q, settingUserDockerImages),
 		MaxUploadMiB:    intSetting(ctx, h.q, settingVMMaxUploadMiB),
+		DiskBackends:    enabledDiskBackends(ctx, h.q),
 	})
+}
+
+func enabledDiskBackends(ctx context.Context, q *db.Queries) []string {
+	out := []string{}
+	if boolSetting(ctx, q, settingDiskLocalEnabled) {
+		out = append(out, diskBackendLocal)
+	}
+	if boolSetting(ctx, q, settingDiskFSxEnabled) && setting(ctx, q, settingFSxFileSystemID) != "" &&
+		setting(ctx, q, settingFSxNFSClients) != "" {
+		out = append(out, diskBackendFSx)
+	}
+	return out
+}
+
+func (h *UserHandler) raiseFSxQuota(ctx context.Context, vm db.Vm, sizeBytes int64) error {
+	disk, err := h.q.GetFSxDiskByVM(ctx, vm.ID)
+	if err != nil {
+		return err
+	}
+	store, err := openFSx(ctx, h.q)
+	if err != nil {
+		return err
+	}
+	return store.setQuota(ctx, disk.VolumeID, sizeBytes)
+}
+
+func diskBackendAllowed(ctx context.Context, q *db.Queries, backend string) error {
+	if backend != diskBackendLocal && backend != diskBackendFSx {
+		return echo.NewHTTPError(http.StatusBadRequest, `disk_backend must be "local" or "fsx"`)
+	}
+	if !slices.Contains(enabledDiskBackends(ctx, q), backend) {
+		return echo.NewHTTPError(http.StatusForbidden, fmt.Sprintf("%s disks are not enabled on this installation", backend))
+	}
+	return nil
 }
 
 func (h *UserHandler) refuseEverywhere(ctx context.Context, p db.CreateVMNetworkTargetParams) error {
@@ -369,6 +407,9 @@ type createVMReq struct {
 	DiskSize string `json:"disk_size"`
 	KernelID string `json:"kernel_id"`
 	OSImageID string `json:"osimage_id"`
+
+	// DiskBackend is where the disk lives: "local" (the default) or "fsx".
+	DiskBackend string `json:"disk_backend" enums:"local,fsx"`
 
 	DefaultPort int32 `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
@@ -575,6 +616,14 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 
 	ctx := c.Request().Context()
 
+	backend := strings.TrimSpace(req.DiskBackend)
+	if backend == "" {
+		backend = diskBackendLocal
+	}
+	if err := diskBackendAllowed(ctx, h.q, backend); err != nil {
+		return err
+	}
+
 	u, err := h.q.GetUserByID(ctx, owner)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read your account")
@@ -704,9 +753,22 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			DefaultUser: loginName(osImage.ConfigUser),
 			KernelID:    pgKernelID,
 			OSImageID:   pgOSImageID,
+			DiskBackend: backend,
 		})
 		if err != nil {
 			return err
+		}
+		if backend == diskBackendFSx {
+			if _, err := scheduleTask(ctx, q, scheduleTaskParams{
+				Kind:        taskVMDiskFSx,
+				SubjectKind: subjectVM,
+				SubjectID:   row.ID,
+				Reason:      "clone an fsx volume for the new vm",
+				CreatedBy:   owner,
+				MaxAttempts: vmDiskFSxAttempts,
+			}); err != nil {
+				return err
+			}
 		}
 		for _, nt := range targets {
 			if _, _, err := insertTarget(ctx, q, row, nt); err != nil {
@@ -734,7 +796,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		return err
 	}
 	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
-		if ttl == 0 && len(targets) == 0 && len(attach) == 0 {
+		if ttl == 0 && len(targets) == 0 && len(attach) == 0 && backend == diskBackendLocal {
 			return insert(ctx, h.q, name)
 		}
 		return inTx(ctx, h.pool, h.q, func(q *db.Queries) error {
@@ -745,6 +807,9 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 			return echo.NewHTTPError(http.StatusConflict, "that name is already taken; choose another")
 		}
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not record the vm")
+	}
+	if backend == diskBackendFSx {
+		return c.JSON(http.StatusAccepted, toVMDTO(row))
 	}
 	rowID := uuid.UUID(row.ID.Bytes).String()
 
@@ -1278,6 +1343,13 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 	clientID := uuid.UUID(vm.ClientID.Bytes).String()
 	if !h.hub.Connected(clientID) {
 		return echo.NewHTTPError(http.StatusConflict, "the host running this vm is not connected")
+	}
+	// Raised first so the guest never sees a disk bigger than its volume may hold.
+	if vm.DiskBackend == diskBackendFSx && diskMiB > vm.DiskMiB {
+		if err := h.raiseFSxQuota(ctx, vm, int64(diskMiB)<<20); err != nil {
+			log.Printf("could not raise the fsx quota of vm %s: %v", vm.Name, err)
+			return echo.NewHTTPError(http.StatusBadGateway, "could not grow the vm's FSx volume; the vm is unchanged")
+		}
 	}
 	// Asked rather than told: the row is only moved once the host has the new
 	// size, so a host that refuses it does not leave the console showing a size
