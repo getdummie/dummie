@@ -18,7 +18,7 @@ const (
 	vmFSxMount = "disk"
 	fsxDiskRaw = "disk.raw"
 
-	fsxMountOptions = "nfsvers=4.1,hard,nconnect=16,timeo=600,retrans=2,noresvport"
+	fsxMountOptions = "nfsvers=4.1,hard,nconnect=16,timeo=600,retrans=2"
 )
 
 var rootfsCacheName = regexp.MustCompile(`^[0-9a-f]{32}-rootfs\.ext4$`)

@@ -152,7 +152,7 @@ a golden snapshot of its OS image, and hosts mount it over NFS.
 
 ```sh
 sudo mkdir -p /mnt/fsx-test
-sudo mount -t nfs -o nfsvers=4.1,noresvport <fsx-dns-name>:/fsx /mnt/fsx-test
+sudo mount -t nfs -o nfsvers=4.1 <fsx-dns-name>:/fsx /mnt/fsx-test
 sudo umount /mnt/fsx-test
 ```
 

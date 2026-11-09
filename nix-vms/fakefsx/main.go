@@ -429,8 +429,6 @@ func sharenfs(exports []struct {
 			rest = append(rest, o)
 		}
 	}
-	// FSx accepts mounts from unprivileged ports (clients use noresvport).
-	rest = append(rest, "insecure")
 	return strings.Join(append([]string{access + "=@" + c.Clients}, rest...), ","), nil
 }
 
