@@ -11,9 +11,15 @@ ON CONFLICT (rootfs) DO UPDATE
 SET claimed_by = EXCLUDED.claimed_by,
     updated_at = now()
 WHERE fsx_images.status = 'building'
-  AND (fsx_images.claimed_by = EXCLUDED.claimed_by
+  AND (fsx_images.claimed_by IS NULL
+       OR fsx_images.claimed_by = EXCLUDED.claimed_by
        OR fsx_images.updated_at < now() - interval '1 hour')
 RETURNING *;
+
+-- name: ReleaseFSxImageClaims :exec
+UPDATE fsx_images
+SET claimed_by = NULL, updated_at = now()
+WHERE claimed_by = $1 AND status = 'building';
 
 -- name: SetFSxImageVolume :exec
 UPDATE fsx_images
@@ -74,4 +80,34 @@ WHERE vm IS NULL OR released;
 
 -- name: DeleteFSxDisk :exec
 DELETE FROM fsx_disks
+WHERE id = $1;
+
+-- name: ListFSxImagesAdmin :many
+SELECT i.*,
+       COALESCE(o.name, '')::text AS osimage_name,
+       (SELECT count(*) FROM fsx_disks d WHERE d.image = i.id)::bigint AS disk_count
+FROM fsx_images i
+LEFT JOIN osimages o ON o.id = i.osimage_id
+ORDER BY i.created_at DESC;
+
+-- name: GetFSxImage :one
+SELECT * FROM fsx_images
+WHERE id = $1;
+
+-- name: CountFSxDisksForImage :one
+SELECT count(*) FROM fsx_disks
+WHERE image = $1;
+
+-- name: ListFSxDisksAdmin :many
+SELECT d.*,
+       COALESCE(v.name, '')::text AS vm_name,
+       COALESCE(v.status, '')::text AS vm_status,
+       i.rootfs AS image_rootfs
+FROM fsx_disks d
+JOIN fsx_images i ON i.id = d.image
+LEFT JOIN vms v ON v.id = d.vm
+ORDER BY d.created_at DESC;
+
+-- name: GetFSxDisk :one
+SELECT * FROM fsx_disks
 WHERE id = $1;

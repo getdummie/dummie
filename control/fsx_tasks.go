@@ -54,6 +54,9 @@ func handleVMDiskFSx(ctx context.Context, r *taskRunner, t db.ScheduledTask) tas
 		if err := r.q.MarkVMFailed(failCtx, db.MarkVMFailedParams{ID: vm.ID, LastError: msg}); err != nil {
 			log.Printf("could not mark vm %s failed: %v", vm.Name, err)
 		}
+		if err := r.q.ReleaseFSxImageClaims(failCtx, t.ID); err != nil {
+			log.Printf("could not release fsx image claims of %s: %v", vm.Name, err)
+		}
 		return taskFailed("%s", msg)
 	}
 	retryOrFail := func(format string, args ...any) taskOutcome {

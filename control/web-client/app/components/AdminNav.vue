@@ -5,9 +5,11 @@ import {
   Box,
   Clock,
   Cpu,
+  Database,
   Globe,
   HardDrive,
   KeyRound,
+  Layers,
   ScrollText,
   Link2,
   Server,
@@ -45,6 +47,10 @@ const groups: AdminLink[][] = [
   [
     { label: 'Kernels', to: '/admin/model/kernels', icon: Cpu },
     { label: 'OS images', to: '/admin/model/osimages', icon: HardDrive },
+  ],
+  [
+    { label: 'FSx images', to: '/admin/model/fsx-images', icon: Layers },
+    { label: 'FSx disks', to: '/admin/model/fsx-disks', icon: Database },
   ],
 ]
 

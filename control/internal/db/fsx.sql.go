@@ -18,7 +18,8 @@ ON CONFLICT (rootfs) DO UPDATE
 SET claimed_by = EXCLUDED.claimed_by,
     updated_at = now()
 WHERE fsx_images.status = 'building'
-  AND (fsx_images.claimed_by = EXCLUDED.claimed_by
+  AND (fsx_images.claimed_by IS NULL
+       OR fsx_images.claimed_by = EXCLUDED.claimed_by
        OR fsx_images.updated_at < now() - interval '1 hour')
 RETURNING id, rootfs, osimage_id, size_bytes, volume_id, volume_path, snapshot_id, snapshot_arn, status, claimed_by, created_at, updated_at
 `
@@ -55,6 +56,18 @@ func (q *Queries) ClaimFSxImage(ctx context.Context, arg ClaimFSxImageParams) (F
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const countFSxDisksForImage = `-- name: CountFSxDisksForImage :one
+SELECT count(*) FROM fsx_disks
+WHERE image = $1
+`
+
+func (q *Queries) CountFSxDisksForImage(ctx context.Context, image pgtype.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countFSxDisksForImage, image)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createFSxDisk = `-- name: CreateFSxDisk :one
@@ -110,6 +123,26 @@ func (q *Queries) DeleteFSxImage(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const getFSxDisk = `-- name: GetFSxDisk :one
+SELECT id, vm, image, volume_id, volume_path, released, created_at FROM fsx_disks
+WHERE id = $1
+`
+
+func (q *Queries) GetFSxDisk(ctx context.Context, id pgtype.UUID) (FsxDisk, error) {
+	row := q.db.QueryRow(ctx, getFSxDisk, id)
+	var i FsxDisk
+	err := row.Scan(
+		&i.ID,
+		&i.Vm,
+		&i.Image,
+		&i.VolumeID,
+		&i.VolumePath,
+		&i.Released,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getFSxDiskByVM = `-- name: GetFSxDiskByVM :one
 SELECT id, vm, image, volume_id, volume_path, released, created_at FROM fsx_disks
 WHERE vm = $1
@@ -126,6 +159,31 @@ func (q *Queries) GetFSxDiskByVM(ctx context.Context, vm pgtype.UUID) (FsxDisk, 
 		&i.VolumePath,
 		&i.Released,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getFSxImage = `-- name: GetFSxImage :one
+SELECT id, rootfs, osimage_id, size_bytes, volume_id, volume_path, snapshot_id, snapshot_arn, status, claimed_by, created_at, updated_at FROM fsx_images
+WHERE id = $1
+`
+
+func (q *Queries) GetFSxImage(ctx context.Context, id pgtype.UUID) (FsxImage, error) {
+	row := q.db.QueryRow(ctx, getFSxImage, id)
+	var i FsxImage
+	err := row.Scan(
+		&i.ID,
+		&i.Rootfs,
+		&i.OSImageID,
+		&i.SizeBytes,
+		&i.VolumeID,
+		&i.VolumePath,
+		&i.SnapshotID,
+		&i.SnapshotARN,
+		&i.Status,
+		&i.ClaimedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -153,6 +211,122 @@ func (q *Queries) GetFSxImageByRootfs(ctx context.Context, rootfs string) (FsxIm
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const listFSxDisksAdmin = `-- name: ListFSxDisksAdmin :many
+SELECT d.id, d.vm, d.image, d.volume_id, d.volume_path, d.released, d.created_at,
+       COALESCE(v.name, '')::text AS vm_name,
+       COALESCE(v.status, '')::text AS vm_status,
+       i.rootfs AS image_rootfs
+FROM fsx_disks d
+JOIN fsx_images i ON i.id = d.image
+LEFT JOIN vms v ON v.id = d.vm
+ORDER BY d.created_at DESC
+`
+
+type ListFSxDisksAdminRow struct {
+	ID          pgtype.UUID
+	Vm          pgtype.UUID
+	Image       pgtype.UUID
+	VolumeID    string
+	VolumePath  string
+	Released    bool
+	CreatedAt   pgtype.Timestamptz
+	VMName      string
+	VmStatus    string
+	ImageRootfs string
+}
+
+func (q *Queries) ListFSxDisksAdmin(ctx context.Context) ([]ListFSxDisksAdminRow, error) {
+	rows, err := q.db.Query(ctx, listFSxDisksAdmin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFSxDisksAdminRow
+	for rows.Next() {
+		var i ListFSxDisksAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Vm,
+			&i.Image,
+			&i.VolumeID,
+			&i.VolumePath,
+			&i.Released,
+			&i.CreatedAt,
+			&i.VMName,
+			&i.VmStatus,
+			&i.ImageRootfs,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listFSxImagesAdmin = `-- name: ListFSxImagesAdmin :many
+SELECT i.id, i.rootfs, i.osimage_id, i.size_bytes, i.volume_id, i.volume_path, i.snapshot_id, i.snapshot_arn, i.status, i.claimed_by, i.created_at, i.updated_at,
+       COALESCE(o.name, '')::text AS osimage_name,
+       (SELECT count(*) FROM fsx_disks d WHERE d.image = i.id)::bigint AS disk_count
+FROM fsx_images i
+LEFT JOIN osimages o ON o.id = i.osimage_id
+ORDER BY i.created_at DESC
+`
+
+type ListFSxImagesAdminRow struct {
+	ID          pgtype.UUID
+	Rootfs      string
+	OSImageID   pgtype.UUID
+	SizeBytes   int64
+	VolumeID    string
+	VolumePath  string
+	SnapshotID  string
+	SnapshotARN string
+	Status      string
+	ClaimedBy   pgtype.UUID
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+	OsimageName string
+	DiskCount   int64
+}
+
+func (q *Queries) ListFSxImagesAdmin(ctx context.Context) ([]ListFSxImagesAdminRow, error) {
+	rows, err := q.db.Query(ctx, listFSxImagesAdmin)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListFSxImagesAdminRow
+	for rows.Next() {
+		var i ListFSxImagesAdminRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Rootfs,
+			&i.OSImageID,
+			&i.SizeBytes,
+			&i.VolumeID,
+			&i.VolumePath,
+			&i.SnapshotID,
+			&i.SnapshotARN,
+			&i.Status,
+			&i.ClaimedBy,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.OsimageName,
+			&i.DiskCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listReleasedFSxDisks = `-- name: ListReleasedFSxDisks :many
@@ -261,6 +435,17 @@ WHERE vm = $1
 
 func (q *Queries) ReleaseFSxDiskForVM(ctx context.Context, vm pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, releaseFSxDiskForVM, vm)
+	return err
+}
+
+const releaseFSxImageClaims = `-- name: ReleaseFSxImageClaims :exec
+UPDATE fsx_images
+SET claimed_by = NULL, updated_at = now()
+WHERE claimed_by = $1 AND status = 'building'
+`
+
+func (q *Queries) ReleaseFSxImageClaims(ctx context.Context, claimedBy pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, releaseFSxImageClaims, claimedBy)
 	return err
 }
 
