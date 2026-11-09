@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import type { Integration } from '@/composables/useIntegrations'
+import { proxyHost } from '@/composables/useIntegrations'
 
 // domain is the fleet domain; each integration answers at <name>.int.<domain>.
 const props = defineProps<{ vmId: string, vmName: string, domain: string }>()
@@ -71,7 +72,7 @@ async function load() {
     // Warm the github call while the user is still reading, so opening the
     // editor does not wait on it. A failure here is not worth surfacing: the
     // open path reports it and retries.
-    for (const i of list.filter(x => x.connected && x.kind !== 'gitlab')) loadChoices(i.id).catch(() => {})
+    for (const i of list.filter(x => x.connected && x.kind === 'github')) loadChoices(i.id).catch(() => {})
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not load the integrations'
@@ -88,6 +89,7 @@ const usageHosts = computed(() => {
   if (!props.domain) return []
   const out = new Map<string, boolean>()
   for (const a of attached.value.values()) {
+    if (a.kind === 'http') continue
     const name = a.kind === 'gitlab' ? a.instance : 'github'
     if (name) out.set(`${name}.int.${props.domain}`, a.kind === 'gitlab')
   }
@@ -175,7 +177,7 @@ async function saveScope(i: Integration) {
       </Button>
     </div>
     <p class="mt-0.5 max-w-2xl text-xs text-muted-foreground">
-      Clone private GitHub and GitLab repositories without requiring ssh keys on the VM.
+      Clone private repositories without ssh keys on the VM, and reach your own HTTP proxies.
     </p>
 
     <FormError v-if="error" id="vm-integrations-error" :message="error" class="mt-3" />
@@ -205,6 +207,10 @@ async function saveScope(i: Integration) {
               <p v-else-if="!attached.has(i.id)" class="mt-0.5 text-xs text-muted-foreground">
                 Not attached.
               </p>
+              <p v-else-if="i.kind === 'http'" class="mt-0.5 break-all text-xs text-muted-foreground">
+                <span class="font-mono">{{ domain ? proxyHost(i.name, domain) : `${i.name}-u` }}</span>
+                → <span class="font-mono">{{ i.target_url }}</span>
+              </p>
               <p v-else-if="i.kind === 'gitlab'" class="mt-0.5 text-xs text-muted-foreground">
                 Reaches whatever its token can on <span class="font-mono">{{ i.instance }}</span>.
               </p>
@@ -223,7 +229,7 @@ async function saveScope(i: Integration) {
             </div>
             <div class="flex shrink-0 items-center gap-2">
               <Button
-                v-if="attached.has(i.id) && i.kind !== 'gitlab'"
+                v-if="attached.has(i.id) && i.kind === 'github'"
                 variant="ghost"
                 size="sm"
                 class="font-mono text-xs"

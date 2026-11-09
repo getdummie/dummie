@@ -169,6 +169,10 @@ type Integration struct {
 	GitLabInstanceID pgtype.UUID
 	TokenEnc         []byte
 	GitLabUsername   string
+	ProxyTargetURL   string
+	ProxyMethods     []string
+	ProxyVerifyTLS   bool
+	ProxyHeadersEnc  []byte
 }
 
 type IntegrationRepo struct {

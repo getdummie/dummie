@@ -192,6 +192,12 @@ type IntegrationTokenResponse struct {
 	Upstream string `json:"upstream,omitempty"`
 	// Meter asks intproxy to record usage under it: "<user>/<vm>/<provider>".
 	Meter string `json:"meter,omitempty"`
+
+	// Set for a user proxy: the headers to add, the methods allowed, and
+	// whether its upstream's certificate goes unchecked.
+	Headers     map[string]string `json:"headers,omitempty"`
+	Methods     []string          `json:"methods,omitempty"`
+	InsecureTLS bool              `json:"insecure_tls,omitempty"`
 }
 
 const IntegrationTokenPath = "/api/v1/client/integration/token"

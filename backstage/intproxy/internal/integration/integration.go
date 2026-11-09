@@ -9,6 +9,7 @@ import (
 	"net/http/httputil"
 	"sort"
 	"strings"
+	"time"
 
 	"intproxy/internal/credential"
 )
@@ -29,6 +30,10 @@ type Route struct {
 	// Relay, when set, is a broker path that answers this request outright;
 	// nothing is proxied and no credential is fetched.
 	Relay string
+
+	// Generic marks an upstream a user picked: plain http is allowed and its
+	// 401s and error bodies are its own business, so they pass through as is.
+	Generic bool
 }
 
 type Integration interface {
@@ -70,6 +75,18 @@ type Metered interface {
 	Meter(resp *http.Response, done func(Usage))
 }
 
+// Transporter is an Integration that dials its upstreams itself rather than
+// through the shared transport.
+type Transporter interface {
+	RoundTripper(credential.Token) http.RoundTripper
+}
+
+// Family is an Integration answering for every <x>-<Name> label, with <x>
+// left for it to read off the Host.
+type Family interface {
+	Family()
+}
+
 type Options struct {
 	// Name is what the config called this integration, and so its subdomain.
 	Name string
@@ -81,6 +98,9 @@ type Options struct {
 	// SelfURL is how a client reaches this integration through the proxy.
 	SelfURL func() string
 	Version string
+	// Transport is the shared one, for a Transporter to clone.
+	Transport   *http.Transport
+	DialTimeout time.Duration
 }
 
 type Factory func(Options) (Integration, error)

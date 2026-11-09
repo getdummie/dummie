@@ -2,6 +2,7 @@ package main
 
 import (
 	"net"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -43,6 +44,7 @@ func TestGenerateIntproxyConfig(t *testing.T) {
 		"- name: llm",
 		"- name: \"techgitlab\"\n    kind: \"gitlab\"",
 		"- name: \"forge\"\n    kind: \"gitea\"",
+		"- name: u\n    kind: http\n    deny: [\"10.64.0.0/16\"]",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q:\n%s", want, out)
@@ -56,10 +58,14 @@ func TestGenerateIntproxyConfig(t *testing.T) {
 func TestGenerateIntproxyConfigCarriesNoPolicy(t *testing.T) {
 	out := generateIntproxyConfig("example.com", "https://control.example.com", true, nil)
 
-	for _, forbidden := range []string{"10.64.0.", "integration:", "repos:", "installation"} {
+	for _, forbidden := range []string{"integration:", "repos:", "installation"} {
 		if strings.Contains(out, forbidden) {
 			t.Errorf("the config leaks policy (%q):\n%s", forbidden, out)
 		}
+	}
+	// The pool is denied as a whole; no single vm's address belongs here.
+	if regexp.MustCompile(`10\.64\.0\.[1-9]`).MatchString(out) {
+		t.Errorf("the config names a vm address:\n%s", out)
 	}
 }
 

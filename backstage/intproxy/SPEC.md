@@ -209,6 +209,28 @@ the control server sets it only for global keys. `Accept-Encoding` is dropped
 upstream so the body stays readable, and a global OpenAI stream gets
 `stream_options.include_usage` unless the client set `stream_options` itself.
 
+## Request shapes (http, user proxies)
+
+An integration of kind `http` is a family: named `u`, it answers for every
+`<proxy>-u.<label>.<tld>` that no exact name claims, so a built-in always wins.
+`<proxy>` is the scope's resource. The broker answers with the target base URL
+(`http` or `https`), the methods allowed, the headers to set and whether to skip
+certificate verification. Broker mode only.
+
+| inbound | upstream |
+|---|---|
+| `<method> /<path>?<query>` | `<target><cleaned path>?<query as sent>`, 405 unless `<method>` is allowed |
+
+The path is cleaned so the target's base path is a floor. The configured headers
+are set after the usual stripping, so they override the client's. The upstream
+is the owner's choice, so its 401s and error bodies pass through untouched.
+
+Every dial is checked on the resolved address: loopback, link-local (so the
+metadata service), unspecified, multicast, the host's own interface addresses
+and the integration's `deny` prefixes are refused. The control server denies the
+vm pool, which keeps a guest from reaching another guest or this proxy through
+it.
+
 ## Header handling
 
 Every inbound `Authorization`, `Cookie`, `Proxy-Authorization`, `Forwarded`,

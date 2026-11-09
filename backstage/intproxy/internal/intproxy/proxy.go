@@ -45,7 +45,19 @@ var stripped = []string{
 	"Chatgpt-Account-Id",
 }
 
-func (s *Server) newReverseProxy() *httputil.ReverseProxy {
+func (s *Server) newTransport() *http.Transport {
+	return &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: s.cfg.DialTimeout.Or(10 * time.Second)}).DialContext,
+		TLSHandshakeTimeout:   s.cfg.TLSHandshakeTimeout.Or(10 * time.Second),
+		ResponseHeaderTimeout: s.cfg.ResponseHeaderTimeout.Or(60 * time.Second),
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConnsPerHost:   16,
+		ForceAttemptHTTP2:     true,
+		DisableCompression:    true,
+	}
+}
+
+func (s *Server) newReverseProxy(shared http.RoundTripper) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite:        s.rewrite,
 		ModifyResponse: s.modifyResponse,
@@ -53,17 +65,20 @@ func (s *Server) newReverseProxy() *httputil.ReverseProxy {
 		// Flush every write: git's sideband progress and any streaming api
 		// response both stall behind a buffer.
 		FlushInterval: -1,
-		Transport: &http.Transport{
-			DialContext:           (&net.Dialer{Timeout: s.cfg.DialTimeout.Or(10 * time.Second)}).DialContext,
-			TLSHandshakeTimeout:   s.cfg.TLSHandshakeTimeout.Or(10 * time.Second),
-			ResponseHeaderTimeout: s.cfg.ResponseHeaderTimeout.Or(60 * time.Second),
-			IdleConnTimeout:       90 * time.Second,
-			MaxIdleConnsPerHost:   16,
-			ForceAttemptHTTP2:     true,
-			DisableCompression:    true,
-		},
-		ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
+		Transport:     pickTransport{shared: shared},
+		ErrorLog:      slog.NewLogLogger(s.log.Handler(), slog.LevelWarn),
 	}
+}
+
+// pickTransport hands a request to its integration's own transport, if it has one.
+type pickTransport struct{ shared http.RoundTripper }
+
+func (p pickTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t, ok := r.Context().Value(ctxIntegration).(integration.Transporter); ok {
+		tok, _ := r.Context().Value(ctxToken).(credential.Token)
+		return t.RoundTripper(tok).RoundTrip(r)
+	}
+	return p.shared.RoundTrip(r)
 }
 
 func (s *Server) proxy(w http.ResponseWriter, r *http.Request, ig integration.Integration, route integration.Route, tok credential.Token) {
@@ -80,12 +95,16 @@ func (s *Server) rewrite(pr *httputil.ProxyRequest) {
 	tok, _ := pr.In.Context().Value(ctxToken).(credential.Token)
 
 	out := &url.URL{Scheme: "https", Host: route.UpstreamHost, Path: route.UpstreamPath}
-	if base, ok := upstreamBase(tok.Upstream); ok {
+	if base, ok := upstreamBase(tok.Upstream, route.Generic); ok {
+		out.Scheme = base.Scheme
 		out.Host = base.Host
 		out.Path = strings.TrimSuffix(base.Path, "/") + route.UpstreamPath
 	}
-	if q := pr.In.URL.Query(); len(q) > 0 {
-		out.RawQuery = q.Encode()
+	switch {
+	case route.Generic:
+		out.RawQuery = pr.In.URL.RawQuery
+	case len(pr.In.URL.Query()) > 0:
+		out.RawQuery = pr.In.URL.Query().Encode()
 	}
 	pr.Out.URL = out
 	pr.Out.Host = out.Host
@@ -99,13 +118,17 @@ func (s *Server) rewrite(pr *httputil.ProxyRequest) {
 }
 
 // upstreamBase only honours https with a host and nothing else, so a source
-// cannot steer a credential onto plain http or smuggle a query along.
-func upstreamBase(raw string) (*url.URL, bool) {
+// cannot steer a credential onto plain http or smuggle a query along. A
+// generic route's owner chose its upstream, plain http included.
+func upstreamBase(raw string, allowHTTP bool) (*url.URL, bool) {
 	if raw == "" {
 		return nil, false
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if err != nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return nil, false
+	}
+	if u.Scheme != "https" && !(allowHTTP && u.Scheme == "http") {
 		return nil, false
 	}
 	return u, true
@@ -115,7 +138,7 @@ func (s *Server) modifyResponse(resp *http.Response) error {
 	ctx := resp.Request.Context()
 	ig, _ := ctx.Value(ctxIntegration).(integration.Integration)
 	route, _ := ctx.Value(ctxRoute).(integration.Route)
-	if ig == nil {
+	if ig == nil || route.Generic {
 		return nil
 	}
 

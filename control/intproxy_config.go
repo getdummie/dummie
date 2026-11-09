@@ -29,6 +29,10 @@ const (
 	intproxyKeyFile  = intproxyCertDir + "/privkey.pem"
 
 	intproxyBrokerSocket = "/run/intproxy/broker.sock"
+
+	// vmPool is what a user proxy may never dial: other guests, and intproxy
+	// itself. It assumes dclient's default pool, as intproxyAddr does.
+	vmPool = "10.64.0.0/16"
 )
 
 const intproxyConfigHeader = `# Written by the control server and installed by dclient. Edits on the host are
@@ -108,6 +112,7 @@ func generateIntproxyConfig(tld, controlURL string, tls bool, hosts []gitHost) s
 	b.WriteString(intproxyStaticConfig)
 
 	b.WriteString("\nintegrations:\n  - name: github\n  - name: llm\n")
+	fmt.Fprintf(&b, "  - name: %s\n    kind: http\n    deny: [%s]\n", userProxyFamily, yamlString(vmPool))
 	for _, h := range hosts {
 		fmt.Fprintf(&b, "  - name: %s\n    kind: %s\n", yamlString(h.name), yamlString(h.flavor))
 	}

@@ -63,7 +63,7 @@ func (q *Queries) CreateGitHubInstallState(ctx context.Context, arg CreateGitHub
 const createIntegration = `-- name: CreateIntegration :one
 INSERT INTO integrations (owner_id, name, kind, readonly)
 VALUES ($1, $2, $3, $4)
-RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username
+RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username, proxy_target_url, proxy_methods, proxy_verify_tls, proxy_headers_enc
 `
 
 type CreateIntegrationParams struct {
@@ -94,6 +94,10 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 		&i.GitLabInstanceID,
 		&i.TokenEnc,
 		&i.GitLabUsername,
+		&i.ProxyTargetURL,
+		&i.ProxyMethods,
+		&i.ProxyVerifyTLS,
+		&i.ProxyHeadersEnc,
 	)
 	return i, err
 }
@@ -261,7 +265,7 @@ func (q *Queries) GetGitHubInstallation(ctx context.Context, id pgtype.UUID) (Gi
 }
 
 const getIntegrationByNameForOwner = `-- name: GetIntegrationByNameForOwner :one
-SELECT id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username FROM integrations
+SELECT id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username, proxy_target_url, proxy_methods, proxy_verify_tls, proxy_headers_enc FROM integrations
 WHERE owner_id = $1 AND name = $2
 `
 
@@ -286,12 +290,16 @@ func (q *Queries) GetIntegrationByNameForOwner(ctx context.Context, arg GetInteg
 		&i.GitLabInstanceID,
 		&i.TokenEnc,
 		&i.GitLabUsername,
+		&i.ProxyTargetURL,
+		&i.ProxyMethods,
+		&i.ProxyVerifyTLS,
+		&i.ProxyHeadersEnc,
 	)
 	return i, err
 }
 
 const getIntegrationForOwner = `-- name: GetIntegrationForOwner :one
-SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at, i.gitlab_instance_id, i.token_enc, i.gitlab_username,
+SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at, i.gitlab_instance_id, i.token_enc, i.gitlab_username, i.proxy_target_url, i.proxy_methods, i.proxy_verify_tls, i.proxy_headers_enc,
        gi.account_login,
        gi.suspended,
        gi.repository_selection,
@@ -323,6 +331,10 @@ type GetIntegrationForOwnerRow struct {
 	GitLabInstanceID    pgtype.UUID
 	TokenEnc            []byte
 	GitLabUsername      string
+	ProxyTargetURL      string
+	ProxyMethods        []string
+	ProxyVerifyTLS      bool
+	ProxyHeadersEnc     []byte
 	AccountLogin        pgtype.Text
 	Suspended           pgtype.Bool
 	RepositorySelection pgtype.Text
@@ -348,6 +360,10 @@ func (q *Queries) GetIntegrationForOwner(ctx context.Context, arg GetIntegration
 		&i.GitLabInstanceID,
 		&i.TokenEnc,
 		&i.GitLabUsername,
+		&i.ProxyTargetURL,
+		&i.ProxyMethods,
+		&i.ProxyVerifyTLS,
+		&i.ProxyHeadersEnc,
 		&i.AccountLogin,
 		&i.Suspended,
 		&i.RepositorySelection,
@@ -679,7 +695,7 @@ func (q *Queries) ListIntegrationVMs(ctx context.Context, integrationID pgtype.U
 }
 
 const listIntegrationsByOwner = `-- name: ListIntegrationsByOwner :many
-SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at, i.gitlab_instance_id, i.token_enc, i.gitlab_username,
+SELECT i.id, i.owner_id, i.name, i.kind, i.installation_pk, i.all_repos, i.readonly, i.created_at, i.updated_at, i.gitlab_instance_id, i.token_enc, i.gitlab_username, i.proxy_target_url, i.proxy_methods, i.proxy_verify_tls, i.proxy_headers_enc,
        gi.account_login,
        gi.suspended,
        gi.repository_selection,
@@ -708,6 +724,10 @@ type ListIntegrationsByOwnerRow struct {
 	GitLabInstanceID    pgtype.UUID
 	TokenEnc            []byte
 	GitLabUsername      string
+	ProxyTargetURL      string
+	ProxyMethods        []string
+	ProxyVerifyTLS      bool
+	ProxyHeadersEnc     []byte
 	AccountLogin        pgtype.Text
 	Suspended           pgtype.Bool
 	RepositorySelection pgtype.Text
@@ -740,6 +760,10 @@ func (q *Queries) ListIntegrationsByOwner(ctx context.Context, ownerID pgtype.UU
 			&i.GitLabInstanceID,
 			&i.TokenEnc,
 			&i.GitLabUsername,
+			&i.ProxyTargetURL,
+			&i.ProxyMethods,
+			&i.ProxyVerifyTLS,
+			&i.ProxyHeadersEnc,
 			&i.AccountLogin,
 			&i.Suspended,
 			&i.RepositorySelection,
@@ -915,7 +939,7 @@ SET all_repos  = $2,
     readonly   = $3,
     updated_at = now()
 WHERE id = $1 AND owner_id = $4
-RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username
+RETURNING id, owner_id, name, kind, installation_pk, all_repos, readonly, created_at, updated_at, gitlab_instance_id, token_enc, gitlab_username, proxy_target_url, proxy_methods, proxy_verify_tls, proxy_headers_enc
 `
 
 type UpdateIntegrationFlagsParams struct {
@@ -946,6 +970,10 @@ func (q *Queries) UpdateIntegrationFlags(ctx context.Context, arg UpdateIntegrat
 		&i.GitLabInstanceID,
 		&i.TokenEnc,
 		&i.GitLabUsername,
+		&i.ProxyTargetURL,
+		&i.ProxyMethods,
+		&i.ProxyVerifyTLS,
+		&i.ProxyHeadersEnc,
 	)
 	return i, err
 }

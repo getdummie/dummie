@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { Integration, IntegrationVM, OwnedVM } from '@/composables/useIntegrations'
 import { flavorLabel, integrationHost } from '@/composables/useIntegrations'
+import type { HTTPProxyForm } from '@/components/HttpProxyFields.vue'
+import { emptyProxyForm, proxyFormBody, proxyFormValid } from '@/components/HttpProxyFields.vue'
 
 definePageMeta({ middleware: ['auth'] })
 
@@ -46,7 +48,8 @@ async function load() {
     item.value = i
     attachedVMs.value = a
     vms.value = v
-    if (i.kind !== 'gitlab' && i.connected) await loadAvailable()
+    if (i.kind === 'http') resetProxyForm(i)
+    if (i.kind === 'github' && i.connected) await loadAvailable()
   }
   catch (e) {
     error.value = e instanceof Error ? e.message : 'Could not load the integration'
@@ -98,6 +101,38 @@ async function manageOnGitHub() {
 }
 
 const isGitLab = computed(() => item.value?.kind === 'gitlab')
+const isHTTP = computed(() => item.value?.kind === 'http')
+
+const proxyForm = ref<HTTPProxyForm>(emptyProxyForm())
+const proxySaving = ref(false)
+const proxySaved = ref(false)
+
+function resetProxyForm(i: Integration) {
+  proxyForm.value = {
+    target_url: i.target_url ?? '',
+    methods: [...(i.methods ?? [])],
+    verify_tls: i.verify_tls ?? true,
+    headers: (i.header_names ?? []).map(name => ({ name, value: '', stored: true })),
+  }
+}
+
+async function saveProxy() {
+  proxySaving.value = true
+  proxySaved.value = false
+  error.value = null
+  try {
+    await api.updateHTTP(id.value, proxyFormBody(proxyForm.value))
+    item.value = await api.get(id.value)
+    resetProxyForm(item.value)
+    proxySaved.value = true
+  }
+  catch (e) {
+    error.value = e instanceof Error ? e.message : 'Could not save the proxy'
+  }
+  finally {
+    proxySaving.value = false
+  }
+}
 
 const newToken = ref('')
 const tokenSaving = ref(false)
@@ -125,7 +160,8 @@ async function saveToken() {
 // An attached VM is the accurate source; otherwise any of the user's will do.
 const usage = computed(() => {
   const attachedVM = vms.value.find(v => attached.value.has(v.id))
-  const host = integrationHost(attachedVM ?? vms.value[0], isGitLab.value ? item.value?.instance : 'github')
+  const name = isHTTP.value ? `${item.value?.name}-u` : isGitLab.value ? item.value?.instance : 'github'
+  const host = integrationHost(attachedVM ?? vms.value[0], name)
   const repo = isGitLab.value ? undefined : available.value[0]
   return host ? { host, repo } : null
 })
@@ -153,7 +189,10 @@ const usage = computed(() => {
           {{ item.name }}
           <Badge v-if="item.readonly" variant="secondary">Read-only</Badge>
         </h1>
-        <p v-if="isGitLab" class="mt-2 text-sm text-muted-foreground">
+        <p v-if="isHTTP" class="mt-2 break-all text-sm text-muted-foreground">
+          HTTP proxy to <span class="font-mono">{{ item.target_url }}</span>.
+        </p>
+        <p v-else-if="isGitLab" class="mt-2 text-sm text-muted-foreground">
           <template v-if="item.account">Token for <span class="font-mono">{{ item.account }}</span> on </template>
           <template v-else>Token on </template>
           <span class="font-mono">{{ item.instance }}</span>
@@ -201,7 +240,23 @@ const usage = computed(() => {
       </div>
 
       <template v-else>
-        <section v-if="isGitLab" class="mt-8 rounded-lg border border-border p-4 sm:p-6">
+        <section v-if="isHTTP" class="mt-8 rounded-lg border border-border p-4 sm:p-6">
+          <h2 class="text-lg font-semibold tracking-tight">Proxy</h2>
+          <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+            Changes reach attached VMs within a minute; nothing needs restarting.
+          </p>
+          <form class="mt-4 max-w-2xl" @submit.prevent="saveProxy">
+            <HttpProxyFields v-model="proxyForm" id-prefix="proxy" />
+            <div class="mt-6 flex flex-wrap items-center gap-3">
+              <Button type="submit" :disabled="proxySaving || !proxyFormValid(proxyForm)">
+                {{ proxySaving ? 'Saving…' : 'Save' }}
+              </Button>
+              <p v-if="proxySaved" class="text-sm text-muted-foreground" role="status">Saved.</p>
+            </div>
+          </form>
+        </section>
+
+        <section v-else-if="isGitLab" class="mt-8 rounded-lg border border-border p-4 sm:p-6">
           <h2 class="text-lg font-semibold tracking-tight">Token</h2>
           <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
             VMs reach whatever projects this token can. Replace it here when it expires or is
@@ -279,7 +334,7 @@ const usage = computed(() => {
                 </NuxtLink>
                 <p class="font-mono text-xs text-muted-foreground">{{ vm.ip }}</p>
               </div>
-              <p v-if="isGitLab" class="sr-only">attached</p>
+              <p v-if="isGitLab || isHTTP" class="sr-only">attached</p>
               <p v-else-if="!vmRepos(vm).length" class="shrink-0 text-xs text-muted-foreground">
                 no repositories
               </p>
@@ -311,7 +366,11 @@ const usage = computed(() => {
         <section v-if="usage" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
           <h2 class="text-lg font-semibold tracking-tight">Using it</h2>
           <div class="mt-4">
-            <IntegrationUsage :host="usage.host" :repo="usage.repo" :gitlab="isGitLab" />
+            <template v-if="isHTTP">
+              <p class="text-xs text-muted-foreground">From inside an attached VM</p>
+              <pre class="mt-1 overflow-x-auto rounded-md bg-muted px-3 py-2 font-mono text-xs">curl https://{{ usage.host }}/</pre>
+            </template>
+            <IntegrationUsage v-else :host="usage.host" :repo="usage.repo" :gitlab="isGitLab" />
           </div>
         </section>
       </template>

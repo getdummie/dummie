@@ -57,6 +57,10 @@ type brokerResponse struct {
 	Account   string    `json:"account,omitempty"`
 	Upstream  string    `json:"upstream,omitempty"`
 	Meter     string    `json:"meter,omitempty"`
+
+	Headers     map[string]string `json:"headers,omitempty"`
+	Methods     []string          `json:"methods,omitempty"`
+	InsecureTLS bool              `json:"insecure_tls,omitempty"`
 }
 
 type brokerError struct {
@@ -96,13 +100,17 @@ func (b *Broker) Token(ctx context.Context, s Scope) (Token, error) {
 	}
 
 	var br brokerResponse
-	if err := json.Unmarshal(raw, &br); err != nil || br.Token == "" {
+	// A user proxy may carry no secret at all; its methods are what make the answer usable.
+	if err := json.Unmarshal(raw, &br); err != nil || (br.Token == "" && len(br.Methods) == 0) {
 		return Token{}, &Denial{
 			Status:  http.StatusBadGateway,
 			Message: "intproxy: the control server returned an unusable token",
 		}
 	}
-	return Token{Value: br.Token, ExpiresAt: br.ExpiresAt, Upstream: br.Upstream, Meter: br.Meter, Account: br.Account}, nil
+	return Token{
+		Value: br.Token, ExpiresAt: br.ExpiresAt, Upstream: br.Upstream, Meter: br.Meter, Account: br.Account,
+		Headers: br.Headers, Methods: br.Methods, InsecureTLS: br.InsecureTLS,
+	}, nil
 }
 
 type relayRequest struct {

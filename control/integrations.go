@@ -41,6 +41,10 @@ type integrationDTO struct {
 	Instance     string   `json:"instance,omitempty"`
 	BaseURL      string   `json:"base_url,omitempty"`
 	Flavor       string   `json:"flavor,omitempty"`
+	TargetURL    string   `json:"target_url,omitempty"`
+	Methods      []string `json:"methods,omitempty"`
+	VerifyTLS    *bool    `json:"verify_tls,omitempty"`
+	HeaderNames  []string `json:"header_names,omitempty"`
 	CreatedAt    string   `json:"created_at"`
 }
 
@@ -81,6 +85,13 @@ func (h *IntegrationHandler) List(c *echo.Context) error {
 			dto.BaseURL = r.GitLabBaseURL.String
 			dto.Flavor = r.GitLabFlavor.String
 		}
+		if r.Kind == integrationKindHTTP {
+			verify := r.ProxyVerifyTLS
+			dto.Connected = true
+			dto.TargetURL = r.ProxyTargetURL
+			dto.Methods = r.ProxyMethods
+			dto.VerifyTLS = &verify
+		}
 		items = append(items, dto)
 	}
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
@@ -89,6 +100,7 @@ func (h *IntegrationHandler) List(c *echo.Context) error {
 type createIntegrationReq struct {
 	Kind string `json:"kind"`
 	createGitLabIntegrationReq
+	httpProxyReq
 }
 
 // @Summary     Create an integration
@@ -109,6 +121,8 @@ func (h *IntegrationHandler) Create(c *echo.Context) error {
 	case "", integrationKindGitHub:
 	case integrationKindGitLab:
 		return h.createGitLab(c, owner, req.createGitLabIntegrationReq)
+	case integrationKindHTTP:
+		return h.createHTTPProxy(c, owner, req.Name, req.httpProxyReq)
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown integration kind")
 	}
@@ -185,6 +199,19 @@ func (h *IntegrationHandler) Get(c *echo.Context) error {
 		dto.Instance = row.GitLabInstanceName.String
 		dto.BaseURL = row.GitLabBaseURL.String
 		dto.Flavor = row.GitLabFlavor.String
+	}
+	if row.Kind == integrationKindHTTP {
+		verify := row.ProxyVerifyTLS
+		dto.Connected = true
+		dto.TargetURL = row.ProxyTargetURL
+		dto.Methods = row.ProxyMethods
+		dto.VerifyTLS = &verify
+		hs, err := openProxyHeaders(h.sealer, row.ProxyHeadersEnc, owner, id)
+		if err != nil {
+			log.Printf("could not open the headers of proxy %s: %v", domainIDString(id), err)
+			return echo.NewHTTPError(http.StatusInternalServerError, "the stored headers could not be decrypted")
+		}
+		dto.HeaderNames = headerNames(hs)
 	}
 	return c.JSON(http.StatusOK, dto)
 }

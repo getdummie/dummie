@@ -110,11 +110,11 @@ func TestEndToEndChatGPTSendsTheBrokersAccount(t *testing.T) {
 // A source is trusted to name the upstream, but never over plain http.
 func TestUpstreamBaseRequiresHTTPS(t *testing.T) {
 	for _, raw := range []string{"http://api.z.ai/v4", "https://", "https://u:p@api.z.ai", "https://api.z.ai/v4?x=1"} {
-		if _, ok := upstreamBase(raw); ok {
+		if _, ok := upstreamBase(raw, false); ok {
 			t.Errorf("%q was accepted", raw)
 		}
 	}
-	if u, ok := upstreamBase("https://api.z.ai/api/paas/v4"); !ok || u.Host != "api.z.ai" {
+	if u, ok := upstreamBase("https://api.z.ai/api/paas/v4", false); !ok || u.Host != "api.z.ai" {
 		t.Fatal("a plain https base was refused")
 	}
 }
