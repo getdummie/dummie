@@ -71,6 +71,7 @@ let
     echo 'nameserver ${vm.dns}' > "$tmp/etc/resolv.conf"
 
     echo '${name}' > "$tmp/etc/hostname"
+    printf '%s' '${name}' | sha256sum | cut -c1-32 > "$tmp/etc/machine-id"
     {
       echo '127.0.0.1 localhost'
       echo '127.0.1.1 ${name}'
@@ -127,9 +128,11 @@ pkgs.writeShellApplication {
       if [ ! -f "$IMG" ]; then
         echo "microqemu(${name}): building rootfs image from ${vm.rootfsTar} -> $IMG" >&2
         tmp="$(mktemp -d)"
-        truncate -s ${vm.diskSize} "$IMG"
-        fakeroot ${mkrootfs} "$tmp" "$IMG"
+        rm -f "$IMG.partial"
+        truncate -s ${vm.diskSize} "$IMG.partial"
+        fakeroot ${mkrootfs} "$tmp" "$IMG.partial"
         rm -rf "$tmp"
+        mv "$IMG.partial" "$IMG"
       fi
     }
 

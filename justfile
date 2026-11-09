@@ -162,23 +162,23 @@ vm-start:
 vm-stop:
   #!/usr/bin/env bash
   cd nix-vms/
-  nix run ".#qemu-host" -- stop
+  nix run ".#qemu-host-1" -- stop
 
 vm-clean:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
-  nix run "#qemu-host" -- stop
-  rm -rf .microqemu/qemu-host/console.log .microqemu/qemu-host/rootfs.ext4
+  nix run ".#qemu-host-1" -- stop
+  rm -rf .microqemu/qemu-host-1/console.log .microqemu/qemu-host-1/rootfs.ext4
   ssh-keygen -R 10.68.0.2
 
 vm-stats:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
-  nix run "#qemu-host" -- stats
+  nix run ".#qemu-host-1" -- stats
 
-vm-ssh:
+vm-ssh-1:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
@@ -190,12 +190,24 @@ vm-ssh:
       -p 2222 \
       ubuntu@10.68.0.2
 
+vm-ssh-2:
+  #!/usr/bin/env bash
+  set -euo pipefail
+  cd nix-vms/
+  # ephemeral VM: host key changes every boot, so skip known_hosts entirely
+  # (no prompt, no "IDENTIFICATION HAS CHANGED" on rebuild).
+  ssh -o StrictHostKeyChecking=no \
+      -o UserKnownHostsFile=/dev/null \
+      -o LogLevel=ERROR \
+      -p 2222 \
+      ubuntu@10.68.0.3
+
 # attach to the VM's serial console via QEMU (no ssh/network needed). Ctrl-] to detach.
 vm-console:
   #!/usr/bin/env bash
   set -euo pipefail
   cd nix-vms/
-  nix run ".#qemu-host" -- console
+  nix run ".#qemu-host-1" -- console
 
 image-build target:
   #!/usr/bin/env bash

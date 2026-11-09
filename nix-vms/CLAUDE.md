@@ -22,8 +22,14 @@ cpu, mem, diskSize, ephemeral; tap/mac/ip/gateway/netmask/dns; kernel + rootfsTa
 `shares` (virtiofs host dirs), `guestUser`, `bootCommand`/`bootWorkingDir`.
 
 ## Key behaviors / gotchas
-- **Networking**: routed tap `vm-tap0` (host `10.68.0.1/16`, guest `10.68.0.2`),
-  static via kernel `ip=`. Host must provide the tap + NAT (host NixOS config).
+- **Networking**: one tap per VM, all enslaved to host bridge `vm-br0` (`10.68.0.1/16`).
+  `qemu-host-1` 10.68.0.2/`vm-tap0`, `qemu-host-2` 10.68.0.3/`vm-tap1`, `fakefsx`
+  10.68.0.10/`vm-tapfsx`. Static IPs via kernel `ip=`. Host provides bridge, taps + NAT.
+- **machine-id** is derived from the VM name at image build, so each host enrolls
+  as a distinct client in control (control keys clients on machine-id).
+- **fakefsx** (`fakefsx/`): NixOS qemu-vm with a file-backed zpool, NFS, and a fake
+  FSx API on :8080 for control (`AWS_ENDPOINT_URL_FSX`). `fakefsx/launcher.nix` wraps
+  the NixOS run script with the same start/stop/status/console CLI; disk in the state dir.
 - **Tap queue mode must match vCPU count** (multi-queue iff cpu>1) or QEMU EINVALs.
 - **Transport is virtio-pci** (`-machine microvm,acpi=on,pcie=on`); kernel needs
   `CONFIG_VIRTIO_PCI`. Nested virt needs `CONFIG_KVM_AMD` + host `-cpu host`.

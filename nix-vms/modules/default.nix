@@ -24,7 +24,12 @@ in
   config = lib.mkIf cfg.enable {
     systemd.network.enable = true;
 
-    systemd.network.netdevs = lib.mapAttrs' (
+    systemd.network.netdevs = {
+      "20-vm-br0".netdevConfig = {
+        Name = "vm-br0";
+        Kind = "bridge";
+      };
+    } // lib.mapAttrs' (
       name: vm:
       lib.nameValuePair "25-${vm.tap}" {
         netdevConfig = {
@@ -39,11 +44,19 @@ in
       }
     ) cfg.instances;
 
-    systemd.network.networks = lib.mapAttrs' (
+    systemd.network.networks = {
+      "20-vm-br0" = {
+        matchConfig.Name = "vm-br0";
+        address = [ "10.68.0.1/16" ];
+        networkConfig.ConfigureWithoutCarrier = true;
+        linkConfig.RequiredForOnline = false;
+      };
+    } // lib.mapAttrs' (
       name: vm:
       lib.nameValuePair "25-${vm.tap}" {
         matchConfig.Name = vm.tap;
-        address = [ "${vm.gateway}/16" ];
+        networkConfig.Bridge = "vm-br0";
+        linkConfig.RequiredForOnline = false;
       }
     ) cfg.instances;
 

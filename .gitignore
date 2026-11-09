@@ -1,4 +1,7 @@
 
+*.qcow2
+.microvm/
+.microqemu/
 tempo/
 .envrc
 .claude/
