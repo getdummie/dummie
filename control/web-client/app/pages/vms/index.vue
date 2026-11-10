@@ -308,6 +308,7 @@ const dockerImagesEnabled = ref(false)
 type DiskBackend = 'local' | 'fsx'
 const diskBackendLabels: Record<DiskBackend, string> = { local: 'Host disk', fsx: 'FSx for OpenZFS' }
 const diskBackends = ref<DiskBackend[]>([])
+const diskBackendChoices = computed(() => diskBackends.value.length ? diskBackends.value : [form.disk_backend])
 
 async function loadFeatures() {
   const res = await authFetch('/vms/features').catch(() => null)
@@ -1094,11 +1095,11 @@ async function confirmDelete() {
                 <p class="font-mono text-xs text-muted-foreground">{{ fmtMiB(diskRemaining) }} left</p>
               </div>
 
-              <div v-if="diskBackends.length > 1" class="space-y-2">
+              <div class="space-y-2">
                 <Label id="vm-disk-backend-label">Disk storage</Label>
                 <div class="flex flex-wrap gap-2" role="radiogroup" aria-labelledby="vm-disk-backend-label">
                   <Button
-                    v-for="b in diskBackends"
+                    v-for="b in diskBackendChoices"
                     :key="b"
                     type="button"
                     size="sm"
