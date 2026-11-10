@@ -127,6 +127,7 @@ func taskRetry(after time.Duration, format string, args ...any) taskOutcome {
 var taskKindTimeouts = map[string]time.Duration{
 	taskOSImageBuild: taskOSImageBuildTimeout,
 	taskVMDiskFSx:    taskVMDiskFSxTimeout,
+	taskVMDiskMove:   taskVMDiskFSxTimeout,
 }
 
 func taskKindTimeout(kind string) time.Duration {
@@ -181,6 +182,7 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore)
 		taskAuditPrune:        handleAuditPrune,
 		taskVMDiskFSx:         handleVMDiskFSx,
 		taskFSxGC:             handleFSxGC,
+		taskVMDiskMove:        handleVMDiskMove,
 	}
 	return r
 }

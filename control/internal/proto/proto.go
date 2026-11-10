@@ -103,6 +103,9 @@ const (
 
 	KindDiskPrepare JobKind = "disk.prepare"
 	KindDiskSeed    JobKind = "disk.seed"
+
+	KindDiskMove      JobKind = "disk.move"
+	KindDiskDropLocal JobKind = "disk.drop_local"
 )
 
 type Job struct {
@@ -123,6 +126,7 @@ type Job struct {
 	CustomCert *CustomCertOrder `json:"custom_cert,omitempty"`
 	Cache *CachePurge `json:"cache,omitempty"`
 	Seed  *DiskSeed   `json:"seed,omitempty"`
+	Move  *DiskMove   `json:"move,omitempty"`
 }
 
 // FSxDisk is an NFS export holding a vm's whole disk as disk.raw.
@@ -135,6 +139,13 @@ type FSxDisk struct {
 type DiskSeed struct {
 	Rootfs string  `json:"rootfs"`
 	FSx    FSxDisk `json:"fsx"`
+}
+
+// DiskMove asks a host to copy a stopped vm's local disk onto an empty volume
+// whose quota is SizeBytes, and boot it from there.
+type DiskMove struct {
+	FSx       FSxDisk `json:"fsx"`
+	SizeBytes int64   `json:"size_bytes"`
 }
 
 // PreparedRootfs names the rootfs a disk.prepare left in the host's cache.

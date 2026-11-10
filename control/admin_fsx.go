@@ -40,6 +40,7 @@ type adminFSxDiskDTO struct {
 	VolumeID    string `json:"volume_id"`
 	VolumePath  string `json:"volume_path"`
 	Released    bool   `json:"released"`
+	InUse       bool   `json:"in_use"`
 	CreatedAt   string `json:"created_at"`
 }
 
@@ -81,11 +82,12 @@ func (h *AdminHandler) ListFSxDisks(c *echo.Context) error {
 			VMID:        domainIDString(r.Vm),
 			VMName:      r.VMName,
 			VMStatus:    r.VmStatus,
-			ImageID:     uuid.UUID(r.Image.Bytes).String(),
+			ImageID:     domainIDString(r.Image),
 			ImageRootfs: r.ImageRootfs,
 			VolumeID:    r.VolumeID,
 			VolumePath:  r.VolumePath,
 			Released:    r.Released,
+			InUse:       r.InUse,
 			CreatedAt:   r.CreatedAt.Time.Format(time.RFC3339),
 		})
 	}
@@ -139,7 +141,13 @@ func (h *AdminHandler) DeleteFSxDisk(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the fsx disk")
 	}
 	if disk.Vm.Valid && !disk.Released {
-		return echo.NewHTTPError(http.StatusConflict, "this disk still belongs to a vm; delete the vm instead")
+		vm, err := h.q.GetVM(ctx, disk.Vm)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not read the disk's vm")
+		}
+		if err == nil && (vm.DiskBackend == diskBackendFSx || vm.DiskMoving) {
+			return echo.NewHTTPError(http.StatusConflict, "this disk still belongs to a vm; delete the vm instead")
+		}
 	}
 	if err := deleteFSxVolume(ctx, h.q, disk.VolumeID); err != nil {
 		return err

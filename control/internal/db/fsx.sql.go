@@ -217,9 +217,11 @@ const listFSxDisksAdmin = `-- name: ListFSxDisksAdmin :many
 SELECT d.id, d.vm, d.image, d.volume_id, d.volume_path, d.released, d.created_at,
        COALESCE(v.name, '')::text AS vm_name,
        COALESCE(v.status, '')::text AS vm_status,
-       i.rootfs AS image_rootfs
+       COALESCE(i.rootfs, '')::text AS image_rootfs,
+       (d.vm IS NOT NULL AND NOT d.released
+        AND (v.disk_backend = 'fsx' OR v.disk_moving))::bool AS in_use
 FROM fsx_disks d
-JOIN fsx_images i ON i.id = d.image
+LEFT JOIN fsx_images i ON i.id = d.image
 LEFT JOIN vms v ON v.id = d.vm
 ORDER BY d.created_at DESC
 `
@@ -235,6 +237,7 @@ type ListFSxDisksAdminRow struct {
 	VMName      string
 	VmStatus    string
 	ImageRootfs string
+	InUse       bool
 }
 
 func (q *Queries) ListFSxDisksAdmin(ctx context.Context) ([]ListFSxDisksAdminRow, error) {
@@ -257,6 +260,7 @@ func (q *Queries) ListFSxDisksAdmin(ctx context.Context) ([]ListFSxDisksAdminRow
 			&i.VMName,
 			&i.VmStatus,
 			&i.ImageRootfs,
+			&i.InUse,
 		); err != nil {
 			return nil, err
 		}

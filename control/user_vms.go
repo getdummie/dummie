@@ -902,6 +902,8 @@ func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 		return echo.NewHTTPError(http.StatusConflict, "this vm no longer exists on its host")
 	}
 	switch {
+	case row.DiskMoving && kind != proto.KindVMStop:
+		return echo.NewHTTPError(http.StatusConflict, "this vm's disk is being moved to FSx")
 	case kind == proto.KindVMStart && row.Status == "running":
 		return echo.NewHTTPError(http.StatusConflict, "this vm is already running")
 	case kind == proto.KindVMStop && row.Status == "stopped":
@@ -1234,6 +1236,9 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 	}
 	if vm.VMID == "" {
 		return echo.NewHTTPError(http.StatusConflict, "this vm was never created on a host")
+	}
+	if vm.DiskMoving {
+		return echo.NewHTTPError(http.StatusConflict, "this vm's disk is being moved to FSx; resize it once that is done")
 	}
 	switch vm.Status {
 	case "pending":

@@ -449,6 +449,18 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.seedDisk(ctx, env.ID, *job.Seed)
+	case proto.KindDiskMove:
+		if job.VMID == "" || job.Move == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no vm or no volume"})
+			return
+		}
+		go l.moveDisk(ctx, env.ID, job.VMID, *job.Move)
+	case proto.KindDiskDropLocal:
+		if job.VMID == "" {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no vm"})
+			return
+		}
+		go l.dropLocalDisk(ctx, env.ID, job.VMID)
 	case proto.KindSuricataConfig, proto.KindDpipeConfig, proto.KindCoreDNSConfig:
 		if job.File == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
@@ -514,6 +526,38 @@ func (l *link) seedDisk(ctx context.Context, jobID string, seed proto.DiskSeed) 
 		return
 	}
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskSeed, OK: true})
+}
+
+func (l *link) moveDisk(ctx context.Context, jobID, vmID string, move proto.DiskMove) {
+	ctx = context.WithoutCancel(ctx)
+	v, err := resolveVM(l.data, vmID)
+	if err != nil {
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskMove, Error: err.Error()})
+		return
+	}
+	log.Printf("job %s: moving the disk of %s to %s:%s", jobID, v.Name, move.FSx.Server, move.FSx.Path)
+	if err := moveDiskToFSx(ctx, l.data, v, move); err != nil {
+		log.Printf("job %s: could not move the disk: %v", jobID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskMove, Error: err.Error()})
+		return
+	}
+	log.Printf("job %s: %s now boots from fsx; its local disk is kept", jobID, v.Name)
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskMove, OK: true})
+}
+
+func (l *link) dropLocalDisk(ctx context.Context, jobID, vmID string) {
+	ctx = context.WithoutCancel(ctx)
+	v, err := resolveVM(l.data, vmID)
+	if err == nil {
+		err = dropLocalDisk(l.data, v)
+	}
+	if err != nil {
+		log.Printf("job %s: could not delete the local disk: %v", jobID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskDropLocal, Error: err.Error()})
+		return
+	}
+	log.Printf("job %s: deleted the local disk of %s", jobID, v.Name)
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindDiskDropLocal, OK: true})
 }
 
 func (l *link) applyRules(ctx context.Context, jobID, rules string) {
@@ -668,6 +712,9 @@ func (l *link) runVMAction(ctx context.Context, jobID string, kind proto.JobKind
 	ctx = context.WithoutCancel(ctx)
 
 	v, err := resolveVM(l.data, vmID)
+	if err == nil && diskMoving(v.ID) {
+		err = fmt.Errorf("the disk of %s is being moved to fsx", v.Name)
+	}
 	if err != nil {
 		l.reply(ctx, jobID, proto.JobResult{Kind: kind, Error: err.Error()})
 		return
@@ -740,6 +787,9 @@ func (l *link) resizeVM(ctx context.Context, jobID, vmID string, req proto.VMRes
 	ctx = context.WithoutCancel(ctx)
 
 	v, err := resolveVM(l.data, vmID)
+	if err == nil && diskMoving(v.ID) {
+		err = fmt.Errorf("the disk of %s is being moved to fsx", v.Name)
+	}
 	if err != nil {
 		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMResize, Error: err.Error()})
 		return

@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 
 	"control/internal/proto"
@@ -129,7 +130,7 @@ func seedFSx(ctx context.Context, data string, seed proto.DiskSeed) error {
 	if err := mountFSx(ctx, seed.FSx, target); err != nil {
 		return err
 	}
-	if err := writeSeed(ctx, src, target); err != nil {
+	if err := writeRawDisk(ctx, src, "raw", target); err != nil {
 		_ = unmountFSx(context.WithoutCancel(ctx), target)
 		return err
 	}
@@ -138,12 +139,79 @@ func seedFSx(ctx context.Context, data string, seed proto.DiskSeed) error {
 	return unmountFSx(context.WithoutCancel(ctx), target)
 }
 
-func writeSeed(ctx context.Context, src, target string) error {
+func writeRawDisk(ctx context.Context, src, format, target string) error {
 	tmp := filepath.Join(target, "."+fsxDiskRaw)
-	out, err := exec.CommandContext(ctx, "qemu-img", "convert", "-q", "-f", "raw", "-O", "raw", "-S", "4k", src, tmp).CombinedOutput()
+	out, err := exec.CommandContext(ctx, "qemu-img", "convert", "-q", "-f", format, "-O", "raw", "-S", "4k", src, tmp).CombinedOutput()
 	if err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("qemu-img convert: %v: %s", err, strings.TrimSpace(string(out)))
 	}
 	return os.Rename(tmp, filepath.Join(target, fsxDiskRaw))
+}
+
+var diskMoves sync.Map
+
+func diskMoving(id string) bool {
+	_, ok := diskMoves.Load(id)
+	return ok
+}
+
+// moveDiskToFSx flattens a stopped vm's overlay and its backing file into
+// disk.raw on an empty volume, then points the vm at it. The overlay is kept.
+func moveDiskToFSx(ctx context.Context, data string, v vm, move proto.DiskMove) error {
+	if v.FSx != nil {
+		if *v.FSx == move.FSx {
+			return nil
+		}
+		return fmt.Errorf("the disk of %s is already on %s:%s", v.Name, v.FSx.Server, v.FSx.Path)
+	}
+	if _, busy := diskMoves.LoadOrStore(v.ID, struct{}{}); busy {
+		return fmt.Errorf("the disk of %s is already being moved", v.Name)
+	}
+	defer diskMoves.Delete(v.ID)
+	if vmPID(data, v.ID) != 0 {
+		return fmt.Errorf("%s is running; stop it before moving its disk", v.Name)
+	}
+	size, err := imageVirtualSize(ctx, v.Disk)
+	if err != nil {
+		return err
+	}
+	if size > move.SizeBytes {
+		return fmt.Errorf("the disk is %d MiB, more than the %d MiB volume holds", size>>20, move.SizeBytes>>20)
+	}
+
+	moved := v
+	moved.FSx = &move.FSx
+	moved.Disk = fsxDiskPath(data, v.ID)
+	moved.Backing = ""
+	moved.LocalDisk, moved.LocalBacking = v.Disk, v.Backing
+	target := fsxMountPoint(data, moved)
+	if err := mountFSx(ctx, move.FSx, target); err != nil {
+		return err
+	}
+	if err := writeRawDisk(ctx, v.Disk, "qcow2", target); err != nil {
+		_ = unmountFSx(context.WithoutCancel(ctx), target)
+		return err
+	}
+	if err := unmountFSx(context.WithoutCancel(ctx), target); err != nil {
+		return err
+	}
+	return saveVM(data, moved)
+}
+
+func dropLocalDisk(data string, v vm) error {
+	if v.LocalDisk == "" {
+		return nil
+	}
+	if v.FSx == nil {
+		return fmt.Errorf("%s still boots from its local disk", v.Name)
+	}
+	if filepath.Dir(v.LocalDisk) != vmDir(data, v.ID) {
+		return fmt.Errorf("%s is not in the directory of %s", v.LocalDisk, v.Name)
+	}
+	if err := os.Remove(v.LocalDisk); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	v.LocalDisk, v.LocalBacking = "", ""
+	return saveVM(data, v)
 }

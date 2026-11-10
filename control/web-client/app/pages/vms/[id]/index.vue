@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Bot, Check, ScrollText, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, Info, Monitor, Pencil, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Bot, Check, ScrollText, ChevronDown, Columns2, Copy, Download, Eye, EyeOff, ExternalLink, HardDriveUpload, Info, Monitor, Pencil, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -50,6 +50,7 @@ interface VM {
   memory_mib: number
   disk_mib: number
   disk_backend: 'local' | 'fsx'
+  disk_moving: boolean
   ip: string
   url: string
   console_url: string
@@ -148,7 +149,7 @@ const isRunning = computed(() => {
 })
 const switchable = computed(() => {
   const v = vm.value
-  return !!v?.vm_id && (v.status === 'running' || v.status === 'stopped')
+  return !!v?.vm_id && !v.disk_moving && (v.status === 'running' || v.status === 'stopped')
 })
 
 const purging = ref<{ until: number } | null>(null)
@@ -160,8 +161,8 @@ watch(vm, (v) => {
   if (p && v && (v.last_error || Date.now() >= p.until)) purging.value = null
 })
 
-watch([() => vm.value?.status, settling, purging], () => {
-  const busy = vm.value?.status === 'pending' || !!settling.value || !!purging.value
+watch([() => vm.value?.status, () => vm.value?.disk_moving, settling, purging], () => {
+  const busy = vm.value?.status === 'pending' || !!vm.value?.disk_moving || !!settling.value || !!purging.value
   if (busy && !timer) timer = setInterval(() => load(true), 5000)
   else if (!busy && timer) {
     clearInterval(timer)
@@ -184,6 +185,37 @@ async function togglePower(run: boolean) {
   catch (e) {
     settling.value = null
     actionError.value = e instanceof Error ? e.message : `Could not ${run ? 'start' : 'stop'} the VM`
+  }
+}
+
+const fsxEnabled = ref(false)
+onMounted(async () => {
+  const res = await authFetch('/vms/features').catch(() => null)
+  if (res?.ok) fsxEnabled.value = ((await res.json()).disk_backends ?? []).includes('fsx')
+})
+
+const movable = computed(() => {
+  const v = vm.value
+  return fsxEnabled.value && !!v && v.disk_backend === 'local' && v.status === 'stopped' && !v.disk_moving
+})
+const moveOpen = ref(false)
+const moving = ref(false)
+const moveError = ref<string | null>(null)
+
+async function confirmMove() {
+  moving.value = true
+  moveError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/move-disk`, { method: 'POST' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    moveOpen.value = false
+    await load(true)
+  }
+  catch (e) {
+    moveError.value = e instanceof Error ? e.message : 'Could not move the disk'
+  }
+  finally {
+    moving.value = false
   }
 }
 
@@ -796,6 +828,7 @@ async function removeDomain(d: CustomDomain) {
               {{ vm.name || vm.vm_id || 'unnamed' }}
             </h1>
             <Badge :variant="statusVariant[vm.status]" class="font-mono">{{ vm.status }}</Badge>
+            <Badge v-if="vm.disk_moving" variant="secondary" class="font-mono">moving disk to FSx…</Badge>
             <p class="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
               {{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }} ·
               {{ vm.disk_mib ? `${fmtMiB(vm.disk_mib)} disk` : 'disk not recorded' }}{{ vm.disk_backend === 'fsx' ? ' on FSx' : '' }}
@@ -943,6 +976,31 @@ async function removeDomain(d: CustomDomain) {
               </form>
             </DialogContent>
           </Dialog>
+          <Dialog v-if="movable" v-model:open="moveOpen">
+            <Button variant="outline" size="sm" class="font-mono text-xs" @click="moveError = null; moveOpen = true">
+              <HardDriveUpload class="size-4" aria-hidden="true" />
+              Move disk to FSx
+            </Button>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Move disk to FSx</DialogTitle>
+                <DialogDescription>
+                  Copies the disk of <span class="font-mono text-foreground">{{ vm.name }}</span> onto its
+                  own FSx for OpenZFS volume; it boots from there from then on. This takes a few minutes
+                  plus the copy, and the VM cannot be started until it is done. It cannot be moved back.
+                </DialogDescription>
+              </DialogHeader>
+              <FormError id="move-disk-error" :message="moveError" />
+              <DialogFooter>
+                <DialogClose as-child>
+                  <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                </DialogClose>
+                <Button class="font-mono text-xs" :disabled="moving" @click="confirmMove">
+                  {{ moving ? 'Starting…' : 'Move' }}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Button
             variant="outline"
             size="sm"
@@ -964,8 +1022,8 @@ async function removeDomain(d: CustomDomain) {
         <AlertDescription>{{ actionError }}</AlertDescription>
       </Alert>
 
-      <Alert v-if="vm.status === 'failed' && vm.last_error" variant="destructive" class="mt-3">
-        <AlertTitle>This VM failed</AlertTitle>
+      <Alert v-if="vm.last_error" variant="destructive" class="mt-3">
+        <AlertTitle>{{ vm.status === 'failed' ? 'This VM failed' : 'Last error' }}</AlertTitle>
         <AlertDescription>{{ vm.last_error }}</AlertDescription>
       </Alert>
 

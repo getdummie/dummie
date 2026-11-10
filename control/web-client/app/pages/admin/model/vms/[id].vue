@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Trash2 } from '@lucide/vue'
+import { ArrowLeft, HardDriveUpload, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,9 @@ interface AdminVM {
   cpus: number
   memory_mib: number
   disk_mib: number
+  disk_backend: 'local' | 'fsx'
+  disk_moving: boolean
+  local_disk_kept: boolean
   ip: string
   spec: Record<string, unknown>
   last_error: string
@@ -237,8 +240,8 @@ watch(vm, (v) => {
 })
 
 let timer: ReturnType<typeof setInterval> | null = null
-watch([() => vm.value?.status, settling], () => {
-  const busy = vm.value?.status === 'pending' || !!settling.value
+watch([() => vm.value?.status, () => vm.value?.disk_moving, settling], () => {
+  const busy = vm.value?.status === 'pending' || !!vm.value?.disk_moving || !!settling.value
   if (busy && !timer) timer = setInterval(() => load(true), 5000)
   else if (!busy && timer) {
     clearInterval(timer)
@@ -255,11 +258,17 @@ const working = ref(false)
 const stopOpen = ref(false)
 const destroyOpen = ref(false)
 const forgetOpen = ref(false)
+const moveOpen = ref(false)
+const dropOpen = ref(false)
 
 const hasGuest = computed(() => !!vm.value?.vm_id && vm.value.status !== 'gone')
 const switchable = computed(() => {
   const v = vm.value
-  return !!v?.vm_id && (v.status === 'running' || v.status === 'stopped')
+  return !!v?.vm_id && !v.disk_moving && (v.status === 'running' || v.status === 'stopped')
+})
+const movable = computed(() => {
+  const v = vm.value
+  return !!v && v.disk_backend === 'local' && v.status === 'stopped' && !v.disk_moving
 })
 const isRunning = computed(() => settling.value?.running ?? vm.value?.status === 'running')
 
@@ -274,6 +283,8 @@ async function act(path: string, method: string, failure: string, settle: { verb
     if (settle) settling.value = { ...settle, from: v.status, until: Date.now() + settleTimeoutMs }
     stopOpen.value = false
     destroyOpen.value = false
+    moveOpen.value = false
+    dropOpen.value = false
     await load(true)
   }
   catch (e) {
@@ -290,6 +301,12 @@ function togglePower(on: boolean) {
 }
 function confirmStop() {
   act(`/admin/vms/${id.value}/stop`, 'POST', 'Could not stop this VM', { verb: 'stopping', running: false })
+}
+function confirmMove() {
+  act(`/admin/vms/${id.value}/move-disk`, 'POST', 'Could not move the disk', null)
+}
+function confirmDrop() {
+  act(`/admin/vms/${id.value}/drop-local-disk`, 'POST', 'Could not delete the local disk', null)
 }
 function confirmDestroy() {
   act(`/admin/vms/${id.value}/destroy`, 'POST', 'Could not destroy this VM', { verb: 'destroying', running: false })
@@ -348,6 +365,7 @@ async function confirmForget() {
             <Badge :variant="statusVariant[displayStatus] ?? 'secondary'" class="font-mono">
               {{ displayStatus }}
             </Badge>
+            <Badge v-if="vm.disk_moving" variant="secondary" class="font-mono">moving disk to FSx…</Badge>
           </div>
           <p v-if="displayStatus === 'stale'" class="mt-2 text-xs text-muted-foreground">
             was <span class="font-mono">{{ vm.status }}</span>, last confirmed {{ since(vm.reported_at) }}
@@ -366,6 +384,28 @@ async function confirmForget() {
               @update:model-value="togglePower"
             />
           </div>
+          <Button
+            v-if="movable"
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs"
+            :disabled="working"
+            @click="actionError = null; moveOpen = true"
+          >
+            <HardDriveUpload class="size-4" aria-hidden="true" />
+            Move disk to FSx
+          </Button>
+          <Button
+            v-if="vm.local_disk_kept"
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs text-destructive hover:text-destructive"
+            :disabled="working"
+            @click="actionError = null; dropOpen = true"
+          >
+            <Trash2 class="size-4" aria-hidden="true" />
+            Delete local disk
+          </Button>
           <Button
             v-if="hasGuest"
             variant="outline"
@@ -445,6 +485,10 @@ async function confirmForget() {
             <dt class="eyebrow text-muted-foreground">Disk</dt>
             <dd class="mt-1 font-mono text-sm">
               {{ vm.disk_mib ? fmtMiB(vm.disk_mib) : 'not recorded' }}
+              {{ vm.disk_backend === 'fsx' ? 'on FSx' : 'on the host' }}
+              <span v-if="vm.local_disk_kept" class="block text-xs text-muted-foreground">
+                its old local disk is still on the host
+              </span>
             </dd>
           </div>
           <div>
@@ -584,6 +628,50 @@ async function confirmForget() {
           </DialogClose>
           <Button variant="destructive" class="font-mono text-xs" :disabled="working" @click="confirmDestroy">
             {{ working ? 'Destroying…' : 'Destroy' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="moveOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Move disk to FSx</DialogTitle>
+          <DialogDescription>
+            Copies the disk of <span class="font-mono text-foreground">{{ vm?.name || vm?.vm_id }}</span>
+            onto its own FSx for OpenZFS volume, and boots it from there from then on. It cannot be
+            started until the copy is done. The local disk stays on the host until you delete it.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="move-disk-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button class="font-mono text-xs" :disabled="working" @click="confirmMove">
+            {{ working ? 'Starting…' : 'Move' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="dropOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Delete local disk</DialogTitle>
+          <DialogDescription>
+            Deletes the disk <span class="font-mono text-foreground">{{ vm?.name || vm?.vm_id }}</span>
+            booted from before it moved to FSx. Boot it from FSx at least once first; this cannot be
+            undone.
+          </DialogDescription>
+        </DialogHeader>
+        <FormError id="drop-disk-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button variant="destructive" class="font-mono text-xs" :disabled="working" @click="confirmDrop">
+            {{ working ? 'Deleting…' : 'Delete' }}
           </Button>
         </DialogFooter>
       </DialogContent>

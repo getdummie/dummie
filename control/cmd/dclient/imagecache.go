@@ -21,7 +21,7 @@ func cacheUsage(data string) (map[string][]string, error) {
 	cache := imagesDir(data)
 	used := map[string][]string{}
 	for _, v := range vms {
-		for _, p := range []string{v.Backing, v.Kernel, v.Initrd} {
+		for _, p := range []string{v.Backing, v.LocalBacking, v.Kernel, v.Initrd} {
 			if p == "" {
 				continue
 			}

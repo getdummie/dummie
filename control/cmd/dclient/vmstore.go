@@ -76,6 +76,11 @@ type vm struct {
 	// directory, rather than a qcow2 overlay on a cached rootfs.
 	FSx *proto.FSxDisk `json:"fsx,omitempty"`
 
+	// LocalDisk and LocalBacking are the overlay a disk moved to FSx came from,
+	// kept until control asks for them to go.
+	LocalDisk    string `json:"local_disk,omitempty"`
+	LocalBacking string `json:"local_backing,omitempty"`
+
 	InitDisk string `json:"init_disk,omitempty"`
 
 	// DiskBytes is the size the overlay should have. A resize only records it

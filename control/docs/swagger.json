@@ -1048,6 +1048,10 @@
                     "disk_mib": {
                         "type": "integer"
                     },
+                    "disk_moving": {
+                        "description": "DiskMoving is true while the local disk is being copied onto FSx, and\nLocalDiskKept once it has been, until an admin deletes the local copy.",
+                        "type": "boolean"
+                    },
                     "expires_at": {
                         "type": "string"
                     },
@@ -1063,6 +1067,9 @@
                     },
                     "last_error": {
                         "type": "string"
+                    },
+                    "local_disk_kept": {
+                        "type": "boolean"
                     },
                     "memory_mib": {
                         "type": "integer"
@@ -4053,6 +4060,84 @@
                 "summary": "Integrations attached to one of your VMs",
                 "tags": [
                     "integrations"
+                ]
+            }
+        },
+        "/vms/{id}/move-disk": {
+            "post": {
+                "description": "Copies a stopped VM's local disk onto its own FSx for OpenZFS volume and boots it from there from then on. The copy runs in the background; disk_moving is true until it is done, and last_error says why when it fails. The local disk is kept on the host until an admin deletes it.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.vmDTO"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "FSx disks are not enabled"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the vm is not stopped, already on FSx, already moving, or has no disk size"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Move a VM's disk onto FSx",
+                "tags": [
+                    "vms"
                 ]
             }
         },

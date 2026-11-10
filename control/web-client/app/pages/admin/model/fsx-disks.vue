@@ -36,6 +36,7 @@ interface DiskRow {
   volume_id: string
   volume_path: string
   released: boolean
+  in_use: boolean
   created_at: string
 }
 
@@ -62,7 +63,7 @@ function fmtDate(s?: string) {
   return Number.isNaN(d.getTime()) ? s : d.toLocaleString()
 }
 
-const inUse = (d: DiskRow) => !!d.vm_id && !d.released
+const inUse = (d: DiskRow) => d.in_use
 
 async function load() {
   loading.value = true
@@ -144,7 +145,7 @@ async function confirmDelete() {
           </template>
           <Badge v-if="!d.vm_id || d.released" variant="outline" class="font-mono">released</Badge>
         </TableCell>
-        <TableCell class="font-mono text-muted-foreground">{{ d.image_rootfs.slice(0, 12) }}</TableCell>
+        <TableCell class="font-mono text-muted-foreground">{{ d.image_rootfs ? d.image_rootfs.slice(0, 12) : 'moved from a host' }}</TableCell>
         <TableCell class="text-muted-foreground">{{ fmtDate(d.created_at) }}</TableCell>
         <TableCell class="text-right">
           <Button

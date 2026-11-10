@@ -195,3 +195,27 @@ SET rdp_nonce  = gen_random_uuid()::text,
     updated_at = now()
 WHERE id = $1 AND created_by = $2
 RETURNING *;
+
+-- name: BeginVMDiskMove :one
+UPDATE vms
+SET disk_moving = true, last_error = '', updated_at = now()
+WHERE id = $1
+  AND status = 'stopped'
+  AND disk_backend = 'local'
+  AND NOT disk_moving
+RETURNING *;
+
+-- name: FinishVMDiskMove :exec
+UPDATE vms
+SET disk_backend = 'fsx', disk_moving = false, local_disk_kept = true, last_error = '', updated_at = now()
+WHERE id = $1;
+
+-- name: FailVMDiskMove :exec
+UPDATE vms
+SET disk_moving = false, last_error = $2, updated_at = now()
+WHERE id = $1;
+
+-- name: ClearVMLocalDiskKept :exec
+UPDATE vms
+SET local_disk_kept = false, updated_at = now()
+WHERE id = $1;

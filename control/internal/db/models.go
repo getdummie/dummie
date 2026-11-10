@@ -362,30 +362,32 @@ type User struct {
 }
 
 type Vm struct {
-	ID          pgtype.UUID
-	ClientID    pgtype.UUID
-	VMID        string
-	Name        string
-	Status      string
-	Boot        string
-	CPUs        int32
-	MemoryMiB   int32
-	IP          string
-	Spec        []byte
-	LastError   string
-	CreatedAt   pgtype.Timestamptz
-	UpdatedAt   pgtype.Timestamptz
-	StartedAt   pgtype.Timestamptz
-	ReportedAt  pgtype.Timestamptz
-	CreatedBy   pgtype.UUID
-	DiskMiB     int32
-	DefaultPort int32
-	PublicPorts []int32
-	RdpNonce    string
-	DefaultUser string
-	KernelID    pgtype.UUID
-	OSImageID   pgtype.UUID
-	DiskBackend string
+	ID            pgtype.UUID
+	ClientID      pgtype.UUID
+	VMID          string
+	Name          string
+	Status        string
+	Boot          string
+	CPUs          int32
+	MemoryMiB     int32
+	IP            string
+	Spec          []byte
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	StartedAt     pgtype.Timestamptz
+	ReportedAt    pgtype.Timestamptz
+	CreatedBy     pgtype.UUID
+	DiskMiB       int32
+	DefaultPort   int32
+	PublicPorts   []int32
+	RdpNonce      string
+	DefaultUser   string
+	KernelID      pgtype.UUID
+	OSImageID     pgtype.UUID
+	DiskBackend   string
+	DiskMoving    bool
+	LocalDiskKept bool
 }
 
 type VmCustomDomain struct {

@@ -32,6 +32,11 @@ type vmDTO struct {
 
 	DiskBackend string `json:"disk_backend" enums:"local,fsx"`
 
+	// DiskMoving is true while the local disk is being copied onto FSx, and
+	// LocalDiskKept once it has been, until an admin deletes the local copy.
+	DiskMoving    bool `json:"disk_moving"`
+	LocalDiskKept bool `json:"local_disk_kept"`
+
 	DefaultPort int32   `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
 
@@ -63,23 +68,25 @@ type vmDTO struct {
 
 func toVMDTO(v db.Vm) vmDTO {
 	d := vmDTO{
-		ID:          uuid.UUID(v.ID.Bytes).String(),
-		ClientID:    uuid.UUID(v.ClientID.Bytes).String(),
-		VMID:        v.VMID,
-		Name:        v.Name,
-		Status:      v.Status,
-		Boot:        v.Boot,
-		CPUs:        v.CPUs,
-		MemoryMiB:   v.MemoryMiB,
-		DiskMiB:     v.DiskMiB,
-		IP:          v.IP,
-		DiskBackend: v.DiskBackend,
-		DefaultPort: v.DefaultPort,
-		PublicPorts: v.PublicPorts,
-		DefaultUser: v.DefaultUser,
-		Spec:        json.RawMessage(v.Spec),
-		LastError:   v.LastError,
-		CreatedAt:   v.CreatedAt.Time.Format(time.RFC3339),
+		ID:            uuid.UUID(v.ID.Bytes).String(),
+		ClientID:      uuid.UUID(v.ClientID.Bytes).String(),
+		VMID:          v.VMID,
+		Name:          v.Name,
+		Status:        v.Status,
+		Boot:          v.Boot,
+		CPUs:          v.CPUs,
+		MemoryMiB:     v.MemoryMiB,
+		DiskMiB:       v.DiskMiB,
+		IP:            v.IP,
+		DiskBackend:   v.DiskBackend,
+		DiskMoving:    v.DiskMoving,
+		LocalDiskKept: v.LocalDiskKept,
+		DefaultPort:   v.DefaultPort,
+		PublicPorts:   v.PublicPorts,
+		DefaultUser:   v.DefaultUser,
+		Spec:          json.RawMessage(v.Spec),
+		LastError:     v.LastError,
+		CreatedAt:     v.CreatedAt.Time.Format(time.RFC3339),
 	}
 	if len(d.Spec) == 0 {
 		d.Spec = json.RawMessage("{}")
@@ -390,6 +397,8 @@ func (h *AdminHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 		return echo.NewHTTPError(http.StatusConflict, "this vm no longer exists on its host")
 	}
 	switch {
+	case row.DiskMoving && kind != proto.KindVMStop:
+		return echo.NewHTTPError(http.StatusConflict, "this vm's disk is being moved to FSx")
 	case kind == proto.KindVMStart && row.Status == "running":
 		return echo.NewHTTPError(http.StatusConflict, "this vm is already running")
 	case kind == proto.KindVMStop && row.Status == "stopped":
