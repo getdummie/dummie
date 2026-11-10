@@ -52,6 +52,7 @@ const chapters = [
                   <a class="btn btn-outline" href="#usecases">What it's for</a>
                 </div>
                 <NuxtLink class="techlink" to="/architecture"><span aria-hidden="true">&gt;_</span> Talk tech to me</NuxtLink>
+                <a class="techlink" href="https://github.com/getdummie/dummie" target="_blank" rel="noopener noreferrer"><span aria-hidden="true">&lt;/&gt;</span> Check out the source code<span class="sr-only"> (opens in a new tab)</span></a>
               </div>
             </div>
 
