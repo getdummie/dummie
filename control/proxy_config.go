@@ -132,8 +132,9 @@ const proxyCookieSecretPath = "/etc/dpipe/keys/cookie_secret"
 const proxyCookieTTL = "1h"
 
 type proxyHost struct {
-	tld string
-	tls bool
+	tld      string
+	tls      bool
+	upstream *edgeUpstream
 }
 
 func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProxySSHUsersByClientRow, http []db.ListProxyHTTPRoutesByClientRow, custom []db.ListCustomDomainRoutesByClientRow, rdp []db.ListProxyRDPUsersByClientRow) string {
@@ -151,7 +152,7 @@ func generateProxyConfig(auth proxyAuthConfig, host proxyHost, ssh []db.ListProx
 	writeProxyACME(&b)
 	writeProxyHTTPS(&b, tls)
 	writeProxySite(&b, host.tld)
-	writeProxySSH(&b, ssh)
+	writeProxySSH(&b, ssh, host.upstream)
 	writeProxyRDP(&b, auth, rdp)
 	b.WriteString(proxyConfigFooter)
 	return b.String()
@@ -296,7 +297,7 @@ func writeProxySite(b *strings.Builder, tld string) {
 
 var hostnamePattern = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
-func writeProxySSH(b *strings.Builder, rows []db.ListProxySSHUsersByClientRow) {
+func writeProxySSH(b *strings.Builder, rows []db.ListProxySSHUsersByClientRow, upstream *edgeUpstream) {
 	if len(rows) == 0 {
 		return
 	}
@@ -311,6 +312,13 @@ func writeProxySSH(b *strings.Builder, rows []db.ListProxySSHUsersByClientRow) {
 		fmt.Fprintf(b, "      vm_name: %s\n", yamlString(r.VMName))
 		fmt.Fprintf(b, "      target: %s\n", yamlString(fmt.Sprintf("%s:%d", r.VMIP, proxyGuestSSHPort)))
 		fmt.Fprintf(b, "      remote_user: %s\n", yamlString(guestLoginName(r.SessionUser)))
+	}
+	if upstream != nil {
+		b.WriteString("  # The edge in front of this host's domain. It has already checked the\n")
+		b.WriteString("  # person's own key, so it may log in as any vm above, but only from here.\n")
+		b.WriteString("  trusted_upstreams:\n")
+		fmt.Fprintf(b, "    - pubkey: %s\n", yamlString(upstream.pubkey))
+		fmt.Fprintf(b, "      sources:\n        - %s\n", yamlString(upstream.source))
 	}
 }
 
@@ -363,7 +371,33 @@ func yamlComment(s string) string {
 	return out
 }
 
+// pushProxyConfig also refreshes the edge on the other side: a host's routes
+// are the edge's routes, and an edge's address is its hosts' trusted source.
 func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAuthConfig, clientID pgtype.UUID) {
+	client, err := q.GetClientByID(ctx, clientID)
+	if err != nil {
+		log.Printf("could not read client %s for its proxy config: %v", uuid.UUID(clientID.Bytes).String(), err)
+		return
+	}
+	if client.Role == clientRoleEdge {
+		pushEdgeProxyConfig(ctx, q, hub, client)
+		hosts, err := q.ListEdgeHosts(ctx, client.ID)
+		if err != nil {
+			log.Printf("could not list the hosts behind edge %s: %v", uuid.UUID(clientID.Bytes).String(), err)
+			return
+		}
+		for _, h := range hosts {
+			pushHostProxyConfig(ctx, q, hub, auth, h.ID)
+		}
+		return
+	}
+	pushHostProxyConfig(ctx, q, hub, auth, clientID)
+	if edge, ok := hostEdge(ctx, q, clientID); ok {
+		pushEdgeProxyConfig(ctx, q, hub, edge)
+	}
+}
+
+func pushHostProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAuthConfig, clientID pgtype.UUID) {
 	id := uuid.UUID(clientID.Bytes).String()
 	sshRows, err := q.ListProxySSHUsersByClient(ctx, clientID)
 	if err != nil {
@@ -389,6 +423,7 @@ func pushProxyConfig(ctx context.Context, q *db.Queries, hub *Hub, auth proxyAut
 	if err != nil {
 		log.Printf("could not read the domain of client %s, writing its proxy config without tls: %v", id, err)
 	}
+	host.upstream = hostUpstream(ctx, q, clientID)
 	env, err := proto.NewEnvelope(proto.TypeJob, "", proto.Job{
 		Kind: proto.KindProxyConfig,
 		Proxy: &proto.ProxyConfig{

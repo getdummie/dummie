@@ -125,6 +125,9 @@ var errCertLacksIntegrations = errors.New("the certificate does not cover the in
 
 func pushIntproxyConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hub *Hub, controlURL string, clientID pgtype.UUID) {
 	id := uuid.UUID(clientID.Bytes).String()
+	if isEdgeClient(ctx, q, clientID) {
+		return
+	}
 
 	tld, cert, key, err := intproxyCertForClient(ctx, q, blobs, clientID)
 	switch {

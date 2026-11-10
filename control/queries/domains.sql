@@ -25,7 +25,7 @@ WHERE c.id = $1;
 
 -- name: ListClientIDsByDomain :many
 SELECT id FROM clients
-WHERE domain_id = $1 AND NOT revoked;
+WHERE domain_id = $1 AND NOT revoked AND role = 'host';
 
 -- name: UpdateDomainTLS :one
 UPDATE domains

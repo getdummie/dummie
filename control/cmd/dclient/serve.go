@@ -52,6 +52,37 @@ func checkFeatures(f Features) error {
 	return nil
 }
 
+const (
+	roleHost = "host"
+	roleEdge = "edge"
+)
+
+func checkRole(cfg Config) error {
+	switch cfg.Role {
+	case "", roleHost:
+		return nil
+	case roleEdge:
+	default:
+		return fmt.Errorf("role %q must be host or edge", cfg.Role)
+	}
+	f := cfg.Features
+	for _, ft := range []struct {
+		on   bool
+		name string
+	}{
+		{f.IPForward, "features.ip_forward"},
+		{f.KVMAccess, "features.kvm_access"},
+		{f.Nftables, "features.nftables"},
+		{f.DHCP, "features.dhcp"},
+		{f.Metadata, "features.metadata"},
+	} {
+		if ft.on {
+			return fmt.Errorf("%s is for running vms and an edge runs none; turn it off", ft.name)
+		}
+	}
+	return nil
+}
+
 func runServe(ctx context.Context, cfg Config) error {
 	if os.Geteuid() != 0 {
 		return errors.New("serve needs root: it writes nftables rules, network interfaces and sysctls")
@@ -59,6 +90,9 @@ func runServe(ctx context.Context, cfg Config) error {
 
 	f := cfg.Features
 	if err := checkFeatures(f); err != nil {
+		return err
+	}
+	if err := checkRole(cfg); err != nil {
 		return err
 	}
 

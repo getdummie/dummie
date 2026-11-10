@@ -261,6 +261,9 @@ func ruleText(s string) string {
 
 func pushSuricataRules(ctx context.Context, q *db.Queries, hub *Hub, clientID pgtype.UUID) {
 	id := uuid.UUID(clientID.Bytes).String()
+	if isEdgeClient(ctx, q, clientID) {
+		return
+	}
 	rows, err := q.ListVMNetworkTargetsByClient(ctx, clientID)
 	if err != nil {
 		log.Printf("could not read the allowed destinations for client %s: %v", id, err)

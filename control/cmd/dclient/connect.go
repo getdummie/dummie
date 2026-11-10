@@ -323,6 +323,8 @@ func sendHello(ctx context.Context, ws *websocket.Conn) error {
 		OSVersion: osVersion,
 		Arch:      runtime.GOARCH,
 		Pool: localPool(),
+		Role:        localRole(),
+		AdvertiseIP: localAdvertiseIP(),
 		Services: installedServicesState(ctx),
 	})
 	if err != nil {

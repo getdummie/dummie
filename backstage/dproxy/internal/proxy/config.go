@@ -65,6 +65,7 @@ type Config struct {
 	Desktop *DesktopConfig `yaml:"desktop"`
 	Site    *SiteConfig    `yaml:"site"`
 	ACME    *ACMEConfig    `yaml:"acme"`
+	Edge    *EdgeConfig    `yaml:"edge"`
 
 	ListenForwards []ForwardConfig `yaml:"listen_forwards"`
 
@@ -203,6 +204,37 @@ type ACMEConfig struct {
 
 const ACMEChallengePrefix = "/.well-known/acme-challenge/"
 
+// EdgeConfig makes http and https a router in front of the hosts: bytes go
+// untouched, by Host or SNI, to the host that still does TLS and auth itself.
+type EdgeConfig struct {
+	// Hosts maps a published hostname to the address of the host serving it.
+	Hosts map[string]string `yaml:"hosts"`
+	// Fallback maps a domain to its hosts, tried in order, for any other name
+	// under it.
+	Fallback  map[string][]string `yaml:"fallback"`
+	HTTPPort  int                 `yaml:"http_port"`
+	HTTPSPort int                 `yaml:"https_port"`
+}
+
+const (
+	defaultEdgeHTTPPort  = 80
+	defaultEdgeHTTPSPort = 443
+)
+
+func (e *EdgeConfig) httpPort() int {
+	if e.HTTPPort == 0 {
+		return defaultEdgeHTTPPort
+	}
+	return e.HTTPPort
+}
+
+func (e *EdgeConfig) httpsPort() int {
+	if e.HTTPSPort == 0 {
+		return defaultEdgeHTTPSPort
+	}
+	return e.HTTPSPort
+}
+
 type HTTPSConfig struct {
 	Listen    string `yaml:"listen"`
 	Reuseport bool   `yaml:"reuseport"`
@@ -219,6 +251,15 @@ type SSHConfig struct {
 	Listen    string    `yaml:"listen"`
 	Reuseport bool      `yaml:"reuseport"`
 	Users     []SSHUser `yaml:"users"`
+
+	// TrustedUpstreams may log in as any VM in users. An edge has already
+	// authorized the person, so the key is only honoured from its sources.
+	TrustedUpstreams []TrustedUpstream `yaml:"trusted_upstreams"`
+}
+
+type TrustedUpstream struct {
+	PubKey  string   `yaml:"pubkey"`
+	Sources []string `yaml:"sources"`
 }
 
 type SSHUser struct {
@@ -333,7 +374,7 @@ func (c *Config) Validate() error {
 			return err
 		}
 		ingress++
-		if c.HTTP == nil || (len(c.HTTP.Hosts) == 0 && c.Site == nil) {
+		if c.Edge == nil && (c.HTTP == nil || (len(c.HTTP.Hosts) == 0 && c.Site == nil)) {
 			return errors.New("config: https requires http.hosts or site (HTTPS routing reuses the host map)")
 		}
 	}
@@ -369,6 +410,19 @@ func (c *Config) Validate() error {
 			}
 			if err := validHostPort(fmt.Sprintf("ssh.users[%d].target", i), u.Target); err != nil {
 				return err
+			}
+		}
+		for i, t := range c.SSH.TrustedUpstreams {
+			if t.PubKey == "" {
+				return fmt.Errorf("config: ssh.trusted_upstreams[%d].pubkey is required", i)
+			}
+			if len(t.Sources) == 0 {
+				return fmt.Errorf("config: ssh.trusted_upstreams[%d] needs at least one source", i)
+			}
+			for j, src := range t.Sources {
+				if net.ParseIP(src) == nil {
+					return fmt.Errorf("config: ssh.trusted_upstreams[%d].sources[%d] %q is not an ip address", i, j, src)
+				}
 			}
 		}
 	}
@@ -490,12 +544,57 @@ func (c *Config) Validate() error {
 		}
 	}
 
+	if c.Edge != nil {
+		if err := c.validateEdge(); err != nil {
+			return err
+		}
+	}
+
 	for i, f := range c.ListenForwards {
 		if err := validHostPort(fmt.Sprintf("listen_forwards[%d].listen", i), f.Listen); err != nil {
 			return err
 		}
 		if err := validHostPort(fmt.Sprintf("listen_forwards[%d].target", i), f.Target); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateEdge keeps an edge a pure router: anything that would make it answer
+// a request itself instead of forwarding it belongs on the hosts.
+func (c *Config) validateEdge() error {
+	if c.HTTP == nil && c.HTTPS == nil {
+		return errors.New("config: edge requires an http or https ingress")
+	}
+	if c.HTTP != nil && (len(c.HTTP.Hosts) > 0 || c.HTTP.Default != "") {
+		return errors.New("config: edge routes from edge.hosts; http.hosts and http.default must be empty")
+	}
+	if c.Site != nil || c.Console != nil || c.Desktop != nil || c.ACME != nil {
+		return errors.New("config: edge cannot serve site, console, desktop or acme; the hosts behind it do")
+	}
+	if err := validPort("edge.http_port", c.Edge.httpPort()); err != nil {
+		return err
+	}
+	if err := validPort("edge.https_port", c.Edge.httpsPort()); err != nil {
+		return err
+	}
+	for host, addr := range c.Edge.Hosts {
+		if !hostnamePattern.MatchString(httpsniff.NormalizeHost(host)) {
+			return fmt.Errorf("config: edge.hosts key %q is not a hostname", host)
+		}
+		if addr == "" || strings.ContainsAny(addr, ":*") {
+			return fmt.Errorf("config: edge.hosts[%s] %q must be a bare host address", host, addr)
+		}
+	}
+	for domain, addrs := range c.Edge.Fallback {
+		if !hostnamePattern.MatchString(httpsniff.NormalizeHost(domain)) {
+			return fmt.Errorf("config: edge.fallback key %q is not a hostname", domain)
+		}
+		for i, addr := range addrs {
+			if addr == "" || strings.ContainsAny(addr, ":*") {
+				return fmt.Errorf("config: edge.fallback[%s][%d] %q must be a bare host address", domain, i, addr)
+			}
 		}
 	}
 	return nil

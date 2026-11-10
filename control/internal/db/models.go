@@ -64,6 +64,9 @@ type Client struct {
 	IntproxyVersion          string
 	IntproxyDownloadURL      string
 	IntproxyInstalledVersion string
+	Role                     string
+	ReportedIP               string
+	AdvertiseIP              string
 }
 
 type ClientEnrollmentKey struct {
@@ -113,6 +116,7 @@ type Domain struct {
 	CertError       string
 	CertIssuedAt    pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+	EdgeClientID    pgtype.UUID
 }
 
 type FsxDisk struct {

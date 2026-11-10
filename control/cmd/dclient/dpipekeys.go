@@ -21,6 +21,8 @@ const (
 
 	dpipeCookieSecretPath = dpipeKeyDir + "/cookie_secret"
 
+	dpipeKnownHostsPath = dpipeKeyDir + "/backend_known_hosts"
+
 	dpipeCertDir  = "/etc/dpipe/certs"
 	dpipeCertPath = dpipeCertDir + "/fullchain.pem"
 	dpipeKeyPath  = dpipeCertDir + "/privkey.pem"
@@ -72,6 +74,13 @@ func writeDpipeKeysTo(dir string, keys *proto.DpipeSSHKeys) (bool, error) {
 			log.Printf("installed the ssh key the control server issued in %s", k.path)
 			changed = true
 		}
+	}
+	if keys.KnownHosts != "" {
+		khChanged, err := writeIfChanged(filepath.Join(dir, filepath.Base(dpipeKnownHostsPath)), keys.KnownHosts, 0o644)
+		if err != nil {
+			return changed, err
+		}
+		changed = changed || khChanged
 	}
 	return changed, nil
 }

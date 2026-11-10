@@ -22,7 +22,7 @@ SET cert_object_key  = '',
     tls_enabled      = false,
     updated_at       = now()
 WHERE id = $1
-RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id
 `
 
 func (q *Queries) ClearDomainCert(ctx context.Context, id pgtype.UUID) (Domain, error) {
@@ -44,6 +44,7 @@ func (q *Queries) ClearDomainCert(ctx context.Context, id pgtype.UUID) (Domain, 
 		&i.CertError,
 		&i.CertIssuedAt,
 		&i.UpdatedAt,
+		&i.EdgeClientID,
 	)
 	return i, err
 }
@@ -62,7 +63,7 @@ func (q *Queries) CountDomains(ctx context.Context) (int64, error) {
 const createDomain = `-- name: CreateDomain :one
 INSERT INTO domains (tld)
 VALUES ($1)
-RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id
 `
 
 func (q *Queries) CreateDomain(ctx context.Context, tld string) (Domain, error) {
@@ -84,6 +85,7 @@ func (q *Queries) CreateDomain(ctx context.Context, tld string) (Domain, error) 
 		&i.CertError,
 		&i.CertIssuedAt,
 		&i.UpdatedAt,
+		&i.EdgeClientID,
 	)
 	return i, err
 }
@@ -99,7 +101,7 @@ func (q *Queries) DeleteDomain(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getClientDomain = `-- name: GetClientDomain :one
-SELECT d.id, d.tld, d.tls_enabled, d.cert_mode, d.acme_directory, d.acme_email, d.acme_credentials, d.acme_account_key, d.cert_object_key, d.key_object_key, d.cert_fingerprint, d.cert_not_after, d.cert_error, d.cert_issued_at, d.updated_at FROM domains d
+SELECT d.id, d.tld, d.tls_enabled, d.cert_mode, d.acme_directory, d.acme_email, d.acme_credentials, d.acme_account_key, d.cert_object_key, d.key_object_key, d.cert_fingerprint, d.cert_not_after, d.cert_error, d.cert_issued_at, d.updated_at, d.edge_client_id FROM domains d
 JOIN clients c ON c.domain_id = d.id
 WHERE c.id = $1
 `
@@ -123,12 +125,13 @@ func (q *Queries) GetClientDomain(ctx context.Context, id pgtype.UUID) (Domain, 
 		&i.CertError,
 		&i.CertIssuedAt,
 		&i.UpdatedAt,
+		&i.EdgeClientID,
 	)
 	return i, err
 }
 
 const getDomain = `-- name: GetDomain :one
-SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id FROM domains
 WHERE id = $1
 `
 
@@ -151,12 +154,13 @@ func (q *Queries) GetDomain(ctx context.Context, id pgtype.UUID) (Domain, error)
 		&i.CertError,
 		&i.CertIssuedAt,
 		&i.UpdatedAt,
+		&i.EdgeClientID,
 	)
 	return i, err
 }
 
 const getSoleDomain = `-- name: GetSoleDomain :one
-SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id FROM domains
 WHERE (SELECT count(*) FROM domains) = 1
 `
 
@@ -179,13 +183,14 @@ func (q *Queries) GetSoleDomain(ctx context.Context) (Domain, error) {
 		&i.CertError,
 		&i.CertIssuedAt,
 		&i.UpdatedAt,
+		&i.EdgeClientID,
 	)
 	return i, err
 }
 
 const listClientIDsByDomain = `-- name: ListClientIDsByDomain :many
 SELECT id FROM clients
-WHERE domain_id = $1 AND NOT revoked
+WHERE domain_id = $1 AND NOT revoked AND role = 'host'
 `
 
 func (q *Queries) ListClientIDsByDomain(ctx context.Context, domainID pgtype.UUID) ([]pgtype.UUID, error) {
@@ -209,7 +214,7 @@ func (q *Queries) ListClientIDsByDomain(ctx context.Context, domainID pgtype.UUI
 }
 
 const listDomains = `-- name: ListDomains :many
-SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id FROM domains
 ORDER BY tld
 `
 
@@ -238,6 +243,7 @@ func (q *Queries) ListDomains(ctx context.Context) ([]Domain, error) {
 			&i.CertError,
 			&i.CertIssuedAt,
 			&i.UpdatedAt,
+			&i.EdgeClientID,
 		); err != nil {
 			return nil, err
 		}
@@ -250,7 +256,7 @@ func (q *Queries) ListDomains(ctx context.Context) ([]Domain, error) {
 }
 
 const listDomainsDueForRenewal = `-- name: ListDomainsDueForRenewal :many
-SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at FROM domains
+SELECT id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id FROM domains
 WHERE tls_enabled
   AND cert_mode = 'acme_cloudflare'
   AND acme_credentials <> ''
@@ -283,6 +289,7 @@ func (q *Queries) ListDomainsDueForRenewal(ctx context.Context, withinSeconds fl
 			&i.CertError,
 			&i.CertIssuedAt,
 			&i.UpdatedAt,
+			&i.EdgeClientID,
 		); err != nil {
 			return nil, err
 		}
@@ -338,7 +345,7 @@ SET cert_object_key  = $2,
     cert_error       = '',
     updated_at       = now()
 WHERE id = $1
-RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id
 `
 
 type UpdateDomainCertParams struct {
@@ -374,6 +381,7 @@ func (q *Queries) UpdateDomainCert(ctx context.Context, arg UpdateDomainCertPara
 		&i.CertError,
 		&i.CertIssuedAt,
 		&i.UpdatedAt,
+		&i.EdgeClientID,
 	)
 	return i, err
 }
@@ -387,7 +395,7 @@ SET tls_enabled      = $2,
     acme_credentials = COALESCE(NULLIF($6::text, ''), acme_credentials),
     updated_at       = now()
 WHERE id = $1
-RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at
+RETURNING id, tld, tls_enabled, cert_mode, acme_directory, acme_email, acme_credentials, acme_account_key, cert_object_key, key_object_key, cert_fingerprint, cert_not_after, cert_error, cert_issued_at, updated_at, edge_client_id
 `
 
 type UpdateDomainTLSParams struct {
@@ -425,6 +433,7 @@ func (q *Queries) UpdateDomainTLS(ctx context.Context, arg UpdateDomainTLSParams
 		&i.CertError,
 		&i.CertIssuedAt,
 		&i.UpdatedAt,
+		&i.EdgeClientID,
 	)
 	return i, err
 }

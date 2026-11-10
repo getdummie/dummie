@@ -13,6 +13,8 @@ sql:
         rename:
           ip: "IP"
           last_ip: "LastIP"
+          reported_ip: "ReportedIP"
+          advertise_ip: "AdvertiseIP"
           tld: "TLD"
           domain_tld: "DomainTLD"
           os: "OS"

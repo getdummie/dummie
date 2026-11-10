@@ -5,9 +5,11 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 
 	"golang.org/x/crypto/ssh"
@@ -47,6 +49,9 @@ type Resolver struct {
 	users   map[sshUserKey]sshPolicy
 	owned map[string][]string
 	rdp   map[string]rdpPolicy
+
+	vms       map[string]sshPolicy
+	upstreams map[string][]net.IP
 }
 
 func NewResolver(log *slog.Logger, router *Router, auth *Authenticator, cfg *Config) (*Resolver, error) {
@@ -54,6 +59,7 @@ func NewResolver(log *slog.Logger, router *Router, auth *Authenticator, cfg *Con
 		log: log, router: router, auth: auth, console: cfg.Console, desktop: cfg.Desktop,
 		users: map[sshUserKey]sshPolicy{}, owned: map[string][]string{},
 		rdp: map[string]rdpPolicy{},
+		vms: map[string]sshPolicy{}, upstreams: map[string][]net.IP{},
 	}
 	if cfg.RDP != nil {
 		for i, u := range cfg.RDP.Users {
@@ -97,8 +103,44 @@ func NewResolver(log *slog.Logger, router *Router, auth *Authenticator, cfg *Con
 			fingerprint: ssh.FingerprintSHA256(key),
 		}
 		r.owned[id.pubkey] = append(r.owned[id.pubkey], u.VMName)
+		r.vms[u.VMName] = sshPolicy{target: u.Target, remoteUser: u.RemoteUser}
+	}
+	for i, t := range cfg.SSH.TrustedUpstreams {
+		key, err := ParseAuthorizedKey(t.PubKey)
+		if err != nil {
+			return nil, fmt.Errorf("ssh.trusted_upstreams[%d]: %w", i, err)
+		}
+		norm := NormalizeKey(key)
+		for _, src := range t.Sources {
+			r.upstreams[norm] = append(r.upstreams[norm], net.ParseIP(src))
+		}
 	}
 	return r, nil
+}
+
+// resolveUpstream never falls through to the per-user policy: the edge's key
+// is not a person's, so it reaches a VM here or nowhere.
+func (r *Resolver) resolveUpstream(m control.Msg, key ssh.PublicKey, sources []net.IP) control.Msg {
+	denied := control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
+	fp := ssh.FingerprintSHA256(key)
+	ip := net.ParseIP(m.ClientIP)
+	if ip == nil || !slices.ContainsFunc(sources, ip.Equal) {
+		r.log.Warn("ssh deny: upstream key from an untrusted source", "id", m.ID, "vm", m.SSHUser,
+			"fp", fp, "client", m.ClientIP)
+		return denied
+	}
+	vm, ok := r.vms[m.SSHUser]
+	if !ok {
+		r.log.Info("ssh deny: upstream asked for a vm not on this host", "id", m.ID, "vm", m.SSHUser,
+			"fp", fp, "client", m.ClientIP)
+		return denied
+	}
+	r.log.Info("ssh authorize", "id", m.ID, "vm", m.SSHUser, "fp", fp, "client", m.ClientIP,
+		"upstream", true, "target", vm.target, "remote_user", vm.remoteUser)
+	return control.Msg{
+		V: control.Version, Type: control.TypeResolved, ID: m.ID,
+		Authorized: true, Target: vm.target, RemoteUser: vm.remoteUser,
+	}
 }
 
 func sshVMNotice(requested string, owned []string) string {
@@ -155,6 +197,9 @@ func (r *Resolver) Handle(m control.Msg) control.Msg {
 			return control.Msg{V: control.Version, Type: control.TypeResolved, ID: m.ID}
 		}
 		norm := NormalizeKey(key)
+		if sources, ok := r.upstreams[norm]; ok {
+			return r.resolveUpstream(m, key, sources)
+		}
 		if u, ok := r.users[sshUserKey{pubkey: norm, vmName: m.SSHUser}]; ok {
 			r.log.Info("ssh authorize", "id", m.ID, "vm", m.SSHUser, "fp", u.fingerprint,
 				"client", m.ClientIP, "target", u.target, "remote_user", u.remoteUser)

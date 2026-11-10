@@ -46,4 +46,14 @@ in
     mac = "02:00:00:00:00:02";
     ip = "10.68.0.3";
   };
+
+  # Runs dclient as an edge (only dproxy + dpipe), routing a domain to the hosts.
+  fakeedge = qemuHost // {
+    cpu = 1;
+    mem = 2048;
+    tap = "vm-tapedge";
+    mac = "02:00:00:00:00:0b";
+    ip = "10.68.0.11";
+    bootCommand = "sudo sh -c 'mkdir -p /etc/dclient && (grep -qs ^control_url: /etc/dclient/config.yaml || { echo control_url: http://10.68.0.1:1323; echo role: edge; echo insecure: true; } > /etc/dclient/config.yaml)' && sudo ./dclient install";
+  };
 }

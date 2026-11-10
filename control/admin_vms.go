@@ -290,6 +290,9 @@ func (h *AdminHandler) CreateVM(c *echo.Context) error {
 	if client.Revoked {
 		return echo.NewHTTPError(http.StatusConflict, "this client has been revoked")
 	}
+	if client.Role == clientRoleEdge {
+		return echo.NewHTTPError(http.StatusConflict, errEdgeRunsNoVMs)
+	}
 	if !h.hub.Connected(clientID) {
 		return echo.NewHTTPError(http.StatusConflict, "this client is not connected")
 	}

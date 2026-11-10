@@ -32,6 +32,7 @@ type Proxy struct {
 	resolver *Resolver
 	auth     *Authenticator
 	ctrl     *Client
+	edge     *edgeRouter
 
 	mu        sync.Mutex
 	listeners []net.Listener
@@ -58,6 +59,9 @@ func New(cfg *Config, log *slog.Logger) (*Proxy, error) {
 		auth:     auth,
 		stopped:  make(chan struct{}),
 	}
+	if cfg.Edge != nil {
+		p.edge = newEdgeRouter(cfg.Edge)
+	}
 	p.ctrl = NewClient(cfg.ControlSocket, resolver, log)
 	return p, nil
 }
@@ -65,7 +69,9 @@ func New(cfg *Config, log *slog.Logger) (*Proxy, error) {
 func (p *Proxy) Client() *Client { return p.ctrl }
 
 func (p *Proxy) Run(ctx context.Context) error {
-	if p.cfg.HTTPS != nil {
+	if p.edge != nil {
+		p.log.Info("edge mode: http and https are forwarded untouched to the hosts", "names", len(p.cfg.Edge.Hosts))
+	} else if p.cfg.HTTPS != nil {
 		p.log.Info("https ingress enabled: dpipe.tls.enabled must be true, certificates live in dpipe")
 	}
 	if p.cfg.HTTP != nil {
@@ -112,14 +118,22 @@ func (p *Proxy) bind() error {
 		if err != nil {
 			return err
 		}
-		go p.acceptLoop("http", ln, func(conn net.Conn) { p.handleHTTP(conn) })
+		handle := p.handleHTTP
+		if p.edge != nil {
+			handle = p.handleEdgeHTTP
+		}
+		go p.acceptLoop("http", ln, handle)
 	}
 	if c := p.cfg.HTTPS; c != nil {
 		ln, err := p.listen("https", c.Listen, c.Reuseport)
 		if err != nil {
 			return err
 		}
-		go p.acceptLoop("https", ln, func(conn net.Conn) { p.handleHTTPS(conn) })
+		handle := p.handleHTTPS
+		if p.edge != nil {
+			handle = p.handleEdgeHTTPS
+		}
+		go p.acceptLoop("https", ln, handle)
 	}
 	for _, route := range p.router.TCPRoutes() {
 		ln, err := p.listen("tcp", route.Listen, route.Reuseport)

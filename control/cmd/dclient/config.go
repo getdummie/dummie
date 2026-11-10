@@ -14,6 +14,8 @@ type Config struct {
 	EnrollmentKey string `yaml:"enrollment_key"`
 	Insecure      bool   `yaml:"insecure"`
 
+	Role string `yaml:"role"`
+
 	DataDir string `yaml:"data_dir"`
 	Socket  string `yaml:"socket"`
 	Group   string `yaml:"group"`

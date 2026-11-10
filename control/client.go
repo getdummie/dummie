@@ -218,7 +218,16 @@ func (h *ClientHandler) serveClient(client db.Client, clientID, remoteIP string,
 		conn.close(websocket.StatusPolicyViolation, "handshake failed")
 		return
 	}
-	log.Printf("client %s connected (hostname=%s ip=%s)", clientID, client.Hostname, remoteIP)
+	log.Printf("client %s connected (hostname=%s ip=%s role=%s)", clientID, client.Hostname, remoteIP, helloRole(hello.Role))
+
+	client.Role = helloRole(hello.Role)
+	if client.Role == clientRoleEdge {
+		pushServicesConfig(ctx, h.q, h.hub, client, false)
+		pushProxyConfig(ctx, h.q, h.hub, h.proxy, client.ID)
+		pushDpipeConfig(ctx, h.q, h.blobs, h.hub, client.ID)
+		h.readLoop(ctx, conn, client, clientID)
+		return
+	}
 
 	pushServicesConfig(ctx, h.q, h.hub, client, false)
 	pushSuricataRules(ctx, h.q, h.hub, client.ID)
@@ -261,6 +270,12 @@ func (h *ClientHandler) handshake(ctx context.Context, conn *clientConn, client 
 		log.Printf("client %s: could not update facts: %v", clientID, err)
 	}
 	recordInstalledVersions(hctx, h.q, client.ID, clientID, hello.Services)
+	reported, _ := validateAdvertiseIP(hello.AdvertiseIP)
+	if err := h.q.SetClientRole(hctx, db.SetClientRoleParams{
+		ID: client.ID, Role: helloRole(hello.Role), ReportedIP: reported,
+	}); err != nil {
+		log.Printf("client %s: could not record its role: %v", clientID, err)
+	}
 
 	ack, err := proto.NewEnvelope(proto.TypeHelloAck, env.ID, proto.HelloAck{
 		ClientID:   clientID,
@@ -507,6 +522,9 @@ func (h *ClientHandler) settleCreate(ctx context.Context, client db.Client, clie
 }
 
 func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, clientID string, env proto.Envelope) {
+	if client.Role == clientRoleEdge {
+		return
+	}
 	var inv proto.Inventory
 	if err := json.Unmarshal(env.Payload, &inv); err != nil {
 		log.Printf("client %s: could not decode inventory: %v", clientID, err)

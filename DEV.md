@@ -55,7 +55,7 @@ docker compose logs -f
 
 ## Local VMs
 
-Three VMs share the host bridge `vm-br0` (`10.68.0.1/16`). The host's NixOS
+Four VMs share the host bridge `vm-br0` (`10.68.0.1/16`). The host's NixOS
 config provides the bridge, the taps and NAT.
 
 | VM            | IP         | tap         | role                           |
@@ -63,6 +63,7 @@ config provides the bridge, the taps and NAT.
 | `qemu-host-1` | 10.68.0.2  | `vm-tap0`   | qemu host running `dclient`    |
 | `qemu-host-2` | 10.68.0.3  | `vm-tap1`   | qemu host running `dclient`    |
 | `fakefsx`     | 10.68.0.10 | `vm-tapfsx` | ZFS + NFS + fake FSx API :8080 |
+| `fakeedge`    | 10.68.0.11 | `vm-tapedge` | edge: `dclient` with `role: edge` |
 
 Run these from `nix-vms/`: state lives in `.microqemu/<vm>/` under the directory
 you launch from, which is also where the `just vm-*` recipes look.
@@ -73,6 +74,7 @@ cd nix-vms
 nix run .#qemu-host-1                # start (also: `just vm-start`)
 nix run .#qemu-host-2
 nix run .#fakefsx
+nix run .#fakeedge
 
 nix run .#<vm> -- status
 nix run .#<vm> -- stop
@@ -105,6 +107,50 @@ ssh-keygen -R 10.68.0.10
 just vm-ssh-1                        # ubuntu@10.68.0.2, port 2222
 just vm-ssh-2                        # ubuntu@10.68.0.3, port 2222
 ssh root@10.68.0.10                  # fakefsx, keys from github.com/codingcoffee.keys
+ssh -p 2222 ubuntu@10.68.0.11        # fakeedge
+```
+
+### Edge (fakeedge)
+
+`fakeedge` routes a domain's names to the hosts behind it: http by Host, https
+by SNI (passed through untouched) and ssh by login name (`ssh <vm>@<tld>`). It
+runs no VMs, only `dproxy` and `dpipe`. Its boot writes `control_url`,
+`role: edge` and `insecure: true` to `/etc/dclient/config.yaml`, then runs
+`dclient install`; it uses one vCPU, so `vm-tapedge` must not be multi-queue.
+
+```sh
+cd nix-vms
+nix run .#fakeedge                   # start
+nix run .#fakeedge -- status
+nix run .#fakeedge -- console        # Ctrl-] to detach; `stty sane onlcr` if lines stair-step
+nix run .#fakeedge -- stop
+
+nix run .#fakeedge -- stop && rm -f .microqemu/fakeedge/rootfs.ext4   # rebuild after changing its boot
+```
+
+Once it enrolls, Admin → Domains → Edge column: pick it for the domain, then
+point the domain at it in `/etc/hosts` (`10.68.0.11 <tld> <vm>.<tld>`). Pick
+"none" and point back at a host to go direct again; hosts stay reachable either
+way.
+
+Inside it:
+
+```sh
+journalctl -u dclient -f                         # enrolment, configs pushed by control
+journalctl -u dproxy -f                          # routing: "edge route", "ssh authorize"
+journalctl -u dpipe -f                           # ssh relay to the host: "ssh backend …"
+sudo cat /etc/dclient/dproxy.yaml                # edge.hosts / edge.fallback / ssh.users
+sudo cat /etc/dclient/config.yaml
+```
+
+On a host behind it, `ssh.trusted_upstreams` in `/etc/dclient/dproxy.yaml`
+names the edge's key and `10.68.0.11`. Bridged VM-to-VM traffic must not be
+masqueraded on the laptop (`net.bridge.bridge-nf-call-iptables=1` routes it
+through iptables), or the host sees the edge as `10.68.0.1` and logs
+`ssh deny: upstream key from an untrusted source`. Check with:
+
+```sh
+sudo iptables -t nat -S POSTROUTING   # only `-s 10.68.0.0/16 ! -o vm-br0 -j MASQUERADE` for the VMs
 ```
 
 ### FSx disks locally

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,43 @@ func localPool() string {
 		return ""
 	}
 	return cfg.Network.Pool
+}
+
+func localRole() string {
+	cfg, err := loadConfig("")
+	if err != nil || cfg.Role == "" {
+		return roleHost
+	}
+	return cfg.Role
+}
+
+// localAdvertiseIP is the uplink's first ipv4 address, which is what an edge
+// dials for a host and what a host sees an edge's connections come from.
+func localAdvertiseIP() string {
+	cfg, err := loadConfig("")
+	if err != nil {
+		return ""
+	}
+	uplink := cfg.Network.Uplink
+	if uplink == "" {
+		if uplink, err = defaultUplink(); err != nil {
+			return ""
+		}
+	}
+	iface, err := net.InterfaceByName(uplink)
+	if err != nil {
+		return ""
+	}
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return ""
+	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok && n.IP.To4() != nil {
+			return n.IP.String()
+		}
+	}
+	return ""
 }
 
 func applySuricataConfig(ctx context.Context, config string) (bool, error) {

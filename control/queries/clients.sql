@@ -89,6 +89,7 @@ WHERE status <> 'offline';
 -- name: ListAvailableHosts :many
 SELECT id, hostname FROM clients
 WHERE revoked = false
+  AND role = 'host'
 ORDER BY (
     SELECT count(*) FROM vms
     WHERE vms.client_id = clients.id AND vms.status IN ('pending', 'running')
@@ -122,5 +123,16 @@ SET dclient_version      = $2,
     intproxy_version     = $10,
     intproxy_download_url = $11,
     updated_at           = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: SetClientRole :exec
+UPDATE clients
+SET role = $2, reported_ip = $3, updated_at = now()
+WHERE id = $1;
+
+-- name: SetClientAdvertiseIP :one
+UPDATE clients
+SET advertise_ip = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;

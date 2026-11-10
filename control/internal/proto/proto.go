@@ -50,6 +50,9 @@ type Hello struct {
 	Arch      string `json:"arch"`
 
 	Pool string `json:"pool,omitempty"`
+	// Role is "host" or "edge"; AdvertiseIP is the uplink's address.
+	Role        string `json:"role,omitempty"`
+	AdvertiseIP string `json:"advertise_ip,omitempty"`
 
 	Services *ServicesState `json:"services,omitempty"`
 }
@@ -292,6 +295,8 @@ type DpipeSSHKeys struct {
 	HostPub   string `json:"host_pub"`
 	ClientKey string `json:"client_key"`
 	ClientPub string `json:"client_pub"`
+	// KnownHosts is only sent to an edge, to pin the hosts it logs in to.
+	KnownHosts string `json:"known_hosts,omitempty"`
 }
 
 type DpipeNamedCert struct {

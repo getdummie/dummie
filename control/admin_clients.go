@@ -158,6 +158,9 @@ type clientDTO struct {
 	ClientVersion string `json:"client_version"`
 	LastSeenAt    string `json:"last_seen_at"`
 	LastIP        string `json:"last_ip"`
+	Role          string `json:"role"`
+	ReportedIP    string `json:"reported_ip"`
+	AdvertiseIP   string `json:"advertise_ip"`
 	CreatedAt     string `json:"created_at"`
 	Domain string `json:"domain"`
 	DomainID string `json:"domain_id"`
@@ -216,6 +219,9 @@ func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 		Arch:          a.Arch,
 		ClientVersion: a.ClientVersion,
 		LastIP:        a.LastIP,
+		Role:          a.Role,
+		ReportedIP:    a.ReportedIP,
+		AdvertiseIP:   a.AdvertiseIP,
 		CreatedAt:     a.CreatedAt.Time.Format(time.RFC3339),
 
 		DclientVersion:     a.DclientVersion,
@@ -313,10 +319,13 @@ func (h *AdminHandler) RevokeClient(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid client id")
 	}
-	if err := h.q.RevokeClient(c.Request().Context(), pgID); err != nil {
+	ctx := c.Request().Context()
+	behind := h.hostsBehindEdge(ctx, pgID)
+	if err := h.q.RevokeClient(ctx, pgID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not revoke client")
 	}
 	h.hub.Kick(id, "client revoked")
+	h.refreshHosts(ctx, behind)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -326,10 +335,13 @@ func (h *AdminHandler) DeleteClient(c *echo.Context) error {
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid client id")
 	}
-	if err := h.q.DeleteClient(c.Request().Context(), pgID); err != nil {
+	ctx := c.Request().Context()
+	behind := h.hostsBehindEdge(ctx, pgID)
+	if err := h.q.DeleteClient(ctx, pgID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete client")
 	}
 	h.hub.Kick(id, "client deleted")
+	h.refreshHosts(ctx, behind)
 	return c.NoContent(http.StatusNoContent)
 }
 
@@ -363,10 +375,14 @@ func (h *AdminHandler) SetClientDomain(c *echo.Context) error {
 		}
 	}
 
+	oldEdge, hadEdge := hostEdge(c.Request().Context(), h.q, pgID)
 	if _, err := h.q.SetClientDomain(c.Request().Context(), db.SetClientDomainParams{
 		ID: pgID, DomainID: domainID,
 	}); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not set the client's domain")
+	}
+	if hadEdge {
+		pushEdgeProxyConfig(c.Request().Context(), h.q, h.hub, oldEdge)
 	}
 
 	if h.certs != nil {

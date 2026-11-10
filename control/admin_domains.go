@@ -20,6 +20,8 @@ type domainDTO struct {
 	HasCert    bool   `json:"has_cert"`
 	NotAfter   string `json:"cert_not_after,omitempty"`
 	CertError  string `json:"cert_error,omitempty"`
+
+	EdgeClientID string `json:"edge_client_id"`
 }
 
 func toDomainDTO(d db.Domain) domainDTO {
@@ -29,6 +31,8 @@ func toDomainDTO(d db.Domain) domainDTO {
 		TLSEnabled: d.TlsEnabled,
 		HasCert:    d.CertObjectKey != "",
 		CertError:  d.CertError,
+
+		EdgeClientID: domainIDString(d.EdgeClientID),
 	}
 	if d.CertNotAfter.Valid {
 		dto.NotAfter = d.CertNotAfter.Time.Format(time.RFC3339)
@@ -97,6 +101,9 @@ func (h *AdminHandler) DeleteDomain(c *echo.Context) error {
 
 	if err := h.q.DeleteDomain(ctx, pgID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete domain")
+	}
+	if certErr == nil && domain.EdgeClientID.Valid {
+		h.refreshEdge(ctx, domain.EdgeClientID)
 	}
 	if certErr == nil && h.blobs != nil && domain.CertObjectKey != "" {
 		_ = h.blobs.Delete(ctx, domain.CertObjectKey)

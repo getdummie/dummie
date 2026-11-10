@@ -196,6 +196,9 @@ const exampleConfig = `# control_url: https://control.example.com
 # enrollment_key: paste-once-then-it-is-ignored
 # insecure: false
 #
+# role: host                # or edge: routes a domain's names to its hosts and
+#                           # runs no vms, so every feature below stays off
+#
 # data_dir: /var/lib/dclient
 # socket: /run/dclient/dclient.sock
 # group: dclient

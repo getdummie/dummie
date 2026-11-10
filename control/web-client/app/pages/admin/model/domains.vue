@@ -23,6 +23,7 @@ import type { DataTableColumn } from '@/lib/table'
 const columns: DataTableColumn[] = [
   { key: 'tld', label: 'TLD' },
   { key: 'tls', label: 'TLS' },
+  { key: 'edge', label: 'Edge' },
   { key: 'actions', label: 'Actions', align: 'right' },
 ]
 
@@ -36,6 +37,7 @@ interface DomainRow {
   has_cert: boolean
   cert_not_after?: string
   cert_error?: string
+  edge_client_id: string
 }
 
 interface DnsRecord {
@@ -95,6 +97,39 @@ async function load() {
   }
 }
 onMounted(load)
+
+const edges = ref<{ id: string, name: string }[]>([])
+const edgeError = ref<string | null>(null)
+
+async function loadEdges() {
+  try {
+    const res = await authFetch('/admin/clients?limit=100')
+    if (!res.ok) return
+    const rows: { id: string, hostname: string, role: string, status: string }[] = (await res.json()).items ?? []
+    edges.value = rows
+      .filter(c => c.role === 'edge' && c.status !== 'revoked')
+      .map(c => ({ id: c.id, name: c.hostname || c.id }))
+  }
+  catch {
+  }
+}
+onMounted(loadEdges)
+
+async function setEdge(d: DomainRow, edgeID: string) {
+  edgeError.value = null
+  try {
+    const res = await authFetch(`/admin/domains/${d.id}/edge`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ edge_client_id: edgeID }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    d.edge_client_id = edgeID
+  }
+  catch (e) {
+    edgeError.value = e instanceof Error ? e.message : 'Could not set the edge'
+  }
+}
 
 const createOpen = ref(false)
 const creating = ref(false)
@@ -371,6 +406,11 @@ const acmeDirectories = [
       <AlertDescription>{{ error }}</AlertDescription>
     </Alert>
 
+    <Alert v-if="edgeError" variant="destructive" class="mt-6">
+      <AlertTitle>Could not set the edge</AlertTitle>
+      <AlertDescription>{{ edgeError }}</AlertDescription>
+    </Alert>
+
     <DataTable
       label="Domains"
       :columns="columns"
@@ -387,6 +427,16 @@ const acmeDirectories = [
         <TableCell class="font-mono">{{ d.tld }}</TableCell>
         <TableCell>
           <Badge :variant="tlsVariant(d)" class="font-mono text-xs">{{ tlsLabel(d) }}</Badge>
+        </TableCell>
+        <TableCell class="min-w-44">
+          <OptionCombobox
+            :id="`domain-edge-${d.id}`"
+            :model-value="d.edge_client_id"
+            :options="edges"
+            default-label="none: hosts direct"
+            search-placeholder="Search edges…"
+            @update:model-value="v => setEdge(d, v)"
+          />
         </TableCell>
         <TableCell class="space-x-1 text-right">
           <Button

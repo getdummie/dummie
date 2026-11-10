@@ -77,6 +77,9 @@ func startHostMove(ctx context.Context, q *db.Queries, hub *Hub, vm db.Vm, targe
 	if client.Revoked {
 		return vm, echo.NewHTTPError(http.StatusConflict, "that host has been revoked")
 	}
+	if client.Role == clientRoleEdge {
+		return vm, echo.NewHTTPError(http.StatusConflict, errEdgeRunsNoVMs)
+	}
 	from := uuid.UUID(vm.ClientID.Bytes).String()
 	if !hub.Connected(from) {
 		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's current host is not connected; it has to be online to hand the vm over")

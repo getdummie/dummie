@@ -48,6 +48,9 @@ interface Client {
   client_version: string
   last_seen_at: string
   last_ip: string
+  role: 'host' | 'edge'
+  reported_ip: string
+  advertise_ip: string
   created_at: string
   domain: string
   domain_id: string
@@ -246,6 +249,34 @@ async function saveDomain() {
   }
   finally {
     savingDomain.value = false
+  }
+}
+
+const advertiseDraft = ref('')
+const savingAdvertise = ref(false)
+const advertiseError = ref<string | null>(null)
+
+watch(() => client.value?.advertise_ip, (v) => { advertiseDraft.value = v || '' }, { immediate: true })
+
+const advertiseDirty = computed(() => advertiseDraft.value.trim() !== (client.value?.advertise_ip || ''))
+
+async function saveAdvertise() {
+  savingAdvertise.value = true
+  advertiseError.value = null
+  try {
+    const res = await authFetch(`/admin/clients/${id.value}/advertise-ip`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ advertise_ip: advertiseDraft.value.trim() }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await load(true)
+  }
+  catch (e) {
+    advertiseError.value = e instanceof Error ? e.message : 'Could not set the address'
+  }
+  finally {
+    savingAdvertise.value = false
   }
 }
 
@@ -647,6 +678,34 @@ async function confirmDelete() {
           <div>
             <dt class="eyebrow text-muted-foreground">Last IP</dt>
             <dd class="mt-1 font-mono text-sm break-all">{{ client.last_ip || '—' }}</dd>
+          </div>
+          <div>
+            <dt class="eyebrow text-muted-foreground">Role</dt>
+            <dd class="mt-1 font-mono text-sm">{{ client.role || 'host' }}</dd>
+          </div>
+          <div>
+            <dt class="eyebrow text-muted-foreground">
+              <label for="client-advertise-ip">{{ client.role === 'edge' ? 'Address hosts see' : 'Address the edge dials' }}</label>
+            </dt>
+            <dd class="mt-1 flex items-center gap-2">
+              <Input
+                id="client-advertise-ip"
+                v-model="advertiseDraft"
+                class="max-w-xs font-mono text-sm"
+                :placeholder="client.reported_ip || 'not reported yet'"
+                :disabled="savingAdvertise"
+                aria-describedby="client-advertise-ip-error"
+              />
+              <Button
+                v-if="advertiseDirty"
+                class="font-mono text-xs"
+                :disabled="savingAdvertise"
+                @click="saveAdvertise"
+              >
+                {{ savingAdvertise ? 'Saving…' : 'Save' }}
+              </Button>
+            </dd>
+            <FormError id="client-advertise-ip-error" :message="advertiseError" />
           </div>
           <div>
             <dt class="eyebrow text-muted-foreground">Enrolled</dt>

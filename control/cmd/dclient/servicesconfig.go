@@ -19,6 +19,7 @@ func applyServicesConfig(ctx context.Context, data string, want proto.ServicesCo
 		errs        []error
 	)
 
+	edge := localRole() == roleEdge
 	for _, svc := range []struct {
 		name string
 		rel  proto.ServiceRelease
@@ -27,6 +28,9 @@ func applyServicesConfig(ctx context.Context, data string, want proto.ServicesCo
 		{dpipeService, want.Dpipe},
 		{intproxyService, want.Intproxy},
 	} {
+		if edge && svc.name == intproxyService {
+			continue
+		}
 		switch err := ensureManagedService(ctx, data, svc.name, svc.rel, want.Force); {
 		case err == nil:
 			log.Printf("%s is installed and running as %s.service", svc.name, svc.name)
@@ -38,10 +42,12 @@ func applyServicesConfig(ctx context.Context, data string, want proto.ServicesCo
 
 	// Not a service: no unit, nothing to start. dinit only has to be on disk for
 	// the next rootfs build to copy it into a guest.
-	switch err := ensureGuestInit(ctx, data, want.Dinit, want.Force); {
-	case err == nil, errors.Is(err, errNoRelease):
-	default:
-		errs = append(errs, fmt.Errorf("%s: %w", guestInitService, err))
+	if !edge {
+		switch err := ensureGuestInit(ctx, data, want.Dinit, want.Force); {
+		case err == nil, errors.Is(err, errNoRelease):
+		default:
+			errs = append(errs, fmt.Errorf("%s: %w", guestInitService, err))
+		}
 	}
 
 	switch staged, err := stageSelfUpgrade(ctx, data, want.Dclient, want.Force); {

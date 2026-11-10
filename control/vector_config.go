@@ -288,6 +288,9 @@ func vectorConfigFromSettings(ctx context.Context, q *db.Queries) proto.VectorCo
 
 func pushVectorConfig(ctx context.Context, q *db.Queries, hub *Hub, clientID pgtype.UUID) {
 	id := uuid.UUID(clientID.Bytes).String()
+	if isEdgeClient(ctx, q, clientID) {
+		return
+	}
 	env, err := buildVectorConfigEnvelope(ctx, q)
 	if err != nil {
 		log.Printf("could not build the vector config job for client %s: %v", id, err)
@@ -304,8 +307,18 @@ func pushVectorConfigToAll(ctx context.Context, q *db.Queries, hub *Hub) {
 		log.Printf("could not build the vector config job: %v", err)
 		return
 	}
-	if n := hub.Broadcast(env); n > 0 {
-		log.Printf("pushed the vector config to %d connected client(s)", n)
+	sent := 0
+	for _, raw := range hub.ConnectedIDs() {
+		id, err := parseUUID(raw)
+		if err != nil || isEdgeClient(ctx, q, id) {
+			continue
+		}
+		if err := hub.Send(raw, env); err == nil {
+			sent++
+		}
+	}
+	if sent > 0 {
+		log.Printf("pushed the vector config to %d connected client(s)", sent)
 	}
 }
 

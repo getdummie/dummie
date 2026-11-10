@@ -121,6 +121,10 @@ func generateDpipeConfig(certs *proto.DpipeCerts) string {
 
 func pushDpipeConfig(ctx context.Context, q *db.Queries, blobs *blobStore, hub *Hub, clientID pgtype.UUID) {
 	id := uuid.UUID(clientID.Bytes).String()
+	if c, err := q.GetClientByID(ctx, clientID); err == nil && c.Role == clientRoleEdge {
+		pushEdgeDpipeConfig(ctx, q, hub, clientID)
+		return
+	}
 
 	certs, err := dpipeCertsForClient(ctx, q, blobs, clientID)
 	if err != nil {
