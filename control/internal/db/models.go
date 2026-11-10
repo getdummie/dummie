@@ -388,6 +388,7 @@ type Vm struct {
 	DiskBackend   string
 	DiskMoving    bool
 	LocalDiskKept bool
+	HostMovingTo  pgtype.UUID
 }
 
 type VmCustomDomain struct {

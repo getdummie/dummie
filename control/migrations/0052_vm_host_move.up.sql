@@ -1,0 +1,2 @@
+ALTER TABLE vms
+    ADD COLUMN host_moving_to UUID REFERENCES clients(id) ON DELETE SET NULL;

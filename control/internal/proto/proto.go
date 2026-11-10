@@ -106,6 +106,10 @@ const (
 
 	KindDiskMove      JobKind = "disk.move"
 	KindDiskDropLocal JobKind = "disk.drop_local"
+
+	KindVMExport  JobKind = "vm.export"
+	KindVMAttach  JobKind = "vm.attach"
+	KindVMRelease JobKind = "vm.release"
 )
 
 type Job struct {
@@ -127,6 +131,8 @@ type Job struct {
 	Cache *CachePurge `json:"cache,omitempty"`
 	Seed  *DiskSeed   `json:"seed,omitempty"`
 	Move  *DiskMove   `json:"move,omitempty"`
+
+	Record *VMRecord `json:"record,omitempty"`
 }
 
 // FSxDisk is an NFS export holding a vm's whole disk as disk.raw.
@@ -146,6 +152,28 @@ type DiskSeed struct {
 type DiskMove struct {
 	FSx       FSxDisk `json:"fsx"`
 	SizeBytes int64   `json:"size_bytes"`
+}
+
+// VMRecord is what one host knows about a stopped fsx vm that another needs to
+// take it over. On an attach Kernel is a URL; IP is only ever reported back.
+type VMRecord struct {
+	ID        string    `json:"id"`
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+	Boot      string    `json:"boot"`
+	CPUs      int       `json:"cpus"`
+	MemoryMiB int       `json:"memory_mib"`
+	Kernel    string    `json:"kernel,omitempty"`
+	Append    string    `json:"append,omitempty"`
+	GuestInit bool      `json:"guest_init,omitempty"`
+	DiskBytes int64     `json:"disk_bytes,omitempty"`
+	FSx       *FSxDisk  `json:"fsx,omitempty"`
+
+	Network   bool     `json:"network,omitempty"`
+	IP        string   `json:"ip,omitempty"`
+	Egress    []string `json:"egress,omitempty"`
+	RateMbit  int      `json:"rate_mbit,omitempty"`
+	BurstKbit int      `json:"burst_kbit,omitempty"`
 }
 
 // PreparedRootfs names the rootfs a disk.prepare left in the host's cache.
@@ -372,6 +400,10 @@ type JobResult struct {
 	Cert   *IssuedCert `json:"cert,omitempty"`
 	Cache  *CachePurgeResult `json:"cache,omitempty"`
 	Rootfs *PreparedRootfs   `json:"rootfs,omitempty"`
+
+	// Record answers vm.export and vm.attach; an export of a vm the host does
+	// not have is OK with no record.
+	Record *VMRecord `json:"record,omitempty"`
 }
 
 // CachePurgeResult answers both cache job kinds. Entries is what the cache

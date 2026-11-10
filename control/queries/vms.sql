@@ -219,3 +219,34 @@ WHERE id = $1;
 UPDATE vms
 SET local_disk_kept = false, updated_at = now()
 WHERE id = $1;
+
+-- name: BeginVMHostMove :one
+UPDATE vms
+SET host_moving_to = sqlc.arg(host_moving_to), last_error = '', updated_at = now()
+WHERE id = sqlc.arg(id)
+  AND status = 'stopped'
+  AND disk_backend = 'fsx'
+  AND NOT disk_moving
+  AND host_moving_to IS NULL
+  AND client_id <> sqlc.arg(host_moving_to)
+RETURNING *;
+
+-- name: SwitchVMHost :execrows
+UPDATE vms
+SET client_id       = sqlc.arg(to_client),
+    vm_id           = sqlc.arg(to_vm_id),
+    ip              = sqlc.arg(ip),
+    status          = 'stopped',
+    host_moving_to  = NULL,
+    local_disk_kept = false,
+    last_error      = '',
+    reported_at     = now(),
+    updated_at      = now()
+WHERE id = sqlc.arg(id)
+  AND client_id = sqlc.arg(from_client)
+  AND vm_id = sqlc.arg(from_vm_id);
+
+-- name: FailVMHostMove :exec
+UPDATE vms
+SET host_moving_to = NULL, last_error = $2, updated_at = now()
+WHERE id = $1;

@@ -38,6 +38,7 @@ definePageMeta({ middleware: ['auth'] })
 interface VM {
   id: string
   client_id: string
+  host?: string
   vm_id: string
   name: string
   default_port: number
@@ -51,6 +52,7 @@ interface VM {
   disk_mib: number
   disk_backend: 'local' | 'fsx'
   disk_moving: boolean
+  host_moving: boolean
   ip: string
   url: string
   console_url: string
@@ -149,7 +151,7 @@ const isRunning = computed(() => {
 })
 const switchable = computed(() => {
   const v = vm.value
-  return !!v?.vm_id && !v.disk_moving && (v.status === 'running' || v.status === 'stopped')
+  return !!v?.vm_id && !v.disk_moving && !v.host_moving && (v.status === 'running' || v.status === 'stopped')
 })
 
 const purging = ref<{ until: number } | null>(null)
@@ -161,8 +163,9 @@ watch(vm, (v) => {
   if (p && v && (v.last_error || Date.now() >= p.until)) purging.value = null
 })
 
-watch([() => vm.value?.status, () => vm.value?.disk_moving, settling, purging], () => {
-  const busy = vm.value?.status === 'pending' || !!vm.value?.disk_moving || !!settling.value || !!purging.value
+watch([() => vm.value?.status, () => vm.value?.disk_moving, () => vm.value?.host_moving, settling, purging], () => {
+  const busy = vm.value?.status === 'pending' || !!vm.value?.disk_moving || !!vm.value?.host_moving
+    || !!settling.value || !!purging.value
   if (busy && !timer) timer = setInterval(() => load(true), 5000)
   else if (!busy && timer) {
     clearInterval(timer)
@@ -517,7 +520,7 @@ async function saveUser() {
 const sizeOpen = ref(false)
 const savingSize = ref(false)
 const sizeError = ref<string | null>(null)
-const sizeForm = reactive({ cpus: '1', memory_mib: '512', disk_size: '', kernel_id: '' })
+const sizeForm = reactive({ cpus: '1', memory_mib: '512', disk_size: '', kernel_id: '', client_id: '' })
 
 interface Kernel {
   id: string
@@ -552,7 +555,33 @@ async function loadKernels() {
   }
 }
 
-const resizable = computed(() => vm.value?.status === 'running' || vm.value?.status === 'stopped')
+const resizable = computed(() => {
+  const v = vm.value
+  return !!v && !v.disk_moving && !v.host_moving && (v.status === 'running' || v.status === 'stopped')
+})
+
+type Host = { id: string, hostname: string }
+const hosts = ref<Host[]>([])
+const hostsError = ref<string | null>(null)
+const hostMovable = computed(() => vm.value?.disk_backend === 'fsx' && vm.value.status === 'stopped')
+const hostLabel = computed(() => {
+  const v = vm.value
+  if (!v) return ''
+  if (sizeForm.client_id === v.client_id) return v.host || v.client_id
+  return hosts.value.find(h => h.id === sizeForm.client_id)?.hostname || sizeForm.client_id
+})
+
+async function loadHosts() {
+  hostsError.value = null
+  try {
+    const res = await authFetch('/vms/hosts')
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    hosts.value = (await res.json()).items ?? []
+  }
+  catch (e) {
+    hostsError.value = e instanceof Error ? e.message : 'Could not load hosts'
+  }
+}
 
 function sizeToMiB(s: string): number | null {
   const v = s.trim()
@@ -575,9 +604,11 @@ function openSize() {
   sizeForm.memory_mib = String(vm.value.memory_mib || 512)
   sizeForm.disk_size = miBToSize(vm.value.disk_mib)
   sizeForm.kernel_id = vm.value.kernel_id || ''
+  sizeForm.client_id = vm.value.client_id
   sizeError.value = null
   sizeOpen.value = true
   if (vm.value.boot === 'direct') loadKernels()
+  if (hostMovable.value) loadHosts()
 }
 
 async function saveSize() {
@@ -601,21 +632,36 @@ async function saveSize() {
     return
   }
 
+  const v = vm.value
+  const hostChanged = !!v && hostMovable.value && sizeForm.client_id !== v.client_id
+  const sizeChanged = !v || cpus !== v.cpus || memory !== v.memory_mib
+    || (!!disk && disk !== v.disk_mib) || sizeForm.kernel_id !== (v.kernel_id || '')
+
   savingSize.value = true
   sizeError.value = null
   try {
-    const res = await authFetch(`/vms/${id.value}/size`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        cpus,
-        memory_mib: memory,
-        disk_size: sizeForm.disk_size.trim(),
-        kernel_id: sizeForm.kernel_id,
-      }),
-    })
-    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    vm.value = await res.json()
+    if (sizeChanged || !hostChanged) {
+      const res = await authFetch(`/vms/${id.value}/size`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          cpus,
+          memory_mib: memory,
+          disk_size: sizeForm.disk_size.trim(),
+          kernel_id: sizeForm.kernel_id,
+        }),
+      })
+      if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    }
+    if (hostChanged) {
+      const res = await authFetch(`/vms/${id.value}/move-host`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: sizeForm.client_id }),
+      })
+      if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    }
+    await load(true)
     sizeOpen.value = false
   }
   catch (e) {
@@ -829,9 +875,11 @@ async function removeDomain(d: CustomDomain) {
             </h1>
             <Badge :variant="statusVariant[vm.status]" class="font-mono">{{ vm.status }}</Badge>
             <Badge v-if="vm.disk_moving" variant="secondary" class="font-mono">moving disk to FSx…</Badge>
+            <Badge v-if="vm.host_moving" variant="secondary" class="font-mono">changing host…</Badge>
             <p class="flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
               {{ vm.cpus }} vCPU · {{ fmtMiB(vm.memory_mib) }} ·
-              {{ vm.disk_mib ? `${fmtMiB(vm.disk_mib)} disk` : 'disk not recorded' }}{{ vm.disk_backend === 'fsx' ? ' on FSx' : '' }}
+              {{ vm.disk_mib ? `${fmtMiB(vm.disk_mib)} disk` : 'disk not recorded' }}{{ vm.disk_backend === 'fsx' ? ' on FSx' : '' }} ·
+              <span class="max-w-48 truncate" :title="vm.host || vm.client_id">host {{ vm.host || vm.client_id }}</span>
               <Dialog v-model:open="sizeOpen">
                 <Button
                   variant="ghost"
@@ -858,6 +906,37 @@ async function removeDomain(d: CustomDomain) {
                     </DialogDescription>
                   </DialogHeader>
                   <form class="space-y-4" :aria-busy="savingSize" @submit.prevent="saveSize">
+                    <div class="space-y-2">
+                      <Label for="size-host">Host</Label>
+                      <Select v-if="hostMovable" v-model="sizeForm.client_id">
+                        <SelectTrigger id="size-host" class="w-full font-mono text-xs" aria-describedby="size-host-hint">
+                          <SelectValue>{{ hostLabel }}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem
+                            v-if="!hosts.some(h => h.id === vm!.client_id)"
+                            :value="vm.client_id"
+                            class="font-mono text-xs"
+                          >
+                            {{ vm.host || vm.client_id }} (current)
+                          </SelectItem>
+                          <SelectItem v-for="h in hosts" :key="h.id" :value="h.id" class="font-mono text-xs">
+                            {{ h.hostname || h.id }}{{ h.id === vm.client_id ? ' (current)' : '' }}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <Input v-else id="size-host" :model-value="vm.host || vm.client_id" class="font-mono text-xs" readonly disabled aria-describedby="size-host-hint" />
+                      <p id="size-host-hint" class="text-xs text-muted-foreground">
+                        <template v-if="hostsError">{{ hostsError }}</template>
+                        <template v-else-if="hostMovable && sizeForm.client_id !== vm.client_id">
+                          The VM gets a new address on the new host, and its URL follows that host's
+                          domain, so any custom domain's CNAME may need updating.
+                        </template>
+                        <template v-else-if="!hostMovable">
+                          Only a stopped VM whose disk is on FSx can change host.
+                        </template>
+                      </p>
+                    </div>
                     <div class="grid gap-4 sm:grid-cols-2">
                       <div class="space-y-2">
                         <Label for="size-cpus">vCPU</Label>

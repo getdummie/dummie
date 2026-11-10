@@ -461,6 +461,18 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.dropLocalDisk(ctx, env.ID, job.VMID)
+	case proto.KindVMExport, proto.KindVMRelease:
+		if job.VMID == "" {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no vm"})
+			return
+		}
+		go l.handOverVM(ctx, env.ID, job.Kind, job.VMID)
+	case proto.KindVMAttach:
+		if job.Record == nil {
+			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no vm record"})
+			return
+		}
+		go l.attachVM(ctx, env.ID, *job.Record)
 	case proto.KindSuricataConfig, proto.KindDpipeConfig, proto.KindCoreDNSConfig:
 		if job.File == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job carried no config"})
@@ -706,6 +718,42 @@ func (l *link) applyServices(ctx context.Context, jobID string, want proto.Servi
 	if upgradeSelf {
 		restartSelf(ctx)
 	}
+}
+
+func (l *link) handOverVM(ctx context.Context, jobID string, kind proto.JobKind, vmID string) {
+	ctx = context.WithoutCancel(ctx)
+	res := proto.JobResult{Kind: kind}
+	var err error
+	if kind == proto.KindVMExport {
+		res.Record, err = exportVM(l.data, vmID)
+	} else {
+		err = releaseVM(ctx, l.data, vmID)
+	}
+	if err != nil {
+		log.Printf("job %s: could not %s vm %s: %v", jobID, kind, vmID, err)
+		res.Error = err.Error()
+	} else {
+		res.OK = true
+	}
+	l.reply(ctx, jobID, res)
+}
+
+func (l *link) attachVM(ctx context.Context, jobID string, rec proto.VMRecord) {
+	ctx = context.WithoutCancel(ctx)
+	v, err := attachVM(ctx, l.data, rec)
+	if err != nil {
+		log.Printf("job %s: could not attach vm %s: %v", jobID, rec.ID, err)
+		l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMAttach, Error: err.Error()})
+		return
+	}
+	log.Printf("job %s: attached vm %s (%s) from %s:%s", jobID, v.ID, v.Name, v.FSx.Server, v.FSx.Path)
+	out := rec
+	out.Kernel = ""
+	out.IP = ""
+	if v.Net != nil {
+		out.IP = v.Net.IP
+	}
+	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMAttach, OK: true, Record: &out})
 }
 
 func (l *link) runVMAction(ctx context.Context, jobID string, kind proto.JobKind, vmID string) {

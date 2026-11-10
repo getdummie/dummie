@@ -128,6 +128,7 @@ var taskKindTimeouts = map[string]time.Duration{
 	taskOSImageBuild: taskOSImageBuildTimeout,
 	taskVMDiskFSx:    taskVMDiskFSxTimeout,
 	taskVMDiskMove:   taskVMDiskFSxTimeout,
+	taskVMHostMove:   taskVMHostMoveTimeout,
 }
 
 func taskKindTimeout(kind string) time.Duration {
@@ -183,6 +184,7 @@ func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore)
 		taskVMDiskFSx:         handleVMDiskFSx,
 		taskFSxGC:             handleFSxGC,
 		taskVMDiskMove:        handleVMDiskMove,
+		taskVMHostMove:        handleVMHostMove,
 	}
 	return r
 }

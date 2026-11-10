@@ -21,6 +21,7 @@ import (
 type vmDTO struct {
 	ID        string `json:"id"`
 	ClientID  string `json:"client_id"`
+	Host      string `json:"host,omitempty"`
 	VMID      string `json:"vm_id"`
 	Name      string `json:"name"`
 	Status    string `json:"status"`
@@ -36,6 +37,8 @@ type vmDTO struct {
 	// LocalDiskKept once it has been, until an admin deletes the local copy.
 	DiskMoving    bool `json:"disk_moving"`
 	LocalDiskKept bool `json:"local_disk_kept"`
+
+	HostMoving bool `json:"host_moving"`
 
 	DefaultPort int32   `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
@@ -81,6 +84,7 @@ func toVMDTO(v db.Vm) vmDTO {
 		DiskBackend:   v.DiskBackend,
 		DiskMoving:    v.DiskMoving,
 		LocalDiskKept: v.LocalDiskKept,
+		HostMoving:    v.HostMovingTo.Valid,
 		DefaultPort:   v.DefaultPort,
 		PublicPorts:   v.PublicPorts,
 		DefaultUser:   v.DefaultUser,
@@ -399,6 +403,8 @@ func (h *AdminHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 	switch {
 	case row.DiskMoving && kind != proto.KindVMStop:
 		return echo.NewHTTPError(http.StatusConflict, "this vm's disk is being moved to FSx")
+	case row.HostMovingTo.Valid:
+		return echo.NewHTTPError(http.StatusConflict, "this vm is changing host")
 	case kind == proto.KindVMStart && row.Status == "running":
 		return echo.NewHTTPError(http.StatusConflict, "this vm is already running")
 	case kind == proto.KindVMStop && row.Status == "stopped":

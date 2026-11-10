@@ -428,6 +428,14 @@
                 },
                 "type": "object"
             },
+            "main.moveHostReq": {
+                "properties": {
+                    "client_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.myOSImageList": {
                 "properties": {
                     "items": {
@@ -1054,6 +1062,12 @@
                     },
                     "expires_at": {
                         "type": "string"
+                    },
+                    "host": {
+                        "type": "string"
+                    },
+                    "host_moving": {
+                        "type": "boolean"
                     },
                     "id": {
                         "type": "string"
@@ -4136,6 +4150,104 @@
                     }
                 ],
                 "summary": "Move a VM's disk onto FSx",
+                "tags": [
+                    "vms"
+                ]
+            }
+        },
+        "/vms/{id}/move-host": {
+            "post": {
+                "description": "Hands a stopped VM whose disk is on FSx over to another host. Both hosts have to be connected. The move runs in the background; host_moving is true until it is done, and last_error says why when it fails. The VM gets a new address on the new host, and its URL follows that host's domain.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.moveHostReq",
+                                        "summary": "body",
+                                        "description": "the host to move to"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "the host to move to",
+                    "required": true
+                },
+                "responses": {
+                    "202": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.vmDTO"
+                                }
+                            }
+                        },
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "no such vm or host"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the vm is not stopped, not on FSx, already moving, or a host is not connected"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Move a VM to another host",
                 "tags": [
                     "vms"
                 ]

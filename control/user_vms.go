@@ -181,6 +181,9 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 	items[0].URL = h.vmURL(ctx, v)
 	items[0].ConsoleURL = h.consoleURL(ctx, v)
 	items[0].DesktopURL = h.desktopURL(ctx, v)
+	if client, err := h.q.GetClientByID(ctx, v.ClientID); err == nil {
+		items[0].Host = client.Hostname
+	}
 	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, items[0])
 }
@@ -904,6 +907,8 @@ func (h *UserHandler) actOnVM(c *echo.Context, kind proto.JobKind) error {
 	switch {
 	case row.DiskMoving && kind != proto.KindVMStop:
 		return echo.NewHTTPError(http.StatusConflict, "this vm's disk is being moved to FSx")
+	case row.HostMovingTo.Valid:
+		return echo.NewHTTPError(http.StatusConflict, "this vm is changing host")
 	case kind == proto.KindVMStart && row.Status == "running":
 		return echo.NewHTTPError(http.StatusConflict, "this vm is already running")
 	case kind == proto.KindVMStop && row.Status == "stopped":
@@ -955,6 +960,9 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 
 	if row.Status == "pending" {
 		return echo.NewHTTPError(http.StatusConflict, "this vm is still being created; try again once it has settled")
+	}
+	if row.HostMovingTo.Valid {
+		return echo.NewHTTPError(http.StatusConflict, "this vm is changing host; try again once it has settled")
 	}
 
 	// The binding goes with the VM so the host stops answering for the name.
@@ -1239,6 +1247,9 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 	}
 	if vm.DiskMoving {
 		return echo.NewHTTPError(http.StatusConflict, "this vm's disk is being moved to FSx; resize it once that is done")
+	}
+	if vm.HostMovingTo.Valid {
+		return echo.NewHTTPError(http.StatusConflict, "this vm is changing host; resize it once that is done")
 	}
 	switch vm.Status {
 	case "pending":

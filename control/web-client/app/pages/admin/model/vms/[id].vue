@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, HardDriveUpload, Trash2 } from '@lucide/vue'
+import { ArrowLeft, ArrowRightLeft, HardDriveUpload, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
@@ -34,6 +35,7 @@ interface AdminVM {
   disk_mib: number
   disk_backend: 'local' | 'fsx'
   disk_moving: boolean
+  host_moving: boolean
   local_disk_kept: boolean
   ip: string
   spec: Record<string, unknown>
@@ -161,15 +163,18 @@ const statusVariant: Record<string, BadgeVariant> = {
 }
 
 const hostname = ref('')
+const hostFor = ref('')
+const onlineHosts = ref<{ id: string, hostname: string }[]>([])
 const owner = ref<{ id: string, username: string } | null>(null)
 
 async function loadHost(clientID: string) {
+  hostFor.value = clientID
   try {
     const res = await authFetch('/admin/clients?limit=100')
     if (!res.ok) return
-    const data = await res.json()
-    const match = (data.items ?? []).find((a: { id: string }) => a.id === clientID)
-    if (match?.hostname) hostname.value = match.hostname
+    const items: { id: string, hostname: string, status: string }[] = (await res.json()).items ?? []
+    hostname.value = items.find(a => a.id === clientID)?.hostname ?? ''
+    onlineHosts.value = items.filter(a => a.status === 'online' && a.id !== clientID)
   }
   catch {
   }
@@ -218,7 +223,7 @@ async function load(quiet = false) {
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
     const data: AdminVM = await res.json()
     vm.value = data
-    if (!hostname.value && data.client_id) loadHost(data.client_id)
+    if (data.client_id && data.client_id !== hostFor.value) loadHost(data.client_id)
     if (!owner.value && data.created_by) loadOwner(data.created_by)
   }
   catch (e) {
@@ -240,8 +245,8 @@ watch(vm, (v) => {
 })
 
 let timer: ReturnType<typeof setInterval> | null = null
-watch([() => vm.value?.status, () => vm.value?.disk_moving, settling], () => {
-  const busy = vm.value?.status === 'pending' || !!vm.value?.disk_moving || !!settling.value
+watch([() => vm.value?.status, () => vm.value?.disk_moving, () => vm.value?.host_moving, settling], () => {
+  const busy = vm.value?.status === 'pending' || !!vm.value?.disk_moving || !!vm.value?.host_moving || !!settling.value
   if (busy && !timer) timer = setInterval(() => load(true), 5000)
   else if (!busy && timer) {
     clearInterval(timer)
@@ -264,12 +269,39 @@ const dropOpen = ref(false)
 const hasGuest = computed(() => !!vm.value?.vm_id && vm.value.status !== 'gone')
 const switchable = computed(() => {
   const v = vm.value
-  return !!v?.vm_id && !v.disk_moving && (v.status === 'running' || v.status === 'stopped')
+  return !!v?.vm_id && !v.disk_moving && !v.host_moving && (v.status === 'running' || v.status === 'stopped')
 })
 const movable = computed(() => {
   const v = vm.value
   return !!v && v.disk_backend === 'local' && v.status === 'stopped' && !v.disk_moving
 })
+const hostMovable = computed(() => {
+  const v = vm.value
+  return !!v && v.disk_backend === 'fsx' && v.status === 'stopped' && !v.host_moving
+})
+const hostOpen = ref(false)
+const hostTarget = ref('')
+
+async function confirmHostMove() {
+  working.value = true
+  actionError.value = null
+  try {
+    const res = await authFetch(`/admin/vms/${id.value}/move-host`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: hostTarget.value }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    hostOpen.value = false
+    await load(true)
+  }
+  catch (e) {
+    actionError.value = e instanceof Error ? e.message : 'Could not change the host'
+  }
+  finally {
+    working.value = false
+  }
+}
 const isRunning = computed(() => settling.value?.running ?? vm.value?.status === 'running')
 
 async function act(path: string, method: string, failure: string, settle: { verb: string, running: boolean } | null) {
@@ -366,6 +398,7 @@ async function confirmForget() {
               {{ displayStatus }}
             </Badge>
             <Badge v-if="vm.disk_moving" variant="secondary" class="font-mono">moving disk to FSx…</Badge>
+            <Badge v-if="vm.host_moving" variant="secondary" class="font-mono">changing host…</Badge>
           </div>
           <p v-if="displayStatus === 'stale'" class="mt-2 text-xs text-muted-foreground">
             was <span class="font-mono">{{ vm.status }}</span>, last confirmed {{ since(vm.reported_at) }}
@@ -394,6 +427,17 @@ async function confirmForget() {
           >
             <HardDriveUpload class="size-4" aria-hidden="true" />
             Move disk to FSx
+          </Button>
+          <Button
+            v-if="hostMovable"
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs"
+            :disabled="working"
+            @click="actionError = null; hostTarget = ''; loadHost(vm.client_id); hostOpen = true"
+          >
+            <ArrowRightLeft class="size-4" aria-hidden="true" />
+            Change host
           </Button>
           <Button
             v-if="vm.local_disk_kept"
@@ -649,6 +693,41 @@ async function confirmForget() {
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
           </DialogClose>
           <Button class="font-mono text-xs" :disabled="working" @click="confirmMove">
+            {{ working ? 'Starting…' : 'Move' }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    <Dialog v-model:open="hostOpen">
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Change host</DialogTitle>
+          <DialogDescription>
+            Hands <span class="font-mono text-foreground">{{ vm?.name || vm?.vm_id }}</span> over to
+            another host. Its disk stays on FSx. It gets a new address there, and its URL follows the
+            new host's domain. Any local disk left on the current host is deleted.
+          </DialogDescription>
+        </DialogHeader>
+        <div class="space-y-2">
+          <Label for="move-host">Move to</Label>
+          <Select v-model="hostTarget">
+            <SelectTrigger id="move-host" class="w-full font-mono text-xs">
+              <SelectValue placeholder="choose a connected host" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="h in onlineHosts" :key="h.id" :value="h.id" class="font-mono text-xs">
+                {{ h.hostname || h.id }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <FormError id="move-host-error" :message="actionError" />
+        <DialogFooter>
+          <DialogClose as-child>
+            <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+          </DialogClose>
+          <Button class="font-mono text-xs" :disabled="working || !hostTarget" @click="confirmHostMove">
             {{ working ? 'Starting…' : 'Move' }}
           </Button>
         </DialogFooter>

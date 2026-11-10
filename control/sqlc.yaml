@@ -23,6 +23,8 @@ sql:
           vm_name: "VMName"
           vm_owner: "VMOwner"
           host_vm_id: "HostVMID"
+          from_vm_id: "FromVMID"
+          to_vm_id: "ToVMID"
           cpus: "CPUs"
           memory_mib: "MemoryMiB"
           cpu_count: "CPUCount"
