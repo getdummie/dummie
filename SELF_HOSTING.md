@@ -170,6 +170,51 @@ the volumes dummie manages; delete them there rather than in the AWS console.
 The first VM from a new OS image takes longer because it builds the golden
 image; later VMs only need a clone.
 
+### Edge in front of several qemu hosts (optional)
+
+When more than one qemu host shares a domain, an edge routes each name to the
+host serving it: http by Host, https by SNI (passed through, so the edge holds
+no certificates) and ssh by login name (`ssh <vm>@dummie.app`). It runs no VMs,
+only dproxy and dpipe. Without an edge, point the domain at a host as before;
+hosts stay directly reachable either way. RDP is not routed through the edge.
+
+1. Use a small server in the same network as the qemu hosts. Move its own sshd
+   off port 22, since dproxy listens on 22, 80 and 443.
+
+2. Open 22, 80 and 443 to the internet on the edge. On the qemu hosts, allow
+   22, 80 and 443 from the edge's private address.
+
+3. Install dclient with only the edge role set. Every VM feature stays off, and
+   dclient refuses to start if one is on:
+
+```sh
+sudo tee /etc/dclient/config.yaml > /dev/null <<'EOF'
+control_url: https://console.dummie.dev
+enrollment_key: paste-the-generated-enrollment-key
+role: edge
+EOF
+
+sudo dclient install
+```
+
+4. In the console:
+   - **Admin → Clients → the edge**: check "Address hosts see" is the edge's
+     private address. It defaults to the address of the uplink interface; set
+     it if hosts see the edge from another address (NAT, second interface).
+   - **Admin → Clients → each host**: likewise check "Address the edge dials".
+   - **Admin → Domains**: pick the edge in the domain's Edge column.
+
+5. Point every record that pointed at a qemu host at the edge's public address
+   instead: `*.dummie.app` and `*.shell.dummie.dev`. Custom domains follow, since
+   they CNAME to `<vm>.dummie.app`.
+
+To check, `journalctl -u dproxy -f` on the edge shows `edge route` per request
+and `ssh authorize` per login. On a host, an ssh login through the edge is
+logged as `ssh authorize … upstream=true`; `ssh deny: upstream key from an
+untrusted source` means the host sees the edge from an address other than the
+one set in step 4. The real user of each ssh login is only in the edge's
+journal.
+
 ## FAQ
 
 - Can I run systemd-resolved on the qemu-host?
