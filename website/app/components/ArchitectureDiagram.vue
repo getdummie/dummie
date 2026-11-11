@@ -112,6 +112,32 @@ const nodes: Node[] = [
     points: ['Any S3-compatible endpoint works — there is no dependency on one vendor.'],
   },
   {
+    id: 'fsx',
+    name: 'FSx for OpenZFS',
+    kind: 'store',
+    sub: 'one volume per VM disk',
+    where: 'optional · managed storage',
+    summary: 'VM disks can live on FSx for OpenZFS instead of a host\'s local disk, so compute and storage scale separately and a stopped VM can change host.',
+    points: [
+      'control creates each VM\'s volume as a clone of a golden snapshot of its OS image; the first VM from a new image builds that snapshot.',
+      'Hosts mount the volume over NFS and need no AWS credentials of their own.',
+      'Without it, a VM\'s disk stays on the local disk of the host that runs it.',
+    ],
+  },
+  {
+    id: 'edge',
+    name: 'edge',
+    kind: 'binary',
+    sub: 'dproxy + dpipe · routes a shared domain',
+    where: 'optional · in front of the hosts',
+    summary: 'When several hosts share a domain, the edge sends each name to the host that serves it. It is an enrolled dclient with role: edge that runs only dproxy and dpipe, and no VMs.',
+    points: [
+      'HTTP by Host and HTTPS by SNI, passed through untouched: the host still terminates TLS and checks auth.',
+      'SSH is terminated here against the person\'s own key, then relayed to the host as <vm>@host with a key only edges hold, accepted only from the edge\'s address.',
+      'Optional per domain. Hosts stay directly reachable with or without it.',
+    ],
+  },
+  {
     id: 'host',
     name: 'QEMU host',
     kind: 'host',
@@ -341,29 +367,29 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
       <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-grid opacity-40" />
 
       <p class="sr-only">
-        A diagram of the dummie architecture: a control plane on the left, reached by clients, and
-        a QEMU host on the right running the ingress proxies, the per-run policy services and the
-        microVMs. Each component is a button; activating one shows a description beside it.
+        A diagram of the dummie architecture. Clients sit at the top and reach the control plane,
+        with an optional edge beside it that routes a shared domain to the right host. Below them,
+        optional FSx for OpenZFS VM disks feed the microVMs of a QEMU host, which runs the ingress
+        proxies, the microVMs and the per-run policy services; a second host shows the fleet
+        scales out. Each component is a button; activating one shows a description beside it.
       </p>
 
-      <div class="relative grid gap-4 lg:grid-cols-[minmax(0,0.9fr)_auto_minmax(0,2.1fr)] lg:items-start lg:gap-2">
-        <div class="flex flex-col lg:col-start-1">
-          <div class="flex justify-center">
-            <button class="arch-node w-full max-w-xs" v-bind="nodeBind('clients')" v-on="on('clients')">
-              <span class="arch-head">
-                <component :is="iconFor('clients')" class="arch-icon" aria-hidden="true" />
-                <span class="arch-name">{{ byId.clients?.name }}</span>
-              </span>
-              <span class="arch-sub">{{ byId.clients?.sub }}</span>
-            </button>
-          </div>
-
-          <div class="arch-link">
-            <span class="arch-rule" />
-            <ArrowDown class="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <span class="arch-edge">https · /api/v1</span>
-          </div>
-
+      <div class="relative">
+        <div class="flex justify-center">
+          <button class="arch-node w-full max-w-xs" v-bind="nodeBind('clients')" v-on="on('clients')">
+            <span class="arch-head">
+              <component :is="iconFor('clients')" class="arch-icon" aria-hidden="true" />
+              <span class="arch-name">{{ byId.clients?.name }}</span>
+            </span>
+            <span class="arch-sub">{{ byId.clients?.sub }}</span>
+          </button>
+        </div>
+        <div class="arch-link">
+          <span class="arch-rule" />
+          <ArrowDown class="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <span class="arch-edge">https · /api/v1</span>
+        </div>
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)] lg:items-start">
           <section class="arch-region">
             <p class="arch-region-head">
               <Server class="size-3.5" aria-hidden="true" />
@@ -401,126 +427,188 @@ const legend: Kind[] = ['host', 'vm', 'binary', 'container', 'db', 'net', 'kerne
               </button>
             </div>
           </section>
-        </div>
 
-        <div class="arch-span arch-span-main">
-          <span class="arch-span-line">
-            <span class="arch-span-rule" />
-            <ArrowRight class="size-3.5 shrink-0 text-muted-foreground max-lg:rotate-90" aria-hidden="true" />
-          </span>
-          <span class="arch-edge arch-span-label">control assigns work to dclient</span>
-        </div>
-
-        <section class="arch-region arch-region-host" :class="{ 'arch-region-on': active === 'host' }">
-          <button type="button" class="arch-region-head w-full" :aria-pressed="active === 'host'" v-on="on('host')">
-            <component :is="iconFor('host')" class="size-3.5" aria-hidden="true" />
-            {{ byId.host?.name }}
-            <span class="arch-region-note">{{ byId.host?.sub }}</span>
-          </button>
-
-          <div class="arch-group">
-            <p class="arch-group-label">public ingress</p>
-            <div class="grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
-              <button class="arch-node arch-node-sm" v-bind="nodeBind('dproxy')" v-on="on('dproxy')">
-                <span class="arch-head">
-                  <component :is="iconFor('dproxy')" class="arch-icon" aria-hidden="true" />
-                  <span class="arch-name">{{ byId.dproxy?.name }}</span>
-                </span>
-                <span class="arch-sub">{{ byId.dproxy?.sub }}</span>
-              </button>
-
-              <span class="arch-span arch-span-inline">
-                <span class="arch-span-line">
-                  <span class="arch-span-rule" />
-                  <ArrowRight class="size-3.5 shrink-0 text-muted-foreground max-sm:rotate-90" aria-hidden="true" />
-                </span>
-                <span class="arch-edge arch-span-label">unix socket · fd passing</span>
+          <section class="arch-region">
+            <p class="arch-region-head">
+              <Network class="size-3.5" aria-hidden="true" />
+              edge
+              <span class="arch-region-note">optional · when hosts share a domain</span>
+            </p>
+            <button class="arch-node arch-node-sm w-full" v-bind="nodeBind('edge')" v-on="on('edge')">
+              <span class="arch-head">
+                <component :is="iconFor('edge')" class="arch-icon" aria-hidden="true" />
+                <span class="arch-name arch-name-sm">{{ byId.edge?.name }}</span>
               </span>
+              <span class="arch-sub">{{ byId.edge?.sub }}</span>
+            </button>
+            <p class="arch-edge arch-aside">
+              <ArrowDown class="size-3.5 shrink-0" aria-hidden="true" />
+              ssh · https to a VM, sent to the host's dproxy
+            </p>
+          </section>
+        </div>
 
-              <button class="arch-node arch-node-sm" v-bind="nodeBind('dpipe')" v-on="on('dpipe')">
-                <span class="arch-head">
-                  <component :is="iconFor('dpipe')" class="arch-icon" aria-hidden="true" />
-                  <span class="arch-name">{{ byId.dpipe?.name }}</span>
+        <div class="arch-link">
+          <span class="arch-rule" />
+          <ArrowDown class="size-3.5 text-muted-foreground" aria-hidden="true" />
+          <span class="arch-edge">control assigns work to dclient</span>
+        </div>
+
+        <div class="grid gap-4 lg:grid-cols-[minmax(0,0.75fr)_minmax(0,2.1fr)_minmax(0,0.55fr)] lg:gap-y-0">
+          <section class="arch-region relative lg:col-start-1 lg:row-start-4 lg:self-center">
+            <span aria-hidden="true" class="arch-disk-link">
+              <span class="arch-disk-rule" />
+              <ArrowRight class="size-3.5 shrink-0 text-muted-foreground" />
+            </span>
+            <p class="arch-region-head">
+              <HardDrive class="size-3.5" aria-hidden="true" />
+              vm disks
+              <span class="arch-region-note">optional</span>
+            </p>
+            <button class="arch-node arch-node-sm arch-cyl w-full" v-bind="nodeBind('fsx')" v-on="on('fsx')">
+              <span class="arch-head">
+                <component :is="iconFor('fsx')" class="arch-icon" aria-hidden="true" />
+                <span class="arch-name arch-name-sm">{{ byId.fsx?.name }}</span>
+              </span>
+              <span class="arch-sub">{{ byId.fsx?.sub }}</span>
+            </button>
+            <p class="arch-edge arch-aside">
+              <ArrowRight class="size-3.5 shrink-0 max-lg:rotate-90" aria-hidden="true" />
+              control creates volumes · hosts mount them over NFS
+            </p>
+          </section>
+
+          <section
+            class="arch-region arch-region-host min-w-0 lg:col-start-2 lg:row-span-8 lg:row-start-1 lg:grid lg:grid-rows-subgrid"
+            :class="{ 'arch-region-on': active === 'host' }"
+          >
+            <button type="button" class="arch-region-head w-full" :aria-pressed="active === 'host'" v-on="on('host')">
+              <component :is="iconFor('host')" class="size-3.5" aria-hidden="true" />
+              {{ byId.host?.name }}
+              <span class="arch-region-note">{{ byId.host?.sub }}</span>
+            </button>
+
+            <div class="arch-group">
+              <p class="arch-group-label">public ingress</p>
+              <div class="grid items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
+                <button class="arch-node arch-node-sm" v-bind="nodeBind('dproxy')" v-on="on('dproxy')">
+                  <span class="arch-head">
+                    <component :is="iconFor('dproxy')" class="arch-icon" aria-hidden="true" />
+                    <span class="arch-name">{{ byId.dproxy?.name }}</span>
+                  </span>
+                  <span class="arch-sub">{{ byId.dproxy?.sub }}</span>
+                </button>
+
+                <span class="arch-span arch-span-inline">
+                  <span class="arch-span-line">
+                    <span class="arch-span-rule" />
+                    <ArrowRight class="size-3.5 shrink-0 text-muted-foreground max-sm:rotate-90" aria-hidden="true" />
+                  </span>
+                  <span class="arch-edge arch-span-label">unix socket · fd passing</span>
                 </span>
-                <span class="arch-sub">{{ byId.dpipe?.sub }}</span>
-              </button>
+
+                <button class="arch-node arch-node-sm" v-bind="nodeBind('dpipe')" v-on="on('dpipe')">
+                  <span class="arch-head">
+                    <component :is="iconFor('dpipe')" class="arch-icon" aria-hidden="true" />
+                    <span class="arch-name">{{ byId.dpipe?.name }}</span>
+                  </span>
+                  <span class="arch-sub">{{ byId.dpipe?.sub }}</span>
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div class="arch-link arch-link-tight">
-            <span class="arch-rule" />
-            <ArrowDown class="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <span class="arch-edge">bytes to the guest</span>
-          </div>
+            <div class="arch-link arch-link-tight">
+              <span class="arch-rule" />
+              <ArrowDown class="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <span class="arch-edge">bytes to the guest</span>
+            </div>
 
-          <div class="grid gap-2.5 sm:grid-cols-3">
-            <section
-              v-for="n in 3"
-              :key="n"
-              class="arch-region arch-region-vm"
-              :class="{ 'arch-region-on': active === 'vm' }"
-            >
-              <button type="button" class="arch-region-head w-full" :aria-pressed="active === 'vm'" v-on="on('vm')">
-                <component :is="iconFor('vm')" class="size-3.5" aria-hidden="true" />
-                {{ byId.vm?.name }} {{ n - 1 }}
-              </button>
-              <div class="grid gap-1.5">
+            <div class="grid gap-2.5 sm:grid-cols-3">
+              <section
+                v-for="n in 3"
+                :key="n"
+                class="arch-region arch-region-vm"
+                :class="{ 'arch-region-on': active === 'vm' }"
+              >
+                <button type="button" class="arch-region-head w-full" :aria-pressed="active === 'vm'" v-on="on('vm')">
+                  <component :is="iconFor('vm')" class="size-3.5" aria-hidden="true" />
+                  {{ byId.vm?.name }} {{ n - 1 }}
+                </button>
+                <div class="grid gap-1.5">
+                  <button
+                    v-for="id in guest"
+                    :key="id"
+                    class="arch-node arch-node-xs"
+                    v-bind="nodeBind(id)"
+                    v-on="on(id)"
+                  >
+                    <span class="arch-head">
+                      <component :is="iconFor(id)" class="arch-icon" aria-hidden="true" />
+                      <span class="arch-name">{{ byId[id]?.name }}</span>
+                    </span>
+                    <span class="arch-sub">{{ byId[id]?.sub }}</span>
+                  </button>
+                </div>
+              </section>
+            </div>
+
+            <div class="arch-link arch-link-tight">
+              <span class="arch-rule" />
+              <ArrowDown class="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <span class="arch-edge">every packet and every name meets policy</span>
+            </div>
+
+            <div class="arch-group">
+              <p class="arch-group-label">per-run policy</p>
+              <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                 <button
-                  v-for="id in guest"
+                  v-for="id in policy"
                   :key="id"
-                  class="arch-node arch-node-xs"
+                  class="arch-node arch-node-sm"
                   v-bind="nodeBind(id)"
                   v-on="on(id)"
                 >
                   <span class="arch-head">
                     <component :is="iconFor(id)" class="arch-icon" aria-hidden="true" />
-                    <span class="arch-name">{{ byId[id]?.name }}</span>
+                    <span class="arch-name arch-name-sm">{{ byId[id]?.name }}</span>
                   </span>
                   <span class="arch-sub">{{ byId[id]?.sub }}</span>
                 </button>
               </div>
-            </section>
-          </div>
-
-          <div class="arch-link arch-link-tight">
-            <span class="arch-rule" />
-            <ArrowDown class="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <span class="arch-edge">every packet and every name meets policy</span>
-          </div>
-
-          <div class="arch-group">
-            <p class="arch-group-label">per-run policy</p>
-            <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <button
-                v-for="id in policy"
-                :key="id"
-                class="arch-node arch-node-sm"
-                v-bind="nodeBind(id)"
-                v-on="on(id)"
-              >
-                <span class="arch-head">
-                  <component :is="iconFor(id)" class="arch-icon" aria-hidden="true" />
-                  <span class="arch-name arch-name-sm">{{ byId[id]?.name }}</span>
-                </span>
-                <span class="arch-sub">{{ byId[id]?.sub }}</span>
-              </button>
             </div>
-          </div>
 
-          <div class="arch-link arch-link-tight">
-            <span class="arch-edge">starts and configures all of the above</span>
-            <ArrowUp class="size-3.5 text-muted-foreground" aria-hidden="true" />
-            <span class="arch-rule" />
-          </div>
+            <div class="arch-link arch-link-tight">
+              <span class="arch-edge">starts and configures all of the above</span>
+              <ArrowUp class="size-3.5 text-muted-foreground" aria-hidden="true" />
+              <span class="arch-rule" />
+            </div>
 
-          <button class="arch-node w-full" v-bind="nodeBind('dclient')" v-on="on('dclient')">
-            <span class="arch-head">
-              <component :is="iconFor('dclient')" class="arch-icon" aria-hidden="true" />
-              <span class="arch-name">{{ byId.dclient?.name }}</span>
-            </span>
-            <span class="arch-sub">{{ byId.dclient?.sub }}</span>
-          </button>
-        </section>
+            <button class="arch-node w-full" v-bind="nodeBind('dclient')" v-on="on('dclient')">
+              <span class="arch-head">
+                <component :is="iconFor('dclient')" class="arch-icon" aria-hidden="true" />
+                <span class="arch-name">{{ byId.dclient?.name }}</span>
+              </span>
+              <span class="arch-sub">{{ byId.dclient?.sub }}</span>
+            </button>
+          </section>
+
+          <section
+            class="arch-region arch-region-host arch-region-ghost flex flex-col lg:col-start-3 lg:row-span-8 lg:row-start-1"
+            :class="{ 'arch-region-on': active === 'host' }"
+          >
+            <button type="button" class="arch-region-head w-full" :aria-pressed="active === 'host'" v-on="on('host')">
+              <component :is="iconFor('host')" class="size-3.5" aria-hidden="true" />
+              {{ byId.host?.name }}
+              <span class="arch-region-note">{{ byId.host?.sub }}</span>
+            </button>
+            <div aria-hidden="true" class="flex flex-1 flex-col gap-2.5">
+              <span class="arch-ghost h-12" />
+              <span class="arch-ghost arch-ghost-vm min-h-24 flex-1" />
+              <span class="arch-ghost h-12" />
+              <span class="arch-ghost h-12" />
+            </div>
+          </section>
+        </div>
       </div>
 
       <!-- teleported: an ancestor transform would make position:fixed resolve
@@ -682,6 +770,34 @@ button.arch-node:hover,
   color: var(--muted-foreground);
 }
 
+.arch-aside {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.55rem;
+}
+
+/* spans the column gap plus the host's border and padding to touch the microVMs */
+.arch-disk-link {
+  display: none;
+}
+@media (min-width: 1024px) {
+  .arch-disk-link {
+    position: absolute;
+    top: 50%;
+    left: 100%;
+    display: flex;
+    align-items: center;
+    width: calc(1rem + 2px + 0.875rem);
+    transform: translateY(-50%);
+  }
+}
+.arch-disk-rule {
+  height: 1px;
+  flex: 1;
+  background-color: var(--border);
+}
+
 .arch-span {
   display: flex;
   flex-direction: column;
@@ -718,25 +834,6 @@ button.arch-node:hover,
     max-width: 5.5rem;
   }
 }
-/* scoped to the main connector: the inline one has its own rules above */
-@media (min-width: 1024px) {
-  .arch-span-main {
-    align-self: center;
-    padding-block: 0;
-    padding-inline: 0.25rem;
-  }
-  .arch-span-main .arch-span-line {
-    flex-direction: row;
-  }
-  .arch-span-main .arch-span-rule {
-    width: 1.25rem;
-    height: 1px;
-  }
-  .arch-span-main .arch-span-label {
-    max-width: 7rem;
-  }
-}
-
 .arch-region {
   padding: 0.875rem;
   border: 1px solid var(--border);
@@ -749,6 +846,19 @@ button.arch-node:hover,
 }
 .arch-region-host {
   border-width: 2px;
+}
+.arch-region-ghost {
+  border-style: dashed;
+  opacity: 0.7;
+}
+.arch-ghost {
+  display: block;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+}
+.arch-ghost-vm {
+  border-color: color-mix(in oklch, var(--primary) 45%, var(--border));
+  background-color: color-mix(in oklch, var(--accent) 45%, transparent);
 }
 .arch-region-vm {
   padding: 0.6rem;
