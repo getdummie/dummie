@@ -78,6 +78,7 @@ services:
     image: rustfs/rustfs:1.0.0-beta.10
     security_opt:
       - "no-new-privileges:true"
+    userns_mode: "keep-id:uid=10001,gid=10001"
     env_file:
       - .rustfs.env
     ports:

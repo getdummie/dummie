@@ -170,7 +170,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	blobs := loadBlobStore(context.Background())
 	certs := newCertIssuer(q, blobs, hub, proxyCfg)
 
-	tasks := newTaskRunner(q, hub, certs, blobs)
+	tasks := newTaskRunner(q, pool, hub, certs, blobs)
 	if pool != nil {
 		runnerCtx, stopRunner := context.WithCancel(context.Background())
 		defer stopRunner()

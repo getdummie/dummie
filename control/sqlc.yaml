@@ -52,3 +52,4 @@ sql:
           proxy_target_url: "ProxyTargetURL"
           proxy_verify_tls: "ProxyVerifyTLS"
           snapshot_arn: "SnapshotARN"
+          nfs_client: "NFSClient"

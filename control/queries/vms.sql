@@ -22,14 +22,15 @@ SET status = 'failed', last_error = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: UpsertVMFromInventory :exec
-INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, boot_record, reported_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 ON CONFLICT (client_id, vm_id) WHERE vm_id <> '' DO UPDATE
 SET status      = EXCLUDED.status,
     boot        = EXCLUDED.boot,
     cpus        = EXCLUDED.cpus,
     memory_mib  = EXCLUDED.memory_mib,
     ip          = EXCLUDED.ip,
+    boot_record = EXCLUDED.boot_record,
     started_at  = COALESCE(vms.started_at, EXCLUDED.started_at),
     reported_at = now(),
     updated_at  = now();
@@ -224,7 +225,7 @@ WHERE id = $1;
 UPDATE vms
 SET host_moving_to = sqlc.arg(host_moving_to), last_error = '', updated_at = now()
 WHERE id = sqlc.arg(id)
-  AND status = 'stopped'
+  AND (status = 'stopped' OR (sqlc.arg(offline)::bool AND status = 'running'))
   AND disk_backend = 'fsx'
   AND NOT disk_moving
   AND host_moving_to IS NULL
@@ -250,3 +251,16 @@ WHERE id = sqlc.arg(id)
 UPDATE vms
 SET host_moving_to = NULL, last_error = $2, updated_at = now()
 WHERE id = $1;
+
+-- name: InsertVMHostEviction :exec
+INSERT INTO vm_host_evictions (client_id, vm_id, vm)
+VALUES ($1, $2, $3)
+ON CONFLICT (client_id, vm_id) DO NOTHING;
+
+-- name: ListVMHostEvictions :many
+SELECT * FROM vm_host_evictions
+WHERE client_id = $1;
+
+-- name: DeleteVMHostEviction :exec
+DELETE FROM vm_host_evictions
+WHERE client_id = $1 AND vm_id = $2;

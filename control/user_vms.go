@@ -184,6 +184,7 @@ func (h *UserHandler) GetVM(c *echo.Context) error {
 	if client, err := h.q.GetClientByID(ctx, v.ClientID); err == nil {
 		items[0].Host = client.Hostname
 	}
+	items[0].HostOnline = h.hub.Connected(items[0].ClientID)
 	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, items[0])
 }

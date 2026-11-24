@@ -53,6 +53,7 @@ interface VM {
   disk_backend: 'local' | 'fsx'
   disk_moving: boolean
   host_moving: boolean
+  host_online: boolean
   ip: string
   url: string
   console_url: string
@@ -563,7 +564,12 @@ const resizable = computed(() => {
 type Host = { id: string, hostname: string }
 const hosts = ref<Host[]>([])
 const hostsError = ref<string | null>(null)
-const hostMovable = computed(() => vm.value?.disk_backend === 'fsx' && vm.value.status === 'stopped')
+const hostOffline = computed(() => !!vm.value && !vm.value.host_online)
+const hostMovable = computed(() => {
+  const v = vm.value
+  if (v?.disk_backend !== 'fsx') return false
+  return v.status === 'stopped' || (hostOffline.value && v.status === 'running')
+})
 const hostLabel = computed(() => {
   const v = vm.value
   if (!v) return ''
@@ -897,7 +903,10 @@ async function removeDomain(d: CustomDomain) {
                     <DialogDescription>
                       What <span class="font-mono text-foreground">{{ vm.name }}</span> gets the next
                       time it boots.
-                      <template v-if="isRunning">
+                      <template v-if="hostOffline">
+                        Its host is offline, so it can only be moved to another host.
+                      </template>
+                      <template v-else-if="isRunning">
                         Applying restarts it, so anything running inside it stops.
                       </template>
                       <template v-else>
@@ -929,11 +938,16 @@ async function removeDomain(d: CustomDomain) {
                       <p id="size-host-hint" class="text-xs text-muted-foreground">
                         <template v-if="hostsError">{{ hostsError }}</template>
                         <template v-else-if="hostMovable && sizeForm.client_id !== vm.client_id">
+                          <template v-if="hostOffline">
+                            The current host is cut off from the disk. If the VM was running there, it
+                            boots on the new host as after a power cut, and unsaved work is lost.
+                          </template>
                           The VM gets a new address on the new host, and its URL follows that host's
                           domain, so any custom domain's CNAME may need updating.
                         </template>
                         <template v-else-if="!hostMovable">
-                          Only a stopped VM whose disk is on FSx can change host.
+                          Only a VM whose disk is on FSx can change host, and only once it is stopped
+                          while its host is online.
                         </template>
                       </p>
                     </div>

@@ -69,17 +69,15 @@ Run these from `nix-vms/`: state lives in `.microqemu/<vm>/` under the directory
 you launch from, which is also where the `just vm-*` recipes look.
 
 ```sh
-cd nix-vms
+nix run ./nix-vms#qemu-host-1 # start (also: `just vm-start`)
+nix run ./nix-vms#qemu-host-2
+nix run ./nix-vms#fakefsx
+nix run ./nix-vms#fakeedge
 
-nix run .#qemu-host-1                # start (also: `just vm-start`)
-nix run .#qemu-host-2
-nix run .#fakefsx
-nix run .#fakeedge
-
-nix run .#<vm> -- status
-nix run .#<vm> -- stop
-nix run .#<vm> -- console            # serial console, Ctrl-] to detach
-nix run .#<vm> -- stats              # qemu hosts only
+nix run ./nix-vms#<vm> -- status
+nix run ./nix-vms#<vm> -- stop
+nix run ./nix-vms#<vm> -- console            # serial console, Ctrl-] to detach
+nix run ./nix-vms#<vm> -- stats              # qemu hosts only
 ```
 
 The qemu hosts boot from `images/debian-vm-host/rootfs.tar`, built with
@@ -120,12 +118,12 @@ runs no VMs, only `dproxy` and `dpipe`. Its boot writes `control_url`,
 
 ```sh
 cd nix-vms
-nix run .#fakeedge                   # start
-nix run .#fakeedge -- status
-nix run .#fakeedge -- console        # Ctrl-] to detach; `stty sane onlcr` if lines stair-step
-nix run .#fakeedge -- stop
+nix run ./nix-vms#fakeedge                   # start
+nix run ./nix-vms#fakeedge -- status
+nix run ./nix-vms#fakeedge -- console        # Ctrl-] to detach; `stty sane onlcr` if lines stair-step
+nix run ./nix-vms#fakeedge -- stop
 
-nix run .#fakeedge -- stop && rm -f .microqemu/fakeedge/rootfs.ext4   # rebuild after changing its boot
+nix run ./nix-vms#fakeedge -- stop && rm -f .microqemu/fakeedge/rootfs.ext4   # rebuild after changing its boot
 ```
 
 Once it enrolls, Admin → Domains → Edge column: pick it for the domain, then

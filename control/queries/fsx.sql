@@ -113,3 +113,8 @@ ORDER BY d.created_at DESC;
 -- name: GetFSxDisk :one
 SELECT * FROM fsx_disks
 WHERE id = $1;
+
+-- name: SetFSxDiskNFSClient :exec
+UPDATE fsx_disks
+SET nfs_client = $2
+WHERE vm = $1;

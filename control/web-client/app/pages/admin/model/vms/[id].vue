@@ -36,6 +36,7 @@ interface AdminVM {
   disk_backend: 'local' | 'fsx'
   disk_moving: boolean
   host_moving: boolean
+  host_online: boolean
   local_disk_kept: boolean
   ip: string
   spec: Record<string, unknown>
@@ -277,7 +278,8 @@ const movable = computed(() => {
 })
 const hostMovable = computed(() => {
   const v = vm.value
-  return !!v && v.disk_backend === 'fsx' && v.status === 'stopped' && !v.host_moving
+  if (!v || v.disk_backend !== 'fsx' || v.host_moving) return false
+  return v.status === 'stopped' || (!v.host_online && v.status === 'running')
 })
 const hostOpen = ref(false)
 const hostTarget = ref('')
@@ -707,6 +709,11 @@ async function confirmForget() {
             Hands <span class="font-mono text-foreground">{{ vm?.name || vm?.vm_id }}</span> over to
             another host. Its disk stays on FSx. It gets a new address there, and its URL follows the
             new host's domain. Any local disk left on the current host is deleted.
+            <template v-if="vm && !vm.host_online">
+              The current host is offline, so it is cut off from the disk instead, and deletes its copy
+              when it reconnects. If the VM was running there, it boots on the new host as after a
+              power cut, and unsaved work is lost.
+            </template>
           </DialogDescription>
         </DialogHeader>
         <div class="space-y-2">

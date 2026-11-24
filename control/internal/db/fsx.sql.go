@@ -73,7 +73,7 @@ func (q *Queries) CountFSxDisksForImage(ctx context.Context, image pgtype.UUID) 
 const createFSxDisk = `-- name: CreateFSxDisk :one
 INSERT INTO fsx_disks (vm, image, volume_id, volume_path)
 VALUES ($1, $2, $3, $4)
-RETURNING id, vm, image, volume_id, volume_path, released, created_at
+RETURNING id, vm, image, volume_id, volume_path, released, created_at, nfs_client
 `
 
 type CreateFSxDiskParams struct {
@@ -99,6 +99,7 @@ func (q *Queries) CreateFSxDisk(ctx context.Context, arg CreateFSxDiskParams) (F
 		&i.VolumePath,
 		&i.Released,
 		&i.CreatedAt,
+		&i.NFSClient,
 	)
 	return i, err
 }
@@ -124,7 +125,7 @@ func (q *Queries) DeleteFSxImage(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getFSxDisk = `-- name: GetFSxDisk :one
-SELECT id, vm, image, volume_id, volume_path, released, created_at FROM fsx_disks
+SELECT id, vm, image, volume_id, volume_path, released, created_at, nfs_client FROM fsx_disks
 WHERE id = $1
 `
 
@@ -139,12 +140,13 @@ func (q *Queries) GetFSxDisk(ctx context.Context, id pgtype.UUID) (FsxDisk, erro
 		&i.VolumePath,
 		&i.Released,
 		&i.CreatedAt,
+		&i.NFSClient,
 	)
 	return i, err
 }
 
 const getFSxDiskByVM = `-- name: GetFSxDiskByVM :one
-SELECT id, vm, image, volume_id, volume_path, released, created_at FROM fsx_disks
+SELECT id, vm, image, volume_id, volume_path, released, created_at, nfs_client FROM fsx_disks
 WHERE vm = $1
 `
 
@@ -159,6 +161,7 @@ func (q *Queries) GetFSxDiskByVM(ctx context.Context, vm pgtype.UUID) (FsxDisk, 
 		&i.VolumePath,
 		&i.Released,
 		&i.CreatedAt,
+		&i.NFSClient,
 	)
 	return i, err
 }
@@ -214,7 +217,7 @@ func (q *Queries) GetFSxImageByRootfs(ctx context.Context, rootfs string) (FsxIm
 }
 
 const listFSxDisksAdmin = `-- name: ListFSxDisksAdmin :many
-SELECT d.id, d.vm, d.image, d.volume_id, d.volume_path, d.released, d.created_at,
+SELECT d.id, d.vm, d.image, d.volume_id, d.volume_path, d.released, d.created_at, d.nfs_client,
        COALESCE(v.name, '')::text AS vm_name,
        COALESCE(v.status, '')::text AS vm_status,
        COALESCE(i.rootfs, '')::text AS image_rootfs,
@@ -234,6 +237,7 @@ type ListFSxDisksAdminRow struct {
 	VolumePath  string
 	Released    bool
 	CreatedAt   pgtype.Timestamptz
+	NFSClient   string
 	VMName      string
 	VmStatus    string
 	ImageRootfs string
@@ -257,6 +261,7 @@ func (q *Queries) ListFSxDisksAdmin(ctx context.Context) ([]ListFSxDisksAdminRow
 			&i.VolumePath,
 			&i.Released,
 			&i.CreatedAt,
+			&i.NFSClient,
 			&i.VMName,
 			&i.VmStatus,
 			&i.ImageRootfs,
@@ -334,7 +339,7 @@ func (q *Queries) ListFSxImagesAdmin(ctx context.Context) ([]ListFSxImagesAdminR
 }
 
 const listReleasedFSxDisks = `-- name: ListReleasedFSxDisks :many
-SELECT id, vm, image, volume_id, volume_path, released, created_at FROM fsx_disks
+SELECT id, vm, image, volume_id, volume_path, released, created_at, nfs_client FROM fsx_disks
 WHERE vm IS NULL OR released
 `
 
@@ -355,6 +360,7 @@ func (q *Queries) ListReleasedFSxDisks(ctx context.Context) ([]FsxDisk, error) {
 			&i.VolumePath,
 			&i.Released,
 			&i.CreatedAt,
+			&i.NFSClient,
 		); err != nil {
 			return nil, err
 		}
@@ -450,6 +456,22 @@ WHERE claimed_by = $1 AND status = 'building'
 
 func (q *Queries) ReleaseFSxImageClaims(ctx context.Context, claimedBy pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, releaseFSxImageClaims, claimedBy)
+	return err
+}
+
+const setFSxDiskNFSClient = `-- name: SetFSxDiskNFSClient :exec
+UPDATE fsx_disks
+SET nfs_client = $2
+WHERE vm = $1
+`
+
+type SetFSxDiskNFSClientParams struct {
+	Vm        pgtype.UUID
+	NFSClient string
+}
+
+func (q *Queries) SetFSxDiskNFSClient(ctx context.Context, arg SetFSxDiskNFSClientParams) error {
+	_, err := q.db.Exec(ctx, setFSxDiskNFSClient, arg.Vm, arg.NFSClient)
 	return err
 }
 

@@ -195,6 +195,26 @@ func (s *fsxStore) setQuota(ctx context.Context, volumeID string, sizeBytes int6
 	return nil
 }
 
+// setVolumeClients replaces who may mount the volume: one host's address to
+// shut every other host out, or the shared setting.
+func (s *fsxStore) setVolumeClients(ctx context.Context, volumeID, clients string) error {
+	_, err := s.client.UpdateVolume(ctx, &fsx.UpdateVolumeInput{
+		VolumeId: aws.String(volumeID),
+		OpenZFSConfiguration: &types.UpdateOpenZFSVolumeConfiguration{
+			NfsExports: []types.OpenZFSNfsExport{{
+				ClientConfigurations: []types.OpenZFSClientConfiguration{{
+					Clients: aws.String(clients),
+					Options: fsxExportOptions,
+				}},
+			}},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("could not change who may mount %s: %w", volumeID, err)
+	}
+	return nil
+}
+
 // deleteVolume takes the volume's own snapshots with it. A volume something
 // is still cloned from is refused by FSx, which is the last guard for images.
 func (s *fsxStore) deleteVolume(ctx context.Context, id string) error {

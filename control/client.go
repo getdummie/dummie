@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -41,7 +42,11 @@ type ClientHandler struct {
 
 	llmSealer *llmSealer
 	llmModels *llmModelsCache
+
+	evicting sync.Map
 }
+
+const vmEvictWait = 2 * time.Minute
 
 func (h *ClientHandler) openEnrollment(ctx context.Context) bool {
 	return boolSetting(ctx, h.q, settingClientOpenEnrollment)
@@ -531,12 +536,30 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 		return
 	}
 
+	evictions, err := h.q.ListVMHostEvictions(ctx, client.ID)
+	if err != nil {
+		log.Printf("client %s: could not read the vms moved off it: %v", clientID, err)
+		return
+	}
+	stale := make(map[string]bool, len(evictions))
+	for _, e := range evictions {
+		stale[e.VMID] = false
+	}
+
 	seen := make([]string, 0, len(inv.VMs))
 	for _, v := range inv.VMs {
 		if v.ID == "" {
 			continue
 		}
+		if _, ok := stale[v.ID]; ok {
+			stale[v.ID] = true
+			continue
+		}
 		seen = append(seen, v.ID)
+		var record []byte
+		if v.Record != nil {
+			record, _ = json.Marshal(v.Record)
+		}
 
 		status := "stopped"
 		started := pgtype.Timestamptz{}
@@ -555,16 +578,17 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 		}
 		if err := withAdoptedVMName(ctx, preferred, func(ctx context.Context, name string) error {
 			return h.q.UpsertVMFromInventory(ctx, db.UpsertVMFromInventoryParams{
-				ClientID:  client.ID,
-				VMID:      v.ID,
-				Name:      name,
-				Status:    status,
-				Boot:      v.Boot,
-				CPUs:      int32(v.CPUs),
-				MemoryMiB: int32(v.MemoryMiB),
-				IP:        v.IP,
-				CreatedAt: created,
-				StartedAt: started,
+				ClientID:   client.ID,
+				VMID:       v.ID,
+				Name:       name,
+				Status:     status,
+				Boot:       v.Boot,
+				CPUs:       int32(v.CPUs),
+				MemoryMiB:  int32(v.MemoryMiB),
+				IP:         v.IP,
+				CreatedAt:  created,
+				StartedAt:  started,
+				BootRecord: record,
 			})
 		}); err != nil {
 			log.Printf("client %s: could not record vm %s from inventory: %v", clientID, v.ID, err)
@@ -577,10 +601,44 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 	}); err != nil {
 		log.Printf("client %s: could not reconcile removed vms: %v", clientID, err)
 	}
+	for vmID, held := range stale {
+		if held {
+			h.evictVM(clientID, client.ID, vmID)
+		} else if err := h.q.DeleteVMHostEviction(ctx, db.DeleteVMHostEvictionParams{ClientID: client.ID, VMID: vmID}); err != nil {
+			log.Printf("client %s: could not forget vm %s, which it no longer holds: %v", clientID, vmID, err)
+		}
+	}
 
 	pushProxyConfig(ctx, h.q, h.hub, h.proxy, client.ID)
 	pushSuricataRules(ctx, h.q, h.hub, client.ID)
 	pushCoreDNSConfig(ctx, h.q, h.hub, client.ID)
+}
+
+// evictVM tells a host to delete its copy of a vm that was moved off it while
+// it was offline. A failure is retried on the host's next inventory.
+func (h *ClientHandler) evictVM(clientID string, client pgtype.UUID, vmID string) {
+	key := clientID + "/" + vmID
+	if _, busy := h.evicting.LoadOrStore(key, struct{}{}); busy {
+		return
+	}
+	go func() {
+		defer h.evicting.Delete(key)
+		ctx, cancel := context.WithTimeout(context.Background(), vmEvictWait+10*time.Second)
+		defer cancel()
+		res, err := h.hub.Ask(ctx, clientID, proto.Job{Kind: proto.KindVMEvict, VMID: vmID}, vmEvictWait)
+		if err == nil && !res.OK {
+			err = errors.New(res.Error)
+		}
+		if err != nil {
+			log.Printf("client %s: could not delete vm %s, which was moved off it: %v", clientID, vmID, err)
+			return
+		}
+		if err := h.q.DeleteVMHostEviction(ctx, db.DeleteVMHostEvictionParams{ClientID: client, VMID: vmID}); err != nil {
+			log.Printf("client %s: could not forget vm %s after deleting it: %v", clientID, vmID, err)
+			return
+		}
+		log.Printf("client %s: deleted vm %s, which was moved off it while it was offline", clientID, vmID)
+	}()
 }
 
 func (h *ClientHandler) handleMetrics(ctx context.Context, client db.Client, clientID string, env proto.Envelope) {

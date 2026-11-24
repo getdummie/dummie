@@ -127,6 +127,7 @@ type FsxDisk struct {
 	VolumePath string
 	Released   bool
 	CreatedAt  pgtype.Timestamptz
+	NFSClient  string
 }
 
 type FsxImage struct {
@@ -393,6 +394,7 @@ type Vm struct {
 	DiskMoving    bool
 	LocalDiskKept bool
 	HostMovingTo  pgtype.UUID
+	BootRecord    []byte
 }
 
 type VmCustomDomain struct {
@@ -409,6 +411,13 @@ type VmCustomDomain struct {
 	OrderedAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+}
+
+type VmHostEviction struct {
+	ClientID  pgtype.UUID
+	VMID      string
+	Vm        pgtype.UUID
+	CreatedAt pgtype.Timestamptz
 }
 
 type VmIntegration struct {

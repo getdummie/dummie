@@ -40,6 +40,10 @@ type vmHostMovePayload struct {
 	FromVMID string `json:"from_vm_id"`
 	To       string `json:"to"`
 	ToVMID   string `json:"to_vm_id"`
+
+	// Offline moves off a host that is not connected, from the boot record it
+	// last reported, after shutting it out of the volume.
+	Offline bool `json:"offline,omitempty"`
 }
 
 type moveHostReq struct {
@@ -54,8 +58,8 @@ func startHostMove(ctx context.Context, q *db.Queries, hub *Hub, vm db.Vm, targe
 		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's disk is still being moved to FSx")
 	case vm.HostMovingTo.Valid:
 		return vm, echo.NewHTTPError(http.StatusConflict, "this vm is already changing host")
-	case vm.VMID == "" || vm.Status != "stopped":
-		return vm, echo.NewHTTPError(http.StatusConflict, "stop the vm before changing its host")
+	case vm.VMID == "":
+		return vm, echo.NewHTTPError(http.StatusConflict, "this vm is not on a host yet")
 	case !vm.KernelID.Valid:
 		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's kernel is not from the catalogue, so another host cannot fetch it")
 	}
@@ -81,8 +85,14 @@ func startHostMove(ctx context.Context, q *db.Queries, hub *Hub, vm db.Vm, targe
 		return vm, echo.NewHTTPError(http.StatusConflict, errEdgeRunsNoVMs)
 	}
 	from := uuid.UUID(vm.ClientID.Bytes).String()
-	if !hub.Connected(from) {
-		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's current host is not connected; it has to be online to hand the vm over")
+	offline := !hub.Connected(from)
+	switch {
+	case !offline && vm.Status != "stopped":
+		return vm, echo.NewHTTPError(http.StatusConflict, "stop the vm before changing its host")
+	case offline && vm.Status != "stopped" && vm.Status != "running":
+		return vm, echo.NewHTTPError(http.StatusConflict, "this vm is "+vm.Status+", so it cannot change host")
+	case offline && len(vm.BootRecord) == 0:
+		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's host is offline and never reported how to boot the vm elsewhere")
 	}
 	if !hub.Connected(target) {
 		return vm, echo.NewHTTPError(http.StatusConflict, "that host is not connected")
@@ -92,7 +102,7 @@ func startHostMove(ctx context.Context, q *db.Queries, hub *Hub, vm db.Vm, targe
 		return vm, echo.NewHTTPError(http.StatusInternalServerError, "could not pick an id for the vm")
 	}
 
-	row, err := q.BeginVMHostMove(ctx, db.BeginVMHostMoveParams{ID: vm.ID, HostMovingTo: to})
+	row, err := q.BeginVMHostMove(ctx, db.BeginVMHostMoveParams{ID: vm.ID, HostMovingTo: to, Offline: offline})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return vm, echo.NewHTTPError(http.StatusConflict, "this vm changed; reload and try again")
 	}
@@ -103,7 +113,7 @@ func startHostMove(ctx context.Context, q *db.Queries, hub *Hub, vm db.Vm, targe
 		Kind:        taskVMHostMove,
 		SubjectKind: subjectVM,
 		SubjectID:   vm.ID,
-		Payload:     vmHostMovePayload{From: from, FromVMID: vm.VMID, To: target, ToVMID: newID},
+		Payload:     vmHostMovePayload{From: from, FromVMID: vm.VMID, To: target, ToVMID: newID, Offline: offline},
 		Reason:      "move the vm to " + client.Hostname,
 		CreatedBy:   by,
 		MaxAttempts: vmHostMoveAttempts,
@@ -124,6 +134,7 @@ func newHostVMID() (string, error) {
 
 // handleVMHostMove attaches the vm on the new host before the old one lets go
 // of it, so at no point do both hosts hold it with the row unsure which is real.
+// An offline old host cannot let go, so it is shut out of the volume instead.
 func handleVMHostMove(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome {
 	vm, err := r.q.GetVM(ctx, t.SubjectID)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -165,13 +176,35 @@ func handleVMHostMove(ctx context.Context, r *taskRunner, t db.ScheduledTask) ta
 	if vm.ClientID != from || vm.VMID != p.FromVMID {
 		return failWith("the vm changed host while it was being moved")
 	}
-	if !r.hub.Connected(p.From) || !r.hub.Connected(p.To) {
+	disk, err := r.q.GetFSxDiskByVM(ctx, vm.ID)
+	if err != nil {
+		return retryOrFail("could not read the vm's volume: %v", err)
+	}
+	fence := p.Offline || disk.NFSClient != ""
+	if p.Offline {
+		fail := failWith
+		failWith = func(format string, args ...any) taskOutcome {
+			r.undoOfflineMove(ctx, disk, p)
+			return fail(format, args...)
+		}
+	}
+	if !r.hub.Connected(p.To) {
+		return retryOrFail("the new host has to be connected")
+	}
+	if !p.Offline && !r.hub.Connected(p.From) {
 		return retryOrFail("both hosts have to be connected")
 	}
 
-	rec, err := r.askRecord(ctx, p.From, proto.Job{Kind: proto.KindVMExport, VMID: p.FromVMID}, hostMoveJobWait)
-	if err != nil {
-		return retryOrFail("could not read the vm from its host: %v", err)
+	var rec *proto.VMRecord
+	if p.Offline {
+		if rec, err = lastBootRecord(vm, disk); err != nil {
+			return failWith("%v", err)
+		}
+	} else {
+		rec, err = r.askRecord(ctx, p.From, proto.Job{Kind: proto.KindVMExport, VMID: p.FromVMID}, hostMoveJobWait)
+		if err != nil {
+			return retryOrFail("could not read the vm from its host: %v", err)
+		}
 	}
 	if rec == nil {
 		// An earlier attempt got as far as releasing it; the new host has it.
@@ -182,7 +215,10 @@ func handleVMHostMove(ctx context.Context, r *taskRunner, t db.ScheduledTask) ta
 		if got == nil {
 			return failWith("neither host has the vm any more; its disk is still on FSx")
 		}
-		return r.switchHost(ctx, vm, p, from, to, got.IP, retryOrFail, failWith)
+		if fence && got.NFSClient == "" {
+			return retryOrFail("the new host could not tell its address towards FSx")
+		}
+		return r.switchHost(ctx, vm, disk, p, from, to, got, fence, retryOrFail, failWith)
 	}
 
 	kernel, err := r.q.GetKernel(ctx, vm.KernelID)
@@ -205,38 +241,106 @@ func handleVMHostMove(ctx context.Context, r *taskRunner, t db.ScheduledTask) ta
 		r.releaseQuietly(ctx, p.To, p.ToVMID)
 		return failWith("the new host refused the vm: %s", res.Error)
 	}
-	ip := res.Record.IP
-
-	res, err = r.hub.Ask(ctx, p.From, proto.Job{Kind: proto.KindVMRelease, VMID: p.FromVMID}, hostMoveJobWait)
-	if err != nil {
-		return retryOrFail("could not ask the old host to let go of the vm: %v", err)
-	}
-	if !res.OK {
+	got := res.Record
+	if fence && got.NFSClient == "" {
 		r.releaseQuietly(ctx, p.To, p.ToVMID)
-		return failWith("the old host would not let go of the vm: %s", res.Error)
+		return failWith("the new host could not tell its address towards FSx")
 	}
-	return r.switchHost(ctx, vm, p, from, to, ip, retryOrFail, failWith)
+
+	if !p.Offline {
+		res, err = r.hub.Ask(ctx, p.From, proto.Job{Kind: proto.KindVMRelease, VMID: p.FromVMID}, hostMoveJobWait)
+		if err != nil {
+			return retryOrFail("could not ask the old host to let go of the vm: %v", err)
+		}
+		if !res.OK {
+			r.releaseQuietly(ctx, p.To, p.ToVMID)
+			return failWith("the old host would not let go of the vm: %s", res.Error)
+		}
+	}
+	return r.switchHost(ctx, vm, disk, p, from, to, got, fence, retryOrFail, failWith)
 }
 
-func (r *taskRunner) switchHost(ctx context.Context, vm db.Vm, p vmHostMovePayload, from, to pgtype.UUID, ip string,
-	retryOrFail, failWith func(string, ...any) taskOutcome) taskOutcome {
-	// The new host's inventory may have adopted the vm as a row of its own.
-	if err := r.q.DeleteAdoptedVM(ctx, db.DeleteAdoptedVMParams{ClientID: to, VMID: p.ToVMID, ID: vm.ID}); err != nil {
-		return retryOrFail("could not clear the adopted copy: %v", err)
+// lastBootRecord rebuilds what an offline host would have exported. The sizes
+// come from the row, which a resize the host never reported back still updated.
+func lastBootRecord(vm db.Vm, disk db.FsxDisk) (*proto.VMRecord, error) {
+	var rec proto.VMRecord
+	if len(vm.BootRecord) == 0 || json.Unmarshal(vm.BootRecord, &rec) != nil || rec.FSx == nil {
+		return nil, errors.New("its host never reported how to boot it elsewhere")
 	}
-	n, err := r.q.SwitchVMHost(ctx, db.SwitchVMHostParams{
-		ID:         vm.ID,
-		ToClient:   to,
-		ToVMID:     p.ToVMID,
-		IP:         ip,
-		FromClient: from,
-		FromVMID:   p.FromVMID,
+	if rec.FSx.Path != disk.VolumePath {
+		return nil, fmt.Errorf("its host last reported it on %s, not on its volume %s", rec.FSx.Path, disk.VolumePath)
+	}
+	rec.CPUs, rec.MemoryMiB = int(vm.CPUs), int(vm.MemoryMiB)
+	rec.IP, rec.NFSClient = "", ""
+	return &rec, nil
+}
+
+// undoOfflineMove gives the volume back to whoever could mount it before, so a
+// failed move leaves the vm bootable where it was.
+func (r *taskRunner) undoOfflineMove(ctx context.Context, disk db.FsxDisk, p vmHostMovePayload) {
+	ctx = context.WithoutCancel(ctx)
+	r.releaseQuietly(ctx, p.To, p.ToVMID)
+	store, err := openFSx(ctx, r.q)
+	if err != nil {
+		log.Printf("could not give %s back to its old host: %v", disk.VolumeID, err)
+		return
+	}
+	clients := disk.NFSClient
+	if clients == "" {
+		clients = store.clients
+	}
+	if err := store.setVolumeClients(ctx, disk.VolumeID, clients); err != nil {
+		log.Printf("could not give %s back to its old host: %v", disk.VolumeID, err)
+	}
+}
+
+var errHostMoveRaced = errors.New("the vm changed while it was being moved")
+
+func (r *taskRunner) switchHost(ctx context.Context, vm db.Vm, disk db.FsxDisk, p vmHostMovePayload, from, to pgtype.UUID,
+	got *proto.VMRecord, fence bool, retryOrFail, failWith func(string, ...any) taskOutcome) taskOutcome {
+	if fence {
+		store, err := openFSx(ctx, r.q)
+		if err != nil {
+			return retryOrFail("could not reach FSx: %v", err)
+		}
+		if err := store.setVolumeClients(ctx, disk.VolumeID, got.NFSClient); err != nil {
+			return retryOrFail("%v", err)
+		}
+	}
+	err := inTx(ctx, r.pool, r.q, func(q *db.Queries) error {
+		// The new host's inventory may have adopted the vm as a row of its own.
+		if err := q.DeleteAdoptedVM(ctx, db.DeleteAdoptedVMParams{ClientID: to, VMID: p.ToVMID, ID: vm.ID}); err != nil {
+			return err
+		}
+		n, err := q.SwitchVMHost(ctx, db.SwitchVMHostParams{
+			ID:         vm.ID,
+			ToClient:   to,
+			ToVMID:     p.ToVMID,
+			IP:         got.IP,
+			FromClient: from,
+			FromVMID:   p.FromVMID,
+		})
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return errHostMoveRaced
+		}
+		if fence {
+			if err := q.SetFSxDiskNFSClient(ctx, db.SetFSxDiskNFSClientParams{Vm: vm.ID, NFSClient: got.NFSClient}); err != nil {
+				return err
+			}
+		}
+		if p.Offline {
+			return q.InsertVMHostEviction(ctx, db.InsertVMHostEvictionParams{ClientID: from, VMID: p.FromVMID, Vm: vm.ID})
+		}
+		return nil
 	})
+	if errors.Is(err, errHostMoveRaced) {
+		return failWith("%v", err)
+	}
 	if err != nil {
 		return retryOrFail("could not record the new host: %v", err)
-	}
-	if n == 0 {
-		return failWith("the vm changed while it was being moved")
 	}
 	for _, id := range []pgtype.UUID{from, to} {
 		r.pushHostConfigs(ctx, id)
@@ -277,7 +381,7 @@ func (r *taskRunner) pushHostConfigs(ctx context.Context, clientID pgtype.UUID) 
 }
 
 // @Summary     Move a VM to another host
-// @Description Hands a stopped VM whose disk is on FSx over to another host. Both hosts have to be connected. The move runs in the background; host_moving is true until it is done, and last_error says why when it fails. The VM gets a new address on the new host, and its URL follows that host's domain.
+// @Description Hands a VM whose disk is on FSx over to another connected host. When its current host is connected the VM has to be stopped. When it is not, the VM is moved from what that host last reported, running or not: the old host is shut out of the volume, and deletes its copy when it reconnects. The move runs in the background; host_moving is true until it is done, and last_error says why when it fails. The VM gets a new address on the new host, and its URL follows that host's domain.
 // @Tags        vms
 // @Accept      json
 // @Produce     json
@@ -288,7 +392,7 @@ func (r *taskRunner) pushHostConfigs(ctx context.Context, clientID pgtype.UUID) 
 // @Failure     400 {object} apiError
 // @Failure     401 {object} apiError
 // @Failure     404 {object} apiError "no such vm or host"
-// @Failure     409 {object} apiError "the vm is not stopped, not on FSx, already moving, or a host is not connected"
+// @Failure     409 {object} apiError "the vm is not stopped, not on FSx, already moving, or the new host is not connected"
 // @Router      /vms/{id}/move-host [post]
 func (h *UserHandler) MoveHost(c *echo.Context) error {
 	vm, err := h.ownedVM(c)

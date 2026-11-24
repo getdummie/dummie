@@ -149,8 +149,9 @@ func taskLongKinds() []string {
 type taskHandler func(ctx context.Context, r *taskRunner, t db.ScheduledTask) taskOutcome
 
 type taskRunner struct {
-	q   *db.Queries
-	hub *Hub
+	q    *db.Queries
+	pool *pgxpool.Pool
+	hub  *Hub
 	certs *certIssuer
 	blobs *blobStore
 
@@ -163,9 +164,10 @@ type taskRunner struct {
 	lastTick atomic.Int64
 }
 
-func newTaskRunner(q *db.Queries, hub *Hub, certs *certIssuer, blobs *blobStore) *taskRunner {
+func newTaskRunner(q *db.Queries, pool *pgxpool.Pool, hub *Hub, certs *certIssuer, blobs *blobStore) *taskRunner {
 	r := &taskRunner{
 		q:        q,
+		pool:     pool,
 		hub:      hub,
 		certs:    certs,
 		blobs:    blobs,

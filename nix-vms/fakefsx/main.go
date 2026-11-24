@@ -127,12 +127,16 @@ func (s *server) dispatch(op string, body []byte) (any, error) {
 	case "UpdateVolume":
 		var in struct {
 			VolumeId             string
-			OpenZFSConfiguration struct{ StorageCapacityQuotaGiB *int }
+			OpenZFSConfiguration struct {
+				StorageCapacityQuotaGiB *int
+				NfsExports              []nfsExport
+			}
 		}
 		if err := decode(&in); err != nil {
 			return nil, err
 		}
-		return s.updateVolume(in.VolumeId, in.OpenZFSConfiguration.StorageCapacityQuotaGiB)
+		cfg := in.OpenZFSConfiguration
+		return s.updateVolume(in.VolumeId, cfg.StorageCapacityQuotaGiB, cfg.NfsExports)
 	case "DeleteVolume":
 		var in struct{ VolumeId string }
 		if err := decode(&in); err != nil {
@@ -309,12 +313,7 @@ type createVolumeInput struct {
 		StorageCapacityQuotaGiB *int
 		RecordSizeKiB           *int
 		DataCompressionType     string
-		NfsExports              []struct {
-			ClientConfigurations []struct {
-				Clients string
-				Options []string
-			}
-		}
+		NfsExports              []nfsExport
 		OriginSnapshot *struct {
 			SnapshotARN  string
 			CopyStrategy string
@@ -405,12 +404,14 @@ func (s *server) createVolume(in createVolumeInput) (any, error) {
 }
 
 // sharenfs turns FSx export rules into the property ZFS hands to exportfs.
-func sharenfs(exports []struct {
+type nfsExport struct {
 	ClientConfigurations []struct {
 		Clients string
 		Options []string
 	}
-}) (string, error) {
+}
+
+func sharenfs(exports []nfsExport) (string, error) {
 	if len(exports) == 0 || len(exports[0].ClientConfigurations) == 0 {
 		return "off", nil
 	}
@@ -534,13 +535,22 @@ func (s *server) describeVolumes(ids []string) (any, error) {
 	return map[string]any{"Volumes": out}, nil
 }
 
-func (s *server) updateVolume(id string, quotaGiB *int) (any, error) {
+func (s *server) updateVolume(id string, quotaGiB *int, exports []nfsExport) (any, error) {
 	d, err := s.volumeByID(id)
 	if err != nil {
 		return nil, err
 	}
 	if quotaGiB != nil {
 		if _, err := zfs("set", fmt.Sprintf("quota=%dG", *quotaGiB), d.name); err != nil {
+			return nil, err
+		}
+	}
+	if exports != nil {
+		share, err := sharenfs(exports)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := zfs("set", "sharenfs="+share, d.name); err != nil {
 			return nil, err
 		}
 	}

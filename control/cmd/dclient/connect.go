@@ -463,7 +463,7 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 			return
 		}
 		go l.dropLocalDisk(ctx, env.ID, job.VMID)
-	case proto.KindVMExport, proto.KindVMRelease:
+	case proto.KindVMExport, proto.KindVMRelease, proto.KindVMEvict:
 		if job.VMID == "" {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no vm"})
 			return
@@ -726,9 +726,12 @@ func (l *link) handOverVM(ctx context.Context, jobID string, kind proto.JobKind,
 	ctx = context.WithoutCancel(ctx)
 	res := proto.JobResult{Kind: kind}
 	var err error
-	if kind == proto.KindVMExport {
+	switch kind {
+	case proto.KindVMExport:
 		res.Record, err = exportVM(l.data, vmID)
-	} else {
+	case proto.KindVMEvict:
+		err = evictVM(ctx, l.data, vmID)
+	default:
 		err = releaseVM(ctx, l.data, vmID)
 	}
 	if err != nil {
@@ -755,6 +758,7 @@ func (l *link) attachVM(ctx context.Context, jobID string, rec proto.VMRecord) {
 	if v.Net != nil {
 		out.IP = v.Net.IP
 	}
+	out.NFSClient = nfsClientAddr(v.FSx.Server)
 	l.reply(ctx, jobID, proto.JobResult{Kind: proto.KindVMAttach, OK: true, Record: &out})
 }
 
@@ -922,6 +926,9 @@ func (l *link) inventory() (proto.Inventory, error) {
 		}
 		if v.Net != nil {
 			state.IP = v.Net.IP
+		}
+		if v.FSx != nil {
+			state.Record, _ = bootRecord(v)
 		}
 		inv.VMs = append(inv.VMs, state)
 	}

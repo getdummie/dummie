@@ -5,8 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log"
+	"net"
 	"os"
+	"os/exec"
 	"regexp"
+	"strings"
+	"syscall"
+	"time"
 
 	"control/internal/proto"
 )
@@ -40,6 +46,18 @@ func exportVM(data, id string) (*proto.VMRecord, error) {
 	v, ok, err := loadMovableVM(data, id)
 	if err != nil || !ok {
 		return nil, err
+	}
+	rec, err := bootRecord(v)
+	if err != nil {
+		return nil, err
+	}
+	rec.NFSClient = nfsClientAddr(v.FSx.Server)
+	return rec, nil
+}
+
+func bootRecord(v vm) (*proto.VMRecord, error) {
+	if v.FSx == nil {
+		return nil, fmt.Errorf("the disk of %s is on this host, not on fsx", v.Name)
 	}
 	if v.Boot != bootDirect || v.Initrd != "" {
 		return nil, fmt.Errorf("only a %s-boot vm with no initrd can change host", bootDirect)
@@ -150,4 +168,84 @@ func releaseVM(ctx context.Context, data, id string) error {
 		return err
 	}
 	return removeVM(ctx, data, v)
+}
+
+// nfsClientAddr is the address this host reaches the FSx server from, which is
+// what an export restricted to this host has to name. Empty when unknown.
+func nfsClientAddr(server string) string {
+	conn, err := net.Dial("udp", net.JoinHostPort(server, "2049"))
+	if err != nil {
+		log.Printf("could not tell this host's address towards %s: %v", server, err)
+		return ""
+	}
+	defer func() { _ = conn.Close() }()
+	if a, ok := conn.LocalAddr().(*net.UDPAddr); ok {
+		return a.IP.String()
+	}
+	return ""
+}
+
+// evictVM drops a vm that control moved off this host while it was offline.
+// Its volume is no longer exported here, so qemu is killed and the mount forced off.
+func evictVM(ctx context.Context, data, id string) error {
+	if !vmIDPattern.MatchString(id) {
+		return fmt.Errorf("%q is not a vm id", id)
+	}
+	v, err := loadVM(data, id)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if v.FSx == nil {
+		return fmt.Errorf("the disk of %s is on this host, not on fsx", v.Name)
+	}
+	if err := killVM(data, id); err != nil {
+		return err
+	}
+	if err := forceUnmountFSx(ctx, fsxMountPoint(data, v)); err != nil {
+		return err
+	}
+	return removeVM(ctx, data, v)
+}
+
+func killVM(data, id string) error {
+	if vmPID(data, id) == 0 {
+		return nil
+	}
+	if err := signalVM(data, id, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
+	}
+	for range 50 {
+		if vmPID(data, id) == 0 {
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("qemu of vm %s did not exit after SIGKILL", id)
+}
+
+// forceUnmountFSx reads the mount table rather than stat-ing target, which can
+// block on a volume whose export no longer lets this host in.
+func forceUnmountFSx(ctx context.Context, target string) error {
+	mounts, err := os.ReadFile("/proc/self/mounts")
+	if err != nil {
+		return err
+	}
+	mounted := false
+	for _, line := range strings.Split(string(mounts), "\n") {
+		if f := strings.Fields(line); len(f) > 1 && f[1] == target {
+			mounted = true
+			break
+		}
+	}
+	if !mounted {
+		return nil
+	}
+	out, err := exec.CommandContext(ctx, "umount", "-f", "-l", target).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("could not force %s off: %v: %s", target, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

@@ -18,7 +18,7 @@ WHERE id = $1
   AND status = 'stopped'
   AND disk_backend = 'local'
   AND NOT disk_moving
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record
 `
 
 func (q *Queries) BeginVMDiskMove(ctx context.Context, id pgtype.UUID) (Vm, error) {
@@ -52,6 +52,7 @@ func (q *Queries) BeginVMDiskMove(ctx context.Context, id pgtype.UUID) (Vm, erro
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
@@ -60,21 +61,22 @@ const beginVMHostMove = `-- name: BeginVMHostMove :one
 UPDATE vms
 SET host_moving_to = $1, last_error = '', updated_at = now()
 WHERE id = $2
-  AND status = 'stopped'
+  AND (status = 'stopped' OR ($3::bool AND status = 'running'))
   AND disk_backend = 'fsx'
   AND NOT disk_moving
   AND host_moving_to IS NULL
   AND client_id <> $1
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record
 `
 
 type BeginVMHostMoveParams struct {
 	HostMovingTo pgtype.UUID
 	ID           pgtype.UUID
+	Offline      bool
 }
 
 func (q *Queries) BeginVMHostMove(ctx context.Context, arg BeginVMHostMoveParams) (Vm, error) {
-	row := q.db.QueryRow(ctx, beginVMHostMove, arg.HostMovingTo, arg.ID)
+	row := q.db.QueryRow(ctx, beginVMHostMove, arg.HostMovingTo, arg.ID, arg.Offline)
 	var i Vm
 	err := row.Scan(
 		&i.ID,
@@ -104,6 +106,7 @@ func (q *Queries) BeginVMHostMove(ctx context.Context, arg BeginVMHostMoveParams
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
@@ -157,7 +160,7 @@ func (q *Queries) CountVMsByOwner(ctx context.Context, createdBy pgtype.UUID) (i
 const createVM = `-- name: CreateVM :one
 INSERT INTO vms (client_id, name, boot, cpus, memory_mib, disk_mib, spec, created_by, default_port, public_ports, default_user, kernel_id, osimage_id, disk_backend)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record
 `
 
 type CreateVMParams struct {
@@ -223,6 +226,7 @@ func (q *Queries) CreateVM(ctx context.Context, arg CreateVMParams) (Vm, error) 
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
@@ -250,6 +254,21 @@ WHERE id = $1
 
 func (q *Queries) DeleteVM(ctx context.Context, id pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, deleteVM, id)
+	return err
+}
+
+const deleteVMHostEviction = `-- name: DeleteVMHostEviction :exec
+DELETE FROM vm_host_evictions
+WHERE client_id = $1 AND vm_id = $2
+`
+
+type DeleteVMHostEvictionParams struct {
+	ClientID pgtype.UUID
+	VMID     string
+}
+
+func (q *Queries) DeleteVMHostEviction(ctx context.Context, arg DeleteVMHostEvictionParams) error {
+	_, err := q.db.Exec(ctx, deleteVMHostEviction, arg.ClientID, arg.VMID)
 	return err
 }
 
@@ -324,7 +343,7 @@ func (q *Queries) FinishVMDiskMove(ctx context.Context, id pgtype.UUID) error {
 }
 
 const getVM = `-- name: GetVM :one
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record FROM vms
 WHERE id = $1
 `
 
@@ -359,12 +378,13 @@ func (q *Queries) GetVM(ctx context.Context, id pgtype.UUID) (Vm, error) {
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
 
 const getVMForOwner = `-- name: GetVMForOwner :one
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record FROM vms
 WHERE id = $1 AND created_by = $2
 `
 
@@ -404,6 +424,7 @@ func (q *Queries) GetVMForOwner(ctx context.Context, arg GetVMForOwnerParams) (V
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
@@ -436,6 +457,23 @@ func (q *Queries) GetVMForOwnerByHostname(ctx context.Context, arg GetVMForOwner
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const insertVMHostEviction = `-- name: InsertVMHostEviction :exec
+INSERT INTO vm_host_evictions (client_id, vm_id, vm)
+VALUES ($1, $2, $3)
+ON CONFLICT (client_id, vm_id) DO NOTHING
+`
+
+type InsertVMHostEvictionParams struct {
+	ClientID pgtype.UUID
+	VMID     string
+	Vm       pgtype.UUID
+}
+
+func (q *Queries) InsertVMHostEviction(ctx context.Context, arg InsertVMHostEvictionParams) error {
+	_, err := q.db.Exec(ctx, insertVMHostEviction, arg.ClientID, arg.VMID, arg.Vm)
+	return err
 }
 
 const listProxyHTTPRoutesByClient = `-- name: ListProxyHTTPRoutesByClient :many
@@ -582,8 +620,38 @@ func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype
 	return items, nil
 }
 
+const listVMHostEvictions = `-- name: ListVMHostEvictions :many
+SELECT client_id, vm_id, vm, created_at FROM vm_host_evictions
+WHERE client_id = $1
+`
+
+func (q *Queries) ListVMHostEvictions(ctx context.Context, clientID pgtype.UUID) ([]VmHostEviction, error) {
+	rows, err := q.db.Query(ctx, listVMHostEvictions, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []VmHostEviction
+	for rows.Next() {
+		var i VmHostEviction
+		if err := rows.Scan(
+			&i.ClientID,
+			&i.VMID,
+			&i.Vm,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVMs = `-- name: ListVMs :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record FROM vms
 ORDER BY created_at DESC
 LIMIT $1 OFFSET $2
 `
@@ -630,6 +698,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 			&i.DiskMoving,
 			&i.LocalDiskKept,
 			&i.HostMovingTo,
+			&i.BootRecord,
 		); err != nil {
 			return nil, err
 		}
@@ -642,7 +711,7 @@ func (q *Queries) ListVMs(ctx context.Context, arg ListVMsParams) ([]Vm, error) 
 }
 
 const listVMsByClient = `-- name: ListVMsByClient :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record FROM vms
 WHERE client_id = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -691,6 +760,7 @@ func (q *Queries) ListVMsByClient(ctx context.Context, arg ListVMsByClientParams
 			&i.DiskMoving,
 			&i.LocalDiskKept,
 			&i.HostMovingTo,
+			&i.BootRecord,
 		); err != nil {
 			return nil, err
 		}
@@ -703,7 +773,7 @@ func (q *Queries) ListVMsByClient(ctx context.Context, arg ListVMsByClientParams
 }
 
 const listVMsByOwner = `-- name: ListVMsByOwner :many
-SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to FROM vms
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record FROM vms
 WHERE created_by = $1
 ORDER BY created_at DESC
 LIMIT $2 OFFSET $3
@@ -752,6 +822,7 @@ func (q *Queries) ListVMsByOwner(ctx context.Context, arg ListVMsByOwnerParams) 
 			&i.DiskMoving,
 			&i.LocalDiskKept,
 			&i.HostMovingTo,
+			&i.BootRecord,
 		); err != nil {
 			return nil, err
 		}
@@ -838,7 +909,7 @@ UPDATE vms
 SET rdp_nonce  = gen_random_uuid()::text,
     updated_at = now()
 WHERE id = $1 AND created_by = $2
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record
 `
 
 type RotateVMRDPNonceForOwnerParams struct {
@@ -877,6 +948,7 @@ func (q *Queries) RotateVMRDPNonceForOwner(ctx context.Context, arg RotateVMRDPN
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
@@ -980,7 +1052,7 @@ UPDATE vms
 SET default_user = $1,
     updated_at   = now()
 WHERE id = $2 AND created_by = $3
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record
 `
 
 type UpdateVMDefaultUserForOwnerParams struct {
@@ -1022,6 +1094,7 @@ func (q *Queries) UpdateVMDefaultUserForOwner(ctx context.Context, arg UpdateVMD
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
@@ -1032,7 +1105,7 @@ SET default_port = $3,
     public_ports = $4,
     updated_at   = now()
 WHERE id = $1 AND created_by = $2
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record
 `
 
 type UpdateVMPortsForOwnerParams struct {
@@ -1078,6 +1151,7 @@ func (q *Queries) UpdateVMPortsForOwner(ctx context.Context, arg UpdateVMPortsFo
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
@@ -1091,7 +1165,7 @@ SET cpus       = $1,
     kernel_id  = $5,
     updated_at = now()
 WHERE id = $6 AND created_by = $7
-RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to
+RETURNING id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record
 `
 
 type UpdateVMSizeForOwnerParams struct {
@@ -1145,35 +1219,38 @@ func (q *Queries) UpdateVMSizeForOwner(ctx context.Context, arg UpdateVMSizeForO
 		&i.DiskMoving,
 		&i.LocalDiskKept,
 		&i.HostMovingTo,
+		&i.BootRecord,
 	)
 	return i, err
 }
 
 const upsertVMFromInventory = `-- name: UpsertVMFromInventory :exec
-INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, reported_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now())
+INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, boot_record, reported_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
 ON CONFLICT (client_id, vm_id) WHERE vm_id <> '' DO UPDATE
 SET status      = EXCLUDED.status,
     boot        = EXCLUDED.boot,
     cpus        = EXCLUDED.cpus,
     memory_mib  = EXCLUDED.memory_mib,
     ip          = EXCLUDED.ip,
+    boot_record = EXCLUDED.boot_record,
     started_at  = COALESCE(vms.started_at, EXCLUDED.started_at),
     reported_at = now(),
     updated_at  = now()
 `
 
 type UpsertVMFromInventoryParams struct {
-	ClientID  pgtype.UUID
-	VMID      string
-	Name      string
-	Status    string
-	Boot      string
-	CPUs      int32
-	MemoryMiB int32
-	IP        string
-	CreatedAt pgtype.Timestamptz
-	StartedAt pgtype.Timestamptz
+	ClientID   pgtype.UUID
+	VMID       string
+	Name       string
+	Status     string
+	Boot       string
+	CPUs       int32
+	MemoryMiB  int32
+	IP         string
+	CreatedAt  pgtype.Timestamptz
+	StartedAt  pgtype.Timestamptz
+	BootRecord []byte
 }
 
 func (q *Queries) UpsertVMFromInventory(ctx context.Context, arg UpsertVMFromInventoryParams) error {
@@ -1188,6 +1265,7 @@ func (q *Queries) UpsertVMFromInventory(ctx context.Context, arg UpsertVMFromInv
 		arg.IP,
 		arg.CreatedAt,
 		arg.StartedAt,
+		arg.BootRecord,
 	)
 	return err
 }

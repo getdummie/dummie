@@ -113,6 +113,7 @@ const (
 	KindVMExport  JobKind = "vm.export"
 	KindVMAttach  JobKind = "vm.attach"
 	KindVMRelease JobKind = "vm.release"
+	KindVMEvict   JobKind = "vm.evict"
 )
 
 type Job struct {
@@ -177,6 +178,9 @@ type VMRecord struct {
 	Egress    []string `json:"egress,omitempty"`
 	RateMbit  int      `json:"rate_mbit,omitempty"`
 	BurstKbit int      `json:"burst_kbit,omitempty"`
+
+	// NFSClient is the reporting host's own address towards the FSx server.
+	NFSClient string `json:"nfs_client,omitempty"`
 }
 
 // PreparedRootfs names the rootfs a disk.prepare left in the host's cache.
@@ -473,6 +477,9 @@ type VMState struct {
 	VMInfo
 	Running   bool      `json:"running"`
 	CreatedAt time.Time `json:"created_at"`
+
+	// Record lets control hand an fsx vm to another host while this one is offline.
+	Record *VMRecord `json:"record,omitempty"`
 }
 
 type Metrics struct {

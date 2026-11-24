@@ -40,6 +40,9 @@ type vmDTO struct {
 
 	HostMoving bool `json:"host_moving"`
 
+	// HostOnline is whether its host is connected; filled in for a single VM only.
+	HostOnline bool `json:"host_online"`
+
 	DefaultPort int32   `json:"default_port"`
 	PublicPorts []int32 `json:"public_ports"`
 
@@ -213,6 +216,7 @@ func (h *AdminHandler) GetVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not read vm")
 	}
 	items := []vmDTO{toVMDTO(v)}
+	items[0].HostOnline = h.hub.Connected(items[0].ClientID)
 	fillVMExpiries(ctx, h.q, items)
 	return c.JSON(http.StatusOK, items[0])
 }

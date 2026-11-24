@@ -1069,6 +1069,10 @@
                     "host_moving": {
                         "type": "boolean"
                     },
+                    "host_online": {
+                        "description": "HostOnline is whether its host is connected; filled in for a single VM only.",
+                        "type": "boolean"
+                    },
                     "id": {
                         "type": "string"
                     },
@@ -4157,7 +4161,7 @@
         },
         "/vms/{id}/move-host": {
             "post": {
-                "description": "Hands a stopped VM whose disk is on FSx over to another host. Both hosts have to be connected. The move runs in the background; host_moving is true until it is done, and last_error says why when it fails. The VM gets a new address on the new host, and its URL follows that host's domain.",
+                "description": "Hands a VM whose disk is on FSx over to another connected host. When its current host is connected the VM has to be stopped. When it is not, the VM is moved from what that host last reported, running or not: the old host is shut out of the volume, and deletes its copy when it reconnects. The move runs in the background; host_moving is true until it is done, and last_error says why when it fails. The VM gets a new address on the new host, and its URL follows that host's domain.",
                 "parameters": [
                     {
                         "description": "vm id",
@@ -4239,7 +4243,7 @@
                                 }
                             }
                         },
-                        "description": "the vm is not stopped, not on FSx, already moving, or a host is not connected"
+                        "description": "the vm is not stopped, not on FSx, already moving, or the new host is not connected"
                     }
                 },
                 "security": [
