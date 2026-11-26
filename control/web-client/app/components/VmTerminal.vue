@@ -212,7 +212,25 @@ function applyModifiers(input: string): string {
 
 function copySelection() {
   const text = term?.getSelection()
-  if (!text) return
+  if (text) copyText(text)
+}
+
+// OSC 52 lets apps with mouse tracking (e.g. claude) copy their own selection.
+// Format is "<targets>;<base64>"; "?" is a clipboard read, which we refuse.
+function handleOsc52(data: string): boolean {
+  const payload = data.slice(data.indexOf(';') + 1)
+  if (!payload || payload === '?') return true
+  try {
+    const bytes = Uint8Array.from(atob(payload), c => c.charCodeAt(0))
+    copyText(new TextDecoder().decode(bytes))
+  }
+  catch {
+    toast.error('Could not copy to clipboard')
+  }
+  return true
+}
+
+function copyText(text: string) {
   if (!navigator.clipboard) {
     toast.error('Could not copy: clipboard needs HTTPS')
     return
@@ -256,6 +274,7 @@ onMounted(async () => {
 
   term.onData(data => send(applyModifiers(data)))
   term.onResize(() => sendResize())
+  term.parser.registerOscHandler(52, handleOsc52)
   termEl.value!.addEventListener('mousedown', () => {
     window.addEventListener('mouseup', copySelection, { once: true })
   })
