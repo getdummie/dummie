@@ -2,6 +2,7 @@
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
+import { toast } from 'vue-sonner'
 
 // dark defaults to undefined, not false: left unset the terminal follows the
 // app theme, while the console page passes its own.
@@ -209,6 +210,18 @@ function applyModifiers(input: string): string {
   return data
 }
 
+function copySelection() {
+  const text = term?.getSelection()
+  if (!text) return
+  if (!navigator.clipboard) {
+    toast.error('Could not copy: clipboard needs HTTPS')
+    return
+  }
+  navigator.clipboard.writeText(text)
+    .then(() => toast.success('Copied to clipboard'))
+    .catch(() => toast.error('Could not copy to clipboard'))
+}
+
 onMounted(async () => {
   let vm: VM
   try {
@@ -243,6 +256,9 @@ onMounted(async () => {
 
   term.onData(data => send(applyModifiers(data)))
   term.onResize(() => sendResize())
+  termEl.value!.addEventListener('mousedown', () => {
+    window.addEventListener('mouseup', copySelection, { once: true })
+  })
 
   resizeObserver = new ResizeObserver(() => fitAndResize())
   resizeObserver.observe(termEl.value!)
@@ -253,6 +269,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
   resizeObserver = null
+  window.removeEventListener('mouseup', copySelection)
   ws?.close(1000, 'page closed')
   ws = null
   term?.dispose()
