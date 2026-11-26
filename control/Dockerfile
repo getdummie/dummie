@@ -6,7 +6,7 @@
 # The console only. nuxt.config.ts sets ssr:false, so `generate` emits a static
 # SPA into .output/public. The landing page and prose docs are not here -- they
 # are their own image, built from website/.
-FROM oven/bun:1.4.0-alpine AS web
+FROM docker.io/oven/bun:1.4.0-alpine AS web
 
 WORKDIR /web
 COPY web-client/package.json web-client/bun.lock ./
@@ -15,7 +15,7 @@ COPY web-client/ ./
 RUN bun run generate
 
 # ---- build: the Go binary ----------------------------------------------------
-FROM golang:1.26.5-trixie AS build
+FROM docker.io/library/golang:1.26.5-trixie AS build
 
 ARG VERSION=dev
 ARG COMMIT=none

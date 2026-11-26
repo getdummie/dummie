@@ -1,7 +1,6 @@
-GORELEASER := "goreleaser/goreleaser:v2.17.1"
-CONTROL_IMAGE := "codingcoffee/dummie-control"
-WEBSITE_IMAGE := "codingcoffee/dummie-website"
-# arm64 can be added here; the Nuxt stages then build a second time under emulation.
+GORELEASER := "docker.io/goreleaser/goreleaser:v2.17.1"
+CONTROL_IMAGE := "docker.io/codingcoffee/dummie-control"
+WEBSITE_IMAGE := "docker.io/codingcoffee/dummie-website"
 IMAGE_PLATFORMS := "linux/amd64"
 
 # print the version everything is built from.
@@ -124,8 +123,9 @@ release-image version:
     --build-arg DATE="$(git log -1 --format=%cI "v{{version}}")" \
     -t "{{CONTROL_IMAGE}}:{{version}}" \
     -t "{{CONTROL_IMAGE}}:latest" \
-    --push \
     control/
+  docker push "{{CONTROL_IMAGE}}:{{version}}"
+  docker push "{{CONTROL_IMAGE}}:latest"
 
 # build and push the website image for a version that is already tagged. Takes
 # the bare number, like release-image. The site carries no build-time reference
@@ -139,8 +139,9 @@ release-website-image version:
     -f website/Dockerfile \
     -t "{{WEBSITE_IMAGE}}:{{version}}" \
     -t "{{WEBSITE_IMAGE}}:latest" \
-    --push \
     website/
+  docker push "{{WEBSITE_IMAGE}}:{{version}}"
+  docker push "{{WEBSITE_IMAGE}}:latest"
 
 # goreleaser in a container, so the binaries never depend on the host toolchain.
 # GOTOOLCHAIN=auto lets it fetch the Go the go.mod files ask for.

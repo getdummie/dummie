@@ -20,7 +20,7 @@ builds:
     binary: dpipe
     env: [CGO_ENABLED=0]
     goos: [linux]
-    goarch: [amd64, arm64]
+    goarch: [amd64]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
@@ -35,7 +35,7 @@ builds:
     binary: dproxy
     env: [CGO_ENABLED=0]
     goos: [linux]
-    goarch: [amd64, arm64]
+    goarch: [amd64]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
@@ -50,7 +50,7 @@ builds:
     binary: intproxy
     env: [CGO_ENABLED=0]
     goos: [linux]
-    goarch: [amd64, arm64]
+    goarch: [amd64]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
@@ -67,7 +67,7 @@ builds:
     # not depend on any libc: CGO_ENABLED=0 is load-bearing, not hygiene.
     env: [CGO_ENABLED=0]
     goos: [linux]
-    goarch: [amd64, arm64]
+    goarch: [amd64]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:
@@ -82,7 +82,7 @@ builds:
     binary: dclient
     env: [CGO_ENABLED=0]
     goos: [linux]
-    goarch: [amd64, arm64]
+    goarch: [amd64]
     flags: [-trimpath]
     mod_timestamp: "{{ .CommitTimestamp }}"
     ldflags:

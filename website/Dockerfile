@@ -1,4 +1,4 @@
-FROM oven/bun:1.4.0-alpine AS build
+FROM docker.io/oven/bun:1.4.0-alpine AS build
 
 WORKDIR /web
 COPY package.json bun.lock ./
@@ -12,7 +12,7 @@ RUN bun run generate
 # public/og.svg is the source of truth; og:image has to be a raster, so the PNG
 # is built here instead of being committed. The two families are the ones the
 # site loads at runtime — without them the card renders in a fallback face.
-FROM alpine:3.22 AS og
+FROM docker.io/library/alpine:3.22 AS og
 
 RUN apk add --no-cache rsvg-convert fontconfig ca-certificates
 
@@ -28,7 +28,7 @@ COPY public/og.svg /og.svg
 RUN rsvg-convert -w 1200 -h 630 /og.svg -o /og.png
 
 # ---- runtime -----------------------------------------------------------------
-FROM nginx:1.29-alpine
+FROM docker.io/library/nginx:1.29-alpine
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --chmod=0755 docker-entrypoint.d/10-console-url.sh /docker-entrypoint.d/10-console-url.sh
