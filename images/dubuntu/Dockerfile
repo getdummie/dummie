@@ -209,6 +209,36 @@ description: "A base skill for developing web apps. Use this skill when you are 
 - vuejs for frontend
 - golang backend initializes the vuejs server on port 3000 and anything not coming on /api/v1/ gets internally routed to vuejs and served
 EOF
+COPY <<'EOF' /etc/bash_aliases
+alias d=docker
+alias dco="docker compose"
+alias v=nvim
+alias gst="git status"
+alias gp="git push"
+alias gl="git pull"
+alias ga="git add"
+alias gd="git diff"
+alias gb="git branch"
+EOF
+COPY <<'EOF' /etc/tmux.conf
+bind h select-pane -L
+bind j select-pane -D
+bind k select-pane -U
+bind l select-pane -R
+
+bind -r C-h previous-window
+bind -r C-l next-window
+
+bind Enter copy-mode
+
+setw -g mode-keys vi
+bind -T copy-mode-vi v send -X begin-selection
+bind -T copy-mode-vi y send -X copy-selection-and-cancel
+EOF
+RUN set -ex \
+  && chmod 0644 /etc/bash_aliases /etc/tmux.conf \
+  && printf '\n[ -f /etc/bash_aliases ] && . /etc/bash_aliases\n' >> /etc/bash.bashrc
+
 RUN chown -R ubuntu:ubuntu /home/ubuntu
 
 USER ubuntu
