@@ -53,6 +53,7 @@ interface TaskRow {
 const kindLabels: Record<string, string> = {
   'vm.expire': 'Destroy expired VM',
   'vm_target.expire': 'Withdraw temporary access',
+  'vm_destination_group.expire': 'Detach temporary group',
   'tasks.cleanup': 'Prune settled tasks',
   'audit.prune': 'Prune audit log',
 }
@@ -195,7 +196,7 @@ function statusVariant(s: string): BadgeVariant {
 function subjectLabel(t: TaskRow) {
   const p = t.payload ?? {}
   const vm = typeof p.vm_name === 'string' ? p.vm_name : ''
-  const dest = typeof p.destination === 'string' ? p.destination : ''
+  const dest = typeof p.destination === 'string' ? p.destination : typeof p.group === 'string' ? `group ${p.group}` : ''
   if (dest && vm) return `${dest} · ${vm}`
   return dest || vm || (t.subject_id ? `${t.subject_id.slice(0, 8)}…` : 'the fleet')
 }
@@ -309,6 +310,7 @@ async function runNow(t: TaskRow) {
           <NativeSelectOption value="">Every kind</NativeSelectOption>
           <NativeSelectOption value="vm.expire">Destroy expired VM</NativeSelectOption>
           <NativeSelectOption value="vm_target.expire">Withdraw temporary access</NativeSelectOption>
+          <NativeSelectOption value="vm_destination_group.expire">Detach temporary group</NativeSelectOption>
           <NativeSelectOption value="tasks.cleanup">Prune settled tasks</NativeSelectOption>
           <NativeSelectOption value="audit.prune">Prune audit log</NativeSelectOption>
         </NativeSelect>
@@ -446,6 +448,10 @@ async function runNow(t: TaskRow) {
             <template v-else-if="toCancel?.kind === 'vm_target.expire'">
               <span class="font-mono text-foreground">{{ subjectLabel(toCancel) }}</span>
               stops being temporary: the destination stays allowed until it is removed by hand.
+            </template>
+            <template v-else-if="toCancel?.kind === 'vm_destination_group.expire'">
+              <span class="font-mono text-foreground">{{ subjectLabel(toCancel) }}</span>
+              stops being temporary: the group stays attached until it is removed by hand.
             </template>
             <template v-else>
               This task will not run. Nothing reschedules it.

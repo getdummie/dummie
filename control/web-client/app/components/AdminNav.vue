@@ -12,6 +12,7 @@ import {
   Layers,
   ScrollText,
   Link2,
+  ListChecks,
   Server,
   Settings,
   Ticket,
@@ -39,6 +40,7 @@ const groups: AdminLink[][] = [
     { label: 'Clients', to: '/admin/model/clients', icon: Server },
     { label: 'Domains', to: '/admin/model/domains', icon: Globe },
     { label: 'Custom domains', to: '/admin/model/custom-domains', icon: Link2 },
+    { label: 'Destination groups', to: '/admin/model/destination-groups', icon: ListChecks },
     { label: 'Scheduled tasks', to: '/admin/model/scheduled-tasks', icon: Clock },
   ],
   [

@@ -162,7 +162,17 @@ LEFT JOIN vm_network_targets t ON t.vm_id = v.id
 WHERE v.client_id = $1
   AND v.ip <> ''
   AND v.status <> 'gone'
-ORDER BY v.ip, kind, destination, transport, ports
+UNION ALL
+SELECT v.ip, v.vm_id, v.name, e.kind, e.destination, e.transport, e.ports,
+       'group ' || g.name || CASE WHEN e.note <> '' THEN ': ' || e.note ELSE '' END
+FROM vms v
+JOIN vm_destination_groups a ON a.vm_id = v.id
+JOIN destination_groups g ON g.id = a.group_id
+JOIN destination_group_entries e ON e.group_id = g.id
+WHERE v.client_id = $1
+  AND v.ip <> ''
+  AND v.status <> 'gone'
+ORDER BY vm_ip, kind, destination, transport, ports
 `
 
 type ListVMNetworkTargetsByClientRow struct {

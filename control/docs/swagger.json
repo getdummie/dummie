@@ -196,6 +196,13 @@
                     "disk_size": {
                         "type": "string"
                     },
+                    "groups": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.vmGroupReq"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
                     "init_script": {
                         "type": "string"
                     },
@@ -408,6 +415,36 @@
                 },
                 "type": "object"
             },
+            "main.destinationGroupDTO": {
+                "properties": {
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "description": {
+                        "type": "string"
+                    },
+                    "entries": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.groupEntryDTO"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    },
+                    "vm_count": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
             "main.featuresDTO": {
                 "properties": {
                     "allow_everything": {
@@ -447,6 +484,26 @@
                         "type": "string"
                     },
                     "updated_at": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "main.groupEntryDTO": {
+                "properties": {
+                    "destination": {
+                        "type": "string"
+                    },
+                    "kind": {
+                        "type": "string"
+                    },
+                    "note": {
+                        "type": "string"
+                    },
+                    "ports": {
+                        "type": "string"
+                    },
+                    "transport": {
                         "type": "string"
                     }
                 },
@@ -701,6 +758,13 @@
                     },
                     "disk_size": {
                         "type": "string"
+                    },
+                    "groups": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.vmGroupReq"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
                     },
                     "init_script": {
                         "type": "string"
@@ -1170,6 +1234,17 @@
                 },
                 "type": "object"
             },
+            "main.vmGroupReq": {
+                "properties": {
+                    "group_id": {
+                        "type": "string"
+                    },
+                    "ttl_seconds": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
             "main.vmTargetDTO": {
                 "properties": {
                     "created_at": {
@@ -1466,6 +1541,48 @@
                 "summary": "One user's usage of the global llm keys for a month",
                 "tags": [
                     "admin"
+                ]
+            }
+        },
+        "/destination-groups": {
+            "get": {
+                "description": "Named sets of destinations an admin maintains. Attach one to a VM with /vms/{id}/groups; edits to a group reach every VM it is attached to.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "items": {
+                                            "$ref": "#/components/schemas/main.destinationGroupDTO"
+                                        },
+                                        "type": "array"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List destination groups",
+                "tags": [
+                    "egress"
                 ]
             }
         },
@@ -3469,7 +3586,7 @@
         },
         "/vms/{id}/connected": {
             "get": {
-                "description": "One item per allowed destination. last_connected is empty when nothing has connected through it since it was added. hosts lists, for a domain, every name under it that was connected to, newest first; an address allowance has none, and is only seen when it carried http or tls.\n\nLike the denied list, only the last 7 days are read, or less if the VM is younger; window_seconds reports the window actually read. An empty last_connected means nothing within it.\n\nRead available first: when it is false nothing could be read, which says nothing about whether the destinations are in use.",
+                "description": "One item per allowed destination, and one per attached group keyed by its attachment id. last_connected is empty when nothing has connected through it since it was added. hosts lists, for a domain, every name under it that was connected to, newest first; an address allowance has none, and is only seen when it carried http or tls.\n\nLike the denied list, only the last 7 days are read, or less if the VM is younger; window_seconds reports the window actually read. An empty last_connected means nothing within it.\n\nRead available first: when it is false nothing could be read, which says nothing about whether the destinations are in use.",
                 "parameters": [
                     {
                         "description": "vm id",
@@ -4154,6 +4271,257 @@
                 "summary": "Confirm the CNAME and start the certificate",
                 "tags": [
                     "vms"
+                ]
+            }
+        },
+        "/vms/{id}/groups": {
+            "post": {
+                "description": "Allows every destination in the group, and keeps following the group as an admin edits it. Set ttl_seconds to have the control plane detach it on its own.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.vmGroupReq",
+                                        "summary": "body",
+                                        "description": "group_id is required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "group_id is required",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "description": "attached"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "that group is already attached"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Attach a destination group",
+                "tags": [
+                    "egress"
+                ]
+            }
+        },
+        "/vms/{id}/groups/{group_id}": {
+            "delete": {
+                "description": "Cancels any pending expiry on it and pushes the new policy to the host.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "attachment id",
+                        "in": "path",
+                        "name": "group_id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "removed"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Detach a destination group",
+                "tags": [
+                    "egress"
+                ]
+            },
+            "put": {
+                "description": "Cancels any pending expiry and starts a fresh one from ttl_seconds; 0 keeps the group attached until it is removed.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "description": "attachment id",
+                        "in": "path",
+                        "name": "group_id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.vmGroupReq",
+                                        "summary": "body",
+                                        "description": "only ttl_seconds is read"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "only ttl_seconds is read",
+                    "required": true
+                },
+                "responses": {
+                    "204": {
+                        "description": "saved"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Unauthorized"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Change how long a group stays attached",
+                "tags": [
+                    "egress"
                 ]
             }
         },
@@ -5058,7 +5426,7 @@
         },
         "/vms/{id}/targets": {
             "get": {
-                "description": "Everything this guest is permitted to reach. expires_at is set on temporary allowances and empty on permanent ones.",
+                "description": "Everything this guest is permitted to reach: items are its own destinations, groups the destination groups attached to it with their current entries. expires_at is set on temporary allowances and empty on permanent ones.",
                 "parameters": [
                     {
                         "description": "vm id",

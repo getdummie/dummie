@@ -14,7 +14,7 @@ import {
   type TargetForm,
 } from '@/lib/targets'
 
-defineProps<{ index: number }>()
+defineProps<{ index: number, hideTtl?: boolean }>()
 const emit = defineEmits<{ remove: [] }>()
 const t = defineModel<TargetForm>({ required: true })
 </script>
@@ -112,12 +112,12 @@ const t = defineModel<TargetForm>({ required: true })
       </div>
     </template>
 
-    <div class="grid gap-3 sm:grid-cols-2">
+    <div class="grid gap-3" :class="!hideTtl && 'sm:grid-cols-2'">
       <div class="space-y-2">
         <Label :for="`t-note-${index}`">Note</Label>
         <Input :id="`t-note-${index}`" v-model="t.note" placeholder="why this is needed" />
       </div>
-      <div class="space-y-2">
+      <div v-if="!hideTtl" class="space-y-2">
         <Label :for="`t-ttl-${index}`">TTL (seconds)</Label>
         <Input
           :id="`t-ttl-${index}`"

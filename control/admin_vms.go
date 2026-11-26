@@ -242,7 +242,11 @@ func (h *AdminHandler) ListVMTargets(c *echo.Context) error {
 		items = append(items, toVMTargetDTO(t))
 	}
 	fillTargetExpiries(ctx, h.q, items)
-	return c.JSON(http.StatusOK, map[string]any{"items": items})
+	groups, err := listVMGroups(ctx, h.q, pgID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not list destination groups")
+	}
+	return c.JSON(http.StatusOK, map[string]any{"items": items, "groups": groups})
 }
 
 type adminCreateVMReq struct {

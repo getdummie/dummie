@@ -51,7 +51,7 @@ type targetActivityDTO struct {
 }
 
 // @Summary     When each allowed destination was last used
-// @Description One item per allowed destination. last_connected is empty when nothing has connected through it since it was added. hosts lists, for a domain, every name under it that was connected to, newest first; an address allowance has none, and is only seen when it carried http or tls.
+// @Description One item per allowed destination, and one per attached group keyed by its attachment id. last_connected is empty when nothing has connected through it since it was added. hosts lists, for a domain, every name under it that was connected to, newest first; an address allowance has none, and is only seen when it carried http or tls.
 // @Description
 // @Description Like the denied list, only the last 7 days are read, or less if the VM is younger; window_seconds reports the window actually read. An empty last_connected means nothing within it.
 // @Description
@@ -86,8 +86,13 @@ func (h *UserHandler) ListTargetActivity(c *echo.Context) error {
 		log.Printf("could not read egress activity for %s: %v", vm.IP, err)
 		return c.JSON(http.StatusOK, unavailable)
 	}
+	groups, err := listVMGroups(ctx, h.q, vm.ID)
+	if err != nil {
+		log.Printf("could not read the destination groups of %s: %v", vm.IP, err)
+	}
+	items := append(targetActivity(targets, seen), groupActivity(groups, seen)...)
 	return c.JSON(http.StatusOK, map[string]any{
-		"items": targetActivity(targets, seen), "available": true, "window_seconds": window,
+		"items": items, "available": true, "window_seconds": window,
 	})
 }
 
@@ -135,15 +140,19 @@ func targetActivity(targets []db.VmNetworkTarget, seen []egressSeen) []targetAct
 		for host, at := range hosts {
 			dto.Hosts = append(dto.Hosts, connectedHostDTO{Host: host, LastSeen: at.UTC().Format(time.RFC3339)})
 		}
-		sort.Slice(dto.Hosts, func(i, j int) bool {
-			if dto.Hosts[i].LastSeen != dto.Hosts[j].LastSeen {
-				return dto.Hosts[i].LastSeen > dto.Hosts[j].LastSeen
-			}
-			return dto.Hosts[i].Host < dto.Hosts[j].Host
-		})
+		sortConnectedHosts(dto.Hosts)
 		items = append(items, dto)
 	}
 	return items
+}
+
+func sortConnectedHosts(hosts []connectedHostDTO) {
+	sort.Slice(hosts, func(i, j int) bool {
+		if hosts[i].LastSeen != hosts[j].LastSeen {
+			return hosts[i].LastSeen > hosts[j].LastSeen
+		}
+		return hosts[i].Host < hosts[j].Host
+	})
 }
 
 func seenMatches(t db.VmNetworkTarget, s egressSeen) bool {

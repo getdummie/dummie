@@ -440,6 +440,8 @@ type createVMReq struct {
 
 	Targets []createTargetReq `json:"targets"`
 
+	Groups []vmGroupReq `json:"groups"`
+
 	InitScript string `json:"init_script"`
 
 	Integrations []recipeIntegration `json:"integrations"`
@@ -758,6 +760,10 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	if err != nil {
 		return err
 	}
+	groups, err := groupsForCreate(ctx, h.q, req.Groups)
+	if err != nil {
+		return err
+	}
 	var row db.Vm
 	insert := func(ctx context.Context, q *db.Queries, name string) error {
 		spec.Name = name
@@ -810,6 +816,11 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 				return err
 			}
 		}
+		for _, g := range groups {
+			if _, err := attachGroup(ctx, q, row, g.id, g.name, g.ttlSeconds); err != nil {
+				return err
+			}
+		}
 		if ttl == 0 {
 			return nil
 		}
@@ -826,7 +837,7 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 		return err
 	}
 	if err := withVMName(ctx, name, func(ctx context.Context, name string) error {
-		if ttl == 0 && len(targets) == 0 && len(attach) == 0 && backend == diskBackendLocal {
+		if ttl == 0 && len(targets) == 0 && len(attach) == 0 && len(groups) == 0 && backend == diskBackendLocal {
 			return insert(ctx, h.q, name)
 		}
 		return inTx(ctx, h.pool, h.q, func(q *db.Queries) error {
@@ -1462,7 +1473,7 @@ func (h *UserHandler) UpdateSize(c *echo.Context) error {
 }
 
 // @Summary     List a VM's allowed destinations
-// @Description Everything this guest is permitted to reach. expires_at is set on temporary allowances and empty on permanent ones.
+// @Description Everything this guest is permitted to reach: items are its own destinations, groups the destination groups attached to it with their current entries. expires_at is set on temporary allowances and empty on permanent ones.
 // @Tags        egress
 // @Produce     json
 // @Security    BearerAuth
@@ -1487,7 +1498,11 @@ func (h *UserHandler) ListTargets(c *echo.Context) error {
 		items = append(items, toVMTargetDTO(t))
 	}
 	fillTargetExpiries(ctx, h.q, items)
-	return c.JSON(http.StatusOK, map[string]any{"items": items})
+	groups, err := listVMGroups(ctx, h.q, vm.ID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not list destination groups")
+	}
+	return c.JSON(http.StatusOK, map[string]any{"items": items, "groups": groups})
 }
 
 type createTargetReq struct {

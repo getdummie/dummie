@@ -41,6 +41,7 @@ type recipeConfig struct {
 	TTLSeconds   int64               `json:"ttl_seconds,omitempty"`
 	InitScript   string              `json:"init_script,omitempty"`
 	Targets      []createTargetReq   `json:"targets,omitempty"`
+	Groups       []vmGroupReq        `json:"groups,omitempty"`
 	Integrations []recipeIntegration `json:"integrations,omitempty"`
 }
 
@@ -133,6 +134,14 @@ func validateRecipeConfig(cfg *recipeConfig) error {
 	}
 	for _, t := range cfg.Targets {
 		if _, err := normalizeTarget(t); err != nil {
+			return err
+		}
+	}
+	for _, g := range cfg.Groups {
+		if _, err := parseUUID(g.GroupID); err != nil {
+			return fmt.Errorf("%q is not a valid destination group id", g.GroupID)
+		}
+		if _, err := parseTTLSeconds(g.TTLSeconds); err != nil {
 			return err
 		}
 	}
@@ -382,6 +391,16 @@ func (h *UserHandler) recipeFromVM(ctx context.Context, vm db.Vm) (recipeConfig,
 		cfg.Targets = append(cfg.Targets, createTargetReq{
 			Kind: t.Kind, Destination: t.Destination, Transport: t.Transport, Ports: t.Ports, Note: t.Note,
 		})
+	}
+
+	groups, err := listVMGroups(ctx, h.q, vm.ID)
+	if err != nil {
+		return cfg, err
+	}
+	for _, g := range groups {
+		if g.ExpiresAt == "" {
+			cfg.Groups = append(cfg.Groups, vmGroupReq{GroupID: g.GroupID})
+		}
 	}
 
 	integs, err := h.q.ListVMIntegrationsForOwner(ctx, db.ListVMIntegrationsForOwnerParams{

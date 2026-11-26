@@ -37,6 +37,40 @@ export function isEverywhere(t: TargetRecord) {
   return t.kind === 'ip' && t.destination === everywhere && t.transport === 'any' && !t.ports
 }
 
+export type GroupEntry = Pick<TargetRecord, 'kind' | 'destination' | 'transport' | 'ports' | 'note'>
+
+export interface DestinationGroup {
+  id: string
+  name: string
+  description: string
+  entries: GroupEntry[]
+  vm_count?: number
+  created_at: string
+  updated_at: string
+}
+
+export interface VmGroup {
+  id: string
+  group_id: string
+  name: string
+  description: string
+  entries: GroupEntry[]
+  created_at: string
+  expires_at: string
+}
+
+// Flattens attached groups into plain records so coverage checks and tables
+// can treat them like the VM's own destinations.
+export function groupEntriesAsTargets(groups: VmGroup[]): TargetRecord[] {
+  return groups.flatMap(g => g.entries.map((e, i) => ({
+    ...e,
+    id: `${g.id}-${i}`,
+    note: `group ${g.name}${e.note ? `: ${e.note}` : ''}`,
+    created_at: g.created_at,
+    expires_at: g.expires_at,
+  })))
+}
+
 export interface TargetActivity {
   target_id: string
   last_connected: string
@@ -120,7 +154,7 @@ export function toTargetPayload(form: TargetForm) {
   }
 }
 
-export function targetToForm(t: TargetRecord, ttlSeconds: number): TargetForm {
+export function targetToForm(t: GroupEntry, ttlSeconds: number): TargetForm {
   const form = blankTarget()
   form.kind = t.kind
   form.destination = t.destination

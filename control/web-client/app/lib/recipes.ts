@@ -15,6 +15,11 @@ export interface RecipeIntegration {
 }
 
 // Every field is optional: whatever is missing takes the create form's default.
+export interface RecipeGroup {
+  group_id: string
+  ttl_seconds?: number
+}
+
 export interface RecipeConfig {
   osimage_id?: string
   kernel_id?: string
@@ -26,6 +31,7 @@ export interface RecipeConfig {
   ttl_seconds?: number
   init_script?: string
   targets?: RecipeTarget[]
+  groups?: RecipeGroup[]
   integrations?: RecipeIntegration[]
 }
 
@@ -68,6 +74,7 @@ export function recipeSummary(c: RecipeConfig): string[] {
   if (c.default_port) out.push(`:${c.default_port}`)
   if (c.public_ports?.length) out.push(`public ${c.public_ports.join(', ')}`)
   if (c.targets?.length) out.push(`${c.targets.length} destination${c.targets.length === 1 ? '' : 's'}`)
+  if (c.groups?.length) out.push(`${c.groups.length} group${c.groups.length === 1 ? '' : 's'}`)
   if (c.integrations?.length) out.push(`${c.integrations.length} integration${c.integrations.length === 1 ? '' : 's'}`)
   if (c.init_script) out.push('init script')
   if (c.ttl_seconds) out.push(`ttl ${c.ttl_seconds}s`)

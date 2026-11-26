@@ -30,9 +30,10 @@ import { TableCell, TableRow } from '@/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import type { DataTableColumn } from '@/lib/table'
-import type { TargetForm } from '@/lib/targets'
+import type { DestinationGroup, TargetForm } from '@/lib/targets'
 import { blankTarget, toTargetPayload } from '@/lib/targets'
 import { recipeSummary, recipeTargetToForm, type Recipe, type RecipeIntegration } from '@/lib/recipes'
+import GroupPicker from '@/components/GroupPicker.vue'
 import TargetFormRow from '@/components/TargetFormRow.vue'
 
 const maxTargets = 32
@@ -353,6 +354,14 @@ const form = reactive({ ...blankForm })
 const maxInitScriptBytes = 64 * 1024
 
 const targets = ref<TargetForm[]>([])
+const groups = ref<DestinationGroup[]>([])
+const pickedGroups = ref<string[]>([])
+const groupTTLs = ref<Record<string, number>>({})
+
+async function loadGroups() {
+  const res = await authFetch('/destination-groups').catch(() => null)
+  if (res?.ok) groups.value = (await res.json()).items ?? []
+}
 
 function addTargetRow() {
   targets.value = [...targets.value, blankTarget()]
@@ -468,6 +477,8 @@ async function pollBuild() {
 function resetForm() {
   Object.assign(form, blankForm)
   targets.value = []
+  pickedGroups.value = []
+  groupTTLs.value = {}
   fromRecipe.value = null
   recipeIntegrations.value = []
   recipeWarnings.value = []
@@ -537,8 +548,16 @@ async function applyRecipe(r: Recipe) {
 
   const [owned] = await Promise.all([
     c.integrations?.length ? integrationsApi.list().catch(() => null) : [],
-    loadHosts(), loadKernels(), loadOSImages(), loadFeatures(),
+    loadHosts(), loadKernels(), loadOSImages(), loadFeatures(), loadGroups(),
   ])
+  for (const rg of c.groups ?? []) {
+    if (!groups.value.some(g => g.id === rg.group_id)) {
+      recipeWarnings.value.push('A destination group in the recipe no longer exists and is left out.')
+      continue
+    }
+    pickedGroups.value.push(rg.group_id)
+    if (rg.ttl_seconds) groupTTLs.value[rg.group_id] = rg.ttl_seconds
+  }
   if (!form.client_id && hosts.value.length === 1) form.client_id = hosts.value[0]!.id
   form.kernel_id = kernels.value.some(k => k.id === c.kernel_id) ? c.kernel_id! : kernels.value[0]?.id ?? ''
   if (c.kernel_id && form.kernel_id !== c.kernel_id) recipeWarnings.value.push('The recipe\'s kernel is gone, so the newest one is picked.')
@@ -565,7 +584,7 @@ async function openCreate() {
   resetForm()
   copiedFrom.value = null
   createOpen.value = true
-  await Promise.all([loadHosts(), loadKernels(), loadOSImages(), loadFeatures()])
+  await Promise.all([loadHosts(), loadKernels(), loadOSImages(), loadFeatures(), loadGroups()])
   if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
   form.kernel_id = kernels.value[0]?.id ?? ''
 }
@@ -592,7 +611,7 @@ async function openCopy(v: VM) {
   form.init_script = specStr(v.spec, 'init_script')
 
   createOpen.value = true
-  await Promise.all([loadHosts(), loadKernels(), loadOSImages(), loadFeatures()])
+  await Promise.all([loadHosts(), loadKernels(), loadOSImages(), loadFeatures(), loadGroups()])
   form.kernel_id = kernels.value[0]?.id ?? ''
   if (hosts.value.some(h => h.id === v.client_id)) form.client_id = v.client_id
   else if (hosts.value.length === 1) form.client_id = hosts.value[0]!.id
@@ -694,6 +713,7 @@ async function create() {
         osimage_id: form.osimage_id,
         ttl_seconds: Number(form.ttl_seconds),
         targets: targets.value.map(toTargetPayload),
+        groups: pickedGroups.value.map(id => ({ group_id: id, ttl_seconds: groupTTLs.value[id] ?? 0 })),
         init_script: form.init_script,
         integrations: recipeIntegrations.value.map(({ id, repos }) => ({ id, repos })),
       }),
@@ -1241,6 +1261,11 @@ async function confirmDelete() {
                   :index="i"
                   @remove="removeTargetRow(i)"
                 />
+
+                <div v-if="groups.length" class="space-y-2">
+                  <Label for="vm-groups">Destination groups</Label>
+                  <GroupPicker id="vm-groups" v-model="pickedGroups" :groups="groups" />
+                </div>
               </div>
 
               <div v-if="recipeIntegrations.length" class="space-y-2 border-t border-border pt-4">

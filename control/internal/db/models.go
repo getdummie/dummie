@@ -101,6 +101,24 @@ type CustomDomainCert struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+type DestinationGroup struct {
+	ID          pgtype.UUID
+	Name        string
+	Description string
+	CreatedAt   pgtype.Timestamptz
+	UpdatedAt   pgtype.Timestamptz
+}
+
+type DestinationGroupEntry struct {
+	ID          pgtype.UUID
+	GroupID     pgtype.UUID
+	Kind        string
+	Destination string
+	Transport   string
+	Ports       string
+	Note        string
+}
+
 type Domain struct {
 	ID              pgtype.UUID
 	TLD             string
@@ -412,6 +430,13 @@ type VmCustomDomain struct {
 	OrderedAt       pgtype.Timestamptz
 	CreatedAt       pgtype.Timestamptz
 	UpdatedAt       pgtype.Timestamptz
+}
+
+type VmDestinationGroup struct {
+	ID        pgtype.UUID
+	VMID      pgtype.UUID
+	GroupID   pgtype.UUID
+	CreatedAt pgtype.Timestamptz
 }
 
 type VmHostEviction struct {

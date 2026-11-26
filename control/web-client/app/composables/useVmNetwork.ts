@@ -1,6 +1,6 @@
 import type { Ref } from 'vue'
 import type { DeniedAttempt, TargetRecord } from '@/lib/targets'
-import { deniedKey, tempAllowPayload } from '@/lib/targets'
+import { deniedKey, groupEntriesAsTargets, tempAllowPayload } from '@/lib/targets'
 
 const deniedWindowSeconds = 3600
 const deniedRefreshMs = 15_000
@@ -17,7 +17,9 @@ export function useVmNetwork(vmId: Ref<string>) {
   async function loadTargets() {
     if (document.hidden) return
     const res = await authFetch(`/vms/${vmId.value}/targets`)
-    if (res.ok) targets.value = (await res.json()).items ?? []
+    if (!res.ok) return
+    const data = await res.json()
+    targets.value = [...(data.items ?? []), ...groupEntriesAsTargets(data.groups ?? [])]
   }
 
   async function loadDenied() {

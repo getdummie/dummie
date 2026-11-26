@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // The VM's allowed and denied destinations, shared by /vms/[id] and the agent's
 // network tab; it loads and edits them on its own.
-import { ClockPlus, Globe, Pencil, Pin, Plus, RefreshCw, Trash2 } from '@lucide/vue'
+import { Check, ClockPlus, Globe, Layers, Pencil, Pin, Plus, RefreshCw, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
 import {
   Dialog,
   DialogClose,
@@ -29,6 +30,7 @@ import {
   destinationPlaceholder as destinationPlaceholderFor,
   domainPortChoices,
   everywhere,
+  groupEntriesAsTargets,
   isEverywhere,
   matchSummary as matchSummaryFor,
   portPresets,
@@ -38,7 +40,7 @@ import {
   tempAllowPayload,
   toTargetPayload,
 } from '@/lib/targets'
-import type { DeniedAttempt, TargetActivity, TargetRecord } from '@/lib/targets'
+import type { DeniedAttempt, DestinationGroup, TargetActivity, TargetRecord, VmGroup } from '@/lib/targets'
 import type { DataTableColumn } from '@/lib/table'
 
 const props = defineProps<{ vmId: string }>()
@@ -47,6 +49,8 @@ const { authFetch } = useAuth()
 const id = computed(() => props.vmId)
 
 const targets = ref<TargetRecord[]>([])
+const vmGroups = ref<VmGroup[]>([])
+const allTargets = computed(() => [...targets.value, ...groupEntriesAsTargets(vmGroups.value)])
 const denied = ref<DeniedAttempt[]>([])
 const deniedAvailable = ref(true)
 const deniedRecording = ref({ packets: false, lookups: false })
@@ -139,7 +143,9 @@ function fmtShortDate(s: string) {
 async function loadTargets() {
   const res = await authFetch(`/vms/${id.value}/targets`)
   if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-  targets.value = (await res.json()).items ?? []
+  const data = await res.json()
+  targets.value = data.items ?? []
+  vmGroups.value = data.groups ?? []
   loadActivity()
 }
 
@@ -151,7 +157,7 @@ async function loadActivity() {
   activity.value = new Map((data?.items ?? []).map((a: TargetActivity) => [a.target_id, a]))
 }
 
-function lastConnected(t: TargetRecord) {
+function lastConnected(t: { id: string }) {
   const at = activity.value.get(t.id)?.last_connected
   if (at) return timeAgo(at)
   return activityWindowSeconds.value < 7 * 86_400 - 60 ? 'never' : 'not in 7 days'
@@ -302,7 +308,7 @@ function deniedDestination(d: DeniedAttempt) {
 const alreadyAllowed = computed(() => {
   const covered = new Map<DeniedAttempt, string | null>()
   for (const d of denied.value) {
-    if (deniedCovered(d, targets.value)) covered.set(d, deniedParent(d, targets.value))
+    if (deniedCovered(d, allTargets.value)) covered.set(d, deniedParent(d, allTargets.value))
   }
   return covered
 })
@@ -562,6 +568,114 @@ async function addResolved() {
   }
 }
 
+const groupOpen = ref(false)
+const availableGroups = ref<DestinationGroup[]>([])
+const groupsLoadError = ref<string | null>(null)
+const pickedGroup = ref<string | null>(null)
+const groupTTL = ref('0')
+const attachingGroup = ref(false)
+const groupError = ref<string | null>(null)
+const attachableGroups = computed(() =>
+  availableGroups.value.filter(g => !vmGroups.value.some(a => a.group_id === g.id)))
+
+async function loadAvailableGroups() {
+  groupsLoadError.value = null
+  try {
+    const res = await authFetch('/destination-groups')
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    availableGroups.value = (await res.json()).items ?? []
+  }
+  catch (e) {
+    groupsLoadError.value = e instanceof Error ? e.message : 'Could not load the destination groups'
+  }
+}
+onMounted(loadAvailableGroups)
+
+function resetGroupForm() {
+  pickedGroup.value = null
+  groupTTL.value = '0'
+  groupError.value = null
+}
+
+async function attachGroup() {
+  if (!pickedGroup.value) {
+    groupError.value = 'Pick a group.'
+    return
+  }
+  const problem = ttlProblem(groupTTL.value)
+  if (problem) {
+    groupError.value = problem
+    return
+  }
+  attachingGroup.value = true
+  groupError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/groups`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: pickedGroup.value, ttl_seconds: Number(groupTTL.value) }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    groupOpen.value = false
+    resetGroupForm()
+    await loadTargets()
+  }
+  catch (e) {
+    groupError.value = e instanceof Error ? e.message : 'Could not add the group'
+  }
+  finally {
+    attachingGroup.value = false
+  }
+}
+
+async function makeGroupPermanent(g: VmGroup) {
+  makingPermanent.value = g.id
+  targetActionError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/groups/${g.id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ttl_seconds: 0 }),
+    })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await loadTargets()
+  }
+  catch (e) {
+    targetActionError.value = e instanceof Error ? e.message : 'Could not make the group permanent'
+  }
+  finally {
+    makingPermanent.value = null
+  }
+}
+
+async function detachGroup(g: VmGroup) {
+  removing.value = g.id
+  targetActionError.value = null
+  try {
+    const res = await authFetch(`/vms/${id.value}/groups/${g.id}`, { method: 'DELETE' })
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    await loadTargets()
+  }
+  catch (e) {
+    targetActionError.value = e instanceof Error ? e.message : 'Could not remove the group'
+  }
+  finally {
+    removing.value = null
+  }
+}
+
+function groupHosts(g: VmGroup) {
+  const own = new Set(g.entries.map(e => e.destination))
+  const hosts = activity.value.get(g.id)?.hosts.filter(h => !own.has(h.host)) ?? []
+  return expandedHosts.value.has(g.id) ? hosts : hosts.slice(0, shownHosts)
+}
+
+function hiddenGroupHostCount(g: VmGroup) {
+  const own = new Set(g.entries.map(e => e.destination))
+  const n = activity.value.get(g.id)?.hosts.filter(h => !own.has(h.host)).length ?? 0
+  return expandedHosts.value.has(g.id) ? 0 : Math.max(0, n - shownHosts)
+}
+
 const removing = ref<string | null>(null)
 
 async function removeTarget(t: TargetRecord) {
@@ -757,6 +871,81 @@ async function removeTarget(t: TargetRecord) {
           </DialogContent>
         </Dialog>
 
+        <Dialog v-model:open="groupOpen" @update:open="(v: boolean) => !v && resetGroupForm()">
+          <Button size="sm" variant="outline" class="font-mono text-xs" @click="resetGroupForm(); loadAvailableGroups(); groupOpen = true">
+            <Layers class="size-4" aria-hidden="true" />
+            Add group
+          </Button>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Add a destination group</DialogTitle>
+              <DialogDescription>
+                Allows every destination in the group. The group is kept by an admin, and this VM
+                follows it as entries are added or removed.
+              </DialogDescription>
+            </DialogHeader>
+
+            <FormError v-if="groupsLoadError" id="groups-load-error" :message="groupsLoadError" />
+            <p v-else-if="!attachableGroups.length" class="text-sm text-muted-foreground">
+              {{ availableGroups.length ? 'Every destination group is already on this VM.' : 'No destination groups have been set up yet. An admin can add them.' }}
+            </p>
+            <form v-else class="space-y-4" :aria-busy="attachingGroup" @submit.prevent="attachGroup">
+              <Command class="rounded-md border border-border">
+                <CommandInput placeholder="Search groups…" />
+                <CommandList class="max-h-60">
+                  <CommandEmpty>Nothing matches that.</CommandEmpty>
+                  <CommandGroup>
+                    <CommandItem
+                      v-for="g in attachableGroups"
+                      :key="g.id"
+                      :value="`${g.name} ${g.entries.map(e => e.destination).join(' ')}`"
+                      class="items-start gap-2"
+                      @select="pickedGroup = g.id"
+                    >
+                      <Check class="mt-0.5 size-4 shrink-0" :class="pickedGroup === g.id ? 'opacity-100' : 'opacity-0'" aria-hidden="true" />
+                      <span class="min-w-0">
+                        <span class="block font-mono text-xs">{{ g.name }}</span>
+                        <span v-if="g.description" class="block text-xs text-muted-foreground">{{ g.description }}</span>
+                        <span class="block font-mono text-xs break-all text-muted-foreground">
+                          {{ g.entries.map(e => e.destination).join(', ') || 'empty' }}
+                        </span>
+                      </span>
+                    </CommandItem>
+                  </CommandGroup>
+                </CommandList>
+              </Command>
+
+              <div class="space-y-2">
+                <Label for="g-ttl">TTL (seconds)</Label>
+                <Input
+                  id="g-ttl"
+                  v-model="groupTTL"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputmode="numeric"
+                  aria-describedby="g-ttl-hint"
+                />
+                <p id="g-ttl-hint" class="text-xs text-muted-foreground">
+                  0 keeps the group until you remove it. Anything else removes it for you when it
+                  runs out.
+                </p>
+              </div>
+
+              <FormError id="group-error" :message="groupError" />
+
+              <DialogFooter>
+                <DialogClose as-child>
+                  <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
+                </DialogClose>
+                <Button type="submit" class="font-mono text-xs" :disabled="attachingGroup || !pickedGroup">
+                  {{ attachingGroup ? 'Adding…' : 'Add group' }}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         <Dialog v-model:open="addOpen" @update:open="(v: boolean) => !v && resetTargetForm()">
           <Button size="sm" class="font-mono text-xs" @click="resetTargetForm(); addOpen = true">
             <Plus class="size-4" aria-hidden="true" />
@@ -909,10 +1098,80 @@ async function removeTarget(t: TargetRecord) {
       <FormError v-if="loadError" id="targets-load-error" :message="loadError" class="mx-4 mb-3" />
       <FormError v-if="targetActionError" id="target-action-error" :message="targetActionError" class="mx-4 mb-3" />
       <TooltipProvider :delay-duration="150">
-      <DataTable label="Allowed destinations" :columns="targetColumns" :empty="!targets.length" :frame="false">
+      <DataTable label="Allowed destinations" :columns="targetColumns" :empty="!targets.length && !vmGroups.length" :frame="false">
         <template #empty>
           No destinations recorded.
         </template>
+        <TableRow v-for="g in vmGroups" :key="g.id">
+          <TableCell class="font-mono break-all">
+            <span class="inline-flex items-center gap-1.5 font-semibold">
+              <Layers class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              {{ g.name }}
+            </span>
+            <span class="mt-1 block text-xs text-muted-foreground">
+              {{ g.entries.map(e => e.destination).join(', ') || 'empty group' }}
+            </span>
+            <ul v-if="groupHosts(g).length" class="mt-1 space-y-0.5 text-xs text-muted-foreground">
+              <li v-for="h in groupHosts(g)" :key="h.host">
+                {{ h.host }} <span class="whitespace-nowrap">· {{ timeAgo(h.last_seen) }}</span>
+              </li>
+              <li v-if="hiddenGroupHostCount(g)">
+                <button type="button" class="underline-offset-2 hover:underline" @click="expandedHosts.add(g.id)">
+                  +{{ hiddenGroupHostCount(g) }} more
+                </button>
+              </li>
+            </ul>
+          </TableCell>
+          <TableCell class="font-mono text-xs text-muted-foreground">
+            group · {{ g.entries.length }} {{ g.entries.length === 1 ? 'entry' : 'entries' }}
+          </TableCell>
+          <TableCell class="font-mono text-muted-foreground">—</TableCell>
+          <TableCell class="font-mono text-muted-foreground">—</TableCell>
+          <TableCell class="text-muted-foreground">{{ g.description || '—' }}</TableCell>
+          <TableCell class="font-mono text-xs">
+            <span v-if="!g.expires_at" class="text-muted-foreground">—</span>
+            <span v-else :class="timeLeft(g.expires_at) === 'overdue' ? 'text-destructive' : 'text-muted-foreground'">
+              {{ timeLeft(g.expires_at) }}
+            </span>
+          </TableCell>
+          <TableCell class="text-right text-xs whitespace-nowrap text-muted-foreground">
+            <template v-if="!activityAvailable">—</template>
+            <template v-else>{{ lastConnected(g) }}</template>
+          </TableCell>
+          <TableCell class="text-right">
+            <div v-if="timeLeft(g.expires_at) !== 'overdue'" class="flex items-center justify-end gap-1">
+              <Tooltip v-if="g.expires_at">
+                <TooltipTrigger as-child>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    :disabled="makingPermanent === g.id"
+                    :aria-label="`Keep group ${g.name} permanently`"
+                    @click="makeGroupPermanent(g)"
+                  >
+                    <Pin :class="['size-4', makingPermanent === g.id && 'animate-pulse']" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Keep permanently</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    class="text-destructive hover:text-destructive"
+                    :disabled="removing === g.id"
+                    :aria-label="`Remove group ${g.name}`"
+                    @click="detachGroup(g)"
+                  >
+                    <Trash2 :class="['size-4', removing === g.id && 'animate-pulse']" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Remove</TooltipContent>
+              </Tooltip>
+            </div>
+          </TableCell>
+        </TableRow>
         <TableRow v-for="t in targets" :key="t.id">
           <TableCell class="font-mono break-all">
             <Hostname :name="t.destination" />

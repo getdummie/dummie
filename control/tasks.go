@@ -176,6 +176,7 @@ func newTaskRunner(q *db.Queries, pool *pgxpool.Pool, hub *Hub, certs *certIssue
 	}
 	r.handlers = map[string]taskHandler{
 		taskVMTargetExpire: handleVMTargetExpire,
+		taskVMGroupExpire:  handleVMGroupExpire,
 		taskVMExpire:       handleVMExpire,
 		taskCleanup:        handleTaskCleanup,
 		taskCertRenew:      handleCertRenew,

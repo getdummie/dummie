@@ -18,6 +18,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import { TableCell, TableRow } from '@/components/ui/table'
 import type { DataTableColumn } from '@/lib/table'
+import { groupEntriesAsTargets, type TargetRecord } from '@/lib/targets'
 
 definePageMeta({ middleware: ['auth', 'admin'] })
 
@@ -47,15 +48,7 @@ interface AdminVM {
   reported_at: string
 }
 
-interface Target {
-  id: string
-  destination: string
-  kind: 'domain' | 'ip'
-  transport: '' | 'tcp' | 'udp' | 'any'
-  ports: string
-  note: string
-  created_at: string
-}
+type Target = TargetRecord
 
 const targetColumns: DataTableColumn[] = [
   { key: 'destination', label: 'Destination' },
@@ -202,7 +195,8 @@ async function loadTargets() {
   try {
     const res = await authFetch(`/admin/vms/${id.value}/targets`)
     if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
-    targets.value = (await res.json()).items ?? []
+    const data = await res.json()
+    targets.value = [...(data.items ?? []), ...groupEntriesAsTargets(data.groups ?? [])]
   }
   catch (e) {
     targetsError.value = e instanceof Error ? e.message : 'Failed to load destinations'

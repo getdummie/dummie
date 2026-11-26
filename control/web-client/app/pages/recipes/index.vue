@@ -18,11 +18,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Textarea } from '@/components/ui/textarea'
+import GroupPicker from '@/components/GroupPicker.vue'
 import OptionCombobox from '@/components/OptionCombobox.vue'
 import TargetFormRow from '@/components/TargetFormRow.vue'
 import type { Integration } from '@/composables/useIntegrations'
 import { formToRecipeTarget, recipeSummary, recipeTargetToForm, type Recipe, type RecipeConfig } from '@/lib/recipes'
-import { blankTarget, type TargetForm } from '@/lib/targets'
+import { blankTarget, type DestinationGroup, type TargetForm } from '@/lib/targets'
 
 definePageMeta({ middleware: ['auth'] })
 useHead({ title: 'dummie — recipes' })
@@ -39,6 +40,7 @@ const error = ref<string | null>(null)
 const osImages = ref<Option[]>([])
 const kernels = ref<Option[]>([])
 const integrations = ref<Integration[]>([])
+const groups = ref<DestinationGroup[]>([])
 
 const maxTargets = 32
 const maxInitScriptBytes = 64 * 1024
@@ -73,6 +75,8 @@ async function loadChoices() {
   if (img?.ok) osImages.value = (await img.json()).items ?? []
   if (ker?.ok) kernels.value = (await ker.json()).items ?? []
   integrations.value = await integrationsApi.list().catch(() => [])
+  const grp = await authFetch('/destination-groups').catch(() => null)
+  if (grp?.ok) groups.value = (await grp.json()).items ?? []
 }
 
 const formOpen = ref(false)
@@ -95,6 +99,8 @@ const blank = {
 const form = reactive({ ...blank })
 const targets = ref<TargetForm[]>([])
 const picked = ref<Record<string, string[]>>({})
+const pickedGroups = ref<string[]>([])
+const groupTTLs = ref<Record<string, number>>({})
 
 async function openForm(r: Recipe | null) {
   editing.value = r
@@ -102,6 +108,8 @@ async function openForm(r: Recipe | null) {
   Object.assign(form, blank)
   targets.value = []
   picked.value = {}
+  pickedGroups.value = []
+  groupTTLs.value = {}
   if (r) {
     const c = r.config
     Object.assign(form, {
@@ -119,6 +127,8 @@ async function openForm(r: Recipe | null) {
     })
     targets.value = (c.targets ?? []).map(recipeTargetToForm)
     picked.value = Object.fromEntries((c.integrations ?? []).map(i => [i.id, i.repos ?? []]))
+    pickedGroups.value = (c.groups ?? []).map(g => g.group_id)
+    groupTTLs.value = Object.fromEntries((c.groups ?? []).map(g => [g.group_id, g.ttl_seconds ?? 0]))
   }
   formOpen.value = true
   await loadChoices()
@@ -159,6 +169,8 @@ function validate(): string | null {
 function toConfig(): RecipeConfig {
   const known = new Set(integrations.value.map(i => i.id))
   const kept = Object.entries(picked.value).filter(([id]) => !integrations.value.length || known.has(id))
+  const knownGroups = new Set(groups.value.map(g => g.id))
+  const keptGroups = pickedGroups.value.filter(id => !groups.value.length || knownGroups.has(id))
   return {
     osimage_id: form.osimage_id || undefined,
     kernel_id: form.kernel_id || undefined,
@@ -170,6 +182,7 @@ function toConfig(): RecipeConfig {
     ttl_seconds: optionalInt(form.ttl_seconds),
     init_script: form.init_script.trim() ? form.init_script : undefined,
     targets: targets.value.length ? targets.value.map(formToRecipeTarget) : undefined,
+    groups: keptGroups.length ? keptGroups.map(id => ({ group_id: id, ttl_seconds: groupTTLs.value[id] || undefined })) : undefined,
     integrations: kept.length ? kept.map(([id, repos]) => ({ id, repos: repos.length ? repos : undefined })) : undefined,
   }
 }
@@ -403,6 +416,20 @@ async function confirmDelete() {
               :index="i"
               @remove="targets = targets.filter((_, n) => n !== i)"
             />
+          </div>
+
+          <div class="space-y-3 border-t border-border pt-4">
+            <div>
+              <Label for="r-groups" class="text-sm font-medium">Destination groups</Label>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Named sets of destinations kept by an admin. The VM follows a group as it changes.
+              </p>
+            </div>
+            <p v-if="!groups.length" class="text-xs text-muted-foreground">No destination groups have been set up.</p>
+            <GroupPicker v-else id="r-groups" v-model="pickedGroups" :groups="groups" />
+            <p v-if="groups.length && pickedGroups.some(id => !groups.some(g => g.id === id))" class="text-xs text-destructive">
+              A group in this recipe no longer exists; it is dropped when you save.
+            </p>
           </div>
 
           <div class="space-y-3 border-t border-border pt-4">
