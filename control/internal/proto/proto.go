@@ -104,6 +104,8 @@ const (
 	KindCacheReport JobKind = "cache.report"
 	KindCachePurge  JobKind = "cache.purge"
 
+	KindHostStatus JobKind = "host.status"
+
 	KindDiskPrepare JobKind = "disk.prepare"
 	KindDiskSeed    JobKind = "disk.seed"
 
@@ -413,6 +415,16 @@ type JobResult struct {
 	// Record answers vm.export and vm.attach; an export of a vm the host does
 	// not have is OK with no record.
 	Record *VMRecord `json:"record,omitempty"`
+
+	Status []ComponentStatus `json:"status,omitempty"`
+}
+
+// ComponentStatus is one host service as dclient saw it when asked.
+type ComponentStatus struct {
+	Name    string `json:"name"`
+	State   string `json:"state"`
+	Detail  string `json:"detail"`
+	Version string `json:"version,omitempty"`
 }
 
 // CachePurgeResult answers both cache job kinds. Entries is what the cache

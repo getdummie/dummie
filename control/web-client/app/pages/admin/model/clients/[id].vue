@@ -392,6 +392,44 @@ async function loadVMs(quiet = false) {
   }
 }
 
+interface ComponentStatus {
+  name: string
+  state: 'pass' | 'warn' | 'fail'
+  detail: string
+  version?: string
+}
+
+const stateVariant: Record<ComponentStatus['state'], 'default' | 'secondary' | 'destructive'> = {
+  pass: 'default',
+  warn: 'secondary',
+  fail: 'destructive',
+}
+const stateLabel: Record<ComponentStatus['state'], string> = { pass: 'ok', warn: 'warn', fail: 'down' }
+
+const hostStatus = ref<ComponentStatus[]>([])
+const hostStatusAt = ref('')
+const hostStatusLoading = ref(false)
+const hostStatusError = ref<string | null>(null)
+
+async function loadStatus(quiet = false) {
+  if (!quiet) hostStatusLoading.value = true
+  try {
+    const res = await authFetch(`/admin/clients/${id.value}/status`)
+    if (!res.ok) throw new Error((await readMessage(res)) || `HTTP ${res.status}`)
+    const data = await res.json()
+    hostStatus.value = data.items ?? []
+    hostStatusAt.value = data.reported_at ?? ''
+    hostStatusError.value = null
+  }
+  catch (e) {
+    hostStatus.value = []
+    hostStatusError.value = e instanceof Error ? e.message : 'Failed to read the service status'
+  }
+  finally {
+    hostStatusLoading.value = false
+  }
+}
+
 interface CacheReport {
   items?: CacheRow[]
   total_bytes?: number
@@ -503,9 +541,11 @@ onMounted(() => {
   load()
   loadVMs()
   loadCache()
+  loadStatus()
   poll = setInterval(() => {
     load(true)
     loadVMs(true)
+    if (client.value?.connected && !hostStatusLoading.value) loadStatus(true)
   }, 10_000)
 })
 onUnmounted(() => clearInterval(poll))
@@ -726,6 +766,53 @@ async function confirmDelete() {
             <dd class="mt-1 font-mono text-xs break-all text-muted-foreground">{{ client.id }}</dd>
           </div>
         </dl>
+      </section>
+
+      <section aria-labelledby="status-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 id="status-heading" class="text-sm font-semibold">Service status</h2>
+            <p class="mt-1 max-w-2xl text-sm text-muted-foreground">
+              What dclient sees on the host right now, checked live every 10 seconds and not stored here.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs"
+            :disabled="hostStatusLoading || !client.connected"
+            @click="loadStatus()"
+          >
+            <RefreshCw class="size-4" :class="hostStatusLoading && 'animate-spin'" aria-hidden="true" />
+            {{ hostStatusLoading ? 'Asking…' : 'Refresh' }}
+          </Button>
+        </div>
+
+        <p v-if="hostStatusAt && !hostStatusError" class="mt-3 font-mono text-xs text-muted-foreground">
+          checked {{ fmtDate(hostStatusAt) }}
+        </p>
+
+        <Alert v-if="hostStatusError" variant="destructive" class="mt-4">
+          <AlertTitle>Could not check this host's services</AlertTitle>
+          <AlertDescription>{{ hostStatusError }}</AlertDescription>
+        </Alert>
+
+        <div v-else-if="hostStatusLoading && !hostStatus.length" class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <Skeleton v-for="n in 8" :key="n" class="h-20" />
+        </div>
+
+        <ul v-else class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <li v-for="s in hostStatus" :key="s.name" class="space-y-2 rounded-md border border-border p-3">
+            <div class="flex items-center justify-between gap-2">
+              <p class="eyebrow text-muted-foreground">{{ s.name }}</p>
+              <Badge :variant="stateVariant[s.state]" class="font-mono">{{ stateLabel[s.state] }}</Badge>
+            </div>
+            <p v-if="s.version" class="font-mono text-xs text-muted-foreground">
+              running <span class="text-foreground">{{ s.version }}</span>
+            </p>
+            <p class="text-xs text-muted-foreground break-words">{{ s.detail }}</p>
+          </li>
+        </ul>
       </section>
 
       <section aria-labelledby="services-heading" class="mt-6 rounded-lg border border-border p-4 sm:p-6">

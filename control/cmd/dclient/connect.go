@@ -433,6 +433,8 @@ func (l *link) handleJob(ctx context.Context, env proto.Envelope) {
 		go l.obtainCert(ctx, env.ID, *job.CustomCert)
 	case proto.KindCacheReport:
 		go l.reportImages(ctx, env.ID)
+	case proto.KindHostStatus:
+		go l.reportStatus(ctx, env.ID)
 	case proto.KindCachePurge:
 		if job.Cache == nil {
 			l.reply(ctx, env.ID, proto.JobResult{Kind: job.Kind, Error: "job named no cache files"})

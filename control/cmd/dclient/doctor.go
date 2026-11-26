@@ -548,6 +548,10 @@ func checkDocker() (result, string) {
 	if err != nil {
 		return warn, "could not read the network config: " + err.Error()
 	}
+	return dockerStatus(cfg)
+}
+
+func dockerStatus(cfg netConfig) (result, string) {
 	missing := warn
 	if cfg.Suricata {
 		missing = fail
