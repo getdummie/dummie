@@ -22,8 +22,8 @@ SET status = 'failed', last_error = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: UpsertVMFromInventory :exec
-INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, boot_record, reported_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, boot_record, disk_backend, reported_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
 ON CONFLICT (client_id, vm_id) WHERE vm_id <> '' DO UPDATE
 SET status      = EXCLUDED.status,
     boot        = EXCLUDED.boot,
@@ -253,14 +253,26 @@ SET host_moving_to = NULL, last_error = $2, updated_at = now()
 WHERE id = $1;
 
 -- name: InsertVMHostEviction :exec
-INSERT INTO vm_host_evictions (client_id, vm_id, vm)
+INSERT INTO vm_host_evictions (machine_id, vm_id, vm)
 VALUES ($1, $2, $3)
-ON CONFLICT (client_id, vm_id) DO NOTHING;
+ON CONFLICT (machine_id, vm_id) DO NOTHING;
 
 -- name: ListVMHostEvictions :many
 SELECT * FROM vm_host_evictions
-WHERE client_id = $1;
+WHERE machine_id = $1;
 
 -- name: DeleteVMHostEviction :exec
 DELETE FROM vm_host_evictions
-WHERE client_id = $1 AND vm_id = $2;
+WHERE machine_id = $1 AND vm_id = $2;
+
+-- name: ListAllVMsByClient :many
+SELECT * FROM vms
+WHERE client_id = $1
+ORDER BY created_at;
+
+-- name: DeleteVMsWithoutVolumeByClient :exec
+-- Local vms, and fsx ones control holds no volume for, such as a stale copy a
+-- host reported. Their fsx disks are not touched.
+DELETE FROM vms
+WHERE client_id = $1
+  AND NOT EXISTS (SELECT 1 FROM fsx_disks d WHERE d.vm = vms.id);

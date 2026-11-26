@@ -44,6 +44,7 @@ type vmHostMovePayload struct {
 	// Offline moves off a host that is not connected, from the boot record it
 	// last reported, after shutting it out of the volume.
 	Offline bool `json:"offline,omitempty"`
+	Start   bool `json:"start,omitempty"`
 }
 
 type moveHostReq struct {
@@ -51,23 +52,15 @@ type moveHostReq struct {
 }
 
 func startHostMove(ctx context.Context, q *db.Queries, hub *Hub, vm db.Vm, target string, by pgtype.UUID) (db.Vm, error) {
-	switch {
-	case vm.DiskBackend != diskBackendFSx:
-		return vm, echo.NewHTTPError(http.StatusConflict, "only a vm whose disk is on FSx can change host")
-	case vm.DiskMoving:
-		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's disk is still being moved to FSx")
-	case vm.HostMovingTo.Valid:
-		return vm, echo.NewHTTPError(http.StatusConflict, "this vm is already changing host")
-	case vm.VMID == "":
-		return vm, echo.NewHTTPError(http.StatusConflict, "this vm is not on a host yet")
-	case !vm.KernelID.Valid:
-		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's kernel is not from the catalogue, so another host cannot fetch it")
+	from := uuid.UUID(vm.ClientID.Bytes).String()
+	offline := !hub.Connected(from)
+	if msg := hostMoveBlocker(vm, offline); msg != "" {
+		return vm, echo.NewHTTPError(http.StatusConflict, msg)
 	}
 	to, err := parseUUID(strings.TrimSpace(target))
 	if err != nil {
 		return vm, echo.NewHTTPError(http.StatusBadRequest, "choose a host to move this vm to")
 	}
-	target = uuid.UUID(to.Bytes).String()
 	if to == vm.ClientID {
 		return vm, echo.NewHTTPError(http.StatusConflict, "this vm is already on that host")
 	}
@@ -84,42 +77,72 @@ func startHostMove(ctx context.Context, q *db.Queries, hub *Hub, vm db.Vm, targe
 	if client.Role == clientRoleEdge {
 		return vm, echo.NewHTTPError(http.StatusConflict, errEdgeRunsNoVMs)
 	}
-	from := uuid.UUID(vm.ClientID.Bytes).String()
-	offline := !hub.Connected(from)
-	switch {
-	case !offline && vm.Status != "stopped":
-		return vm, echo.NewHTTPError(http.StatusConflict, "stop the vm before changing its host")
-	case offline && vm.Status != "stopped" && vm.Status != "running":
-		return vm, echo.NewHTTPError(http.StatusConflict, "this vm is "+vm.Status+", so it cannot change host")
-	case offline && len(vm.BootRecord) == 0:
-		return vm, echo.NewHTTPError(http.StatusConflict, "this vm's host is offline and never reported how to boot the vm elsewhere")
-	}
-	if !hub.Connected(target) {
+	if !hub.Connected(uuid.UUID(to.Bytes).String()) {
 		return vm, echo.NewHTTPError(http.StatusConflict, "that host is not connected")
 	}
-	newID, err := newHostVMID()
-	if err != nil {
-		return vm, echo.NewHTTPError(http.StatusInternalServerError, "could not pick an id for the vm")
-	}
-
-	row, err := q.BeginVMHostMove(ctx, db.BeginVMHostMoveParams{ID: vm.ID, HostMovingTo: to, Offline: offline})
-	if errors.Is(err, pgx.ErrNoRows) {
+	row, err := beginHostMove(ctx, q, vm, to, client.Hostname, offline, false, by)
+	if errors.Is(err, errHostMoveRaced) {
 		return vm, echo.NewHTTPError(http.StatusConflict, "this vm changed; reload and try again")
 	}
 	if err != nil {
-		return vm, echo.NewHTTPError(http.StatusInternalServerError, "could not start the move")
+		return vm, echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return row, nil
+}
+
+// hostMoveBlocker says why vm cannot leave its host now, or "" when it can.
+func hostMoveBlocker(vm db.Vm, offline bool) string {
+	switch {
+	case vm.DiskBackend != diskBackendFSx:
+		return "only a vm whose disk is on FSx can change host"
+	case vm.DiskMoving:
+		return "this vm's disk is still being moved to FSx"
+	case vm.HostMovingTo.Valid:
+		return "this vm is already changing host"
+	case vm.VMID == "":
+		return "this vm is not on a host yet"
+	case !vm.KernelID.Valid:
+		return "this vm's kernel is not from the catalogue, so another host cannot fetch it"
+	case !offline && vm.Status != "stopped":
+		return "stop the vm before changing its host"
+	case offline && vm.Status != "stopped" && vm.Status != "running":
+		return "this vm is " + vm.Status + ", so it cannot change host"
+	case offline && len(vm.BootRecord) == 0:
+		return "this vm's host is offline and never reported how to boot the vm elsewhere"
+	}
+	return ""
+}
+
+// beginHostMove marks the vm as moving and queues the move. start boots it on
+// the new host once it is there.
+func beginHostMove(ctx context.Context, q *db.Queries, vm db.Vm, to pgtype.UUID, hostname string, offline, start bool, by pgtype.UUID) (db.Vm, error) {
+	newID, err := newHostVMID()
+	if err != nil {
+		return vm, errors.New("could not pick an id for the vm")
+	}
+	row, err := q.BeginVMHostMove(ctx, db.BeginVMHostMoveParams{ID: vm.ID, HostMovingTo: to, Offline: offline})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return vm, errHostMoveRaced
+	}
+	if err != nil {
+		return vm, errors.New("could not start the move")
+	}
+	payload := vmHostMovePayload{
+		From: uuid.UUID(vm.ClientID.Bytes).String(), FromVMID: vm.VMID,
+		To: uuid.UUID(to.Bytes).String(), ToVMID: newID,
+		Offline: offline, Start: start,
 	}
 	if _, err := scheduleTask(ctx, q, scheduleTaskParams{
 		Kind:        taskVMHostMove,
 		SubjectKind: subjectVM,
 		SubjectID:   vm.ID,
-		Payload:     vmHostMovePayload{From: from, FromVMID: vm.VMID, To: target, ToVMID: newID, Offline: offline},
-		Reason:      "move the vm to " + client.Hostname,
+		Payload:     payload,
+		Reason:      "move the vm to " + hostname,
 		CreatedBy:   by,
 		MaxAttempts: vmHostMoveAttempts,
 	}); err != nil {
 		_ = q.FailVMHostMove(ctx, db.FailVMHostMoveParams{ID: vm.ID, LastError: "could not queue the host move"})
-		return vm, echo.NewHTTPError(http.StatusInternalServerError, "could not queue the host move")
+		return vm, errors.New("could not queue the host move")
 	}
 	return row, nil
 }
@@ -177,6 +200,9 @@ func handleVMHostMove(ctx context.Context, r *taskRunner, t db.ScheduledTask) ta
 		return failWith("the vm changed host while it was being moved")
 	}
 	disk, err := r.q.GetFSxDiskByVM(ctx, vm.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return failWith("control holds no FSx volume for this vm, so it cannot hand it to another host")
+	}
 	if err != nil {
 		return retryOrFail("could not read the vm's volume: %v", err)
 	}
@@ -332,7 +358,11 @@ func (r *taskRunner) switchHost(ctx context.Context, vm db.Vm, disk db.FsxDisk, 
 			}
 		}
 		if p.Offline {
-			return q.InsertVMHostEviction(ctx, db.InsertVMHostEvictionParams{ClientID: from, VMID: p.FromVMID, Vm: vm.ID})
+			old, err := q.GetClientByID(ctx, from)
+			if err != nil {
+				return err
+			}
+			return q.InsertVMHostEviction(ctx, db.InsertVMHostEvictionParams{MachineID: old.MachineID, VMID: p.FromVMID, Vm: vm.ID})
 		}
 		return nil
 	})
@@ -345,7 +375,26 @@ func (r *taskRunner) switchHost(ctx context.Context, vm db.Vm, disk db.FsxDisk, 
 	for _, id := range []pgtype.UUID{from, to} {
 		r.pushHostConfigs(ctx, id)
 	}
+	if p.Start {
+		r.startMovedVM(ctx, vm, p)
+	}
 	return taskDone("moved %s from %s to %s as %s", vm.Name, p.From, p.To, p.ToVMID)
+}
+
+// startMovedVM boots a vm that was running on the host it was moved off. Its
+// result settles like any start, against the row id the job carries.
+func (r *taskRunner) startMovedVM(ctx context.Context, vm db.Vm, p vmHostMovePayload) {
+	env, err := proto.NewEnvelope(proto.TypeJob, uuid.UUID(vm.ID.Bytes).String(), proto.Job{
+		Kind: proto.KindVMStart,
+		VMID: p.ToVMID,
+	})
+	if err == nil {
+		err = r.hub.Send(p.To, env)
+	}
+	if err != nil {
+		log.Printf("could not start %s on its new host: %v", vm.Name, err)
+		_ = r.q.SetVMLastError(ctx, db.SetVMLastErrorParams{ID: vm.ID, LastError: "moved, but could not be started on its new host"})
+	}
 }
 
 // askRecord returns a nil record, with no error, for a vm the host does not have.

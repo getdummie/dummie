@@ -12,6 +12,7 @@ SET hostname        = EXCLUDED.hostname,
     domain_id       = COALESCE(clients.domain_id, EXCLUDED.domain_id),
     revoked         = false,
     updated_at      = now()
+WHERE NOT clients.deleting
 RETURNING *;
 
 -- name: GetClientByMachineID :one
@@ -136,3 +137,8 @@ UPDATE clients
 SET advertise_ip = $2, updated_at = now()
 WHERE id = $1
 RETURNING *;
+
+-- name: MarkClientDeleting :execrows
+UPDATE clients
+SET revoked = true, deleting = true, status = 'offline', updated_at = now()
+WHERE id = $1 AND NOT deleting;

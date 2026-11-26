@@ -70,8 +70,10 @@ VALUES ($1, $2, $3, $4)
 RETURNING *;
 
 -- name: ReleaseFSxDiskForVM :exec
+-- Detached as well, since a disk still pointing at its vm keeps the vm row from
+-- being deleted.
 UPDATE fsx_disks
-SET released = true
+SET released = true, vm = NULL
 WHERE vm = $1;
 
 -- name: ListReleasedFSxDisks :many

@@ -68,6 +68,39 @@
                 },
                 "type": "object"
             },
+            "main.clientDeletePlan": {
+                "properties": {
+                    "blocked": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.deletePlanVM"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "deleted": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.deletePlanVM"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "forgotten": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.deletePlanVM"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    },
+                    "moved": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.deletePlanVM"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
             "main.connectedHostDTO": {
                 "properties": {
                     "host": {
@@ -273,6 +306,20 @@
                     },
                     "limit": {
                         "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "main.deletePlanVM": {
+                "properties": {
+                    "id": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "reason": {
+                        "type": "string"
                     }
                 },
                 "type": "object"
@@ -1182,6 +1229,44 @@
         "url": ""
     },
     "paths": {
+        "/admin/clients/{id}/delete-plan": {
+            "get": {
+                "description": "Lists what deleting the host does to its VMs: local-disk VMs are deleted for good, FSx VMs move to other hosts, and any FSx VM that cannot move yet blocks the delete.",
+                "parameters": [
+                    {
+                        "description": "client id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.clientDeletePlan"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Preview deleting a host",
+                "tags": [
+                    "admin"
+                ]
+            }
+        },
         "/admin/github-app": {
             "delete": {
                 "responses": {

@@ -448,6 +448,9 @@ func (h *AdminHandler) DeleteVM(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid vm id")
 	}
 	ctx := c.Request().Context()
+	if _, err := h.q.GetFSxDiskByVM(ctx, pgID); err == nil {
+		return echo.NewHTTPError(http.StatusConflict, "this vm's disk is on FSx; move or destroy the vm instead, so its volume is not lost")
+	}
 	if err := h.q.DeleteVM(ctx, pgID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete vm")
 	}

@@ -185,8 +185,9 @@ func nfsClientAddr(server string) string {
 	return ""
 }
 
-// evictVM drops a vm that control moved off this host while it was offline.
-// Its volume is no longer exported here, so qemu is killed and the mount forced off.
+// evictVM drops a stale copy of a vm that control moved, or is moving, off this
+// host. The guest gets a short chance to shut down cleanly, which a volume no
+// longer exported here will not allow, so it is then killed and the mount forced off.
 func evictVM(ctx context.Context, data, id string) error {
 	if !vmIDPattern.MatchString(id) {
 		return fmt.Errorf("%q is not a vm id", id)
@@ -201,6 +202,9 @@ func evictVM(ctx context.Context, data, id string) error {
 	if v.FSx == nil {
 		return fmt.Errorf("the disk of %s is on this host, not on fsx", v.Name)
 	}
+	if err := stopVM(ctx, data, id, evictStopWait); err != nil {
+		log.Printf("vm %s did not stop cleanly before its eviction: %v", id, err)
+	}
 	if err := killVM(data, id); err != nil {
 		return err
 	}
@@ -209,6 +213,8 @@ func evictVM(ctx context.Context, data, id string) error {
 	}
 	return removeVM(ctx, data, v)
 }
+
+const evictStopWait = 30 * time.Second
 
 func killVM(data, id string) error {
 	if vmPID(data, id) == 0 {

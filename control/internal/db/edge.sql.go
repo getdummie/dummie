@@ -12,7 +12,7 @@ import (
 )
 
 const getHostEdge = `-- name: GetHostEdge :one
-SELECT e.id, e.machine_id, e.hostname, e.token_hash, e.status, e.os, e.os_version, e.arch, e.client_version, e.last_seen_at, e.last_ip, e.enrolled_key_id, e.revoked, e.created_at, e.updated_at, e.cpu_count, e.cpu_percent, e.load1, e.load5, e.load15, e.mem_total_bytes, e.mem_used_bytes, e.disk_total_bytes, e.disk_used_bytes, e.uptime_seconds, e.metrics_at, e.domain_id, e.dclient_version, e.dclient_download_url, e.dpipe_version, e.dpipe_download_url, e.proxy_version, e.proxy_download_url, e.dpipe_installed_version, e.proxy_installed_version, e.dinit_version, e.dinit_download_url, e.dinit_installed_version, e.intproxy_version, e.intproxy_download_url, e.intproxy_installed_version, e.role, e.reported_ip, e.advertise_ip FROM clients h
+SELECT e.id, e.machine_id, e.hostname, e.token_hash, e.status, e.os, e.os_version, e.arch, e.client_version, e.last_seen_at, e.last_ip, e.enrolled_key_id, e.revoked, e.created_at, e.updated_at, e.cpu_count, e.cpu_percent, e.load1, e.load5, e.load15, e.mem_total_bytes, e.mem_used_bytes, e.disk_total_bytes, e.disk_used_bytes, e.uptime_seconds, e.metrics_at, e.domain_id, e.dclient_version, e.dclient_download_url, e.dpipe_version, e.dpipe_download_url, e.proxy_version, e.proxy_download_url, e.dpipe_installed_version, e.proxy_installed_version, e.dinit_version, e.dinit_download_url, e.dinit_installed_version, e.intproxy_version, e.intproxy_download_url, e.intproxy_installed_version, e.role, e.reported_ip, e.advertise_ip, e.deleting FROM clients h
 JOIN domains d ON d.id = h.domain_id
 JOIN clients e ON e.id = d.edge_client_id
 WHERE h.id = $1
@@ -69,6 +69,7 @@ func (q *Queries) GetHostEdge(ctx context.Context, id pgtype.UUID) (Client, erro
 		&i.Role,
 		&i.ReportedIP,
 		&i.AdvertiseIP,
+		&i.Deleting,
 	)
 	return i, err
 }

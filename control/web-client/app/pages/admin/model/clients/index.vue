@@ -36,7 +36,7 @@ interface ClientRow {
   id: string
   machine_id: string
   hostname: string
-  status: 'online' | 'offline' | 'revoked'
+  status: 'online' | 'offline' | 'revoked' | 'deleting'
   connected: boolean
   os: string
   os_version: string
@@ -108,6 +108,7 @@ const statusVariant: Record<ClientRow['status'], 'default' | 'secondary' | 'dest
   online: 'default',
   offline: 'secondary',
   revoked: 'destructive',
+  deleting: 'destructive',
 }
 
 async function load(silent = false) {
@@ -174,6 +175,7 @@ async function confirmRevoke() {
 
 const toDelete = ref<ClientRow | null>(null)
 const deleting = ref(false)
+const deleteBlocked = ref(true)
 
 async function confirmDelete() {
   if (!toDelete.value) return
@@ -275,8 +277,8 @@ async function confirmDelete() {
               variant="ghost"
               size="icon"
               class="text-destructive hover:text-destructive"
-              :disabled="a.status === 'revoked'"
-              :aria-label="a.status === 'revoked'
+              :disabled="a.status === 'revoked' || a.status === 'deleting'"
+              :aria-label="a.status === 'revoked' || a.status === 'deleting'
                 ? `Cannot revoke ${a.hostname || a.machine_id}: already revoked`
                 : `Revoke client token for ${a.hostname || a.machine_id}`"
               @click="toRevoke = a"
@@ -287,7 +289,10 @@ async function confirmDelete() {
               variant="ghost"
               size="icon"
               class="text-destructive hover:text-destructive"
-              :aria-label="`Delete client ${a.hostname || a.machine_id}`"
+              :disabled="a.status === 'deleting'"
+              :aria-label="a.status === 'deleting'
+                ? `${a.hostname || a.machine_id} is already being deleted`
+                : `Delete client ${a.hostname || a.machine_id}`"
               @click="toDelete = a"
             >
               <Trash2 class="size-4" aria-hidden="true" />
@@ -333,15 +338,17 @@ async function confirmDelete() {
           <DialogDescription>
             Permanently remove
             <span class="font-mono text-foreground">{{ toDelete?.hostname || toDelete?.machine_id }}</span>
-            from the registry and drop its connection. The machine can enroll again with a valid key.
+            from the registry and drop its connection. The machine can enroll again with a valid key
+            once its VMs have moved off.
           </DialogDescription>
         </DialogHeader>
+        <ClientDeletePlan v-if="toDelete" v-model:blocked="deleteBlocked" :client-id="toDelete.id" />
         <FormError id="delete-client-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
           </DialogClose>
-          <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
+          <Button variant="destructive" class="font-mono text-xs" :disabled="deleting || deleteBlocked" @click="confirmDelete">
             {{ deleting ? 'Deleting…' : 'Delete' }}
           </Button>
         </DialogFooter>

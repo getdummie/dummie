@@ -67,6 +67,7 @@ type Client struct {
 	Role                     string
 	ReportedIP               string
 	AdvertiseIP              string
+	Deleting                 bool
 }
 
 type ClientEnrollmentKey struct {
@@ -414,10 +415,10 @@ type VmCustomDomain struct {
 }
 
 type VmHostEviction struct {
-	ClientID  pgtype.UUID
 	VMID      string
 	Vm        pgtype.UUID
 	CreatedAt pgtype.Timestamptz
+	MachineID string
 }
 
 type VmIntegration struct {

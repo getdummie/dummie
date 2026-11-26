@@ -40,7 +40,7 @@ interface Client {
   id: string
   machine_id: string
   hostname: string
-  status: 'online' | 'offline' | 'revoked'
+  status: 'online' | 'offline' | 'revoked' | 'deleting'
   connected: boolean
   os: string
   os_version: string
@@ -189,6 +189,7 @@ const statusVariant: Record<Client['status'], 'default' | 'secondary' | 'destruc
   online: 'default',
   offline: 'secondary',
   revoked: 'destructive',
+  deleting: 'destructive',
 }
 
 const reported = computed(() => !!client.value?.metrics?.reported_at)
@@ -513,6 +514,7 @@ const revokeOpen = ref(false)
 const deleteOpen = ref(false)
 const revoking = ref(false)
 const deleting = ref(false)
+const deleteBlocked = ref(true)
 
 async function confirmRevoke() {
   revoking.value = true
@@ -591,7 +593,7 @@ async function confirmDelete() {
             variant="outline"
             size="sm"
             class="font-mono text-xs text-destructive hover:text-destructive"
-            :disabled="client.status === 'revoked' || revoking"
+            :disabled="client.status === 'revoked' || client.status === 'deleting' || revoking"
             :aria-label="client.status === 'revoked'
               ? 'Cannot revoke this client: already revoked'
               : 'Revoke this client\'s token'"
@@ -604,8 +606,8 @@ async function confirmDelete() {
             variant="outline"
             size="sm"
             class="font-mono text-xs text-destructive hover:text-destructive"
-            :disabled="deleting"
-            aria-label="Delete this client record"
+            :disabled="deleting || client.status === 'deleting'"
+            :aria-label="client.status === 'deleting' ? 'This client is already being deleted' : 'Delete this client record'"
             @click="deleteOpen = true"
           >
             <Trash2 class="size-4" aria-hidden="true" />
@@ -624,6 +626,14 @@ async function confirmDelete() {
         <AlertDescription>
           Its token no longer works and its socket was closed. The machine has to enroll again
           with a fresh key to come back.
+        </AlertDescription>
+      </Alert>
+
+      <Alert v-if="client.status === 'deleting'" variant="destructive" class="mt-4">
+        <AlertTitle>This client is being deleted</AlertTitle>
+        <AlertDescription>
+          Its VMs on FSx are moving to other hosts, or waiting for one to connect. The record goes
+          once the last of them has moved.
         </AlertDescription>
       </Alert>
 
@@ -1105,15 +1115,16 @@ async function confirmDelete() {
             Removes the record for
             <span class="font-mono text-foreground">{{ client?.hostname || client?.machine_id }}</span>
             and closes its socket. Nothing is asked of the machine itself, so an client still
-            installed there re-enrolls if it has a valid key.
+            installed there re-enrolls if it has a valid key, once its VMs have moved off.
           </DialogDescription>
         </DialogHeader>
+        <ClientDeletePlan v-if="deleteOpen" v-model:blocked="deleteBlocked" :client-id="id" />
         <FormError id="delete-client-error" :message="actionError" />
         <DialogFooter>
           <DialogClose as-child>
             <Button type="button" variant="outline" class="font-mono text-xs">Cancel</Button>
           </DialogClose>
-          <Button variant="destructive" class="font-mono text-xs" :disabled="deleting" @click="confirmDelete">
+          <Button variant="destructive" class="font-mono text-xs" :disabled="deleting || deleteBlocked" @click="confirmDelete">
             {{ deleting ? 'Deleting…' : 'Delete' }}
           </Button>
         </DialogFooter>

@@ -129,6 +129,7 @@ var taskKindTimeouts = map[string]time.Duration{
 	taskVMDiskFSx:    taskVMDiskFSxTimeout,
 	taskVMDiskMove:   taskVMDiskFSxTimeout,
 	taskVMHostMove:   taskVMHostMoveTimeout,
+	taskClientDrain:  clientDrainTimeout,
 }
 
 func taskKindTimeout(kind string) time.Duration {
@@ -187,6 +188,7 @@ func newTaskRunner(q *db.Queries, pool *pgxpool.Pool, hub *Hub, certs *certIssue
 		taskFSxGC:             handleFSxGC,
 		taskVMDiskMove:        handleVMDiskMove,
 		taskVMHostMove:        handleVMHostMove,
+		taskClientDrain:       handleClientDrain,
 	}
 	return r
 }

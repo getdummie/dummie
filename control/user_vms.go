@@ -983,7 +983,12 @@ func (h *UserHandler) DeleteVM(c *echo.Context) error {
 	}
 
 	if row.VMID == "" || row.Status == "failed" || row.Status == "gone" {
-		if err := h.q.DeleteVM(ctx, row.ID); err != nil {
+		if err := inTx(ctx, h.pool, h.q, func(q *db.Queries) error {
+			if err := q.ReleaseFSxDiskForVM(ctx, row.ID); err != nil {
+				return err
+			}
+			return q.DeleteVM(ctx, row.ID)
+		}); err != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, "could not delete vm")
 		}
 		cancelTasksForSubject(ctx, h.q, subjectVM, row.ID, "the vm was deleted")

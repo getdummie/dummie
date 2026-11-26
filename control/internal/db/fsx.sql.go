@@ -439,10 +439,12 @@ func (q *Queries) MarkFSxImageReady(ctx context.Context, id pgtype.UUID) error {
 
 const releaseFSxDiskForVM = `-- name: ReleaseFSxDiskForVM :exec
 UPDATE fsx_disks
-SET released = true
+SET released = true, vm = NULL
 WHERE vm = $1
 `
 
+// Detached as well, since a disk still pointing at its vm keeps the vm row from
+// being deleted.
 func (q *Queries) ReleaseFSxDiskForVM(ctx context.Context, vm pgtype.UUID) error {
 	_, err := q.db.Exec(ctx, releaseFSxDiskForVM, vm)
 	return err

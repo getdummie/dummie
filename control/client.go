@@ -48,6 +48,10 @@ type ClientHandler struct {
 
 const vmEvictWait = 2 * time.Minute
 
+const diskLockedMessage = "the disk is still locked by another host, most likely the one this vm was moved off, " +
+	"which is still running it. Stop the vm there or shut that host down, wait a minute or two for its " +
+	"hold on the disk to lapse, then start the vm again"
+
 func (h *ClientHandler) openEnrollment(ctx context.Context) bool {
 	return boolSetting(ctx, h.q, settingClientOpenEnrollment)
 }
@@ -122,6 +126,9 @@ func (h *ClientHandler) Enroll(c *echo.Context) error {
 		EnrolledKeyID: enrolledKeyID,
 		DomainID:      domainID,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return echo.NewHTTPError(http.StatusConflict, "this machine was deleted and its vms are still moving off it; enroll again once that is done")
+	}
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, "could not register client")
 	}
@@ -462,6 +469,9 @@ func (h *ClientHandler) settleEnd(ctx context.Context, clientID, jobID string, r
 		if msg == "" {
 			msg = "the client reported a failure with no message"
 		}
+		if res.Kind == proto.KindVMStart && strings.Contains(msg, `Failed to get "write" lock`) {
+			msg = diskLockedMessage
+		}
 		if err := h.q.SetVMLastError(ctx, db.SetVMLastErrorParams{ID: rowID, LastError: msg}); err != nil {
 			log.Printf("client %s: could not record the failed %s of vm %s: %v", clientID, res.Kind, jobID, err)
 		}
@@ -527,7 +537,7 @@ func (h *ClientHandler) settleCreate(ctx context.Context, client db.Client, clie
 }
 
 func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, clientID string, env proto.Envelope) {
-	if client.Role == clientRoleEdge {
+	if client.Role == clientRoleEdge || client.Deleting {
 		return
 	}
 	var inv proto.Inventory
@@ -536,7 +546,7 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 		return
 	}
 
-	evictions, err := h.q.ListVMHostEvictions(ctx, client.ID)
+	evictions, err := h.q.ListVMHostEvictions(ctx, client.MachineID)
 	if err != nil {
 		log.Printf("client %s: could not read the vms moved off it: %v", clientID, err)
 		return
@@ -557,8 +567,10 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 		}
 		seen = append(seen, v.ID)
 		var record []byte
+		backend := diskBackendLocal
 		if v.Record != nil {
 			record, _ = json.Marshal(v.Record)
+			backend = diskBackendFSx
 		}
 
 		status := "stopped"
@@ -588,7 +600,8 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 				IP:         v.IP,
 				CreatedAt:  created,
 				StartedAt:  started,
-				BootRecord: record,
+				BootRecord:  record,
+				DiskBackend: backend,
 			})
 		}); err != nil {
 			log.Printf("client %s: could not record vm %s from inventory: %v", clientID, v.ID, err)
@@ -603,8 +616,8 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 	}
 	for vmID, held := range stale {
 		if held {
-			h.evictVM(clientID, client.ID, vmID)
-		} else if err := h.q.DeleteVMHostEviction(ctx, db.DeleteVMHostEvictionParams{ClientID: client.ID, VMID: vmID}); err != nil {
+			h.evictVM(clientID, client.MachineID, vmID)
+		} else if err := h.q.DeleteVMHostEviction(ctx, db.DeleteVMHostEvictionParams{MachineID: client.MachineID, VMID: vmID}); err != nil {
 			log.Printf("client %s: could not forget vm %s, which it no longer holds: %v", clientID, vmID, err)
 		}
 	}
@@ -616,7 +629,7 @@ func (h *ClientHandler) handleInventory(ctx context.Context, client db.Client, c
 
 // evictVM tells a host to delete its copy of a vm that was moved off it while
 // it was offline. A failure is retried on the host's next inventory.
-func (h *ClientHandler) evictVM(clientID string, client pgtype.UUID, vmID string) {
+func (h *ClientHandler) evictVM(clientID, machineID, vmID string) {
 	key := clientID + "/" + vmID
 	if _, busy := h.evicting.LoadOrStore(key, struct{}{}); busy {
 		return
@@ -625,20 +638,25 @@ func (h *ClientHandler) evictVM(clientID string, client pgtype.UUID, vmID string
 		defer h.evicting.Delete(key)
 		ctx, cancel := context.WithTimeout(context.Background(), vmEvictWait+10*time.Second)
 		defer cancel()
-		res, err := h.hub.Ask(ctx, clientID, proto.Job{Kind: proto.KindVMEvict, VMID: vmID}, vmEvictWait)
-		if err == nil && !res.OK {
-			err = errors.New(res.Error)
-		}
-		if err != nil {
+		if err := askEvict(ctx, h.q, h.hub, clientID, machineID, vmID); err != nil {
 			log.Printf("client %s: could not delete vm %s, which was moved off it: %v", clientID, vmID, err)
 			return
 		}
-		if err := h.q.DeleteVMHostEviction(ctx, db.DeleteVMHostEvictionParams{ClientID: client, VMID: vmID}); err != nil {
-			log.Printf("client %s: could not forget vm %s after deleting it: %v", clientID, vmID, err)
-			return
-		}
-		log.Printf("client %s: deleted vm %s, which was moved off it while it was offline", clientID, vmID)
+		log.Printf("client %s: deleted vm %s, which was moved off it", clientID, vmID)
 	}()
+}
+
+// askEvict has the host shut a stale copy down, unmount its volume and delete
+// it, then forgets the eviction.
+func askEvict(ctx context.Context, q *db.Queries, hub *Hub, clientID, machineID, vmID string) error {
+	res, err := hub.Ask(ctx, clientID, proto.Job{Kind: proto.KindVMEvict, VMID: vmID}, vmEvictWait)
+	if err == nil && !res.OK {
+		err = errors.New(res.Error)
+	}
+	if err != nil {
+		return err
+	}
+	return q.DeleteVMHostEviction(ctx, db.DeleteVMHostEvictionParams{MachineID: machineID, VMID: vmID})
 }
 
 func (h *ClientHandler) handleMetrics(ctx context.Context, client db.Client, clientID string, env proto.Envelope) {

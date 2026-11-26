@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -165,6 +166,9 @@ type clientDTO struct {
 	Domain string `json:"domain"`
 	DomainID string `json:"domain_id"`
 
+	// Deleting is true once deleted while its FSx VMs still wait to move off.
+	Deleting bool `json:"deleting"`
+
 	DclientVersion     string `json:"dclient_version"`
 	DclientDownloadURL string `json:"dclient_download_url"`
 	DpipeVersion       string `json:"dpipe_version"`
@@ -212,6 +216,7 @@ func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 		Hostname:      a.Hostname,
 		Status:        a.Status,
 		Connected:     connected,
+		Deleting:      a.Deleting,
 		Domain:        domain,
 		DomainID:      domainIDString(a.DomainID),
 		OS:            a.OS,
@@ -261,6 +266,9 @@ func toClientDTO(a db.Client, connected bool, domain string) clientDTO {
 	}
 	if a.Revoked {
 		d.Status = "revoked"
+	}
+	if a.Deleting {
+		d.Status = "deleting"
 	}
 	return d
 }
@@ -336,11 +344,29 @@ func (h *AdminHandler) DeleteClient(c *echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "invalid client id")
 	}
 	ctx := c.Request().Context()
-	behind := h.hostsBehindEdge(ctx, pgID)
-	if err := h.q.DeleteClient(ctx, pgID); err != nil {
-		return echo.NewHTTPError(http.StatusInternalServerError, "could not delete client")
+	plan, err := planClientDelete(ctx, h.q, pgID)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "could not read the host's vms")
 	}
-	h.hub.Kick(id, "client deleted")
+	if len(plan.Blocked) > 0 {
+		return echo.NewHTTPError(http.StatusConflict, fmt.Sprintf(
+			"%d vm(s) on FSx cannot move off this host yet, so it cannot be deleted; see the delete preview", len(plan.Blocked)))
+	}
+	behind := h.hostsBehindEdge(ctx, pgID)
+	if plan.needsDrain() {
+		client, err := h.q.GetClientByID(ctx, pgID)
+		if err == nil {
+			err = h.drainClient(ctx, client, plan)
+		}
+		if err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not delete client")
+		}
+	} else {
+		if err := h.q.DeleteClient(ctx, pgID); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, "could not delete client")
+		}
+		h.hub.Kick(id, "client deleted")
+	}
 	h.refreshHosts(ctx, behind)
 	return c.NoContent(http.StatusNoContent)
 }

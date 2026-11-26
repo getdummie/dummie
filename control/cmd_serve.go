@@ -205,6 +205,7 @@ func runEchoServer(ctx context.Context, host string, port int, web fs.FS, pool *
 	admin.GET("/clients/:id", adminH.GetClient)
 	admin.POST("/clients/:id/revoke", adminH.RevokeClient)
 	admin.DELETE("/clients/:id", adminH.DeleteClient)
+	admin.GET("/clients/:id/delete-plan", adminH.ClientDeletePlan)
 	llmSealer := loadLLMSealer()
 	llmH := &LLMKeyHandler{q: q, sealer: llmSealer, devices: newChatGPTDevices()}
 	admin.GET("/llm-keys", llmH.ListGlobal)

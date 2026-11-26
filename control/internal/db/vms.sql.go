@@ -259,16 +259,29 @@ func (q *Queries) DeleteVM(ctx context.Context, id pgtype.UUID) error {
 
 const deleteVMHostEviction = `-- name: DeleteVMHostEviction :exec
 DELETE FROM vm_host_evictions
-WHERE client_id = $1 AND vm_id = $2
+WHERE machine_id = $1 AND vm_id = $2
 `
 
 type DeleteVMHostEvictionParams struct {
-	ClientID pgtype.UUID
-	VMID     string
+	MachineID string
+	VMID      string
 }
 
 func (q *Queries) DeleteVMHostEviction(ctx context.Context, arg DeleteVMHostEvictionParams) error {
-	_, err := q.db.Exec(ctx, deleteVMHostEviction, arg.ClientID, arg.VMID)
+	_, err := q.db.Exec(ctx, deleteVMHostEviction, arg.MachineID, arg.VMID)
+	return err
+}
+
+const deleteVMsWithoutVolumeByClient = `-- name: DeleteVMsWithoutVolumeByClient :exec
+DELETE FROM vms
+WHERE client_id = $1
+  AND NOT EXISTS (SELECT 1 FROM fsx_disks d WHERE d.vm = vms.id)
+`
+
+// Local vms, and fsx ones control holds no volume for, such as a stale copy a
+// host reported. Their fsx disks are not touched.
+func (q *Queries) DeleteVMsWithoutVolumeByClient(ctx context.Context, clientID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, deleteVMsWithoutVolumeByClient, clientID)
 	return err
 }
 
@@ -460,20 +473,75 @@ func (q *Queries) GetVMForOwnerByHostname(ctx context.Context, arg GetVMForOwner
 }
 
 const insertVMHostEviction = `-- name: InsertVMHostEviction :exec
-INSERT INTO vm_host_evictions (client_id, vm_id, vm)
+INSERT INTO vm_host_evictions (machine_id, vm_id, vm)
 VALUES ($1, $2, $3)
-ON CONFLICT (client_id, vm_id) DO NOTHING
+ON CONFLICT (machine_id, vm_id) DO NOTHING
 `
 
 type InsertVMHostEvictionParams struct {
-	ClientID pgtype.UUID
-	VMID     string
-	Vm       pgtype.UUID
+	MachineID string
+	VMID      string
+	Vm        pgtype.UUID
 }
 
 func (q *Queries) InsertVMHostEviction(ctx context.Context, arg InsertVMHostEvictionParams) error {
-	_, err := q.db.Exec(ctx, insertVMHostEviction, arg.ClientID, arg.VMID, arg.Vm)
+	_, err := q.db.Exec(ctx, insertVMHostEviction, arg.MachineID, arg.VMID, arg.Vm)
 	return err
+}
+
+const listAllVMsByClient = `-- name: ListAllVMsByClient :many
+SELECT id, client_id, vm_id, name, status, boot, cpus, memory_mib, ip, spec, last_error, created_at, updated_at, started_at, reported_at, created_by, disk_mib, default_port, public_ports, rdp_nonce, default_user, kernel_id, osimage_id, disk_backend, disk_moving, local_disk_kept, host_moving_to, boot_record FROM vms
+WHERE client_id = $1
+ORDER BY created_at
+`
+
+func (q *Queries) ListAllVMsByClient(ctx context.Context, clientID pgtype.UUID) ([]Vm, error) {
+	rows, err := q.db.Query(ctx, listAllVMsByClient, clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Vm
+	for rows.Next() {
+		var i Vm
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClientID,
+			&i.VMID,
+			&i.Name,
+			&i.Status,
+			&i.Boot,
+			&i.CPUs,
+			&i.MemoryMiB,
+			&i.IP,
+			&i.Spec,
+			&i.LastError,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.StartedAt,
+			&i.ReportedAt,
+			&i.CreatedBy,
+			&i.DiskMiB,
+			&i.DefaultPort,
+			&i.PublicPorts,
+			&i.RdpNonce,
+			&i.DefaultUser,
+			&i.KernelID,
+			&i.OSImageID,
+			&i.DiskBackend,
+			&i.DiskMoving,
+			&i.LocalDiskKept,
+			&i.HostMovingTo,
+			&i.BootRecord,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listProxyHTTPRoutesByClient = `-- name: ListProxyHTTPRoutesByClient :many
@@ -621,12 +689,12 @@ func (q *Queries) ListProxySSHUsersByClient(ctx context.Context, clientID pgtype
 }
 
 const listVMHostEvictions = `-- name: ListVMHostEvictions :many
-SELECT client_id, vm_id, vm, created_at FROM vm_host_evictions
-WHERE client_id = $1
+SELECT vm_id, vm, created_at, machine_id FROM vm_host_evictions
+WHERE machine_id = $1
 `
 
-func (q *Queries) ListVMHostEvictions(ctx context.Context, clientID pgtype.UUID) ([]VmHostEviction, error) {
-	rows, err := q.db.Query(ctx, listVMHostEvictions, clientID)
+func (q *Queries) ListVMHostEvictions(ctx context.Context, machineID string) ([]VmHostEviction, error) {
+	rows, err := q.db.Query(ctx, listVMHostEvictions, machineID)
 	if err != nil {
 		return nil, err
 	}
@@ -635,10 +703,10 @@ func (q *Queries) ListVMHostEvictions(ctx context.Context, clientID pgtype.UUID)
 	for rows.Next() {
 		var i VmHostEviction
 		if err := rows.Scan(
-			&i.ClientID,
 			&i.VMID,
 			&i.Vm,
 			&i.CreatedAt,
+			&i.MachineID,
 		); err != nil {
 			return nil, err
 		}
@@ -1225,8 +1293,8 @@ func (q *Queries) UpdateVMSizeForOwner(ctx context.Context, arg UpdateVMSizeForO
 }
 
 const upsertVMFromInventory = `-- name: UpsertVMFromInventory :exec
-INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, boot_record, reported_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now())
+INSERT INTO vms (client_id, vm_id, name, status, boot, cpus, memory_mib, ip, created_at, started_at, boot_record, disk_backend, reported_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now())
 ON CONFLICT (client_id, vm_id) WHERE vm_id <> '' DO UPDATE
 SET status      = EXCLUDED.status,
     boot        = EXCLUDED.boot,
@@ -1240,17 +1308,18 @@ SET status      = EXCLUDED.status,
 `
 
 type UpsertVMFromInventoryParams struct {
-	ClientID   pgtype.UUID
-	VMID       string
-	Name       string
-	Status     string
-	Boot       string
-	CPUs       int32
-	MemoryMiB  int32
-	IP         string
-	CreatedAt  pgtype.Timestamptz
-	StartedAt  pgtype.Timestamptz
-	BootRecord []byte
+	ClientID    pgtype.UUID
+	VMID        string
+	Name        string
+	Status      string
+	Boot        string
+	CPUs        int32
+	MemoryMiB   int32
+	IP          string
+	CreatedAt   pgtype.Timestamptz
+	StartedAt   pgtype.Timestamptz
+	BootRecord  []byte
+	DiskBackend string
 }
 
 func (q *Queries) UpsertVMFromInventory(ctx context.Context, arg UpsertVMFromInventoryParams) error {
@@ -1266,6 +1335,7 @@ func (q *Queries) UpsertVMFromInventory(ctx context.Context, arg UpsertVMFromInv
 		arg.CreatedAt,
 		arg.StartedAt,
 		arg.BootRecord,
+		arg.DiskBackend,
 	)
 	return err
 }
