@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"regexp"
@@ -327,6 +328,23 @@ func (h *UserHandler) ListHosts(c *echo.Context) error {
 	return c.JSON(http.StatusOK, map[string]any{"items": items})
 }
 
+func (h *UserHandler) randomHost(ctx context.Context) (string, error) {
+	rows, err := h.q.ListAvailableHosts(ctx)
+	if err != nil {
+		return "", echo.NewHTTPError(http.StatusInternalServerError, "could not list hosts")
+	}
+	var ids []string
+	for _, r := range rows {
+		if id := uuid.UUID(r.ID.Bytes).String(); h.hub.Connected(id) {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return "", echo.NewHTTPError(http.StatusConflict, "no host is connected right now")
+	}
+	return ids[rand.IntN(len(ids))], nil
+}
+
 type userArtifactDTO struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
@@ -513,7 +531,7 @@ func parseSizeMiB(s string) (int32, error) {
 }
 
 // @Summary     Create a VM
-// @Description Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. An SSH public key on your account is optional: without one the VM is still created and reachable through the web console, only SSH is unavailable. The size is charged against your quota; disk_size takes the client's syntax ("2G", "512M", or plain bytes).
+// @Description Pick a host from /vms/hosts, or leave client_id empty for a random connected one, and an artifact from /vms/kernels and /vms/osimages. An SSH public key on your account is optional: without one the VM is still created and reachable through the web console, only SSH is unavailable. The size is charged against your quota; disk_size takes the client's syntax ("2G", "512M", or plain bytes).
 // @Description
 // @Description Set ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.
 // @Description
@@ -524,13 +542,13 @@ func parseSizeMiB(s string) (int32, error) {
 // @Accept      json
 // @Produce     json
 // @Security    BearerAuth
-// @Param       body body createVMReq true "client_id, kernel_id and osimage_id are required"
+// @Param       body body createVMReq true "kernel_id and osimage_id are required"
 // @Success     202 {object} vmDTO "accepted and pending; the host has not reported yet"
 // @Failure     400 {object} apiError "bad size, bad port count, cpus under 1, memory under 64 MiB, an init script over 64 KiB, a destination that is not allowable, or a repository an integration does not cover"
 // @Failure     401 {object} apiError
 // @Failure     403 {object} apiError "over quota"
 // @Failure     404 {object} apiError "no such host, kernel or os image"
-// @Failure     409 {object} apiError "host revoked or disconnected, artifact withdrawn, name taken, or the job could not be delivered"
+// @Failure     409 {object} apiError "host revoked or disconnected, no host connected, artifact withdrawn, name taken, or the job could not be delivered"
 // @Failure     502 {object} apiError "could not prepare an artifact download"
 // @Failure     503 {object} apiError "no blob store is configured on this installation"
 // @Router      /vms [post]
@@ -654,9 +672,14 @@ func (h *UserHandler) CreateVM(c *echo.Context) error {
 	}
 
 	clientID := strings.TrimSpace(req.ClientID)
+	if clientID == "" {
+		if clientID, err = h.randomHost(ctx); err != nil {
+			return err
+		}
+	}
 	pgClientID, err := parseUUID(clientID)
 	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, "choose a host to run this vm on")
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid host id")
 	}
 	client, err := h.q.GetClientByID(ctx, pgClientID)
 	if err != nil {

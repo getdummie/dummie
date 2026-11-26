@@ -2741,7 +2741,7 @@
                 ]
             },
             "post": {
-                "description": "Pick a host from /vms/hosts and an artifact from /vms/kernels and /vms/osimages. An SSH public key on your account is optional: without one the VM is still created and reachable through the web console, only SSH is unavailable. The size is charged against your quota; disk_size takes the client's syntax (\"2G\", \"512M\", or plain bytes).\n\nSet ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.\n\ntargets is the egress allowlist to give the VM at birth — each entry takes exactly the shape `POST /vms/{id}/targets` accepts, including its own ttl_seconds. At most 32; add the rest afterwards. The whole list is validated before anything is written and inserted in the same transaction as the VM, so a bad entry is a 400 with no VM created rather than a VM with a partial allowlist. Omit it for a VM that may reach nothing until you allow something.\n\nThe response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'. The allowlist reaches the host with the guest's address, so it is in force by the time the VM is up.",
+                "description": "Pick a host from /vms/hosts, or leave client_id empty for a random connected one, and an artifact from /vms/kernels and /vms/osimages. An SSH public key on your account is optional: without one the VM is still created and reachable through the web console, only SSH is unavailable. The size is charged against your quota; disk_size takes the client's syntax (\"2G\", \"512M\", or plain bytes).\n\nSet ttl_seconds to make this a temporary sandbox: the control plane destroys it that many seconds after the row is written. The clock is wall-clock from the create and keeps running while the VM is stopped.\n\ntargets is the egress allowlist to give the VM at birth — each entry takes exactly the shape `POST /vms/{id}/targets` accepts, including its own ttl_seconds. At most 32; add the rest afterwards. The whole list is validated before anything is written and inserted in the same transaction as the VM, so a bad entry is a 400 with no VM created rather than a VM with a partial allowlist. Omit it for a VM that may reach nothing until you allow something.\n\nThe response is the row as written, with status 'pending'. The host reports the result over its own socket, so poll GET /vms/{id} to see it reach 'running' or 'failed'. The allowlist reaches the host with the guest's address, so it is in force by the time the VM is up.",
                 "requestBody": {
                     "content": {
                         "application/json": {
@@ -2753,13 +2753,13 @@
                                     {
                                         "$ref": "#/components/schemas/main.createVMReq",
                                         "summary": "body",
-                                        "description": "client_id, kernel_id and osimage_id are required"
+                                        "description": "kernel_id and osimage_id are required"
                                     }
                                 ]
                             }
                         }
                     },
-                    "description": "client_id, kernel_id and osimage_id are required",
+                    "description": "kernel_id and osimage_id are required",
                     "required": true
                 },
                 "responses": {
@@ -2821,7 +2821,7 @@
                                 }
                             }
                         },
-                        "description": "host revoked or disconnected, artifact withdrawn, name taken, or the job could not be delivered"
+                        "description": "host revoked or disconnected, no host connected, artifact withdrawn, name taken, or the job could not be delivered"
                     },
                     "502": {
                         "content": {

@@ -627,7 +627,6 @@ function parsePorts(s: string): number[] {
 }
 
 function validate(): string | null {
-  if (!form.client_id) return 'Choose a host to run this VM on.'
   const name = form.name.trim()
   if (name && (name.length < 3 || name.length > 52)) {
     return 'A name must be between 3 and 52 characters.'
@@ -799,14 +798,14 @@ async function confirmDelete() {
               <DialogDescription>
                 <template v-if="fromRecipe">
                   Prefilled from the recipe <span class="font-mono">{{ fromRecipe }}</span>; anything it
-                  leaves out keeps its default. Pick a host and a name, and change whatever you need.
+                  leaves out keeps its default. Change whatever you need.
                 </template>
                 <template v-else-if="copiedFrom">
                   Prefilled from <span class="font-mono">{{ copiedFrom }}</span>. Nothing is created
                   until you submit, so change whatever you need first.
                 </template>
                 <template v-else>
-                  Pushed to the host you pick, which downloads the images and boots it. Building takes
+                  Pushed to the host you pick, or a random one, which downloads the images and boots it. Building takes
                   a few minutes — the row stays <span class="font-mono">pending</span> until it reports back.
                 </template>
               </DialogDescription>
@@ -858,7 +857,7 @@ async function confirmDelete() {
                 <Label for="vm-host">Host</Label>
                 <Select v-model="form.client_id">
                   <SelectTrigger id="vm-host" class="w-full">
-                    <SelectValue placeholder="Choose a host…" />
+                    <SelectValue placeholder="Any connected host" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem v-for="h in hosts" :key="h.id" :value="h.id">
