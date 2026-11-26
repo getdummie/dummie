@@ -28,6 +28,10 @@ const corednsLogContainer = "coredns"
 
 const vectorConfigTemplate = `# Written by dclient from the control server's settings. Edits are overwritten:
 # this file is replaced whenever those settings or the control server change.
+api:
+  enabled: true
+  address: "127.0.0.1:8686"
+
 sources:
   eve:
     type: file
