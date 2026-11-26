@@ -2,6 +2,8 @@ GORELEASER := "docker.io/goreleaser/goreleaser:v2.17.1"
 CONTROL_IMAGE := "docker.io/codingcoffee/dummie-control"
 WEBSITE_IMAGE := "docker.io/codingcoffee/dummie-website"
 IMAGE_PLATFORMS := "linux/amd64"
+# podman defaults to OCI, which silently drops HEALTHCHECK; docker ignores this.
+export BUILDAH_FORMAT := "docker"
 
 # print the version everything is built from.
 version:
