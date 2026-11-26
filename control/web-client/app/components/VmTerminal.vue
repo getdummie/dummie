@@ -299,10 +299,12 @@ defineExpose({ phase, message, connect, disconnect, send, focus, ctrlArmed, shif
 </script>
 
 <template>
-  <div
-    ref="termEl"
-    class="min-h-0 flex-1 overflow-hidden bg-white p-2 dark:bg-[#09090b]"
-    role="application"
-    aria-label="Terminal"
-  />
+  <div class="flex min-h-0 flex-1 flex-col bg-white p-2 dark:bg-[#09090b]">
+    <div
+      ref="termEl"
+      class="min-h-0 flex-1 overflow-hidden"
+      role="application"
+      aria-label="Terminal"
+    />
+  </div>
 </template>
