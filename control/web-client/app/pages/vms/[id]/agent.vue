@@ -4,12 +4,12 @@ import { useLocalStorage, useMediaQuery, watchDebounced } from '@vueuse/core'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AgentChanges from '@/components/agent/AgentChanges.vue'
 import AgentComposer from '@/components/agent/AgentComposer.vue'
+import AgentCwdInput from '@/components/agent/AgentCwdInput.vue'
 import AgentFileEditor from '@/components/agent/AgentFileEditor.vue'
 import AgentMediaViewer from '@/components/agent/AgentMediaViewer.vue'
 import AgentHarnessIcon from '@/components/agent/AgentHarnessIcon.vue'
@@ -431,7 +431,7 @@ onBeforeUnmount(() => sock.close())
                 </TabsList>
               </Tabs>
               <label for="agent-cwd" class="eyebrow mb-2 block text-muted-foreground">working directory</label>
-              <Input id="agent-cwd" v-model="newCwd" class="font-mono text-sm" spellcheck="false" placeholder="~/app" />
+              <AgentCwdInput id="agent-cwd" v-model="newCwd" placeholder="~/app" :list="sock.list" />
               <div class="mt-2 flex min-h-7 flex-wrap items-center gap-2 font-mono text-xs" role="status">
                 <span v-if="cwdState === 'dir'" class="inline-flex items-center gap-1 text-muted-foreground">
                   <CircleCheck class="size-3.5 text-primary-text" aria-hidden="true" />
