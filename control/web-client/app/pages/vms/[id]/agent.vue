@@ -501,6 +501,7 @@ onBeforeUnmount(() => sock.close())
             <AgentTransfer
               :initial-path="activeCwd || hello?.cwd || hello?.home || ''"
               :connected="phase === 'open'"
+              :active="centerTab === 'transfer'"
               :list="sock.list"
               :upload="sock.upload"
               :read-raw="sock.readRaw"

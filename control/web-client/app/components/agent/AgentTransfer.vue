@@ -4,11 +4,13 @@ import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { toast } from 'vue-sonner'
 import { AgentError, type AgentDirEntry } from '@/composables/useAgentSocket'
 
 const props = defineProps<{
   initialPath: string
   connected: boolean
+  active: boolean
   list: (path: string) => Promise<{ path: string, entries: AgentDirEntry[] }>
   upload: (file: File, onProgress?: (fraction: number) => void, opts?: { dest?: string, overwrite?: boolean }) => Promise<string>
   readRaw: (cwd: string, path: string, type: string, onProgress?: (fraction: number) => void, download?: boolean) => Promise<Blob>
@@ -78,7 +80,7 @@ function track(t: Omit<Transfer, 'id' | 'progress' | 'state'>) {
   return transfers.value[0]!
 }
 
-function enqueue(files: FileList | File[] | null | undefined) {
+function enqueue(files: FileList | File[] | null | undefined, copyPath = false) {
   if (!files?.length || !dir.value) return
   const dest = dir.value
   const limit = maxUploadMiB.value * 1024 * 1024
@@ -89,16 +91,17 @@ function enqueue(files: FileList | File[] | null | undefined) {
       continue
     }
     const force = overwrite.value
-    queue = queue.then(() => runUpload(t, file, dest, force))
+    queue = queue.then(() => runUpload(t, file, dest, force, copyPath))
   }
 }
 
-async function runUpload(t: Transfer, file: File, dest: string, force: boolean) {
+async function runUpload(t: Transfer, file: File, dest: string, force: boolean, copyPath: boolean) {
   t.state = 'running'
   try {
     const path = await props.upload(file, (f) => { t.progress = f }, { dest, overwrite: force })
     t.state = 'done'
     if (!path.startsWith(`${dest.replace(/\/$/, '')}/`)) t.message = `landed in ${path}; ${upgradeHint}`
+    if (copyPath) void copyToClipboard(path)
     if (dir.value === dest) await open(dest)
   }
   catch (e) {
@@ -106,6 +109,16 @@ async function runUpload(t: Transfer, file: File, dest: string, force: boolean) 
     t.message = e instanceof AgentError && e.code === 'exists'
       ? 'already exists; tick "Replace existing files" to overwrite it'
       : e instanceof Error ? e.message : 'upload failed'
+  }
+}
+
+async function copyToClipboard(path: string) {
+  try {
+    await navigator.clipboard.writeText(path)
+    toast.success('Path copied to clipboard', { description: path })
+  }
+  catch {
+    toast.error('Uploaded, but could not copy the path', { description: path })
   }
 }
 
@@ -132,6 +145,20 @@ function onPick(ev: Event) {
   const input = ev.target as HTMLInputElement
   enqueue(input.files)
   input.value = ''
+}
+
+// Browsers name every clipboard image image.png, so add the local time to it.
+function onPaste(ev: ClipboardEvent) {
+  const files = Array.from(ev.clipboardData?.files ?? [])
+  if (!props.active || ev.defaultPrevented || !files.length || !dir.value) return
+  ev.preventDefault()
+  const d = new Date()
+  const p = (n: number) => String(n).padStart(2, '0')
+  const stamp = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}-${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`
+  enqueue(files.map((f, i) => {
+    const m = /^image\.(\w+)$/.exec(f.name)
+    return m ? new File([f], `image-${stamp}${i ? `-${i}` : ''}.${m[1]}`, { type: f.type }) : f
+  }), true)
 }
 
 function onDragLeave(ev: DragEvent) {
@@ -161,7 +188,11 @@ watch(() => props.connected, (ok) => {
 watch(() => props.initialPath, (p) => {
   if (!dir.value && p) void open(p)
 })
-onMounted(loadLimit)
+onMounted(() => {
+  void loadLimit()
+  window.addEventListener('paste', onPaste)
+})
+onBeforeUnmount(() => window.removeEventListener('paste', onPaste))
 </script>
 
 <template>
@@ -192,7 +223,7 @@ onMounted(loadLimit)
         <Checkbox id="transfer-overwrite" :model-value="overwrite" @update:model-value="(v) => overwrite = v === true" />
         <Label for="transfer-overwrite" class="font-mono text-xs font-normal">Replace existing files</Label>
       </div>
-      <span>Drop files anywhere here · up to {{ maxUploadMiB }} MiB each</span>
+      <span>Drop or paste files here · up to {{ maxUploadMiB }} MiB each</span>
     </div>
 
     <p v-if="!connected" class="p-3 font-mono text-xs text-muted-foreground">Waiting for the connection to the VM…</p>
