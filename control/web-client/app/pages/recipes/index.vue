@@ -138,12 +138,12 @@ function toggleRepo(id: string, repo: string, on: boolean) {
   picked.value = { ...picked.value, [id]: [...repos] }
 }
 
-const optionalInt = (v: string) => (v.trim() ? Number(v) : undefined)
+const optionalInt = (v: string | number) => (String(v).trim() ? Number(v) : undefined)
 
 function validate(): string | null {
   if (!form.name.trim()) return 'Give the recipe a name.'
   for (const [label, v, min] of [['vCPU', form.cpus, 1], ['Memory', form.memory_mib, 64], ['Default port', form.default_port, 1], ['TTL', form.ttl_seconds, 0]] as const) {
-    if (v.trim() && (!Number.isInteger(Number(v)) || Number(v) < min)) return `${label} must be a whole number of at least ${min}.`
+    if (String(v).trim() && (!Number.isInteger(Number(v)) || Number(v) < min)) return `${label} must be a whole number of at least ${min}.`
   }
   if (form.disk_size.trim() && !/^\d+[KkMmGgTt]?$/.test(form.disk_size.trim())) {
     return 'Disk size must be a number, optionally with a K, M, G or T suffix — e.g. 2G.'
