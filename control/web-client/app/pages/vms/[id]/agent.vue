@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ArrowLeft, CircleCheck, FileDiff as FileDiffIcon, FolderPlus, PanelLeft } from '@lucide/vue'
-import { useLocalStorage, useMediaQuery, watchDebounced } from '@vueuse/core'
+import { ArrowLeft, FileDiff as FileDiffIcon, PanelLeft } from '@lucide/vue'
+import { useMediaQuery } from '@vueuse/core'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -8,65 +8,37 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import AgentChanges from '@/components/agent/AgentChanges.vue'
-import AgentComposer from '@/components/agent/AgentComposer.vue'
-import AgentCwdInput from '@/components/agent/AgentCwdInput.vue'
-import AgentFileEditor from '@/components/agent/AgentFileEditor.vue'
-import AgentMediaViewer from '@/components/agent/AgentMediaViewer.vue'
-import AgentHarnessIcon from '@/components/agent/AgentHarnessIcon.vue'
+import AgentChatPanel from '@/components/agent/AgentChatPanel.vue'
+import AgentFilesPanel from '@/components/agent/AgentFilesPanel.vue'
 import AgentSessions from '@/components/agent/AgentSessions.vue'
-import AgentThread from '@/components/agent/AgentThread.vue'
 import AgentTransfer from '@/components/agent/AgentTransfer.vue'
 import ThemeToggle from '@/components/ThemeToggle.vue'
 import VmDestinations from '@/components/VmDestinations.vue'
 import VmTerminal, { type Phase as ConsolePhase } from '@/components/VmTerminal.vue'
 import VmTerminalKeypad from '@/components/VmTerminalKeypad.vue'
-import type { AgentSession } from '@/composables/useAgentSocket'
-import { emptyChat, type ChatState, type Draft, type Model } from '@/lib/agentChat'
-import { mediaKind } from '@/lib/fileKind'
-import { chatAdapter } from '@/lib/harness'
+import { agentWorkspaceKey, useAgentWorkspace } from '@/composables/useAgentWorkspace'
 
 definePageMeta({ middleware: ['auth'], layout: false })
 
 const route = useRoute()
-const router = useRouter()
 const id = computed(() => String(route.params.id))
 const wide = useMediaQuery('(min-width: 1024px)')
 
-const sock = useAgentSocket(() => id.value)
-const { phase, error, hello, sessions, diff } = sock
-
-const activeKey = ref<string | null>(null)
-const activeId = ref<string | null>(null)
-const activeCwd = ref('')
-const alive = ref(false)
-// The active session's harness, or the one a new session will start in.
-const harness = ref('pi')
-const preferredHarness = useLocalStorage('dummie:agent-harness', 'pi')
-const chat = ref<ChatState>(emptyChat())
-const sessionModels = ref<Model[]>([])
-const harnessInfo = computed(() => hello.value?.harnesses.find(h => h.name === harness.value))
-// Until a session is open there is no agent to ask, so dinit's preset list stands in.
-const models = computed(() => (activeKey.value && sessionModels.value.length ? sessionModels.value : harnessInfo.value?.models ?? []))
-const model = ref('')
-// The last model picked per harness, so a new session does not start on its default.
-const preferredModels = useLocalStorage<Record<string, string>>('dummie:agent-models', {})
-const newCwd = ref('')
-const sending = ref(false)
-const actionError = ref<string | null>(null)
 const sessionsOpen = ref(false)
 const changesOpen = ref(false)
 const centerTab = ref<'chat' | 'console' | 'files' | 'transfer' | 'network'>('chat')
+
+const ws = useAgentWorkspace(() => id.value, (view) => {
+  centerTab.value = view
+  if (view === 'chat') sessionsOpen.value = false
+  else changesOpen.value = false
+})
+provide(agentWorkspaceKey, reactive(ws))
+const { sock, phase, error, hello, sessions, diff, activeKey, activeCwd, newCwd, harnessInfo, install, title, renamable, statusLabel } = ws
+const { openFile, openSession, startNew, gitInit, renameSession, onEdited } = ws
+
 // The transfer tab mounts on first use and then stays, so its queue survives tab switches.
 const transferMounted = ref(false)
-// The file picked in the right panel's tree, edited in the center panel.
-const openedFile = ref<{ cwd: string, path: string } | null>(null)
-const openedMedia = computed(() => openedFile.value && mediaKind(openedFile.value.path))
-
-function onOpenFile(file: { cwd: string, path: string }) {
-  openedFile.value = file
-  centerTab.value = 'files'
-  changesOpen.value = false
-}
 // The console mounts on first use and then stays, so switching tabs keeps
 // its shell alive.
 const consoleMounted = ref(false)
@@ -81,241 +53,8 @@ watch(centerTab, async (tab) => {
   await nextTick()
   terminal.value?.focus()
 })
-// Files edited by hand since the last prompt, so the agent hears about them.
-const editedFiles = ref(new Set<string>())
-const cwdState = ref<'checking' | 'dir' | 'file' | 'missing' | null>(null)
-const creatingDir = ref(false)
-
-const installs: Record<string, string> = {
-  pi: 'bun install -g @earendil-works/pi-coding-agent',
-  claude: 'bun install -g @anthropic-ai/claude-code',
-  codex: 'bun install -g @openai/codex',
-  opencode: 'bun install -g opencode-ai',
-  gemini: 'bun install -g @google/gemini-cli',
-}
-const busyHint = computed(() => harnessInfo.value?.steers
-  ? 'a message sent now steers the running agent'
-  : 'a message sent now waits for this turn to end')
-const title = computed(() => {
-  const s = sessions.value.find(s => s.key === activeKey.value)
-  return s?.name || s?.title || (activeKey.value ? 'session' : 'new session')
-})
 
 useHead(() => ({ title: `dummie — agent · ${title.value}` }))
-
-const modelKey = (m: { provider: string, id: string }) => `${m.provider}/${m.id}`
-
-sock.on((m) => {
-  if (m.t === 'event' && m.key === activeKey.value) chatAdapter(harness.value).applyEvent(chat.value, m.ev)
-  if (m.t === 'exit' && m.key === activeKey.value) {
-    alive.value = false
-    chat.value.busy = false
-    if (m.error) actionError.value = `The agent stopped: ${m.error}`
-  }
-  if (m.t === 'hello') {
-    newCwd.value ||= m.cwd
-    if (activeId.value) {
-      void open({ harness: harness.value, id: activeId.value })
-      return
-    }
-    watchCwd(m.cwd)
-    const sid = typeof route.query.id === 'string' ? route.query.id : null
-    pickHarness(typeof route.query.harness === 'string' ? route.query.harness : preferredHarness.value)
-    if (sid) void open({ harness: harness.value, id: sid })
-  }
-})
-
-function pickHarness(name: string) {
-  if (activeKey.value) return
-  harness.value = name
-  preferredHarness.value = name
-  model.value = preferredModels.value[name] ?? ''
-}
-
-function watchCwd(cwd: string) {
-  if (cwd) sock.watch(cwd)
-}
-
-function openSession(s: AgentSession) {
-  sessionsOpen.value = false
-  centerTab.value = 'chat'
-  void open({ harness: s.harness, id: s.id })
-}
-
-async function open(target: { harness: string, id: string }) {
-  actionError.value = null
-  try {
-    loadOpened(await sock.request({ t: 'open', ...target }))
-  }
-  catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not open the session'
-  }
-}
-
-function loadOpened(res: Record<string, any>) {
-  activeKey.value = res.key
-  activeId.value = res.id
-  harness.value = res.harness
-  activeCwd.value = res.cwd
-  alive.value = true
-  chat.value = chatAdapter(res.harness).fromHistory(res.history, !!res.streaming)
-  model.value = res.model ? modelKey(res.model) : ''
-  watchCwd(res.cwd)
-  void router.replace({ query: { harness: res.harness, id: res.id } })
-  void loadModels()
-}
-
-async function loadModels() {
-  if (!activeKey.value) return
-  try {
-    const res = await sock.models(activeKey.value)
-    sessionModels.value = res.models
-    if (res.current) model.value = modelKey(res.current)
-  }
-  catch {
-    sessionModels.value = []
-  }
-}
-
-function startNew() {
-  activeKey.value = null
-  activeId.value = null
-  alive.value = false
-  chat.value = emptyChat()
-  sessionModels.value = []
-  pickHarness(preferredHarness.value)
-  sessionsOpen.value = false
-  centerTab.value = 'chat'
-  newCwd.value = hello.value?.cwd ?? ''
-  watchCwd(newCwd.value)
-  void router.replace({ query: {} })
-}
-
-async function ensureSession(): Promise<string> {
-  if (activeKey.value && alive.value) return activeKey.value
-  const picked = models.value.find(m => modelKey(m) === model.value)
-  const res = activeId.value
-    ? await sock.request({ t: 'open', harness: harness.value, id: activeId.value })
-    : await sock.request({ t: 'open', harness: harness.value, cwd: newCwd.value.trim(), model: picked && { provider: picked.provider, id: picked.id } })
-  loadOpened(res)
-  return res.key
-}
-
-async function send(draft: Draft) {
-  sending.value = true
-  actionError.value = null
-  try {
-    const key = await ensureSession()
-    const attachments = await Promise.all(draft.files.map(async f => ({
-      path: await sock.upload(f),
-      mime: f.type || 'application/octet-stream',
-    })))
-    let text = draft.text
-    if (editedFiles.value.size) {
-      text += `\n\n(I edited these files by hand since your last turn; re-read them before changing them: ${[...editedFiles.value].join(', ')})`
-    }
-    await sock.prompt(key, text, attachments)
-    editedFiles.value = new Set()
-  }
-  catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not send the message'
-  }
-  finally {
-    sending.value = false
-  }
-}
-
-async function stop() {
-  if (!activeKey.value) return
-  try {
-    await sock.abort(activeKey.value)
-  }
-  catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not stop the agent'
-  }
-}
-
-async function setModel(key: string) {
-  const m = models.value.find(m => modelKey(m) === key)
-  if (!m) return
-  const remember = () => {
-    model.value = key
-    preferredModels.value = { ...preferredModels.value, [harness.value]: key }
-  }
-  if (!activeKey.value || !alive.value) {
-    remember()
-    return
-  }
-  try {
-    await sock.setModel(activeKey.value, m)
-    remember()
-  }
-  catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not switch the model'
-  }
-}
-
-async function gitInit() {
-  try {
-    await sock.request({ t: 'git_init', cwd: activeCwd.value || newCwd.value })
-  }
-  catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'git init failed'
-  }
-}
-
-watch(newCwd, (cwd) => {
-  if (!activeKey.value) watchCwd(cwd.trim())
-})
-
-async function checkCwd() {
-  const path = newCwd.value.trim()
-  if (activeKey.value || !path || phase.value !== 'open') {
-    cwdState.value = null
-    return
-  }
-  cwdState.value = 'checking'
-  try {
-    const st = await sock.request({ t: 'stat', path })
-    cwdState.value = st.dir ? 'dir' : st.exists ? 'file' : 'missing'
-  }
-  catch {
-    cwdState.value = null
-  }
-}
-
-watchDebounced([newCwd, phase, activeKey], checkCwd, { debounce: 300, immediate: true })
-
-async function createCwd() {
-  creatingDir.value = true
-  try {
-    const res = await sock.request({ t: 'mkdir', path: newCwd.value.trim() })
-    newCwd.value = res.path
-    await checkCwd()
-    watchCwd(res.path)
-  }
-  catch (e) {
-    actionError.value = e instanceof Error ? e.message : 'Could not create the directory'
-  }
-  finally {
-    creatingDir.value = false
-  }
-}
-
-const renamable = computed(() => (hello.value?.harnesses ?? []).filter(h => h.renames).map(h => h.name))
-
-function renameSession(s: AgentSession, name: string) {
-  return sock.rename(s.harness, s.id, name)
-}
-
-function onEdited(path: string) {
-  editedFiles.value = new Set(editedFiles.value).add(path)
-}
-
-const statusLabel = computed(() => ({ connecting: 'connecting', open: 'connected', closed: 'reconnecting', error: 'error' }[phase.value]))
-
-onMounted(() => sock.connect())
-onBeforeUnmount(() => sock.close())
 </script>
 
 <template>
@@ -357,7 +96,7 @@ onBeforeUnmount(() => sock.close())
       <AlertTitle>{{ harnessInfo.name }} is not installed in this VM</AlertTitle>
       <AlertDescription>
         Install it from the console, then reload this page:
-        <code class="font-mono text-xs">{{ installs[harnessInfo.name] }}</code>
+        <code class="font-mono text-xs">{{ install }}</code>
       </AlertDescription>
     </Alert>
 
@@ -413,89 +152,9 @@ onBeforeUnmount(() => sock.close())
             </div>
           </header>
 
-          <div v-show="centerTab === 'chat'" class="flex min-h-0 flex-1 flex-col">
-            <div v-if="!activeKey" class="mx-auto mt-10 w-full max-w-3xl px-4">
-              <p id="agent-harness" class="eyebrow mb-2 text-muted-foreground">agent</p>
-              <Tabs :model-value="harness" class="mb-6" @update:model-value="pickHarness(String($event))">
-                <TabsList class="h-auto flex-wrap justify-start" aria-labelledby="agent-harness">
-                  <TabsTrigger
-                    v-for="h in hello?.harnesses ?? []"
-                    :key="h.name"
-                    :value="h.name"
-                    class="h-7 flex-none gap-1.5 font-mono text-xs"
-                    :class="!h.available && 'opacity-60'"
-                  >
-                    <AgentHarnessIcon :harness="h.name" />
-                    {{ h.name }}
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-              <label for="agent-cwd" class="eyebrow mb-2 block text-muted-foreground">working directory</label>
-              <AgentCwdInput id="agent-cwd" v-model="newCwd" placeholder="~/app" :list="sock.list" />
-              <div class="mt-2 flex min-h-7 flex-wrap items-center gap-2 font-mono text-xs" role="status">
-                <span v-if="cwdState === 'dir'" class="inline-flex items-center gap-1 text-muted-foreground">
-                  <CircleCheck class="size-3.5 text-primary-text" aria-hidden="true" />
-                  exists
-                </span>
-                <span v-else-if="cwdState === 'file'" class="text-destructive">that is a file, not a directory</span>
-                <template v-else-if="cwdState === 'missing'">
-                  <span class="text-muted-foreground">does not exist yet</span>
-                  <Button variant="outline" size="sm" class="h-7 font-mono text-xs" :disabled="creatingDir" @click="createCwd">
-                    <FolderPlus class="size-3.5" aria-hidden="true" />
-                    Create it
-                  </Button>
-                </template>
-              </div>
-              <p class="mt-1 font-mono text-xs text-muted-foreground">
-                A new {{ harness }} session starts here when you send the first message. The diff pane shows this directory's uncommitted changes.
-              </p>
-            </div>
+          <AgentChatPanel v-show="centerTab === 'chat'" />
 
-            <AgentThread v-if="activeKey" :chat="chat" />
-            <div v-else class="flex-1" />
-
-            <p v-if="actionError" class="mx-auto w-full max-w-3xl px-4 pb-2 font-mono text-xs text-destructive" role="alert">
-              {{ actionError }}
-            </p>
-            <AgentComposer
-              :busy="chat.busy"
-              :busy-hint="busyHint"
-              :sending="sending"
-              :disabled="phase !== 'open' || !harnessInfo?.available"
-              :models="models"
-              :model="model"
-              @send="send"
-              @stop="stop"
-              @model="setModel"
-            />
-          </div>
-
-          <div v-show="centerTab === 'files'" class="flex min-h-0 flex-1 flex-col">
-            <AgentMediaViewer
-              v-if="openedMedia && openedFile"
-              :key="`${openedFile.cwd}/${openedFile.path}`"
-              :cwd="openedFile.cwd"
-              :path="openedFile.path"
-              :kind="openedMedia.kind"
-              :mime="openedMedia.mime"
-              :read-raw="sock.readRaw"
-              @close="openedFile = null"
-            />
-            <AgentFileEditor
-              v-else-if="openedFile"
-              :key="`${openedFile.cwd}/${openedFile.path}`"
-              :cwd="openedFile.cwd"
-              :path="openedFile.path"
-              mode="file"
-              :read-file="sock.readFile"
-              :write-file="sock.writeFile"
-              @close="openedFile = null"
-              @saved="onEdited"
-            />
-            <p v-else class="p-4 font-mono text-xs text-muted-foreground">
-              Pick a file in the right panel's files tab to open it here.
-            </p>
-          </div>
+          <AgentFilesPanel v-show="centerTab === 'files'" hint="Pick a file in the right panel's files tab to open it here." />
 
           <div v-if="transferMounted" v-show="centerTab === 'transfer'" class="flex min-h-0 flex-1 flex-col">
             <AgentTransfer
@@ -540,7 +199,7 @@ onBeforeUnmount(() => sock.close())
       <template v-if="wide">
         <ResizableHandle />
         <ResizablePanel :default-size="32" :min-size="18">
-          <AgentChanges :diff="diff" :read-file="sock.readFile" :write-file="sock.writeFile" @git-init="gitInit" @edited="onEdited" @open-file="onOpenFile" />
+          <AgentChanges :diff="diff" :read-file="sock.readFile" :write-file="sock.writeFile" @git-init="gitInit" @edited="onEdited" @open-file="openFile" />
         </ResizablePanel>
       </template>
     </component>
@@ -560,7 +219,7 @@ onBeforeUnmount(() => sock.close())
           <SheetTitle>Changes</SheetTitle>
           <SheetDescription>Uncommitted changes in the session's directory</SheetDescription>
         </SheetHeader>
-        <AgentChanges in-sheet :diff="diff" :read-file="sock.readFile" :write-file="sock.writeFile" @git-init="gitInit" @edited="onEdited" @open-file="onOpenFile" />
+        <AgentChanges in-sheet :diff="diff" :read-file="sock.readFile" :write-file="sock.writeFile" @git-init="gitInit" @edited="onEdited" @open-file="openFile" />
       </SheetContent>
     </Sheet>
   </div>

@@ -1274,12 +1274,86 @@
                 },
                 "type": "object"
             },
+            "main.vmWorkspaceReq": {
+                "properties": {
+                    "layout_id": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
             "main.webSessionDTO": {
                 "properties": {
                     "expires_in": {
                         "type": "integer"
                     },
                     "url": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "main.workspaceGrid": {
+                "properties": {
+                    "items": {
+                        "items": {
+                            "$ref": "#/components/schemas/main.workspaceItem"
+                        },
+                        "type": "array",
+                        "uniqueItems": false
+                    }
+                },
+                "type": "object"
+            },
+            "main.workspaceItem": {
+                "properties": {
+                    "h": {
+                        "type": "integer"
+                    },
+                    "panel": {
+                        "type": "string"
+                    },
+                    "w": {
+                        "type": "integer"
+                    },
+                    "x": {
+                        "type": "integer"
+                    },
+                    "y": {
+                        "type": "integer"
+                    }
+                },
+                "type": "object"
+            },
+            "main.workspaceLayoutDTO": {
+                "properties": {
+                    "builtin": {
+                        "type": "boolean"
+                    },
+                    "created_at": {
+                        "type": "string"
+                    },
+                    "id": {
+                        "type": "string"
+                    },
+                    "layout": {
+                        "$ref": "#/components/schemas/main.workspaceGrid"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "updated_at": {
+                        "type": "string"
+                    }
+                },
+                "type": "object"
+            },
+            "main.workspaceLayoutReq": {
+                "properties": {
+                    "layout": {
+                        "$ref": "#/components/schemas/main.workspaceGrid"
+                    },
+                    "name": {
                         "type": "string"
                     }
                 },
@@ -6026,6 +6100,373 @@
                 "summary": "Open a session on a VM's site",
                 "tags": [
                     "vms"
+                ]
+            }
+        },
+        "/vms/{id}/workspace": {
+            "get": {
+                "description": "The layout picked for this VM, or the built-in default layout when none was picked.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.workspaceLayoutDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Read the workspace layout a VM opens with",
+                "tags": [
+                    "workspaces"
+                ]
+            },
+            "put": {
+                "description": "Pass \"default\" as the layout id to go back to the built-in default layout.",
+                "parameters": [
+                    {
+                        "description": "vm id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.vmWorkspaceReq",
+                                        "summary": "body",
+                                        "description": "one of your layouts, or default"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "one of your layouts, or default",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.workspaceLayoutDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Pick the workspace layout a VM opens with",
+                "tags": [
+                    "workspaces"
+                ]
+            }
+        },
+        "/workspace-layouts": {
+            "get": {
+                "description": "The built-in default layout comes first, then yours.",
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "additionalProperties": {
+                                        "items": {
+                                            "$ref": "#/components/schemas/main.workspaceLayoutDTO"
+                                        },
+                                        "type": "array"
+                                    },
+                                    "type": "object"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "List workspace layouts",
+                "tags": [
+                    "workspaces"
+                ]
+            },
+            "post": {
+                "description": "Panels sit on a 24x24 grid, each panel at most once and none overlapping.",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.workspaceLayoutReq",
+                                        "summary": "body",
+                                        "description": "name is required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "name is required",
+                    "required": true
+                },
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.workspaceLayoutDTO"
+                                }
+                            }
+                        },
+                        "description": "Created"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "you already have a layout with that name"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Save a workspace layout",
+                "tags": [
+                    "workspaces"
+                ]
+            }
+        },
+        "/workspace-layouts/{id}": {
+            "delete": {
+                "description": "VMs that used it go back to the default layout.",
+                "parameters": [
+                    {
+                        "description": "layout id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the default layout cannot be changed"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Delete one of your workspace layouts",
+                "tags": [
+                    "workspaces"
+                ]
+            },
+            "put": {
+                "description": "Every VM using this layout sees the change. The built-in default layout cannot be changed.",
+                "parameters": [
+                    {
+                        "description": "layout id",
+                        "in": "path",
+                        "name": "id",
+                        "required": true,
+                        "schema": {
+                            "format": "uuid",
+                            "type": "string"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "oneOf": [
+                                    {
+                                        "type": "object"
+                                    },
+                                    {
+                                        "$ref": "#/components/schemas/main.workspaceLayoutReq",
+                                        "summary": "body",
+                                        "description": "name is required"
+                                    }
+                                ]
+                            }
+                        }
+                    },
+                    "description": "name is required",
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.workspaceLayoutDTO"
+                                }
+                            }
+                        },
+                        "description": "OK"
+                    },
+                    "400": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Bad Request"
+                    },
+                    "403": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "the default layout cannot be changed"
+                    },
+                    "404": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "Not Found"
+                    },
+                    "409": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/main.apiError"
+                                }
+                            }
+                        },
+                        "description": "you already have a layout with that name"
+                    }
+                },
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "summary": "Replace one of your workspace layouts",
+                "tags": [
+                    "workspaces"
                 ]
             }
         }

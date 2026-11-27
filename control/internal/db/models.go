@@ -470,3 +470,17 @@ type VmNetworkTarget struct {
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 }
+
+type VmWorkspaceLayout struct {
+	VMID     pgtype.UUID
+	LayoutID pgtype.UUID
+}
+
+type WorkspaceLayout struct {
+	ID        pgtype.UUID
+	OwnerID   pgtype.UUID
+	Name      string
+	Layout    []byte
+	CreatedAt pgtype.Timestamptz
+	UpdatedAt pgtype.Timestamptz
+}

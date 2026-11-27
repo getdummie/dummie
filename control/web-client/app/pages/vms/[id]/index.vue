@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Bot, Check, ScrollText, ChevronDown, Copy, Download, Eye, EyeOff, ExternalLink, HardDriveUpload, Info, Monitor, Pencil, RefreshCw, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
+import { ArrowLeft, Bot, Check, ChevronDown, Copy, Download, ExternalLink, Eye, EyeOff, HardDriveUpload, Info, LayoutGrid, Monitor, Pencil, RefreshCw, ScrollText, SquareTerminal, Terminal, Trash2 } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -1383,6 +1383,25 @@ async function removeDomain(d: CustomDomain) {
               <Bot class="size-4" aria-hidden="true" />
               Agent
               <span class="sr-only">: open a coding agent chat in a new tab</span>
+            </Button>
+            <Button
+              v-if="vm.console_url"
+              as="a"
+              variant="outline"
+              size="sm"
+              class="font-mono text-xs"
+              :href="`/vms/${vm.id}/workspace`"
+              target="_blank"
+              rel="noopener"
+              :aria-disabled="vm.status !== 'running'"
+              :class="vm.status !== 'running' && 'pointer-events-none opacity-50'"
+              :title="vm.status === 'running'
+                ? `Open a customizable workspace on ${vm.name}`
+                : `Cannot open the workspace: this VM is ${vm.status}`"
+            >
+              <LayoutGrid class="size-4" aria-hidden="true" />
+              Workspace
+              <span class="sr-only">: open a customizable workspace in a new tab</span>
             </Button>
             <div v-if="sshHost && activeEditor" class="inline-flex items-center">
               <Button
