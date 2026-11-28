@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowLeft, Maximize } from '@lucide/vue'
+import { ArrowLeft, ClipboardPaste, Maximize } from '@lucide/vue'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import VmDesktop, { type Phase } from '@/components/VmDesktop.vue'
@@ -73,6 +73,17 @@ const connection = computed(() => {
           </Button>
           <Button variant="outline" size="sm" class="font-mono text-xs max-sm:hidden" @click="desktop?.ctrlAltDel()">
             Ctrl+Alt+Del
+          </Button>
+          <Button
+            v-if="desktop?.clipboardFallback"
+            variant="outline"
+            size="sm"
+            class="font-mono text-xs"
+            title="Send your clipboard to the desktop, then paste there with Ctrl+V"
+            @click="desktop?.pasteIntoDesktop()"
+          >
+            <ClipboardPaste class="size-3.5" aria-hidden="true" />
+            <span class="max-sm:sr-only">Send clipboard</span>
           </Button>
           <Button
             variant="outline"

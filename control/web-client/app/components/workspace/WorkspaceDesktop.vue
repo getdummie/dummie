@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Maximize } from '@lucide/vue'
+import { ClipboardPaste, Maximize } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import VmDesktop, { type Phase } from '@/components/VmDesktop.vue'
 
@@ -26,6 +26,16 @@ const desktop = useTemplateRef<InstanceType<typeof VmDesktop>>('desktop')
           </Button>
           <Button variant="outline" size="sm" class="h-6 font-mono text-xs" @click="desktop?.ctrlAltDel()">
             Ctrl+Alt+Del
+          </Button>
+          <Button
+            v-if="desktop?.clipboardFallback"
+            variant="outline"
+            size="icon-xs"
+            aria-label="Send clipboard"
+            title="Send your clipboard to the desktop, then paste there with Ctrl+V"
+            @click="desktop?.pasteIntoDesktop()"
+          >
+            <ClipboardPaste aria-hidden="true" />
           </Button>
           <Button variant="outline" size="icon-xs" aria-label="Fullscreen" @click="desktop?.fullscreen()">
             <Maximize aria-hidden="true" />

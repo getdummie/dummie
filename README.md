@@ -44,6 +44,15 @@ Each directory is a project in its own right.
 | `backstage/` | `dproxy` and `dpipe`, the connection services `dclient` runs on each host, plus `dinit`, the guest init copied into every rootfs and booted as pid 1. |
 | `website/` | Landing page, case studies and docs. Prerendered Nuxt with SSR on, shipped as its own container — deliberately separate from the console SPA in `control/web-client`. |
 
+## Known issues
+
+- **Browser remote desktop in Chromium.** The in-browser desktop is IronRDP
+  compiled to WebAssembly, drawing every frame onto a 2D canvas, and on some
+  machines Chromium's GPU-accelerated canvas drops those frames: the session
+  connects but the screen stays blank. If that happens, turn off "Use graphics
+  acceleration when available" in `chrome://settings/system` and restart the
+  browser. Firefox is not affected.
+
 ## Contributing
 
 This repo is very open to contributions, specifically prompt requests! If you

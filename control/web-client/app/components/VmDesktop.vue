@@ -96,6 +96,45 @@ function onAudio(m: { type: string, data: Uint8Array, channels: number, sampleRa
   playAt += buf.duration
 }
 
+// IronRDP draws every frame with putImageData. On a GPU-backed canvas some
+// Chromium drivers drop those frames, so its canvas is kept in software.
+function keepRendererInSoftware() {
+  const proto = HTMLCanvasElement.prototype as HTMLCanvasElement & { dummiePatched?: boolean }
+  if (proto.dummiePatched) return
+  proto.dummiePatched = true
+  const original = proto.getContext
+  proto.getContext = function (this: HTMLCanvasElement, type: string, options?: unknown) {
+    const host = (this.getRootNode() as ShadowRoot).host
+    if (type === '2d' && host?.tagName === 'IRON-REMOTE-DESKTOP') {
+      options = { ...(options as object), willReadFrequently: true }
+    }
+    return original.call(this, type, options)
+  } as typeof proto.getContext
+}
+
+// Mirrors IronRDP's own check: without clipboard-read permission support it
+// drops to a text-only mode where every transfer needs a user gesture.
+const clipboardFallback = ref(false)
+
+async function detectClipboardFallback() {
+  try {
+    await navigator.permissions.query({ name: 'clipboard-read' as PermissionName })
+    clipboardFallback.value = !navigator.clipboard?.read
+  }
+  catch {
+    clipboardFallback.value = true
+  }
+}
+
+async function pasteIntoDesktop() {
+  try {
+    await ui?.sendClipboardData()
+  }
+  catch (e) {
+    message.value = `Could not read your clipboard: ${e instanceof Error ? e.message : e}`
+  }
+}
+
 function resumeAudio() {
   if (actx?.state === 'suspended') void actx.resume()
 }
@@ -211,6 +250,7 @@ onMounted(async () => {
       import('@devolutions/iron-remote-desktop-rdp'),
     ])
     rdpModule = rdp
+    keepRendererInSoftware()
     await rdp.init('INFO')
     // The element reads `module` as it mounts, so it is built here rather than
     // in the template.
@@ -223,6 +263,12 @@ onMounted(async () => {
     screen.value!.append(el)
     ui = await ready
     ui.setEnableClipboard(true)
+    await detectClipboardFallback()
+    // Only fires in the fallback mode. A copy in the guest follows a key press or
+    // click in this tab, which is what lets the page write the clipboard here.
+    ui.onClipboardRemoteUpdateCallback(() => {
+      ui?.saveRemoteClipboardData().catch(() => {})
+    })
   }
   catch (e) {
     phase.value = 'error'
@@ -243,7 +289,7 @@ onBeforeUnmount(() => {
   actx = null
 })
 
-defineExpose({ phase, message, connect, disconnect, ctrlAltDel, superKey, fullscreen })
+defineExpose({ phase, message, connect, disconnect, ctrlAltDel, superKey, fullscreen, clipboardFallback, pasteIntoDesktop })
 </script>
 
 <template>
