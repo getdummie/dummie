@@ -236,7 +236,7 @@ func (r *Resolver) Handle(m control.Msg) control.Msg {
 
 		if _, published := r.router.HostEntry(m.Host); !published {
 			if k, ok := desktopKind(r.desktop); ok {
-				if vmHost, ok := labelledVMHost(r.router, k.label, m.Host); ok {
+				if vmHost, ok := desktopVMHost(r.router, r.desktop, m.Host); ok {
 					return r.resolveSession(log, k, m, vmHost, req)
 				}
 			}

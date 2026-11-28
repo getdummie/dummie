@@ -24,7 +24,7 @@ func TestEdgeBackends(t *testing.T) {
 		"ONE.vm.local:443":    {"10.68.0.2"},
 		"one--8080.vm.local":  {"10.68.0.2"},
 		"two.shell.vm.local":  {"10.68.0.3"},
-		"two.desk.vm.local":   {"10.68.0.3"},
+		"two--desk.vm.local":  {"10.68.0.3"},
 		"app.example.com":     {"10.68.0.3"},
 		"www.vm.local":        {"10.68.0.2", "10.68.0.3"},
 		"missing.vm.local":    {"10.68.0.2", "10.68.0.3"},

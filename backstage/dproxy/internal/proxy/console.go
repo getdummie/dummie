@@ -125,12 +125,27 @@ func (p *Proxy) consoleVMHost(host string) (string, bool) {
 	return consoleVMHost(p.router, p.cfg.Console, host)
 }
 
+// desktopVMHost maps "one--desk.vm.local" to "one.vm.local". The label rides on
+// the first one so the fleet's *.<tld> certificate covers it; a VM name cannot
+// contain "--", so no guest can claim it.
 func desktopVMHost(router *Router, d *DesktopConfig, host string) (string, bool) {
 	k, ok := desktopKind(d)
 	if !ok {
 		return "", false
 	}
-	return labelledVMHost(router, k.label, host)
+	first, rest, ok := strings.Cut(httpsniff.NormalizeHost(host), ".")
+	if !ok || rest == "" {
+		return "", false
+	}
+	name, ok := strings.CutSuffix(first, portSeparator+k.label)
+	if !ok || name == "" {
+		return "", false
+	}
+	vmHost := name + "." + rest
+	if _, ok := router.PublishedEntry(vmHost); !ok {
+		return "", false
+	}
+	return vmHost, true
 }
 
 func (p *Proxy) desktopVMHost(host string) (string, bool) {

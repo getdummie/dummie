@@ -44,6 +44,42 @@ func TestConsoleVMHost(t *testing.T) {
 	}
 }
 
+func TestDesktopVMHost(t *testing.T) {
+	cfg := &Config{
+		HTTP:    &HTTPConfig{Hosts: map[string]HTTPHost{"one.vm.local": {Host: "10.64.0.2", DefaultPort: 8000}}},
+		Desktop: &DesktopConfig{RemotePassword: "ubuntu"},
+	}
+	p := &Proxy{cfg: cfg, router: NewRouter(cfg)}
+
+	cases := []struct {
+		name string
+		host string
+		want string
+	}{
+		{"desktop name", "one--desk.vm.local", "one.vm.local"},
+		{"case and port are normalised", "ONE--DESK.vm.local:443", "one.vm.local"},
+		{"unknown vm", "nope--desk.vm.local", ""},
+		{"port host", "one--8080.vm.local", ""},
+		{"old label form", "one.desk.vm.local", ""},
+		{"no name", "--desk.vm.local", ""},
+		{"single label", "one--desk", ""},
+	}
+	for _, c := range cases {
+		got, ok := p.desktopVMHost(c.host)
+		if !ok {
+			got = ""
+		}
+		if got != c.want {
+			t.Errorf("%s: desktopVMHost(%q) = %q, want %q", c.name, c.host, got, c.want)
+		}
+	}
+
+	p.cfg.Desktop = nil
+	if _, ok := p.desktopVMHost("one--desk.vm.local"); ok {
+		t.Error("a desktop name resolved with no desktop: configured")
+	}
+}
+
 func mintConsoleToken(a *Authenticator, sub, host string) string {
 	payload, err := json.Marshal(claims{
 		Sub: sub,

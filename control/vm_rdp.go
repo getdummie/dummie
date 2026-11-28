@@ -20,12 +20,13 @@ const proxyDesktopAudPrefix = "desktop:"
 // The port a native client connects to. dproxy owns it on every fleet host.
 const rdpPublicPort = 3389
 
+// desktopHost is "<vm>--desk.<tld>", one label deep so *.<tld> covers it.
 func (h *UserHandler) desktopHost(ctx context.Context, v db.Vm) string {
 	tld := h.vmDomainTLD(ctx, v)
 	if tld == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s.%s.%s", v.Name, proxyDesktopLabel, tld)
+	return fmt.Sprintf("%s--%s.%s", v.Name, proxyDesktopLabel, tld)
 }
 
 func (h *UserHandler) desktopURL(ctx context.Context, v db.Vm) string {
