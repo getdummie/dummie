@@ -1,24 +1,28 @@
 package dpipe
 
 import (
+	"bytes"
+	"context"
+	"crypto/tls"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"time"
 
 	"dpipe/internal/control"
+	"dpipe/internal/rdp"
 	"dpipe/internal/xnet"
 )
 
 // The browser desktop is the console's counterpart for RDP. dproxy authorizes the
-// upgrade the same way; the difference is what sits on the far side of the
-// websocket. Here dpipe brings up the guest leg — X.224, TLS and NLA — and then
-// carries the decrypted RDP stream in binary frames, because the in-browser client
-// runs in WebAssembly and cannot open a TLS connection of its own.
+// upgrade the same way; past it, the websocket speaks RDCleanPath to IronRDP's
+// in-browser client, which cannot open TLS itself but does run NLA itself.
 //
-// It has no config block: it needs the same guest leg the native path does, so it
-// is gated on rdp.enabled and reuses the console's session limits.
+// It has no config block: it is gated on rdp.enabled and reuses the console's
+// session limits.
 func (s *Server) handleDesktopAccept(p *control.Peer, m control.Msg, fds []int) {
 	if len(fds) != 1 {
 		control.CloseFDs(fds)
@@ -73,17 +77,84 @@ func (s *Server) serveDesktop(id string, m control.Msg, client net.Conn, pipelin
 		return
 	}
 
-	backend, err := s.dialGuestRDP(log, m.Target, m.RemoteUser, m.RemotePassword)
+	_ = client.SetDeadline(time.Now().Add(s.cfg.RDP.HandshakeTimeout.Or(defaultRDPHandshakeTimeout)))
+	backend, err := s.rdcleanpath(log, ws, m.Target)
 	if err != nil {
 		log.Warn("desktop backend connect failed", "target", m.Target, "err", err)
-		ws.Close(wsCloseInternalError, "desktop connect failed")
+		ws.Close(wsCloseNormal, "desktop connect failed")
 		return
 	}
 	defer func() { _ = backend.Close() }()
+	_ = client.SetDeadline(time.Time{})
 
-	log.Info("desktop session start", "target", m.Target, "remote_user", m.RemoteUser)
+	log.Info("desktop session start", "target", m.Target)
 	s.pumpDesktop(ws, backend)
 	log.Info("desktop session end")
+}
+
+// rdcleanpath answers the browser's RDCleanPath request: X.224 and TLS with the
+// guest, then the guest's response and certificate chain back to the browser,
+// which runs NLA itself over the returned stream. The destination the browser
+// names is ignored; dproxy already chose the target from the token.
+func (s *Server) rdcleanpath(log *slog.Logger, ws *wsConn, target string) (net.Conn, error) {
+	fail := func(code, status int64, err error) (net.Conn, error) {
+		_ = ws.WriteMessage(opBinary, rdp.EncodeRDCleanPathError(code, status))
+		return nil, err
+	}
+
+	op, payload, err := ws.ReadMessage()
+	if err != nil {
+		return nil, fmt.Errorf("read rdcleanpath request: %w", err)
+	}
+	if op != opBinary || len(payload) > rdp.MaxRDCleanPathRequest {
+		return fail(rdp.RDCleanPathErrGeneral, 400, errors.New("not an rdcleanpath request"))
+	}
+	req, err := rdp.ParseRDCleanPathRequest(payload)
+	if err != nil {
+		return fail(rdp.RDCleanPathErrGeneral, 400, err)
+	}
+	cr, err := rdp.ReadConnectionRequest(bytes.NewReader(req.X224))
+	if err != nil || len(cr.Raw) != len(req.X224) {
+		return fail(rdp.RDCleanPathErrGeneral, 400, fmt.Errorf("unusable X.224 request: %v", err))
+	}
+
+	nc, err := net.DialTimeout("tcp", target, s.cfg.RDP.DialTimeout.Or(defaultDialTimeout))
+	if err != nil {
+		return fail(rdp.RDCleanPathErrGeneral, 502, err)
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = nc.Close()
+		}
+	}()
+	_ = nc.SetDeadline(time.Now().Add(s.cfg.RDP.HandshakeTimeout.Or(defaultRDPHandshakeTimeout)))
+
+	if _, err := nc.Write(cr.Raw); err != nil {
+		return fail(rdp.RDCleanPathErrGeneral, 502, fmt.Errorf("write X.224 request: %w", err))
+	}
+	confirm, err := rdp.ReadFrame(nc)
+	if err != nil {
+		return fail(rdp.RDCleanPathErrNegotiation, 0, fmt.Errorf("read X.224 confirm: %w", err))
+	}
+
+	// Self-signed guest certificate; the browser binds CredSSP to this exact key.
+	btls := tls.Client(nc, &tls.Config{InsecureSkipVerify: true})
+	if err := btls.HandshakeContext(context.Background()); err != nil {
+		return fail(rdp.RDCleanPathErrGeneral, 502, fmt.Errorf("backend tls handshake: %w", err))
+	}
+	var chain [][]byte
+	for _, c := range btls.ConnectionState().PeerCertificates {
+		chain = append(chain, c.Raw)
+	}
+	if err := ws.WriteMessage(opBinary, rdp.EncodeRDCleanPathResponse(target, confirm, chain)); err != nil {
+		return nil, fmt.Errorf("write rdcleanpath response: %w", err)
+	}
+
+	_ = nc.SetDeadline(time.Time{})
+	ok = true
+	log.Debug("desktop rdcleanpath done", "target", target, "certs", len(chain))
+	return btls, nil
 }
 
 // pumpDesktop moves bytes both ways until either side stops. Binary frames carry

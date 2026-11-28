@@ -1472,6 +1472,19 @@ async function removeDomain(d: CustomDomain) {
             </div>
             <div class="flex flex-wrap items-center gap-2">
               <Button
+                as="a"
+                variant="outline"
+                size="sm"
+                class="text-xs"
+                :href="`/vms/${vm.id}/desktop`"
+                target="_blank"
+                rel="noopener"
+                :title="`Open ${vm.name}'s desktop in this browser`"
+              >
+                <ExternalLink class="size-4" aria-hidden="true" />
+                Open in browser
+              </Button>
+              <Button
                 v-if="!rdp"
                 variant="outline"
                 size="sm"
@@ -1507,8 +1520,8 @@ async function removeDomain(d: CustomDomain) {
           </div>
 
           <p v-if="!rdp && !rdpError" class="mt-2 text-xs text-muted-foreground">
-            Open this VM's desktop in any RDP client. (Only works if remote desktop server is
-            already present in the VM)
+            Open this VM's desktop in the browser or in any RDP client. (Only works if a remote
+            desktop server is already present in the VM)
           </p>
 
           <p v-if="rdpError" class="mt-2 text-xs text-destructive" role="alert">

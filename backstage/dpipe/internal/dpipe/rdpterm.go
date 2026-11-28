@@ -279,7 +279,7 @@ func (s *Server) rdpAuthorizer(p *control.Peer, log *slog.Logger, clientIP strin
 }
 
 // dialGuestRDP brings up the backend leg: TCP, X.224 with NLA requested, TLS, then
-// CredSSP as a client. It is shared with the browser desktop path.
+// CredSSP as a client.
 func (s *Server) dialGuestRDP(log *slog.Logger, target, user, password string) (net.Conn, error) {
 	dialTimeout := s.cfg.RDP.DialTimeout.Or(defaultDialTimeout)
 	nc, err := net.DialTimeout("tcp", target, dialTimeout)

@@ -6,6 +6,7 @@ import AgentSessions from '@/components/agent/AgentSessions.vue'
 import AgentTransfer from '@/components/agent/AgentTransfer.vue'
 import VmDestinations from '@/components/VmDestinations.vue'
 import WorkspaceConsole from '@/components/workspace/WorkspaceConsole.vue'
+import WorkspaceDesktop from '@/components/workspace/WorkspaceDesktop.vue'
 import type { PanelType } from '@/lib/workspace'
 
 defineProps<{ panel: PanelType, vmId: string, active: boolean }>()
@@ -15,6 +16,7 @@ const ws = useInjectedAgentWorkspace()
 <template>
   <AgentChatPanel v-if="panel === 'chat'" />
   <WorkspaceConsole v-else-if="panel === 'console'" :vm-id="vmId" />
+  <WorkspaceDesktop v-else-if="panel === 'desktop'" :vm-id="vmId" />
   <AgentFilesPanel v-else-if="panel === 'files'" hint="Pick a file in the diff panel's files tab to open it here." />
   <AgentTransfer
     v-else-if="panel === 'transfer'"

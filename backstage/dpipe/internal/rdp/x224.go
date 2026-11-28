@@ -72,6 +72,18 @@ func readTPKT(r io.Reader) ([]byte, error) {
 	return body, nil
 }
 
+// ReadFrame reads one whole TPKT frame, header included, without interpreting it.
+func ReadFrame(r io.Reader) ([]byte, error) {
+	body, err := readTPKT(r)
+	if err != nil {
+		return nil, err
+	}
+	frame := make([]byte, tpktHeader, tpktHeader+len(body))
+	frame[0] = tpktVersion
+	binary.BigEndian.PutUint16(frame[2:], uint16(tpktHeader+len(body)))
+	return append(frame, body...), nil
+}
+
 func writeTPKT(w io.Writer, body []byte) error {
 	buf := make([]byte, tpktHeader, tpktHeader+len(body))
 	buf[0] = tpktVersion

@@ -25,7 +25,7 @@ const (
 
 var workspacePanels = map[string]bool{
 	"chat": true, "console": true, "files": true, "transfer": true,
-	"network": true, "diff": true, "sessions": true,
+	"network": true, "diff": true, "sessions": true, "desktop": true,
 }
 
 type workspaceItem struct {

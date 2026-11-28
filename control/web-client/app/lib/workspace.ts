@@ -1,9 +1,9 @@
-import { ArrowLeftRight, Bot, FileCode, FileDiff, Globe, History, SquareTerminal } from '@lucide/vue'
+import { ArrowLeftRight, Bot, FileCode, FileDiff, Globe, History, Monitor, SquareTerminal } from '@lucide/vue'
 
 export const GRID_COLS = 24
 export const GRID_ROWS = 24
 
-export type PanelType = 'chat' | 'console' | 'files' | 'transfer' | 'network' | 'diff' | 'sessions'
+export type PanelType = 'chat' | 'console' | 'files' | 'transfer' | 'network' | 'diff' | 'sessions' | 'desktop'
 
 export interface GridItem {
   panel: PanelType
@@ -30,6 +30,7 @@ export const panels: Record<PanelType, { label: string, icon: typeof Bot }> = {
   network: { label: 'network', icon: Globe },
   diff: { label: 'diff', icon: FileDiff },
   sessions: { label: 'sessions', icon: History },
+  desktop: { label: 'desktop', icon: Monitor },
 }
 
 export const panelTypes = Object.keys(panels) as PanelType[]

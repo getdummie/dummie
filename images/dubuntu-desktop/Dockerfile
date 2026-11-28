@@ -21,17 +21,22 @@ RUN set -ex \
     python3 \
     htop \
     btop \
-    gdm3 \
+    dbus-user-session \
     gnome-session \
     gnome-shell \
     gnome-terminal \
     gnome-remote-desktop \
     pipewire \
+    pipewire-pulse \
+    wireplumber \
+    fuse3 \
     libgl1-mesa-dri \
     openssl \
     neovim \
     gnupg \
     ca-certificates \
+    fonts-noto-color-emoji \
+    fonts-noto-core \
   && apt clean \
   && rm -rf /var/lib/apt/lists/*
 
@@ -54,16 +59,11 @@ RUN set -ex \
   && apt clean \
   && rm -rf /var/lib/apt/lists/*
 
-RUN set -e \
-  && apt-get install -y --no-install-recommends \
-    fonts-noto-color-emoji \
-    fonts-noto-core
-
 RUN set -ex \
   && systemctl enable ssh \
   && systemctl enable systemd-resolved \
   && systemctl enable systemd-networkd \
-  && systemctl set-default graphical.target \
+  && systemctl set-default multi-user.target \
   && systemctl mask -- \
     snapd.service \
     snapd.socket \
@@ -95,11 +95,14 @@ RUN set -ex \
     apport-autoreport.timer \
     ufw.service \
     systemd-networkd-wait-online.service \
+    gnome-remote-desktop.service \
   && (id ubuntu || adduser --disabled-password --gecos "" ubuntu) \
   && echo 'ubuntu:ubuntu' | chpasswd \
   && adduser ubuntu sudo \
   && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu \
-  && chmod 0440 /etc/sudoers.d/ubuntu
+  && chmod 0440 /etc/sudoers.d/ubuntu \
+  && install -d -m 0755 /var/lib/systemd/linger \
+  && touch /var/lib/systemd/linger/ubuntu
 
 RUN set -ex \
   && printf 'LANG=C.UTF-8\nLC_ALL=C.UTF-8\n' > /etc/default/locale \
@@ -107,50 +110,76 @@ RUN set -ex \
   && printf 'LANG=C.UTF-8\nLC_ALL=C.UTF-8\n' >> /etc/environment \
   && sed -i 's/^#\?AcceptEnv LANG LC_\*/#AcceptEnv LANG LC_*/' /etc/ssh/sshd_config
 
-RUN set -ex \
-  && install -d -m 0755 /etc/gnome-remote-desktop \
-  && openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
-       -subj "/CN=ubuntu-desktop" \
-       -keyout /etc/gnome-remote-desktop/tls.key \
-       -out /etc/gnome-remote-desktop/tls.crt
+# gnome-remote-desktop runs in user mode, headless, under the lingering ubuntu
+# user's systemd: no login screen and no handover redirect, which the in-browser
+# client cannot follow.
+COPY virtual-sink.conf /etc/pipewire/pipewire.conf.d/virtual-sink.conf
 
-RUN cat > /usr/local/sbin/grd-config.sh <<'EOF'
+RUN cat > /usr/local/bin/grd-setup.sh <<'EOF'
 #!/bin/sh
 set -eu
 
-chown gnome-remote-desktop:gnome-remote-desktop /etc/gnome-remote-desktop/tls.crt /etc/gnome-remote-desktop/tls.key
-grdctl --system rdp set-tls-cert /etc/gnome-remote-desktop/tls.crt
-grdctl --system rdp set-tls-key /etc/gnome-remote-desktop/tls.key
-grdctl --system rdp set-credentials ubuntu ubuntu
-grdctl --system rdp disable-view-only
-grdctl --system rdp set-port 3389
-# dproxy always dials :3389, so a daemon that quietly moved to another port would
-# just look like a dead guest.
-grdctl --system rdp disable-port-negotiation
-grdctl --system rdp enable
-systemctl enable gnome-remote-desktop.service
+dir="$HOME/.local/share/gnome-remote-desktop"
+mkdir -p "$dir"
+if [ ! -f "$dir/tls.crt" ]; then
+  openssl req -x509 -newkey rsa:4096 -nodes -days 3650 -subj "/CN=$(hostname)" \
+    -keyout "$dir/tls.key" -out "$dir/tls.crt" 2>/dev/null
+  chmod 0600 "$dir/tls.key"
+fi
 
-# Restart rather than start: the daemon must bind 3389 after the settings above.
-systemctl restart gnome-remote-desktop.service
+g="grdctl --headless"
+$g rdp set-tls-cert "$dir/tls.crt"
+$g rdp set-tls-key "$dir/tls.key"
+$g rdp set-credentials ubuntu ubuntu
+$g rdp disable-view-only
+$g rdp set-port 3389
+# dpipe always dials :3389, so a daemon that quietly moved to another port would
+# just look like a dead guest.
+$g rdp disable-port-negotiation
+$g rdp enable
 EOF
 
-RUN chmod 0755 /usr/local/sbin/grd-config.sh
+RUN chmod 0755 /usr/local/bin/grd-setup.sh
 
-RUN cat > /etc/systemd/system/grd-config.service <<'EOF'
+RUN cat > /etc/systemd/user/dummie-gnome-shell.service <<'EOF'
 [Unit]
-Description=Configure gnome-remote-desktop RDP (system mode)
-After=gnome-remote-desktop.service systemd-user-sessions.service
-Wants=gnome-remote-desktop.service
+Description=Headless GNOME Shell
+Requires=pipewire.service wireplumber.service
+After=pipewire.service wireplumber.service
 
 [Service]
-Type=oneshot
-ExecStart=/usr/local/sbin/grd-config.sh
-RemainAfterExit=yes
+Type=dbus
+BusName=org.gnome.Mutter.RemoteDesktop
+ExecStart=/usr/bin/gnome-shell --headless
+Restart=on-failure
+RestartSec=2
 
 [Install]
-WantedBy=graphical.target
+WantedBy=default.target
 EOF
 
-RUN systemctl enable grd-config.service
+RUN cat > /etc/systemd/user/dummie-remote-desktop.service <<'EOF'
+[Unit]
+Description=GNOME Remote Desktop (headless, user mode)
+Requires=dummie-gnome-shell.service
+After=dummie-gnome-shell.service
+PartOf=dummie-gnome-shell.service
+
+[Service]
+ExecStartPre=/usr/local/bin/grd-setup.sh
+ExecStart=/usr/libexec/gnome-remote-desktop-daemon --headless
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+
+RUN systemctl --global enable \
+    pipewire.socket \
+    pipewire-pulse.socket \
+    wireplumber.service \
+    dummie-gnome-shell.service \
+    dummie-remote-desktop.service
 
 USER ubuntu
