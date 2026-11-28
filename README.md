@@ -46,12 +46,9 @@ Each directory is a project in its own right.
 
 ## Known issues
 
-- **Browser remote desktop in Chromium.** The in-browser desktop is IronRDP
-  compiled to WebAssembly, drawing every frame onto a 2D canvas, and on some
-  machines Chromium's GPU-accelerated canvas drops those frames: the session
-  connects but the screen stays blank. If that happens, turn off "Use graphics
-  acceleration when available" in `chrome://settings/system` and restart the
-  browser. Firefox is not affected.
+- **Browser remote desktop in Chromium.** If the desktop connects but the
+  screen stays blank, turning off "Use graphics acceleration when available" in
+  `chrome://settings/system` and restarting the browser may help.
 
 ## Contributing
 

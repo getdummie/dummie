@@ -131,6 +131,7 @@ async function pasteIntoDesktop() {
     await ui?.sendClipboardData()
   }
   catch (e) {
+    console.warn('[desktop] clipboard send failed:', e)
     message.value = `Could not read your clipboard: ${e instanceof Error ? e.message : e}`
   }
 }
@@ -267,8 +268,9 @@ onMounted(async () => {
     // Only fires in the fallback mode. A copy in the guest follows a key press or
     // click in this tab, which is what lets the page write the clipboard here.
     ui.onClipboardRemoteUpdateCallback(() => {
-      ui?.saveRemoteClipboardData().catch(() => {})
+      ui?.saveRemoteClipboardData().catch(e => console.warn('[desktop] clipboard write failed:', e))
     })
+    ui.onWarningCallback(w => console.warn('[desktop]', w))
   }
   catch (e) {
     phase.value = 'error'
