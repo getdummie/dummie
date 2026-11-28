@@ -241,7 +241,7 @@ func (r *Resolver) Handle(m control.Msg) control.Msg {
 				}
 			}
 			if k, ok := consoleHostKind(r.console, req); ok {
-				if vmHost, ok := labelledVMHost(r.router, k.label, m.Host); ok {
+				if vmHost, ok := suffixedVMHost(r.router, k.label, m.Host); ok {
 					return r.resolveSession(log, k, m, vmHost, req)
 				}
 			}

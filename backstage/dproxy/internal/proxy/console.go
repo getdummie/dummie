@@ -97,16 +97,18 @@ func consoleHostKind(cc *ConsoleConfig, req *http.Request) (sessionKind, bool) {
 	return k, ok
 }
 
-// labelledVMHost maps "one.shell.vm.local" to the published host "one.vm.local".
-// The label must sit in the second position, so a guest cannot claim one by
-// naming itself after it.
-func labelledVMHost(router *Router, label, host string) (string, bool) {
-	host = httpsniff.NormalizeHost(host)
-	labels := strings.Split(host, ".")
-	if len(labels) < 3 || labels[1] != label {
+// suffixedVMHost maps "one--<label>.vm.local" to "one.vm.local", so *.<tld>
+// covers it. A VM name cannot contain "--", so no guest can claim it.
+func suffixedVMHost(router *Router, label, host string) (string, bool) {
+	first, rest, ok := strings.Cut(httpsniff.NormalizeHost(host), ".")
+	if !ok || rest == "" {
 		return "", false
 	}
-	vmHost := strings.Join(append([]string{labels[0]}, labels[2:]...), ".")
+	name, ok := strings.CutSuffix(first, portSeparator+label)
+	if !ok || name == "" {
+		return "", false
+	}
+	vmHost := name + "." + rest
 	if _, ok := router.PublishedEntry(vmHost); !ok {
 		return "", false
 	}
@@ -118,34 +120,19 @@ func consoleVMHost(router *Router, cc *ConsoleConfig, host string) (string, bool
 	if !ok {
 		return "", false
 	}
-	return labelledVMHost(router, k.label, host)
+	return suffixedVMHost(router, k.label, host)
 }
 
 func (p *Proxy) consoleVMHost(host string) (string, bool) {
 	return consoleVMHost(p.router, p.cfg.Console, host)
 }
 
-// desktopVMHost maps "one--desk.vm.local" to "one.vm.local". The label rides on
-// the first one so the fleet's *.<tld> certificate covers it; a VM name cannot
-// contain "--", so no guest can claim it.
 func desktopVMHost(router *Router, d *DesktopConfig, host string) (string, bool) {
 	k, ok := desktopKind(d)
 	if !ok {
 		return "", false
 	}
-	first, rest, ok := strings.Cut(httpsniff.NormalizeHost(host), ".")
-	if !ok || rest == "" {
-		return "", false
-	}
-	name, ok := strings.CutSuffix(first, portSeparator+k.label)
-	if !ok || name == "" {
-		return "", false
-	}
-	vmHost := name + "." + rest
-	if _, ok := router.PublishedEntry(vmHost); !ok {
-		return "", false
-	}
-	return vmHost, true
+	return suffixedVMHost(router, k.label, host)
 }
 
 func (p *Proxy) desktopVMHost(host string) (string, bool) {

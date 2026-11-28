@@ -44,9 +44,9 @@ func testFleetCert(t *testing.T, tld string) (string, string) {
 	return testCert(t, certificateNames(tld), time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour))
 }
 
-func TestCertificateNamesCoverConsolesAndIntegrations(t *testing.T) {
+func TestCertificateNamesCoverVMsAndIntegrations(t *testing.T) {
 	got := certificateNames("example.com")
-	want := []string{"*.example.com", "*.shell.example.com", "*.int.example.com"}
+	want := []string{"*.example.com", "*.int.example.com"}
 	if len(got) != len(want) {
 		t.Fatalf("certificateNames = %v, want %v", got, want)
 	}
@@ -57,9 +57,9 @@ func TestCertificateNamesCoverConsolesAndIntegrations(t *testing.T) {
 	}
 }
 
-func TestCertificateRequiredNamesCoverConsoles(t *testing.T) {
+func TestCertificateRequiredNamesCoverVMs(t *testing.T) {
 	got := certificateRequiredNames("example.com")
-	want := []string{"*.example.com", "*.shell.example.com"}
+	want := []string{"*.example.com"}
 	if len(got) != len(want) {
 		t.Fatalf("certificateRequiredNames = %v, want %v", got, want)
 	}
@@ -123,16 +123,16 @@ func TestValidateCertificateAcceptsAFleetCertificate(t *testing.T) {
 	}
 }
 
-func TestValidateCertificateRejectsMissingConsoleWildcard(t *testing.T) {
+func TestValidateCertificateRejectsMissingWildcard(t *testing.T) {
 	certPEM, keyPEM := testCert(t,
-		[]string{"example.com", "*.example.com"},
+		[]string{"example.com"},
 		time.Now().Add(-time.Hour), time.Now().Add(90*24*time.Hour))
 
 	_, err := validateCertificate(certPEM, keyPEM, "example.com")
 	if err == nil {
-		t.Fatal("a certificate with no console wildcard was accepted")
+		t.Fatal("a certificate with no wildcard was accepted")
 	}
-	if !strings.Contains(err.Error(), "*.shell.example.com") {
+	if !strings.Contains(err.Error(), "*.example.com") {
 		t.Errorf("the error does not name the missing name: %v", err)
 	}
 }

@@ -25,7 +25,7 @@ func (h *UserHandler) consoleHost(ctx context.Context, v db.Vm) string {
 	if tld == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s.%s.%s", v.Name, proxyConsoleLabel, tld)
+	return fmt.Sprintf("%s--%s.%s", v.Name, proxyConsoleLabel, tld)
 }
 
 func (h *UserHandler) consoleURL(ctx context.Context, v db.Vm) string {

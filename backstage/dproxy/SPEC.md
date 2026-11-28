@@ -116,7 +116,7 @@ acme:
 
 edge:                       # router mode: http/https forwarded untouched by Host/SNI
   hosts:                    # published name -> host address (no port)
-    one.vm.local: 10.68.0.2 # also answers one--8080.vm.local, one.shell.vm.local
+    one.vm.local: 10.68.0.2 # also answers one--8080.vm.local, one--shell.vm.local
   fallback:                 # any other name under a domain, hosts tried in order
     vm.local: [10.68.0.2, 10.68.0.3]
   http_port: 80

@@ -10,9 +10,9 @@ import (
 
 func TestAgentTLD(t *testing.T) {
 	for host, want := range map[string]string{
-		"one.shell.vm.example.com": "vm.example.com",
-		"one.shell.local":          "local",
-		"shell.local":              "",
+		"one--shell.vm.example.com": "vm.example.com",
+		"one--shell.local":          "local",
+		"one--shell":                "",
 	} {
 		if got := agentTLD(host); got != want {
 			t.Errorf("agentTLD(%q) = %q, want %q", host, got, want)

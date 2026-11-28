@@ -11,7 +11,6 @@ import (
 func TestConsoleVMHost(t *testing.T) {
 	cfg := &Config{HTTP: &HTTPConfig{Hosts: map[string]HTTPHost{
 		"one.vm.local": {Host: "10.64.0.2", DefaultPort: 8000},
-		"two.shell.vm.local": {Host: "10.64.0.3", DefaultPort: 8000},
 	}}}
 	p := &Proxy{cfg: cfg, router: NewRouter(cfg)}
 
@@ -20,12 +19,14 @@ func TestConsoleVMHost(t *testing.T) {
 		host string
 		want string
 	}{
-		{"console name", "one.shell.vm.local", "one.vm.local"},
-		{"case and port are normalised", "ONE.shell.vm.local:80", "one.vm.local"},
-		{"unknown vm", "nope.shell.vm.local", ""},
+		{"console name", "one--shell.vm.local", "one.vm.local"},
+		{"case and port are normalised", "ONE--SHELL.vm.local:80", "one.vm.local"},
+		{"unknown vm", "nope--shell.vm.local", ""},
 		{"not a console name", "one.vm.local", ""},
-		{"wrong label position", "shell.one.vm.local", ""},
-		{"too few labels", "shell.local", ""},
+		{"port host", "one--8080.vm.local", ""},
+		{"old label form", "one.shell.vm.local", ""},
+		{"no name", "--shell.vm.local", ""},
+		{"single label", "one--shell", ""},
 	}
 	for _, c := range cases {
 		p.cfg.Console = &ConsoleConfig{}
@@ -39,7 +40,7 @@ func TestConsoleVMHost(t *testing.T) {
 	}
 
 	p.cfg.Console = nil
-	if _, ok := p.consoleVMHost("one.shell.vm.local"); ok {
+	if _, ok := p.consoleVMHost("one--shell.vm.local"); ok {
 		t.Error("a console name resolved with no console: configured")
 	}
 }
@@ -148,7 +149,7 @@ func TestWebsocketKeyValidation(t *testing.T) {
 		}
 		mutate(h)
 		var b strings.Builder
-		b.WriteString("GET /?token=t HTTP/1.1\r\nHost: one.shell.vm.local\r\n")
+		b.WriteString("GET /?token=t HTTP/1.1\r\nHost: one--shell.vm.local\r\n")
 		for k, v := range h {
 			if v != "" {
 				b.WriteString(k + ": " + v + "\r\n")

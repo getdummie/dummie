@@ -136,10 +136,10 @@ func TestPortHostsAreNotConsoleNames(t *testing.T) {
 	}
 	p := &Proxy{cfg: cfg, router: NewRouter(cfg)}
 
-	if got, ok := p.consoleVMHost("one--9000.shell.vm.local"); ok {
+	if got, ok := p.consoleVMHost("one--9000.vm.local"); ok {
 		t.Errorf("consoleVMHost accepted the name--port form, routing to %q", got)
 	}
-	if _, ok := p.router.HostBackend("one--9000.shell.vm.local"); ok {
-		t.Error("the name--port form under the console label still routes somewhere")
+	if _, ok := p.router.HostBackend("one--shell.vm.local"); ok {
+		t.Error("the console name routes as a port host")
 	}
 }

@@ -28,9 +28,8 @@ func newEdgeRouter(cfg *EdgeConfig) *edgeRouter {
 	return r
 }
 
-// backends also resolves name--<port>.rest, name--<label>.rest and
-// name.<label>.rest to name.rest, which is how port hosts, the desktop and the
-// console hostnames are spelled.
+// backends also resolves name--<port>.rest and name--<label>.rest to
+// name.rest, which is how port hosts and the console and desktop are spelled.
 func (r *edgeRouter) backends(host string) []string {
 	h := httpsniff.NormalizeHost(host)
 	if h == "" {
@@ -44,11 +43,6 @@ func (r *edgeRouter) backends(host string) []string {
 			if addr, ok := r.hosts[name+"."+rest]; ok {
 				return []string{addr}
 			}
-		}
-	}
-	if labels := strings.Split(h, "."); len(labels) >= 3 {
-		if addr, ok := r.hosts[strings.Join(append([]string{labels[0]}, labels[2:]...), ".")]; ok {
-			return []string{addr}
 		}
 	}
 	for d := h; d != ""; {

@@ -82,13 +82,10 @@ func (s *Server) serveTLSAgent(log *slog.Logger, id string, rep control.Msg, tc 
 }
 
 // agentTLD is what the guest needs to find the fleet's llm proxy at
-// llm.int.<tld>: the console host is <vm>.<label>.<tld>.
+// llm.int.<tld>: the console host is <vm>--<label>.<tld>.
 func agentTLD(host string) string {
-	labels := strings.Split(host, ".")
-	if len(labels) < 3 {
-		return ""
-	}
-	return strings.Join(labels[2:], ".")
+	_, tld, _ := strings.Cut(host, ".")
+	return tld
 }
 
 func (s *Server) serveAgent(id string, m control.Msg, client net.Conn, pipelined []byte) {

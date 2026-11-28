@@ -80,10 +80,7 @@ func certificateNames(tld string) []string {
 // all. Adding a name here breaks every certificate already issued without it,
 // so integrations key off what the leaf actually covers instead.
 func certificateRequiredNames(tld string) []string {
-	return []string{
-		"*." + tld,
-		"*." + proxyConsoleLabel + "." + tld,
-	}
+	return []string{"*." + tld}
 }
 
 // certificateCoversIntegrations reports whether a leaf can serve *.int.<tld>,

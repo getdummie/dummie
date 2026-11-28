@@ -122,7 +122,7 @@ cache key, so moving dinit rebuilds those images as VMs are created from them.
 
 ## The coding agent — `dinit agent`
 
-The console's agent tab (`wss://<vm>.shell.<tld>/agent`) is dpipe running
+The console's agent tab (`wss://<vm>--shell.<tld>/agent`) is dpipe running
 `/sbin/dinit agent attach --tld <tld>` over ssh as the VM's session user. It is
 not pid 1 work, and it works the same in handoff and agent mode.
 

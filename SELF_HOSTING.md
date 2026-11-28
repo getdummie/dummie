@@ -19,7 +19,6 @@ virtualization enabled, if its a VM in itself.
 - s3.dummie.dev
 - console-s3.dummie.dev
 - *.dummie.app
-- *.shell.dummie.dev
 
 ### Control Server
 
@@ -205,8 +204,8 @@ sudo dclient install
    - **Admin → Domains**: pick the edge in the domain's Edge column.
 
 5. Point every record that pointed at a qemu host at the edge's public address
-   instead: `*.dummie.app` and `*.shell.dummie.dev`. Custom domains follow, since
-   they CNAME to `<vm>.dummie.app`.
+   instead: `*.dummie.app`. Custom domains follow, since they CNAME to
+   `<vm>.dummie.app`.
 
 To check, `journalctl -u dproxy -f` on the edge shows `edge route` per request
 and `ssh authorize` per login. On a host, an ssh login through the edge is
