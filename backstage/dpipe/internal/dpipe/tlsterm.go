@@ -91,6 +91,10 @@ func (s *Server) serveTLS(p *control.Peer, id string, client net.Conn) {
 		s.serveTLSAgent(log, id, rep, tc, routeHost, remoteIP, prefix)
 		return
 	}
+	if rep.Protocol == control.ProtoDesktop {
+		s.serveTLSDesktop(log, id, rep, tc, routeHost, remoteIP, prefix)
+		return
+	}
 
 	backend, err := net.DialTimeout("tcp", rep.Target, s.cfg.TLS.DialTimeout.Or(defaultDialTimeout))
 	if err != nil {
@@ -144,6 +148,24 @@ func (s *Server) serveTLSConsole(log *slog.Logger, id string, rep control.Msg, t
 	s.serveConsole(id, control.Msg{
 		Host: host, Target: rep.Target, RemoteUser: rep.RemoteUser,
 		Sub: rep.Sub, WSKey: rep.WSKey, ClientIP: clientIP,
+	}, tc, pipelinedBytes(prefix))
+}
+
+func (s *Server) serveTLSDesktop(log *slog.Logger, id string, rep control.Msg, tc net.Conn, host, clientIP string, prefix []byte) {
+	if !s.cfg.RDP.Enabled {
+		log.Warn("desktop over tls but rdp is not enabled", "host", host)
+		writeQuickTLS(tc, 404)
+		_ = tc.Close()
+		return
+	}
+	if !s.acquireConsole(host) {
+		log.Info("desktop refused: too many sessions for this vm", "host", host, "sub", rep.Sub)
+		writeQuickTLS(tc, 503)
+		_ = tc.Close()
+		return
+	}
+	s.serveDesktop(id, control.Msg{
+		Host: host, Target: rep.Target, Sub: rep.Sub, WSKey: rep.WSKey, ClientIP: clientIP,
 	}, tc, pipelinedBytes(prefix))
 }
 
